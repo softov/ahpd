@@ -187,6 +187,15 @@ it('reads a quoted description with a column-0 x: line back whole', () => {
   expect(readAgents(yaml, written).description).toBe('one\nx: two');
 });
 
+it('reads and writes the instructions as the whole body where they are the body, as VS Code reads an agent file', () => {
+  expect(readAgents(yaml, FULL, 'body').instructions)
+    .toBe('## Instructions\n\nBe calm.\nBe kind.\n\n## How you work\n\nThe rest is the bot\'s.');
+  // The frontmatter's other keys stay the bot's; the body is the owner's.
+  expect(writeAgents(yaml, FULL, parts({ instructions: 'Be kind.\n## Notes\nBe exact.' }), 'body'))
+    .toBe('---\nname: Motion\ndescription: A careful reviewer.\ncolour: red\n---\n\nBe kind.\n## Notes\nBe exact.\n');
+  expect(instructionsProblem('Be calm.\n## Notes\nBe kind.', 'body')).toBeUndefined();
+});
+
 it('names the line that would end the Instructions section', () => {
   // A `##` line in the instructions reads back as the section's end, so a write
   // that took one is refused rather than cutting the text in silence.

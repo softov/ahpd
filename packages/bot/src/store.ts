@@ -1,6 +1,6 @@
 import { AGENTS_FILE, makeFolder, partsOf, readAgentsFile, withAgents, writeAgentsFile } from './folder.js';
 import { BOT_BODIES, DEFAULT_SESSION, isBotColor, isSlug, withoutParts } from './record.js';
-import type { AgentsParts, Yaml } from './agents.js';
+import type { AgentsParts, InstructionsIn, Yaml } from './agents.js';
 import type { BotRecord, KeptBot } from './record.js';
 import type { RecordChange, RecordCollection, StoredRecord } from '@ahpd/sdk';
 
@@ -139,6 +139,8 @@ const holds = (wanted: AgentsParts, got: AgentsParts): boolean =>
 export interface BotStoreSeams {
   /** The YAML a bot's `AGENTS.md` is read and written with. */
   yaml?: Yaml;
+  /** Where a bot's instructions are in its `AGENTS.md`: its own section unless this says the body. */
+  instructionsIn?: InstructionsIn;
   /** The `AGENTS.md` a bot with no file is given: its template, filled with its words. */
   agents?(bot: BotRecord): Promise<string>;
 }
@@ -221,7 +223,7 @@ export function botStore(
     // The record's parts where it still carries some - the older copy a load
     // moves - and the file's everywhere else. A hand edit of the record alone
     // therefore answers with the persona the bot's own file has.
-    const bot = withAgents(seams.yaml, one);
+    const bot = withAgents(seams.yaml, one, seams.instructionsIn);
     const before = held.get(bot.id);
     if (before !== undefined && before.owner !== bot.owner) {
       onProblem(`bots/${bot.id} changed owner; the bot was left as it was`);
@@ -257,28 +259,29 @@ export function botStore(
    * the persona between the two.
    */
   const move = async (one: KeptBot, yaml: Yaml): Promise<BotRecord> => {
-    const bot = withAgents(yaml, one);
+    const at = seams.instructionsIn;
+    const bot = withAgents(yaml, one, at);
     const parts = partsOf(bot);
     try {
-      const file = readAgentsFile(bot.workspace, yaml);
+      const file = readAgentsFile(bot.workspace, yaml, at);
       if (file.kind === 'unreadable') {
         onProblem(`bots/${bot.id} was left in its record: its ${AGENTS_FILE} cannot be read: ${String(file.error)}`);
         return bot;
       }
       if (file.kind === 'parts') {
-        writeAgentsFile(bot.workspace, yaml, parts);
+        writeAgentsFile(bot.workspace, yaml, parts, at);
       }
       else if (seams.agents !== undefined) {
-        makeFolder(bot.workspace, await seams.agents(bot), yaml, parts);
+        makeFolder(bot.workspace, await seams.agents(bot), yaml, parts, at);
       }
       else {
-        writeAgentsFile(bot.workspace, yaml, parts);
+        writeAgentsFile(bot.workspace, yaml, parts, at);
       }
       /*
        * Read back before the record gives the parts up: a write that reached no
        * file has nothing to answer them, and the record is the only copy left.
        */
-      const back = readAgentsFile(bot.workspace, yaml);
+      const back = readAgentsFile(bot.workspace, yaml, at);
       if (back.kind !== 'parts' || !holds(parts, back.parts)) {
         onProblem(`bots/${bot.id} was left in its record: its ${AGENTS_FILE} does not read back with those parts`);
         return bot;
@@ -338,7 +341,7 @@ export function botStore(
       // A record made before the file was the one copy is moved into its file
       // here, once, rather than at every read: the next daemon to load it finds
       // a record with no parts.
-      held.set(one.id, yaml !== undefined && older(one) ? await move(one, yaml) : withAgents(yaml, one));
+      held.set(one.id, yaml !== undefined && older(one) ? await move(one, yaml) : withAgents(yaml, one, seams.instructionsIn));
     }
   };
 

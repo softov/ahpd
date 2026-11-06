@@ -9,6 +9,9 @@
     },
     "mainTurnPostMessageAbsent": {
       "description": "Qué hace un turno principal cuando el turno de la sesión de fondo termina sin post_message: post (por defecto), notice, silence o postNotice."
+    },
+    "instructionsIn": {
+      "description": "Dónde están las instrucciones de un bot en su AGENTS.md: su sección ## Instructions (por defecto), o todo el cuerpo después del frontmatter, como VS Code lee un archivo de agente."
     }
   },
   "session": {

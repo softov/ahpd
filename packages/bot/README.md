@@ -31,6 +31,7 @@ In the configuration file, with every option set:
 | --- | --- | --- |
 | `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>` |
 | `mainTurnPostMessageAbsent` | `post` | What a main turn does when the back session's turn ends without `post_message`: `post`, `notice`, `silence` or `postNotice` |
+| `instructionsIn` | `section` | Where a bot's instructions are in its `AGENTS.md`: its `## Instructions` section, or `body`, the whole body after the frontmatter, as VS Code reads an agent file |
 
 The plugin's own entry needs `session:read` and `session:write`: a message is sent to a back session as a client's chat action, and the session's state is read the same way. The write group also holds `session:trust`, which the trusted start of a back session asks for.
 

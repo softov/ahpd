@@ -13,7 +13,7 @@ import { isSlug } from './record.js';
 import { botStore } from './store.js';
 import { agentsTextOf } from './template.js';
 import { botWake, isMainTurnAbsence } from './wake.js';
-import type { Yaml } from './agents.js';
+import type { InstructionsIn, Yaml } from './agents.js';
 import type { BotRecord } from './record.js';
 import type { MainTurnAbsence } from './wake.js';
 import type { Bag, MessageFrom, Owner, Plugin, PluginPeer, RecordCollection, TurnEndEvent } from '@ahpd/sdk';
@@ -67,6 +67,7 @@ export const title = 'Bot';
 export const defaults = {
   root: '~/.bots',
   mainTurnPostMessageAbsent: 'post',
+  instructionsIn: 'section',
 } as const;
 
 /** What the plugin's connection to the host calls itself, which is how it knows its own frames. */
@@ -471,6 +472,12 @@ export const apply: Plugin['apply'] = (host, options) => {
   if (askedAbsent !== undefined && !isMainTurnAbsence(askedAbsent)) {
     host.problem(`${name}: mainTurnPostMessageAbsent is ${JSON.stringify(askedAbsent)}, which is not one of post, notice, silence or postNotice; using post`);
   }
+  /*
+   * Where a bot's instructions are in its `AGENTS.md`: its own section, or the
+   * whole body after the frontmatter, as VS Code reads an agent file. The
+   * schema names the two, so a value outside them never reaches here.
+   */
+  const instructionsIn: InstructionsIn = options.instructionsIn === 'body' ? 'body' : defaults.instructionsIn;
   const kept = host.records('templates', { body: 'text' });
   const templates = {
     // A bot file is edited by hand too, so a name is checked again here.
@@ -514,7 +521,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     host.records(BOTS_DIR, { body: 'instructions', file: BOT_FILE }),
     host.records(GONE),
     (line) => { host.problem(`${name}: ${line}`); },
-    { yaml, agents },
+    { yaml, agents, instructionsIn },
   );
   /**
    * One collection of one bot's, opened the first time that bot's data is
@@ -619,6 +626,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     hostName: host.hostName,
     templates,
     yaml,
+    instructionsIn,
     agents,
     chats,
     backSessions: backs,

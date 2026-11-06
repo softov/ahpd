@@ -9,7 +9,7 @@ import { named, rowId, userOf, whose } from './names.js';
 import {
   BOT_BODIES, BOT_COLORS, checkRecord, DEFAULT_SESSION, isSlug, TURN_WORD,
 } from './record.js';
-import type { Yaml } from './agents.js';
+import type { InstructionsIn, Yaml } from './agents.js';
 import type { BackSessions } from './names.js';
 import type { BotCatalogue } from './catalogue.js';
 import type { BotRecord } from './record.js';
@@ -138,6 +138,8 @@ export interface BotOptions {
   templates: BotTemplates;
   /** The YAML a bot's `AGENTS.md` is read and written with. */
   yaml: Yaml;
+  /** Where a bot's instructions are in its `AGENTS.md`: its own section unless this says the body. */
+  instructionsIn?: InstructionsIn;
   /**
    * The `AGENTS.md` a bot with no file is given: its template, filled with its
    * words.
@@ -727,7 +729,7 @@ export function botProvider(options: BotOptions): BotProvider {
       // The file's parts, read now rather than answered from the cache: an edit
       // the bot made to its own file shows on the next read, without anything
       // having to notice the write.
-      const bot = fromAgents(options.yaml, known);
+      const bot = fromAgents(options.yaml, known, options.instructionsIn);
       if (held.path === '') {
         /*
          * The agent it names is the bot's session's, and one this host does not
@@ -790,7 +792,7 @@ export function botProvider(options: BotOptions): BotProvider {
       // The file's parts over the record's: an edit that names no persona is
       // editing the bot as it is now, not as the store last read it.
       const known = store.get(slug);
-      const existing = known === undefined ? undefined : fromAgents(options.yaml, known);
+      const existing = known === undefined ? undefined : fromAgents(options.yaml, known, options.instructionsIn);
       if (existing !== undefined && !mayWrite(existing, owner, reader)) throw notYours(existing);
       if (existing === undefined && store.tombstoned(slug)) {
         throw new RpcError(-32010, `${slug} was a bot here once; choose another name`);
@@ -845,9 +847,10 @@ export function botProvider(options: BotOptions): BotProvider {
       /*
        * The section ends at the next `##` line, so instructions with one of
        * their own would be cut at it: refused here, before anything is written,
-       * rather than written and read back short.
+       * rather than written and read back short. Instructions that are the
+       * whole body hold any line.
        */
-      const wrong = instructionsProblem(record.instructions ?? '');
+      const wrong = instructionsProblem(record.instructions ?? '', options.instructionsIn);
       if (wrong !== undefined) throw new RpcError(-32602, wrong);
       /*
        * The file is written before the record, because the file is the one copy
@@ -867,15 +870,15 @@ export function botProvider(options: BotOptions): BotProvider {
       if (record.computer === undefined) {
         // A file this host cannot read would be written over as if it were
         // empty, and its text is the bot's: the write is refused instead.
-        const file = readAgentsFile(record.workspace, options.yaml);
+        const file = readAgentsFile(record.workspace, options.yaml, options.instructionsIn);
         if (file.kind === 'unreadable') {
           throw new RpcError(-32603, `${join(record.workspace, AGENTS_FILE)} cannot be read, so it was not written: ${String(file.error)}`);
         }
         if (existing === undefined && file.kind === 'missing') {
-          makeFolder(record.workspace, await options.agents(record), options.yaml, partsOf(record));
+          makeFolder(record.workspace, await options.agents(record), options.yaml, partsOf(record), options.instructionsIn);
         }
         else {
-          writeAgentsFile(record.workspace, options.yaml, partsOf(record));
+          writeAgentsFile(record.workspace, options.yaml, partsOf(record), options.instructionsIn);
         }
       }
       await store.put(record);

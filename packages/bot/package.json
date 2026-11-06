@@ -90,6 +90,11 @@
         "mainTurnPostMessageAbsent": {
           "type": "string",
           "description": "What a main turn does when the back session's turn ends without post_message: post (the default), notice, silence or postNotice."
+        },
+        "instructionsIn": {
+          "type": "string",
+          "enum": ["section", "body"],
+          "description": "Where a bot's instructions are in its AGENTS.md: its ## Instructions section (the default), or the whole body after the frontmatter, as VS Code reads an agent file."
         }
       }
     }

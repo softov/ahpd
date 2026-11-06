@@ -95,6 +95,8 @@ If the Instructions section does not say what you are for, ask the person who ta
 | The text under `## Instructions`, up to the next `##` heading or the end of the file | The UI, on a make or an edit |
 | Everything else: other frontmatter keys, other sections, comments | The bot |
 
+With the plugin's `instructionsIn` at `body`, a bot's instructions are the whole body after the frontmatter instead, as VS Code reads an agent file: the body is the UI's, it may hold any line, and a template gives a bot its frontmatter alone, since the body a make writes is the instructions.
+
 The UI changes only the parts in that table. A make or an edit replaces those frontmatter keys and the text of that section, and keeps every other byte of the file: a key a person or the bot put there, another section, a comment. The rest of the file is the bot's, and the bot may rewrite any of it. An edit or a make whose instructions hold a line that starts with `## ` is refused `-32602`, and the refusal names the line: the section would end there, and the rest of the instructions would read as another section.
 
 A part the file does not have reads empty. A bot that removed its Instructions section is a bot with no instructions, and the next edit writes the section again. A read takes the parts from the file each time, so an edit the bot makes to its own file is what the next read answers. A watch and the catalogue hear a change to `bot.md`; a change to `AGENTS.md` alone is answered by the next read of the bot.
@@ -306,6 +308,7 @@ An edit that asks for a provider, leaving everything else as it was:
 | --- | --- | --- |
 | `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>`. A root that is the configuration folder or under it is refused at load, with a problem line, and the default is used |
 | `mainTurnPostMessageAbsent` | `post` | What a main turn does when the back session's turn ends without `post_message`: `post`, `notice`, `silence` or `postNotice` |
+| `instructionsIn` | `section` | Where a bot's instructions are in its `AGENTS.md`: `section`, its `## Instructions` section, or `body`, the whole body after the frontmatter, as VS Code reads an agent file - [The persona](#the-persona) |
 
 ```json
 { "plugins": [{ "name": "@ahpd/bot", "options": { "root": "/srv/bots" } }] }

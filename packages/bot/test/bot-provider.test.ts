@@ -112,6 +112,7 @@ function made(
   extra: Agent[] = [],
   files = false,
   prepare?: (configDir: string, bots: string) => void,
+  pluginOptions: Bag = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), 'ahpd-bot-'));
   loose.push(root);
@@ -167,7 +168,7 @@ function made(
     grants: ['session:trust'],
   });
   prepare?.(configDir, bots);
-  apply(plugin, { root: bots });
+  apply(plugin, { root: bots, ...pluginOptions });
 
   const base: HostOptions = {
     path: root,
@@ -567,6 +568,19 @@ it('leaves a time it cannot read out of a resolve', async () => {
   const at = got(await call(soft, 'resourceResolve', { uri: 'bot://older' }));
   expect(at).not.toHaveProperty('mtime');
   expect(at['ctime']).toBe('2026-10-11T00:00:00.000Z');
+});
+
+it('keeps a bot\'s instructions as the whole body of its AGENTS.md where instructionsIn says body, as VS Code reads an agent file', async () => {
+  const { host, bots } = made({ soft: ['bot:*', 'session:create'] }, {}, {}, true, [], false, undefined, { instructionsIn: 'body' });
+  const soft = await as(host, 'soft');
+  // A `##` line is one more line of a body, where it would end a section.
+  const instructions = 'You review pull requests.\n## What to say\nWhat would break, in one paragraph.';
+  expect(await write(soft, 'bot://motion', { name: 'Motion', description: 'Reads pull requests.', instructions }, { createOnly: true }))
+    .toEqual({ result: {} });
+
+  expect(readFileSync(join(bots, 'motion', 'AGENTS.md'), 'utf8'))
+    .toBe(`---\nname: Motion\ndescription: Reads pull requests.\n---\n\n${instructions}\n`);
+  expect((await record(soft, 'bot://motion'))['instructions']).toBe(instructions);
 });
 
 it('resolves only the times it knows, as the spec\'s resolve carries them', async () => {

@@ -15,7 +15,16 @@
  * frontmatter keys, other sections. The frontmatter is edited by line rather
  * than re-stringified whole for the same reason: a key a person or the bot put
  * there is not this module's to reformat.
+ *
+ * The plugin's `instructionsIn` may say `body` instead, which reads a bot's
+ * instructions as the whole body after the frontmatter, as VS Code reads an
+ * agent file: then the body is the owner's, and the frontmatter's other keys
+ * are all that stays the bot's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/common/promptSyntax/service/promptsServiceImpl.ts#L1761
  */
+
+/** Where a bot's instructions are in its `AGENTS.md`: its own section, or the whole body. */
+export type InstructionsIn = 'section' | 'body';
 
 /**
  * The YAML the plugin host hands the plugin, which the host reads its own
@@ -47,9 +56,14 @@ export interface AgentsParts {
   name: string;
   /** One line about the bot, or empty. */
   description: string;
-  /** The text under `## Instructions`, without the blank lines at each end, or empty. */
+  /** The text under `## Instructions`, or the body, without the blank lines at each end, or empty. */
   instructions: string;
 }
+
+/** Text without the blank lines at each end. */
+const trimmed = (text: string): string => text
+  .replace(/^(?:[ \t]*\r?\n)+/, '')
+  .replace(/(?:\r?\n[ \t]*)+$/, '');
 
 /** A file as the parts the writer changes and the parts it leaves alone. */
 interface Split {
@@ -112,10 +126,7 @@ function fields(yaml: Yaml, front: string): Record<string, unknown> | undefined 
 /** The text of the Instructions section, without the blank lines at each end. */
 function instructionsOf(body: string): string {
   const region = sectionOf(body);
-  if (region === undefined) return '';
-  return body.slice(region.start, region.end)
-    .replace(/^(?:[ \t]*\r?\n)+/, '')
-    .replace(/(?:\r?\n[ \t]*)+$/, '');
+  return region === undefined ? '' : trimmed(body.slice(region.start, region.end));
 }
 
 /** Where the Instructions section's text starts and ends in the body, or `undefined` when there is no section. */
@@ -139,15 +150,15 @@ const said = (fields: Record<string, unknown> | undefined, key: string): string 
  * A file with no frontmatter, or with one that names neither key, reads its
  * name and description as empty. A file with no Instructions section reads
  * its instructions as empty - what a bot leaves of a section it removed, and
- * what an edit in the UI writes again.
+ * what an edit in the UI writes again - unless the instructions are the body.
  */
-export function readAgents(yaml: Yaml, text: string): AgentsParts {
+export function readAgents(yaml: Yaml, text: string, at: InstructionsIn = 'section'): AgentsParts {
   const { front, body } = split(text);
   const parsed = fields(yaml, front);
   return {
     name: said(parsed, 'name'),
     description: said(parsed, 'description'),
-    instructions: instructionsOf(body),
+    instructions: at === 'body' ? trimmed(body) : instructionsOf(body),
   };
 }
 
@@ -260,9 +271,12 @@ function setFields(yaml: Yaml, front: string, values: Record<string, unknown>): 
  *
  * The Instructions section ends at the next `##` line, so a line of the
  * instructions that starts with one would read back as the end of the section:
- * the write is refused rather than cutting the text in silence.
+ * the write is refused rather than cutting the text in silence. Instructions
+ * that are the whole body may hold any line.
  */
-export function instructionsProblem(instructions: string): string | undefined {
+export function instructionsProblem(instructions: string, at: InstructionsIn = 'section'): string | undefined {
+  // The whole body has no end a heading could mark.
+  if (at === 'body') return undefined;
   const line = instructions.split(/\r?\n/).find((one) => /^##(?:[ \t]|$)/.test(one));
   return line === undefined ? undefined : `the instructions have a line that starts with "## ": ${line}`;
 }
@@ -276,9 +290,10 @@ const gap = (body: string, eol: string): string =>
  *
  * A missing Instructions section is added after the frontmatter, and a missing
  * frontmatter is added on top, so a file the bot wrote before it had either
- * reads with its own text below the new section.
+ * reads with its own text below the new section. Where the instructions are
+ * the body, the body is the instructions and nothing else.
  */
-export function writeAgents(yaml: Yaml, text: string, parts: AgentsParts): string {
+export function writeAgents(yaml: Yaml, text: string, parts: AgentsParts, at: InstructionsIn = 'section'): string {
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const { head, front, close, body, has } = split(text);
   const values: Record<string, unknown> = {
@@ -288,9 +303,10 @@ export function writeAgents(yaml: Yaml, text: string, parts: AgentsParts): strin
   const edited = setFields(yaml, front, values);
 
   const region = sectionOf(body);
-  const kept = region === undefined
-    ? `${eol}## Instructions${eol}${eol}${parts.instructions}${eol}${gap(body, eol)}${body}`
-    : body.slice(0, region.start) + eol + parts.instructions + eol + (region.end < body.length ? eol : '') + body.slice(region.end);
+  let kept: string;
+  if (at === 'body') kept = `${eol}${parts.instructions}${eol}`;
+  else if (region === undefined) kept = `${eol}## Instructions${eol}${eol}${parts.instructions}${eol}${gap(body, eol)}${body}`;
+  else kept = body.slice(0, region.start) + eol + parts.instructions + eol + (region.end < body.length ? eol : '') + body.slice(region.end);
 
   return has
     ? head + edited + close + kept

@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readAgents, writeAgents } from './agents.js';
 import { AGENTS_TEMPLATE_FOLDER, agentsTemplatePath, DEFAULT_AGENTS_TEMPLATE } from './template.js';
-import type { AgentsParts, Yaml } from './agents.js';
+import type { AgentsParts, InstructionsIn, Yaml } from './agents.js';
 import type { BotRecord, KeptBot } from './record.js';
 
 /**
@@ -88,11 +88,11 @@ export function prepareFolder(folder: string, agents: string): void {
  * keeps it, and the make writes the parts into that file with
  * `writeAgentsFile`.
  */
-export function makeFolder(folder: string, agents: string, yaml: Yaml, parts: AgentsParts): void {
+export function makeFolder(folder: string, agents: string, yaml: Yaml, parts: AgentsParts, at: InstructionsIn = 'section'): void {
   mkdirSync(folder, { recursive: true });
   written(join(folder, CLAUDE_FILE), '@AGENTS.md\n');
   const text = agents.endsWith('\n') ? agents : `${agents}\n`;
-  written(join(folder, AGENTS_FILE), writeAgents(yaml, text, parts));
+  written(join(folder, AGENTS_FILE), writeAgents(yaml, text, parts, at));
 }
 
 /**
@@ -108,7 +108,7 @@ export type AgentsFile =
   | { kind: 'unreadable'; error: unknown };
 
 /** The parts one bot's `AGENTS.md` says, which of the three it is, or why it cannot be read. */
-export function readAgentsFile(folder: string, yaml: Yaml): AgentsFile {
+export function readAgentsFile(folder: string, yaml: Yaml, at: InstructionsIn = 'section'): AgentsFile {
   let text: string;
   try {
     text = readFileSync(join(folder, AGENTS_FILE), 'utf8');
@@ -118,7 +118,7 @@ export function readAgentsFile(folder: string, yaml: Yaml): AgentsFile {
     return { kind: 'unreadable', error };
   }
   try {
-    return { kind: 'parts', parts: readAgents(yaml, text) };
+    return { kind: 'parts', parts: readAgents(yaml, text, at) };
   }
   catch (error) {
     return { kind: 'unreadable', error };
@@ -136,14 +136,14 @@ const partsIn = (file: AgentsFile): AgentsParts | undefined => (file.kind === 'p
  * survives. A folder with no file gets one, which is what an edit to a bot
  * whose file was removed does.
  */
-export function writeAgentsFile(folder: string, yaml: Yaml, parts: AgentsParts): void {
+export function writeAgentsFile(folder: string, yaml: Yaml, parts: AgentsParts, at: InstructionsIn = 'section'): void {
   mkdirSync(folder, { recursive: true });
   let text = '';
   try { text = readFileSync(join(folder, AGENTS_FILE), 'utf8'); }
   catch {
     // No file yet: the parts are the whole of it.
   }
-  writeFileSync(join(folder, AGENTS_FILE), writeAgents(yaml, text, parts));
+  writeFileSync(join(folder, AGENTS_FILE), writeAgents(yaml, text, parts, at));
 }
 
 /** The parts a bot answers with, as the writer takes them. A missing line is written empty. */
@@ -207,9 +207,9 @@ const joined = (bot: KeptBot, first: Words, second: Words): BotRecord => {
  * copy in the record is dropped rather than written over it. A bot on a
  * computer has no folder here, and its record is all this host knows of it.
  */
-export function withAgents(yaml: Yaml | undefined, bot: KeptBot): BotRecord {
+export function withAgents(yaml: Yaml | undefined, bot: KeptBot, at: InstructionsIn = 'section'): BotRecord {
   if (yaml === undefined || bot.computer !== undefined) return joined(bot, saidOf(bot), {});
-  const file = partsIn(readAgentsFile(bot.workspace, yaml));
+  const file = partsIn(readAgentsFile(bot.workspace, yaml, at));
   const record = file !== undefined && nonEmpty(file.instructions) !== undefined
     ? { ...saidOf(bot), instructions: undefined }
     : saidOf(bot);
@@ -223,8 +223,8 @@ export function withAgents(yaml: Yaml | undefined, bot: KeptBot): BotRecord {
  * the bot made to its own file shows on the next read, without anything having
  * to notice the write. A folder with no file answers the parts the record had.
  */
-export function fromAgents(yaml: Yaml, bot: BotRecord): BotRecord {
+export function fromAgents(yaml: Yaml, bot: BotRecord, at: InstructionsIn = 'section'): BotRecord {
   if (bot.computer !== undefined) return bot;
-  const file = partsIn(readAgentsFile(bot.workspace, yaml));
+  const file = partsIn(readAgentsFile(bot.workspace, yaml, at));
   return file === undefined ? bot : joined(bot, file, saidOf(bot));
 }
