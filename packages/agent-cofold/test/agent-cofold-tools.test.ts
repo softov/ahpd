@@ -560,6 +560,33 @@ it('still sends the after when the person declines the edit', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+/*
+ * A refused call held in the session's own snapshot as the protocol's reducer
+ * holds it: cancelled, with `denied`, the reason its cancelled state carries,
+ * and left so by the completion that follows, so a client that subscribes
+ * later reads the row every client that watched holds.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L635
+ */
+it('holds a refused call cancelled as denied in the session\'s own snapshot', async () => {
+  const dir = place();
+  const { session, v } = await open({
+    script: [{ toolCalls: [call('write_file', { path: 'b.txt', content: 'new' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'default' },
+  });
+  session.sendMessage('t1', 'write it');
+  await when(() => asked(v));
+  session.confirm('c1', false);
+  await when(() => ended(v));
+
+  const turn = (session.chatState().turns as Bag[])[0] as Bag;
+  const row = (turn.responseParts as Bag[]).find((one) => one.kind === 'toolCall' && (one.toolCall as Bag).toolCallId === 'c1')?.toolCall as Bag;
+  expect(row).toMatchObject({ status: 'cancelled', reason: 'denied' });
+  expect(row).not.toHaveProperty('success');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 it('sends a declined edit its after before the next ask', async () => {
   const dir = place();
   const { session, v, edits } = await open({

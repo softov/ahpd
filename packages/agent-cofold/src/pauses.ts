@@ -187,7 +187,7 @@ export const createPauses = (
       confirm: (toolCallId, approved, optionId) => {
         const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
         if (held === undefined) return false;
-        const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
+        const selectedOption = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
         /*
          * The tool's name as the request was built with it. A question rebuilt
          * by a replay may still carry the session choice, so the rule is read
@@ -208,10 +208,13 @@ export const createPauses = (
         ctx.activeMapping?.settle(held.requestId);
 
         /*
-         * The row in this session's own snapshot moves with the decision.
+         * The row in this session's own snapshot moves with the decision, as
+         * the protocol's reducer moves it: running when approved, and cancelled
+         * as `denied` when refused, the reason its cancelled state carries.
          *
          * Nothing applies what a client dispatched, so a call approved here
          * would stay `pending-confirmation` for anybody who subscribes next.
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L629
          */
         const part = (ctx.active?.responseParts as Bag[] | undefined)
           ?.find((one) => one.kind === 'toolCall' && bag(one.toolCall).toolCallId === held.callId);
@@ -219,12 +222,13 @@ export const createPauses = (
           const call = bag(part.toolCall);
           call.status = approved ? 'running' : 'cancelled';
           if (approved) call.confirmed = 'user-action';
+          else call.reason = 'denied';
           delete call.options;
-          if (picked !== undefined) call.selectedOption = picked;
+          if (selectedOption !== undefined) call.selectedOption = selectedOption;
           part.toolCall = call;
         }
         route(approved
-          ? { type: 'approve', requestId: held.requestId, ...(picked?.id === 'allow-session' && !matched ? { alwaysApprove: true } : {}) }
+          ? { type: 'approve', requestId: held.requestId, ...(selectedOption?.id === 'allow-session' && !matched ? { alwaysApprove: true } : {}) }
           : { type: 'deny', requestId: held.requestId, reason: DECLINED });
         return true;
       },
