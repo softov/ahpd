@@ -142,6 +142,11 @@ export interface Lifecycle {
   /** A session's tree put back at its path on its branch, where `shelve` took it. */
   restore(uri: string): Promise<void>;
   /**
+   * Whether deleting an archived session keeps its work: each of its trees
+   * gone, or on its own branch and synced with its remote.
+   */
+  canAutomaticallyDeleteArchivedSession(uri: string): Promise<boolean>;
+  /**
    * A message's turn, whichever way it arrived. `relay` carries a client's
    * start to the session that runs it on another host, when the session the
    * turn reaches is one; a session a relaunch brought back here takes the turn
@@ -1343,6 +1348,40 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const archivedNow = (uri: string): boolean => (kept.flags(idOf(uri)) & Status.IsArchived) !== 0;
 
   /*
+   * Why a tree on its branch is not synced with its remote, or undefined when
+   * it is: nothing uncommitted, an upstream, and nothing left to push to it,
+   * as VS Code's host judges a tree it may take away by itself. A port that
+   * cannot say whether a branch is pushed keeps the tree.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1851-L1870
+   */
+  const unsynced = async (port: Worktrees, path: string, linked: readonly string[]): Promise<string | undefined> => {
+    if (await port.dirty(path, linked).catch(() => true) !== false) return 'it has changes nobody committed';
+    if (port.pushed === undefined) return 'this host cannot tell whether its branch is pushed';
+    if (!await port.pushed(path).catch(() => false)) return 'its branch has no upstream or has commits nobody pushed';
+    return undefined;
+  };
+
+  /*
+   * Whether deleting an archived session keeps its work: each of its trees,
+   * the one it ran in and each one a move left it, is gone, or is on its own
+   * branch and synced with its remote, as VS Code's host judges a session it
+   * deletes by itself.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11163-L11192
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1672-L1697
+   */
+  const canAutomaticallyDeleteArchivedSession = async (uri: string): Promise<boolean> => {
+    const port = options.worktrees;
+    const linked = linkedOf(uri);
+    for (const tree of treesOf(uri)) {
+      if (!await present(tree.path)) continue;
+      if (port === undefined || tree.branch === undefined) return false;
+      if (await offBranch(port, { ...tree, branch: tree.branch }) !== undefined) return false;
+      if (await unsynced(port, tree.path, linked) !== undefined) return false;
+    }
+    return true;
+  };
+
+  /*
    * An archived session's trees, given back: the one it ran in and each one
    * a move left it, as VS Code's host archives a session's additional
    * worktrees with it.
@@ -1384,20 +1423,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       const clean = async (): Promise<boolean> => await port.dirty(tree.path, linked).catch(() => true) === false;
       /*
        * An archive the host made itself never commits and never loses a
-       * commit: the tree goes only when it is clean and its branch is on a
-       * remote as it is here, whatever `archiveDirtyWorktree` says.
+       * commit: the tree goes only when it is synced with its remote,
+       * whatever `archiveDirtyWorktree` says.
        */
       if (kept.autoArchivedAt?.(idOf(uri)) !== undefined) {
-        if (!await clean()) {
-          log(`kept ${tree.path}: it has changes nobody committed`);
-          continue;
-        }
-        if (port.pushed === undefined) {
-          log(`kept ${tree.path}: this host cannot tell whether its branch is pushed`);
-          continue;
-        }
-        if (!await port.pushed(tree.path).catch(() => false)) {
-          log(`kept ${tree.path}: its branch has no upstream or has commits nobody pushed`);
+        const not = await unsynced(port, tree.path, linked);
+        if (not !== undefined) {
+          log(`kept ${tree.path}: ${not}`);
           continue;
         }
       }
@@ -2271,6 +2303,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   return {
     removeSession, respawning, restart, moveSession, restartChat, chatIdOf, deletedChat, backendsOwn,
     chatAgent, chatConfig, isolated, oweTree,
-    shelve, restore, beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, openSession,
+    shelve, restore, canAutomaticallyDeleteArchivedSession,
+    beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, openSession,
   };
 }

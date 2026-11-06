@@ -1,6 +1,5 @@
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
-import { stat } from 'node:fs/promises';
 import { sessionFlag } from './chatactions.js';
 import type { Bag } from '../types/common.js';
 import type { Summary } from '../types/catalog.js';
@@ -98,9 +97,6 @@ export function createMerged(ctx: HostContext): Merged {
     const when = Date.parse(at);
     return !Number.isNaN(when) && when <= now() - days * DAY_MS ? at : undefined;
   };
-
-  /** Whether something is at a path. */
-  const present = (path: string): Promise<boolean> => stat(path).then(() => true, () => false);
 
   /** The folder a row's session works in. */
   const folderOf = (row: Summary): string | undefined => {
@@ -221,14 +217,25 @@ export function createMerged(ctx: HostContext): Merged {
     return true;
   };
 
-  /** Delete one session the host archived, once its tree is gone. */
+  /*
+   * Delete one session the host archived, once deleting it keeps its work:
+   * each of its trees gone, or synced with its remote, as VS Code's host
+   * deletes one by itself. A synced tree is taken away with the session, by
+   * `shelve` while the record that names it is still here, as the automatic
+   * archive takes one away; a running session's goes with its teardown.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L184-L191
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11163-L11179
+   */
   const deleteOne = async (row: Summary, at: string): Promise<boolean> => {
     const related = await relatedOf(row);
     if (related === undefined || !complete(related)) return false;
-    const tree = worktreeOf(row.resource);
-    if (tree !== undefined && await present(tree.path)) return false;
+    if (!await ctx.canAutomaticallyDeleteArchivedSession(row.resource)) {
+      log(`kept ${row.resource}: the archived session still has a worktree with unsynced work`);
+      return false;
+    }
     // Checked again, since GitHub and the disk took a while to answer.
     if (ctx.closed || !archived(row.resource) || busy(row.resource) || kept.autoArchivedAt?.(idOf(row.resource)) !== at) return false;
+    await ctx.shelve(row.resource);
     try {
       await ctx.removeSession(row.resource);
     }

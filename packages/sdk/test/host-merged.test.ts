@@ -4,7 +4,8 @@
  * A window pushes `autoArchiveMergedSessionsAfterDays` and
  * `autoDeleteArchivedMergedSessionsAfterDays`. An hourly pass archives an
  * inactive session whose related pull requests are merged, stores the time,
- * and later deletes a session it archived that way once its tree is gone.
+ * and later deletes a session it archived that way once each of its trees is
+ * gone or synced with its remote.
  *
  * The clock is the host's `now` and `timer`: a case moves the clock by days
  * and fires the hourly pass by hand. GitHub is a fake port that records what
@@ -465,6 +466,19 @@ describe('the tree of a session the host archived', () => {
     await h.logged('merged sessions: looked at 1, archived 0, deleted 0');
     expect(h.removed(h.first)).toEqual([]);
     expect(h.archived(one)).toBe(true);
+  });
+
+  it('deletes a session whose tree was pushed after the archive, past the delete days, taking the tree and keeping the branch', async () => {
+    const { h, one, where, branch, project } = await treed();
+    await pass(h);
+    await h.logged(`kept ${where}: its branch has no upstream or has commits nobody pushed`);
+    git(where, 'push', '-q', '-u', 'origin', branch);
+    h.days(31);
+    await h.push({ [DELETE]: 30 });
+    await h.logged('merged sessions: looked at 1, archived 0, deleted 1');
+    expect(h.removed(h.first)).toEqual([h.uriOf(one)]);
+    expect(existsSync(where)).toBe(false);
+    expect(git(project, 'branch', '--list', branch)).toContain(branch);
   });
 });
 
