@@ -637,6 +637,11 @@ export const serverFields = {
     enum: ['url', 'branch'],
     description: 'How merged sessions learn the state of a pull request: url asks for each pull request by its page, branch asks for the pull requests of the session\'s branch.',
   },
+  onPath: {
+    type: 'string',
+    enum: ['runnable', 'findExecutable'],
+    description: 'How ahpd configure and ahpd doctor find a command on PATH: runnable, the default, takes a regular file with an execute bit and skips an empty entry; findExecutable is VS Code\'s lookup, any file that is not a folder, with an entry that is not absolute read against the working directory. Set in the configuration file only.',
+  },
   clientToolTimeoutMs: {
     type: 'integer',
     minimum: 0,
@@ -774,7 +779,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['httpApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts'] as const;
+const FILE_ONLY = ['httpApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts', 'onPath'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;

@@ -24,7 +24,7 @@ import { installLine, knownAgents, type KnownAgent } from '@ahpd/sdk';
 import type { StoredRecord } from '@ahpd/sdk';
 import { asSpec } from './config.js';
 import type { Runner } from './install.js';
-import { onPath } from './onpath.js';
+import { onPath, type OnPathLookup } from './onpath.js';
 import { isNamed } from './plugins.js';
 
 /** The plugin every ACP agent runs through, which is what registers the engine they are records of. */
@@ -86,6 +86,8 @@ export interface Search {
   platform?: NodeJS.Platform;
   /** Whether each agent command found is asked its `--version`. Defaults to true. */
   versions?: boolean;
+  /** Which lookup finds a command, as the daemon's `onPath` setting names it. Defaults to `runnable`. */
+  onPath?: OnPathLookup;
 }
 
 /** The first non-empty line of a program's output. */
@@ -135,7 +137,7 @@ export const findRuntimes = async (search: Search): Promise<RuntimeFound[]> => {
   const platform = search.platform ?? process.platform;
   const found: RuntimeFound[] = [];
   for (const name of RUNTIMES) {
-    const path = onPath(name, search.path, platform);
+    const path = onPath(name, search.path, platform, process.env, search.onPath);
     if (path === undefined) {
       found.push({ name });
       continue;
@@ -231,7 +233,7 @@ export const findAgents = async (search: Search, configured: ReadonlyMap<string,
   for (const row of Object.values(knownAgents)) {
     const config = configured.get(row.id);
     const agent = config === undefined ? row : withRecord(row, config);
-    const path = onPath(agent.command, search.path, platform);
+    const path = onPath(agent.command, search.path, platform, process.env, search.onPath);
     if (path === undefined) {
       missing.push(agent);
       continue;
@@ -252,7 +254,7 @@ export const findAlso = async (search: Search): Promise<AlsoFound[]> => {
   const platform = search.platform ?? process.platform;
   const found: AlsoFound[] = [];
   for (const name of ['claude', 'pi'] as const) {
-    const path = onPath(name, search.path, platform);
+    const path = onPath(name, search.path, platform, process.env, search.onPath);
     if (path === undefined) continue;
     const version = await versionOf(path, search.run);
     found.push({ name, path, ...(version === undefined ? {} : { version }) });

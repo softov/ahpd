@@ -316,6 +316,18 @@ export interface Config {
    */
   pullRequestLookup?: 'url' | 'branch';
   /**
+   * How `ahpd configure` and `ahpd doctor` find a command on PATH.
+   *
+   * `runnable`, the default, takes a regular file with an execute bit, tries
+   * each `PATHEXT` extension and then the name as written on Windows, and skips
+   * an empty entry, so a setup reports what the machine installs and not what
+   * the folder it ran in holds. `findExecutable` is VS Code's lookup
+   * (src/vs/base/node/processes.ts L86-L140 at 6b68d3fe): any file that is not a
+   * folder, with every entry that is not absolute, the empty one among them,
+   * read against the working directory.
+   */
+  onPath?: 'runnable' | 'findExecutable';
+  /**
    * How long a call a client runs may wait before it is failed.
    *
    * Unset is ten minutes; zero waits for ever, for a deployment whose clients

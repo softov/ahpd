@@ -162,6 +162,12 @@ describe('a wrong value on a known key', () => {
   it('refuses a value that was dropped before, rather than falling back to the default', () => {
     expect(refusal({ updateCheck: 'false' })).toBe(`${config}: updateCheck must be true or false`);
   });
+
+  it('takes onPath as runnable or findExecutable, and refuses another lookup', () => {
+    expect(folded({ onPath: 'findExecutable' }).warnings).toEqual([]);
+    expect(folded({ onPath: 'runnable' }).warnings).toEqual([]);
+    expect(refusal({ onPath: 'which' })).toBe(`${config}: onPath must be one of runnable, findExecutable`);
+  });
 });
 
 describe('an unknown key', () => {
