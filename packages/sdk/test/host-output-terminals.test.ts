@@ -104,6 +104,18 @@ describe('an output terminal', () => {
     expect(opened_.snapshot.state.content).toEqual([{ type: 'unclassified', value: 'the new output\n' }]);
   });
 
+  it('is dropped by a client\'s dispose with nothing said, it being on no list, as VS Code\'s host drops one', async () => {
+    const { client, p, chatUri, out } = await opened();
+    const terminal = out().create({ title: 'a shell', chat: chatUri });
+    await client.handle({ method: 'subscribe', params: { channel: terminal.uri } });
+    await settle();
+    const from = p.notes.length;
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L936-L947
+    await expect(client.handle({ method: 'disposeTerminal', params: { channel: terminal.uri } })).resolves.toBeNull();
+    await settle();
+    expect(p.notes.slice(from).filter((note) => note.method === 'action')).toEqual([]);
+  });
+
   it('is not on the root list, though its channel is served', async () => {
     const { client, chatUri, out } = await opened();
     const terminal = out().create({ title: 'a shell', chat: chatUri });

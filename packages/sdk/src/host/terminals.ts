@@ -46,6 +46,8 @@ export interface Terminals {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L620-L633
    */
   setTerminalClaim(uri: string, claim: Claim): void;
+  /** An output terminal let go of with nothing said, answering whether the name was one. */
+  dropOutputTerminal(uri: string): boolean;
 }
 
 /**
@@ -584,7 +586,14 @@ export function createTerminals(ctx: HostContext): Terminals {
     heard(uri, { type: 'terminal/claimed', claim });
   };
 
-  return { bang, terminalInfo, heldTerminals, heldOutputs, setTerminalClaim };
+  const dropOutputTerminal = (uri: string): boolean => {
+    if (!outputs.delete(uri)) return false;
+    terminals.delete(uri);
+    hearing.delete(uri);
+    return true;
+  };
+
+  return { bang, terminalInfo, heldTerminals, heldOutputs, setTerminalClaim, dropOutputTerminal };
 }
 
 /**
@@ -723,12 +732,23 @@ export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext
      * closing the same terminal.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L937-L947
      */
+    /*
+     * A terminal a client is done with, as VS Code's terminal manager disposes
+     * one: an output terminal dropped with nothing said, it being on no list,
+     * a process terminal ended and the list said, a name this host holds no
+     * terminal under answered all the same.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L936-L947
+     */
     disposeTerminal: async (params) => {
       const uri = String(params.channel ?? '');
       const terminal = terminals.get(uri);
       if (!terminal) return null;
-      terminal.close();
+      if (ctx.dropOutputTerminal(uri)) {
+        log(`dropped the output terminal ${uri}`);
+        return null;
+      }
       terminals.delete(uri);
+      terminal.close();
       log(`closed ${uri}`);
       dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
       return null;
