@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { customizationsOf, EFFORT_DESCRIPTIONS, EFFORT_LABELS, EFFORTS, SDK_DEFAULT_MODEL_VALUE } from './session.js';
 import { configDirOf, diskOf, managedDirOf } from './session/disk.js';
+import { isClaudeAccountSetUp } from './logins.js';
 import type { Account, Offered } from '@ahpd/sdk';
 import { bag, isRecord, str } from '@ahpd/sdk';
 
@@ -80,7 +81,14 @@ const accountOf = (value: unknown, at: number): Account | undefined => {
   return { status: 'signedIn', email, ...(plan === undefined ? {} : { planType: plan }), observedAt: at };
 };
 
-export async function probe(cwd: string): Promise<Offered> {
+/**
+ * What the agent offers, read off one short-lived CLI, and `setUp`, whether
+ * the CLI's own account is set up: the CLI lists the models it knows whatever
+ * signs it in, and VS Code's Claude agent publishes them only where an account
+ * is, which `claude()` decides beside the credentials of its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1002-L1021
+ */
+export async function probe(cwd: string): Promise<Offered & { setUp: boolean }> {
   // A prompt that never yields. The query needs one to exist; it does not need
   // one to answer what it can do.
   async function* silence(): AsyncGenerator<never> {
@@ -114,6 +122,7 @@ export async function probe(cwd: string): Promise<Offered> {
       // with nothing in it, which is worse than no control.
       ...(styles.length > 0 ? { outputStyles: styles } : {}),
       ...(str(init.output_style) ? { outputStyle: str(init.output_style) as string } : {}),
+      setUp: isClaudeAccountSetUp(init.account),
       models: list(init.models)
         // `value`, not `id`.
         .map((raw) => {
@@ -138,7 +147,7 @@ export async function probe(cwd: string): Promise<Offered> {
     };
   } catch {
     // A harness that will not answer offers nothing, which is a real answer.
-    return { models: [], commands: [], customizations: [] };
+    return { models: [], commands: [], customizations: [], setUp: false };
   } finally {
     // Closed, and its exit awaited, so a probe ends with its CLI's process:
     // the query's cleanup settles once the process has exited, or after the

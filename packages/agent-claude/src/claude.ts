@@ -6,7 +6,9 @@ import { configDirOf } from './session/disk.js';
 import { watchFolders } from './session/watch.js';
 import { turnsOf, subagentsOf } from './transcript.js';
 import { catalogue, findSession, forgetSession, transcriptOf, written } from './catalog.js';
+import { BEFORE_TOKEN, loginsOf } from './logins.js';
 import type { AgentLogins } from './logins.js';
+import { ownEnvOf } from './options.js';
 import { offeredModels, ownModels, type ModelEntry, type ModelSource, type OfferedModel } from './models.js';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -223,6 +225,19 @@ export function claude(options: ClaudeOptions): Agent<Session> {
    * read of a conversation replaces what an earlier one named.
    */
   const readEnds = new Map<string, ReadonlyMap<string, string>>();
+  /**
+   * Whether a session of this harness has a credential beside the CLI's own
+   * account: a login the record names that is open and its owner's or the
+   * host's, or a key or a cloud provider's switch the variant's own
+   * environment holds, each of which a session signs in with.
+   */
+  const credentialed = (): boolean => {
+    const values = options.presetOf?.() ?? options.preset ?? {};
+    const own = ownEnvOf(values);
+    return loginsOf(values, options.logins).length > 0
+      || BEFORE_TOKEN.some((name) => typeof own[name] === 'string' && own[name] !== '');
+  };
+
   /** A list the CLI reported, as this harness offers it. */
   const offer = async <T extends OfferedModel>(cli: T[]): Promise<(T | OfferedModel)[]> => {
     if (options.models === undefined && options.modelSources === undefined) return cli;
@@ -504,20 +519,40 @@ export function claude(options: ClaudeOptions): Agent<Session> {
 
     directories: () => [...dirs],
 
-    // What the CLI offers, its models with this variant's own. The probe is
-    // counted from before its CLI starts to the turn after its CLI's exit, by
-    // when every change that CLI made has been told.
+    // What the CLI offers, its models with this variant's own, none where no
+    // credential is set up: neither the CLI's own account nor one of this
+    // variant's. The probe is counted from before its CLI starts to the turn
+    // after its CLI's exit, by when every change that CLI made has been told.
     probe: async () => {
       probing += 1;
       let probed: Awaited<ReturnType<typeof probe>>;
       try { probed = await probe(dir); }
       finally { setImmediate(() => { probing -= 1; }); }
-      return { ...probed, models: await offer(probed.models) };
+      const { setUp, ...offered } = probed;
+      return { ...offered, models: setUp || credentialed() ? await offer(offered.models) : [] };
     },
 
-    // The personal folder only, which is the one the probe reads, quiet while
-    // a probe's own CLI is up.
-    probeChanged: (onChange) => watchFolders({ configDir: configDirOf() }, onChange, () => probing > 0),
+    /*
+     * The personal folder only, which is the one the probe reads, quiet while
+     * a probe's own CLI is up; and a login the record names opening or
+     * stopping, which moves whether its models are offered, as VS Code's
+     * Claude agent lists its models again when its sign-in changes.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L878-L884
+     */
+    probeChanged: (onChange) => {
+      const stop = watchFolders({ configDir: configDirOf() }, onChange, () => probing > 0);
+      const logins = options.logins;
+      if (logins === undefined) return stop;
+      const told = (id: string): void => {
+        const named = (options.presetOf?.() ?? options.preset ?? {})['logins'];
+        if (Array.isArray(named) && named.includes(id)) onChange();
+      };
+      logins.open.changed.add(told);
+      return () => {
+        stop();
+        logins.open.changed.delete(told);
+      };
+    },
 
     // Every session the store holds, wherever it ran. The shared listing is
     // copied rather than handed over: the host's fold does not touch a row,

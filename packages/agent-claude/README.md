@@ -236,6 +236,8 @@ A session is not tied to an agent: nothing is stored per session, because the ne
 
 Sessions use whatever the Claude CLI is signed in with. A client can push a token instead. Pushed tokens are held per connection and are not used for other clients' sessions.
 
+An agent offers its models only where a credential is set up: the CLI's own sign-in, a token, a key or another provider, a key or a provider's switch in the record's own `env`, or an open login the record names. With none, the picker offers none, as VS Code's Claude agent offers no models where no account is set up; a login that opens or stops reads the list again.
+
 ### Several logins
 
 A Claude login is a connector of the adapter `claude-login`, which this plugin registers: one Claude account's token, kept in the host's vault. A person makes one with `x-ahpd/connectors/signin`, which answers claude.ai's sign-in page for a one-year token, the page `claude setup-token` opens. They paste the code the page shows into `x-ahpd/connectors/signin-finish`, which makes the connector. A token `claude setup-token` printed is put with `x-ahpd/connectors/put` instead. Either needs a Pro, Max, Team or Enterprise plan. A put of the same id replaces the token, and `x-ahpd/connectors/remove` takes the login away.

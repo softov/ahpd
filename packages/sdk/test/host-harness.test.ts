@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
 import type { SessionState } from '@microsoft/agent-host-protocol';
 import {
-  resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk,
+  SIGNED_IN, resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk,
   sendAnswered, serving, settle, running,
 } from './support/host.js';
 
@@ -62,6 +62,7 @@ describe('what the harness offers', () => {
 
   it('advertises the models on the root channel, keyed by `value`', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [{ value: 'sonnet', displayName: 'Sonnet' }],
       commands: [], agents: [],
     };
@@ -85,6 +86,7 @@ describe('what the harness offers', () => {
 
   it('gives each model its own thinking control, from what that model supports', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [
         { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'medium', 'high'] },
         { value: 'haiku', displayName: 'Haiku' },
@@ -124,6 +126,7 @@ describe('what the harness offers', () => {
    */
   it('leaves the SDK\'s default alias out, and titles each model\'s effort as VS Code\'s Claude does', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [
         { value: 'default', displayName: 'Default (recommended)', supportedEffortLevels: ['low', 'high'] },
         { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'high'] },
@@ -144,6 +147,7 @@ describe('what the harness offers', () => {
 
   it('offers one effort control, not the model\'s and the session\'s both', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [
         { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'medium', 'high'] },
       ],
@@ -177,6 +181,7 @@ describe('what the harness offers', () => {
    */
   it('offers no session-wide effort where no model has one of its own', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [{ value: 'haiku', displayName: 'Haiku' }],
       commands: [], agents: [],
     };

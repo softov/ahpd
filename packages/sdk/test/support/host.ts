@@ -14,9 +14,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Peer } from '../../src/types/rpc.js';
 import type { HostOptions } from '../../src/types/host.js';
-import { sdk, resetSdk, wrote } from './claude-sdk.js';
+import { SIGNED_IN, sdk, resetSdk, wrote } from './claude-sdk.js';
 
-export { sdk, resetSdk, wrote };
+export { SIGNED_IN, sdk, resetSdk, wrote };
 
 /** The CLIs that belong to a session. The boot probe is not one of them. */
 export const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== undefined);

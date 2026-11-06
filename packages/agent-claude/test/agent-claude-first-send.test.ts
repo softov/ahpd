@@ -20,6 +20,8 @@ const sdk = vi.hoisted(() => ({
   closed: 0,
   /** Whether a CLI answers what it has. */
   answers: true,
+  /** The account a CLI reports: one signed in to claude.ai, by its subscription. */
+  account: { email: 'softov@brbyte.com', subscriptionType: 'Claude Max', apiProvider: 'firstParty' } as Record<string, unknown>,
   /** What a CLI reports of its servers. */
   servers: [] as Record<string, unknown>[],
   /** What each CLI was asked, in order, and when it read its first prompt. */
@@ -28,6 +30,7 @@ const sdk = vi.hoisted(() => ({
     sdk.built = [];
     sdk.closed = 0;
     sdk.answers = true;
+    sdk.account = { email: 'softov@brbyte.com', subscriptionType: 'Claude Max', apiProvider: 'firstParty' };
     sdk.servers = [];
     sdk.calls = [];
   },
@@ -61,7 +64,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
       reconnectMcpServer: async (name: string) => { sdk.calls.push(`reconnect ${name}`); },
       setMcpServers: async () => {},
       initializationResult: () => (sdk.answers
-        ? Promise.resolve({ models: [{ value: 'sonnet', displayName: 'Sonnet' }], commands: [], agents: [] })
+        ? Promise.resolve({ account: sdk.account, models: [{ value: 'sonnet', displayName: 'Sonnet' }], commands: [], agents: [] })
         : Promise.reject(new Error('the CLI did not answer'))),
       mcpServerStatus: async () => sdk.servers,
       reloadSkills: async () => ({ skills: [] }),
@@ -166,6 +169,21 @@ it("lists the agent's own and its disk scan until its first CLI answers", async 
   session.sendMessage('t1', 'hello');
   await settle();
   expect(session.models()).toEqual([{ id: 'sonnet', name: 'Sonnet' }]);
+  await session.close();
+});
+
+/*
+ * A CLI signed in to nothing lists models no turn could run on, and a
+ * session offers none of them, as VS Code's Claude agent offers no models
+ * where no account is set up.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1002-L1021
+ */
+it('lists no models once its first CLI answers signed in to nothing', async () => {
+  sdk.account = { tokenSource: 'none', apiProvider: 'firstParty' };
+  const { session } = open();
+  session.sendMessage('t1', 'hello');
+  await settle();
+  expect(session.models()).toEqual([]);
   await session.close();
 });
 

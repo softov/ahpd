@@ -1,6 +1,7 @@
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
+import { isClaudeAccountSetUp } from '../logins.js';
 import { protectedResource, urlOf } from '../mcp.js';
 import { flagSettingsOf } from '../options.js';
 import { SDK_DEFAULT_MODEL_VALUE } from './config.js';
@@ -481,7 +482,14 @@ export function createServers(ctx: SessionContext): Servers {
     ]);
     if (init === undefined || described || ctx.disposed || ctx.query !== to) return;
     described = true;
-    ctx.models = list(init.models)
+    /*
+     * The models, where the CLI is signed in to anything, as VS Code's Claude
+     * agent offers none where no account is set up. The CLI runs on this
+     * session's credential, so its account says whether the session has one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1002-L1021
+     */
+    const setUp = isClaudeAccountSetUp(init.account);
+    ctx.models = (setUp ? list(init.models) : [])
       .map((raw) => {
         const model = bag(raw);
         // `value`, not `id`. Reading the wrong name costs every model there
@@ -489,7 +497,7 @@ export function createServers(ctx: SessionContext): Servers {
         return { id: str(model.value) ?? '', name: str(model.displayName) ?? str(model.value) ?? '' };
       })
       .filter((model) => model.id !== '' && model.id !== SDK_DEFAULT_MODEL_VALUE);
-    if (ctx.options.offerModels) ctx.models = await ctx.options.offerModels(ctx.models);
+    if (setUp && ctx.options.offerModels) ctx.models = await ctx.options.offerModels(ctx.models);
     /*
      * The style the preset names, applied once the CLI is there to take it.
      *

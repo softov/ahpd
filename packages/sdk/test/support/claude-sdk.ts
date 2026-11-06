@@ -51,6 +51,13 @@ export interface Fake {
   options: Record<string, unknown>;
 }
 
+/**
+ * The account a CLI signed in to claude.ai reports, by its subscription and
+ * with no token source, as CLI 2.1.301 reports one: a probe offers a CLI's
+ * models where an account is set up.
+ */
+export const SIGNED_IN = { email: 'softov@brbyte.com', subscriptionType: 'Claude Max', apiProvider: 'firstParty' };
+
 export const sdk = {
   sessions: [] as Record<string, unknown>[],
   transcript: [] as Record<string, unknown>[],
@@ -75,6 +82,7 @@ export const sdk = {
   throwOnce: 0,
   /** Every conversation `deleteSession` was asked to delete, in order. */
   deleted: [] as string[],
+  /** What `initializationResult` answers; a case that offers models puts `SIGNED_IN` in it. */
   init: {} as Record<string, unknown>,
   mcp: [] as Record<string, unknown>[],
   skills: [] as Record<string, unknown>[],

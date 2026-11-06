@@ -26,7 +26,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
       toggleMcpServer: async () => {},
       reconnectMcpServer: async () => {},
       setMcpServers: async () => {},
-      initializationResult: async () => ({}),
+      // A CLI signed in to claude.ai, which a probe offers models for.
+      initializationResult: async () => ({ account: { email: 'softov@brbyte.com', subscriptionType: 'Claude Max', apiProvider: 'firstParty' } }),
       mcpServerStatus: async () => [],
       reloadSkills: async () => ({ skills: [] }),
       reloadPlugins: async () => ({ plugins: [] }),

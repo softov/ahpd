@@ -14,7 +14,7 @@
  */
 
 import type { Bag, CallOutcome, Connector, ConnectorOwner } from '@ahpd/sdk';
-import { sameOwnerOrHost } from '@ahpd/sdk';
+import { isRecord, sameOwnerOrHost, str } from '@ahpd/sdk';
 
 /** One call of a login as its connector's health keeps it; the host stamps the time. */
 export type CallNote = Omit<CallOutcome, 'at'>;
@@ -41,6 +41,27 @@ export const BEFORE_TOKEN = [
   'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_API_KEY',
 ] as const;
+
+/**
+ * Whether a CLI's own account is set up, VS Code's test of the account the
+ * SDK reports: a provider other than Anthropic's, whose auth is external, or
+ * a token or a key the CLI found: a credential configured, which no request
+ * has tried yet. A CLI is started on its session's credential, a login's
+ * token or a key, so what it reports covers those too.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeTransportMode.ts#L86-L97
+ *
+ * Ours beside it: a claude.ai sign-in, which the CLI this host runs (2.1.301)
+ * reports by its subscription and with no token source, and a key source of
+ * `none`, which spells no key as `tokenSource` spells no token.
+ */
+export const isClaudeAccountSetUp = (account: unknown): boolean => {
+  if (!isRecord(account)) return false;
+  const provider = str(account.apiProvider);
+  if (provider !== undefined && provider !== 'firstParty') return true;
+  const token = str(account.tokenSource);
+  const key = str(account.apiKeySource);
+  return (token !== undefined && token !== 'none') || (key !== undefined && key !== 'none') || str(account.subscriptionType) !== undefined;
+};
 
 /**
  * The SDK's kinds of a request that failed with a 429 or a 5xx: the failures
@@ -149,6 +170,9 @@ export class OpenLogins {
   /** What a call of a login calls, with its id and how the call went. */
   onCall: ((id: string, outcome: CallNote) => void) | undefined;
 
+  /** Who is told, with its connector's id, when a login opens and when it stops. */
+  readonly changed = new Set<(id: string) => void>();
+
   constructor(now: () => number = Date.now) {
     this.rests = new Rests(now);
   }
@@ -162,7 +186,11 @@ export class OpenLogins {
     if (typeof token !== 'string' || token === '') throw new Error(`${connector.id} holds no token`);
     this.rests.clear(connector.id);
     this.open.set(connector.id, { owner: connector.owner, token });
-    return () => { this.open.delete(connector.id); };
+    for (const told of this.changed) told(connector.id);
+    return () => {
+      this.open.delete(connector.id);
+      for (const told of this.changed) told(connector.id);
+    };
   }
 
   /** The login an open connector holds, or nothing for an id that is not open. */
