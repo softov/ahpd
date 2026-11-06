@@ -48,8 +48,8 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   editing: Map<string, string>;
   pending: Map<string, OpenRequest>;
   points: Map<string, string>;
-  /** The steering message the run was handed and has not read yet, whose removal is said once it reads it. */
-  steering: { id: string; message: Bag } | undefined;
+  /** The steering message the run was handed and has not read yet, by its id, whose removal is said once it reads it. */
+  steering: { id: string } | undefined;
   /**
    * The steering messages a client took back while the run still held them.
    *

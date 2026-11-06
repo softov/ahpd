@@ -411,16 +411,11 @@ export function cofoldSession(
      * text and then the parts, and the first part is always that text, so only
      * what follows it is handed over.
      */
-    sendSteeringMessage: ({ id, text, attachments, from }) => {
+    sendSteeringMessage: ({ id, text, attachments }) => {
       const live = ctx.handle;
       const status = live?.status();
       if (live === undefined || (status !== 'running' && status !== 'awaiting')) return false;
-      const message: Bag = {
-        text,
-        origin: from?.origin ?? { kind: 'user' },
-        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-      };
-      ctx.steering = { id, message };
+      ctx.steering = { id };
       const submitted = attachments === undefined || attachments.length === 0
         ? live.submit({ type: 'steer', text })
         : partsFor(text, attachments, ctx.supportsVision())
