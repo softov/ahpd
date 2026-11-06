@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { withViewData } from '@ahpd/sdk';
+import { checkView } from '../../sdk/src/plugins/view.js';
 import type { Adapter, Connector, DeviceSignIn, PluginView, ViewHandle } from '@ahpd/sdk';
 import {
   ACCESS_TOKEN_URL, ACCOUNT_URL, CLIENT_ID, DEVICE_CODE_URL,
-  devtunnelAdapter, OpenTunnels, TUNNELS_URL,
+  devtunnelAdapter, OpenTunnels, TUNNEL_VIEW, TUNNELS_URL,
 } from '../src/adapter.js';
 
 /*
@@ -114,6 +115,13 @@ describe('the registration', () => {
   it('lets a sign-in change the account only when the option says so', () => {
     expect(signInOf(devtunnelAdapter(new OpenTunnels())).switchAccount).toBe(false);
     expect(signInOf(devtunnelAdapter(new OpenTunnels(), { allowAccountChange: true })).switchAccount).toBe(true);
+  });
+
+  it('shows the account and the last refresh as key values, which the host check passes', () => {
+    expect(TUNNEL_VIEW.components['accountName']).toMatchObject({ component: 'KeyValue', label: 'Account', value: { path: '/account' } });
+    expect(TUNNEL_VIEW.components['refreshed']).toMatchObject({ component: 'KeyValue', label: 'Last refresh', child: 'refreshedAt' });
+    expect(TUNNEL_VIEW.components['refreshedAt']).toMatchObject({ component: 'DateTime', value: { path: '/refreshed' }, format: 'datetime' });
+    expect(() => { checkView({ ...TUNNEL_VIEW, dataModel: { account: 'octocat' } }, 'main', 'tunnel-devtunnel', {}); }).not.toThrow();
   });
 
   it('declares a main view: the account it signed in as, and its last refresh', () => {

@@ -25,7 +25,9 @@ export const VIEW_SURFACES: readonly ViewSurface[] = ['main'];
  * `label` and `display`, and its `child` drawn small below it as a footer.
  * `DateTime` is a time a client shows in its reader's own zone: `value` is an
  * ISO time, `format` is one of `DATE_TIME_FORMATS`, and `label` goes before it.
- * `KeyValue` is one line: its `label` at the start and its `value` at the end.
+ * `KeyValue` is one line: its `label` at the start and its `value` at the end,
+ * or its `child` at the end in place of `value`, as a `DateTime` that is the
+ * line's value.
  */
 export const VIEW_KINDS: readonly string[] = ['Text', 'Link', 'Button', 'Card', 'Row', 'Column', 'List', 'Divider', 'Icon', 'Progress', 'DateTime', 'KeyValue'];
 

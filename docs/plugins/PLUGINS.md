@@ -1058,7 +1058,7 @@ A view is a small A2UI v0.10 surface, so a client needs no code for the plugin t
 
 - `Progress` is a bar: `value` out of `max`, which is 100 when absent. `label` is the text above it, and `display: 'percent'` shows the share beside the label. `value` and `max` are numbers or `{ path }`. Its `child` is drawn small below the bar, as a footer.
 - `DateTime` is a time a client shows in its reader's own zone, so the host needs no zone. `value` is an ISO time or `{ path }`. `format` is `time`, `date`, `datetime` or `auto`, the default: `auto` shows the hour on the reader's today, and the weekday, the day and the hour on another day. `label` goes before the time, as `Resets 05:10 AM`.
-- `KeyValue` is one line: its `label` at the start and its `value` at the end. Each is text or `{ path }`.
+- `KeyValue` is one line: its `label` at the start and its `value` at the end. Each is text or `{ path }`. A `child` is drawn at the end in place of `value`, as a `DateTime` that is the line's value.
 
 ```ts
 host.showView({

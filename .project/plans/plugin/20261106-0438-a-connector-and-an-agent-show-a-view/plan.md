@@ -150,6 +150,7 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | Each window's data has `resetInSeconds`, counted when the data is made | Softov, 2026-11-06: "reset on dataModel windows need a resetInSeconds" | 08 |
 | A `KeyValue` kind draws a label and a value on one line; a `Progress` keeps its structure and adds its `child` as a footer | Softov, 2026-11-06: "The same Line Text can also be used to style Key values" and "The progress continue the same structure... just add the footer." | 08 |
 | A login reads its usage without a session, with one `/usage` query at open and at each check | Softov, 2026-11-06, chose "One-shot /usage query" | 09 |
+| A devtunnel connector shows its account and its last refresh as `KeyValue` lines, and a `KeyValue` may draw its `child` as its value | Softov, 2026-11-06: "on devTunnel connector.. and the keyvalue." | 10 |
 
 ## Proposed architecture
 
@@ -172,6 +173,7 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | [07 - a login asks the profile scope](task-07-a-login-asks-the-profile-scope.md) | implemented | 04 |
 | [08 - a view draws a gauge and a time](task-08-a-view-draws-a-gauge-and-a-time.md) | implemented | 07 |
 | [09 - a login reads its usage alone](task-09-a-login-reads-its-usage-alone.md) | implemented | 07 |
+| [10 - a devtunnel shows key values](task-10-a-devtunnel-shows-key-values.md) | implemented | 08 |
 
 ## Risks and tradeoffs
 
@@ -181,7 +183,7 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 09 are `implemented` on 2026-11-06, on #249's branch.
+- **Done so far:** tasks 01 to 09 are `implemented` on 2026-11-06 and merged in #249; task 10 is `implemented`.
 - **Next action:** ahpw draws `Progress`, `DateTime` and `KeyValue`, in Softov's other session.
 - **Open questions:** none.
 - **Watch out for:** a plugin, a connector and an agent must stay one structure. A change to one needs the same change to the others.
