@@ -120,7 +120,7 @@ describe('the registration', () => {
   it('shows the account and the last refresh as key values, which the host check passes', () => {
     expect(TUNNEL_VIEW.components['accountName']).toMatchObject({ component: 'KeyValue', label: 'Account', value: { path: '/account' } });
     expect(TUNNEL_VIEW.components['refreshed']).toMatchObject({ component: 'KeyValue', label: 'Last refresh', child: 'refreshedAt' });
-    expect(TUNNEL_VIEW.components['refreshedAt']).toMatchObject({ component: 'DateTime', value: { path: '/refreshed' }, format: 'auto' });
+    expect(TUNNEL_VIEW.components['refreshedAt']).toMatchObject({ component: 'DateTime', value: { path: '/refreshed' }, format: 'datetime' });
     expect(() => { checkView({ ...TUNNEL_VIEW, dataModel: { account: 'octocat' } }, 'main', 'tunnel-devtunnel', {}); }).not.toThrow();
   });
 

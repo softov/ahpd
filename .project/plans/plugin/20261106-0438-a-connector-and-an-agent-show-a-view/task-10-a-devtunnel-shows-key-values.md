@@ -22,7 +22,7 @@ The refresh time is a `DateTime`, so a client shows it in its reader's own zone.
 ## Steps
 
 1. Make the account line a `KeyValue` with the label `Account` and the value at `/account`.
-2. Make the refresh line a `KeyValue` with the label `Last refresh` and a `DateTime` as its `child`.
+2. Make the refresh line a `KeyValue` with the label `Last refresh` and a `datetime` `DateTime` as its `child`.
 3. Write that a `KeyValue` draws its `child` in place of `value`.
 
 ## Validation
