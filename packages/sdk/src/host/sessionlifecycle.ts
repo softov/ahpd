@@ -45,7 +45,7 @@ const complete = (related: PullRequest[]): boolean =>
   related.length > 0 && related.every((one) => one.state !== 'open') && related.some((one) => one.state === 'merged');
 
 export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
-  const { options, sessions, kept, restarting, githubFacts, worktreeOf, dirOf, lent, log, running } = ctx;
+  const { options, sessions, kept, restarting, githubFacts, worktreeOf, dirOf, getAuthToken, log, running } = ctx;
 
   // How the pass learns the state of a pull request, from the host's own
   // option: set here because the pass is where it is read.
@@ -127,7 +127,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
     const branch = tree?.branch ?? git?.branchName ?? facts?.pullRequestBranchName;
     if (typeof owner !== 'string' || typeof repo !== 'string' || typeof branch !== 'string') return undefined;
     const resource = String(github.resource.resource ?? '');
-    return github.forBranch({ owner, repo }, branch, lent(resource), tree?.repository ?? dir);
+    return github.forBranch({ owner, repo }, branch, getAuthToken(resource), tree?.repository ?? dir);
   };
 
   /**
@@ -156,7 +156,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
     const found: PullRequest[] = [];
     const unresolved: string[] = [];
     for (const url of urls) {
-      const one = await ask.call(github, url, lent(resource), cwd);
+      const one = await ask.call(github, url, getAuthToken(resource), cwd);
       if (one !== undefined) found.push(one);
       else unresolved.push(url);
     }

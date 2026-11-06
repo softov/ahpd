@@ -54,7 +54,7 @@ export interface Facts {
 
 export function createFacts(ctx: HostContext): Facts {
   const {
-    options, sessions, owners, connections, worktreeOf, githubFacts, kept, log, lent, dispatch,
+    options, sessions, owners, connections, worktreeOf, githubFacts, kept, log, getAuthToken, dispatch,
     dirOf, leadOf, changesetAt, changesetOf, catalogueOf, contentMoved, operationsMoved, listedMeta,
   } = ctx;
 
@@ -539,7 +539,7 @@ export function createFacts(ctx: HostContext): Facts {
     const resource = String(options.github.resource.resource ?? '');
     let found;
     try {
-      found = await options.github.forBranch({ owner, repo }, branch, lent(resource), dir);
+      found = await options.github.forBranch({ owner, repo }, branch, getAuthToken(resource), dir);
     }
     catch (error) {
       log(`${dir}: GitHub did not answer for ${branch}: ${error instanceof Error ? error.message : String(error)}`);

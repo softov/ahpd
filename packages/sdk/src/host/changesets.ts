@@ -65,7 +65,7 @@ export interface Changesets {
 }
 
 export function createChangesets(ctx: HostContext): Changesets {
-  const { options, connections, sessions, leadOf, wheres, worktreeOf, githubFacts, lent, dispatch } = ctx;
+  const { options, connections, sessions, leadOf, wheres, worktreeOf, githubFacts, getAuthToken, dispatch } = ctx;
 
   /**
    * The directory a session works in, as a path.
@@ -422,7 +422,7 @@ export function createChangesets(ctx: HostContext): Changesets {
     const facts = githubFacts.get(dir) as { pullRequestUrls?: string[]; pullRequestBranchName?: string } | undefined;
     const owner = git?.githubOwner;
     const repo = git?.githubRepo;
-    const token = options.github === undefined ? undefined : lent(String(options.github.resource.resource ?? ''));
+    const token = options.github === undefined ? undefined : getAuthToken(String(options.github.resource.resource ?? ''));
     const github = options.github !== undefined && typeof owner === 'string' && typeof repo === 'string'
       ? { ask: options.github, owner, repo, ...(token === undefined ? {} : { token }) }
       : undefined;

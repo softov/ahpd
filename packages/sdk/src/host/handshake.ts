@@ -59,8 +59,8 @@ interface Target {
  *
  * The protocol keys a provider-level token by its resource and a targeted one
  * by its target as well, because two MCP servers can share a resource and
- * still be two consumers. So `tokensFor` and `lent`, which look a token up by
- * its resource, never find one aimed at a server.
+ * still be two consumers. So `tokensFor` and `getAuthToken`, which look a
+ * token up by its resource, never find one aimed at a server.
  * https://github.com/microsoft/agent-host-protocol/blob/0b7b7f9f4ceb2fbd8846557416f765ac73da647d/docs/specification/authentication.md#L151-L153
  */
 const keyOf = (resource: string, target?: Target): string => (target === undefined
@@ -94,7 +94,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
   const { connection } = conn;
   const {
     advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting,
-    clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaChanged,
+    clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, authenticationResource, log, LOGS, METRICS, metaChanged,
     metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
     snapshotOf, TRACES, visible, watchedAs,
   } = ctx;
@@ -206,7 +206,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
      * The notification is the same either way, because what a client has
      * to do about it is the same.
      */
-    if (target === undefined && options.users !== undefined && resource === loginId()) {
+    if (target === undefined && options.users !== undefined && resource === authenticationResource()) {
       const until = connection.principalUntil;
       if (until === undefined) return;
       const left = until - Date.now();
@@ -830,7 +830,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       if (token === '') {
         const had = connection.tokens.delete(key);
         forgetExpiry(key);
-        const signedOut = target === undefined && options.users !== undefined && resource === loginId()
+        const signedOut = target === undefined && options.users !== undefined && resource === authenticationResource()
           && connection.principal !== undefined && connection.root !== true;
         if (signedOut) {
           delete connection.principal;
@@ -860,7 +860,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * demote it and signing out could only lose the key. Answered as accepted and otherwise
        * ignored, because the client asked for something that is already so.
        */
-      if (target === undefined && connection.root === true && options.users !== undefined && resource === loginId()) return {};
+      if (target === undefined && connection.root === true && options.users !== undefined && resource === authenticationResource()) return {};
       /*
        * The host's own resource: the one credential here that is checked.
        *
@@ -869,7 +869,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * still does. This one is a person, and the directory is the only
        * thing that can say whether the token belongs to one.
        */
-      if (target === undefined && options.users !== undefined && resource === loginId()) {
+      if (target === undefined && options.users !== undefined && resource === authenticationResource()) {
         const held = await options.users.verify(token);
         if (held === undefined) {
           throw new RpcError(-32007, 'That credential is not one this host knows', {

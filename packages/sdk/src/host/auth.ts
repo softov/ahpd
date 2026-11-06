@@ -7,10 +7,12 @@ import type { HostContext } from './context.js';
 
 /** What a person has to sign into, and what they have. */
 export interface Auth {
-  loginId(): string;
+  /** The resource a client authenticates for the host's own sign-in. */
+  authenticationResource(): string;
   resourcesOf(agent: Agent): Bag[];
   agentsFor(connection: Connection, list: unknown): unknown;
-  lent(resource: string): string | undefined;
+  /** A token any connected client authenticated for a resource, unexpired, for the host's own work. */
+  getAuthToken(resource: string): string | undefined;
   advertised(): Set<string>;
   metadataFor(resource: string): Bag;
   channelAwaiting(resource: string, connection: Connection): string;
@@ -33,7 +35,13 @@ export function createAuth(ctx: HostContext): Auth {
   const watchedAs = (connection: Connection, session: string): string | undefined =>
     (connection.watching.has(session) ? session : undefined);
 
-  const loginId = (): string => String(options.users?.resource.resource ?? '');
+  /*
+   * The users directory's protected resource, the one a client authenticates
+   * for the host's own sign-in, as VS Code's host names the resource a relay
+   * client authenticates.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2634-L2640
+   */
+  const authenticationResource = (): string => String(options.users?.resource.resource ?? '');
   /**
    * What a backend may be handed a token for: its own, and GitHub's.
    *
@@ -72,11 +80,16 @@ export function createAuth(ctx: HostContext): Auth {
       return mayUseAgent(connection.principal, owned, { root: connection.root === true, hasDirectory: true });
     });
   };
-  /** A token any connected client lent for a resource, and has not run out. */
-  const lent = (resource: string): string | undefined => {
+  /**
+   * A token any connected client authenticated for a resource, skipping one
+   * that has run out, for the host's own work, as VS Code's host reads a token
+   * from the host-wide store any client authenticated into.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L267-L273
+   */
+  const getAuthToken = (resource: string): string | undefined => {
     // A person's sign-in is not a credential the host spends on its own work:
     // one client's sign-in must not become another client's session.
-    if (options.users !== undefined && resource === loginId()) return undefined;
+    if (options.users !== undefined && resource === authenticationResource()) return undefined;
     for (const connection of connections) {
       const held = connection.tokens.get(resource);
       if (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now())) return held.token;
@@ -93,7 +106,7 @@ export function createAuth(ctx: HostContext): Auth {
         if (typeof id === 'string') out.add(id);
       }
     }
-    if (options.users !== undefined) out.add(loginId());
+    if (options.users !== undefined) out.add(authenticationResource());
     return out;
   };
   /**
@@ -133,5 +146,5 @@ export function createAuth(ctx: HostContext): Auth {
     return ROOT;
   };
 
-  return { loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting, watchedAs };
+  return { authenticationResource, resourcesOf, agentsFor, getAuthToken, advertised, metadataFor, channelAwaiting, watchedAs };
 }
