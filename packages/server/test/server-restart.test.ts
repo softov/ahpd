@@ -936,12 +936,20 @@ describe('a turn and a restart that is stopping the daemon', () => {
 
   type Client = ReturnType<ReturnType<typeof createHost>['accept']>;
 
-  /** What the host last said about an action on a chat: the action, or the refusal of it. */
-  const answeredOn = (said: { notes: { method: string; params: unknown }[] }, chat: string) => said.notes
-    .filter((note) => note.method === 'action')
-    .map((note) => note.params as { channel: string; action: { type: string }; rejectionReason?: string })
-    .filter((one) => one.channel === chat)
-    .at(-1);
+  /**
+   * The words the host refused the last turn on a chat with, or nothing: it
+   * says the client's start and ends that turn at once in a `chat/error` of the
+   * `rejected` type.
+   */
+  const refusedOn = (said: { notes: { method: string; params: unknown }[] }, chat: string): string | undefined => {
+    const last = said.notes
+      .filter((note) => note.method === 'action')
+      .map((note) => note.params as { channel: string; action: { type: string; part?: { error?: { errorType?: string; message?: string } } } })
+      .filter((one) => one.channel === chat)
+      .at(-1);
+    const error = last?.action.type === 'chat/error' ? last.action.part?.error : undefined;
+    return error?.errorType === 'rejected' ? error.message : undefined;
+  };
 
   /** A client saying something on a chat now. */
   const say = async (client: Client, chat: string, text: string, turnId: string): Promise<void> => {
@@ -997,7 +1005,7 @@ describe('a turn and a restart that is stopping the daemon', () => {
     // On its way down, with the host still answering: the window a turn can
     // start in, and be ended by the close at the end of this restart.
     await say(client, chat, 'hello', 't1');
-    expect(answeredOn(said, chat)?.rejectionReason).toBe('The daemon is restarting');
+    expect(refusedOn(said, chat)).toBe('The daemon is restarting');
 
     release();
     await over;
@@ -1027,7 +1035,7 @@ describe('a turn and a restart that is stopping the daemon', () => {
     // ends before the next thing somebody says.
     await quiet(host);
     await say(client, chat, 'still here', 't2');
-    expect(answeredOn(said, chat)?.rejectionReason).toBeUndefined();
+    expect(refusedOn(said, chat)).toBeUndefined();
     await host.close();
   });
 
@@ -1044,7 +1052,7 @@ describe('a turn and a restart that is stopping the daemon', () => {
     );
     await expect(unrunnable(ARGV, false)).rejects.toThrow('Its line cannot run now, so it was not stopped: config.json is not JSON');
     await say(client, chat, 'hello', 't1');
-    expect(answeredOn(said, chat)?.rejectionReason).toBeUndefined();
+    expect(refusedOn(said, chat)).toBeUndefined();
 
     const underWay = checkedRestart(
       async () => 'xyz',
@@ -1054,7 +1062,7 @@ describe('a turn and a restart that is stopping the daemon', () => {
     );
     await expect(underWay(ARGV, false)).rejects.toThrow('A restart is already under way.');
     await say(client, chat, 'and again', 't2');
-    expect(answeredOn(said, chat)?.rejectionReason).toBeUndefined();
+    expect(refusedOn(said, chat)).toBeUndefined();
     expect(asked).toEqual([]);
     await host.close();
   });
