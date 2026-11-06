@@ -729,7 +729,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         }
         /*
          * The copies are this write's until it has been stored or refused.
-         * Another write's prune may run in between, and what it would find at
+         * Another write's garbage collection may run in between, and what it would find at
          * their names is a copy no automation names yet - which is what it
          * removes, and what would leave this entry pointing at nothing.
          */
@@ -739,7 +739,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
             : store.update(resource, withPinOf(resource, (action.changes ?? {}) as Bag), held.copies);
           if (!made) { no(`Automation not found: ${resource}`); return; }
           dispatch(channel, action, origin);
-          pruneCopies();
+          collectGarbage();
         }
         finally {
           held.release();
@@ -775,7 +775,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       }
       store.remove(resource);
       // And the copies its template named, which nothing names any more.
-      pruneCopies();
+      collectGarbage();
       return;
     }
 
@@ -1084,12 +1084,12 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    * holds still reference, read back off them rather than remembered here - a
    * host that restarted holds the same answer.
    */
-  const pruneCopies = (): void => {
+  const collectGarbage = (): void => {
     const port = options.clientPlugins;
     if (port === undefined) return;
     const kept = (options.automations?.list() ?? [])
       .flatMap((one) => (one.customizations ?? []).map((copy) => localPath(copy.uri)));
-    port.prune(kept);
+    port.collectGarbage(kept);
   };
 
   /**
