@@ -2138,10 +2138,12 @@ export function chatAction(
        * The action is said first, as the reference host says a truncation
        * before its provider cuts anything. The backend stops before the
        * delete, because a backend that is still writing writes the
-       * conversation back behind it, and a delete that fails is logged and
-       * leaves the chat to come back on the conversation it had. Held in
-       * `restarting` the whole time, so an action sent behind it reaches the
-       * new backend rather than the one that stopped.
+       * conversation back behind it. A delete that fails is logged, and the
+       * backend comes back on the conversation it had while the chat keeps
+       * what the truncation left, as the reference's agent resumes the
+       * transcript its failed delete left under a chat state already cut.
+       * Held in `restarting` the whole time, so an action sent behind it
+       * reaches the new backend rather than the one that stopped.
        */
       const startOver = (kept: Bag[]): void => {
         const owner = sessions.get(session.uri);
@@ -2167,7 +2169,7 @@ export function chatAction(
             chatUri,
             chatIdFor(uri, chatUri),
             chatConfig(owner, chatUri),
-            failed !== undefined && own !== undefined ? { resume: own, seed: all as Bag[] } : { seed: kept },
+            { ...(failed !== undefined && own !== undefined ? { resume: own } : {}), seed: kept },
             owner.workingDirectory,
             undefined,
             beside.get(chatUri) ?? owner.additional,

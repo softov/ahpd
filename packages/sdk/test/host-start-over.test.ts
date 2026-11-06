@@ -67,9 +67,10 @@ const backend = (seen: Seen, deletes = true): Agent => {
 
 type Client = { handle(request: unknown): Promise<unknown> };
 
-/** A host with one session whose chat has answered one turn, and a client watching it. */
+/** A host with one session whose chat has answered one turn, a client watching it, and the host's log. */
 const answered = async (seen: Seen, deletes = true) => {
-  const host = createHost({ path: DIR, agents: [backend(seen, deletes)], ...machine() });
+  const lines: string[] = [];
+  const host = createHost({ path: DIR, agents: [backend(seen, deletes)], ...machine(), onEvent: (line) => { lines.push(line); } });
   const p = peer();
   p.request = async () => ({ trusted: true });
   const client: Client = host.accept(p);
@@ -79,7 +80,7 @@ const answered = async (seen: Seen, deletes = true) => {
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } } });
   await settle();
-  return { client, p, chat };
+  return { client, p, chat, lines };
 };
 
 /** The ids of a chat's turns, as a subscribe answers them. */
@@ -123,17 +124,26 @@ describe('a chat truncated whole', () => {
     expect(await turnsOf(client, chat)).toEqual(['t2']);
   });
 
-  it('is refused for a backend that cannot delete, and nothing restarts', async () => {
+  /*
+   * A backend with no delete is a provider with no truncation of its own: the
+   * truncation is said, every client empties the chat, and the backend keeps
+   * the conversation it has, as the reference host does when its provider has
+   * no `truncateChat`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1990
+   */
+  it('is said for a backend that cannot delete, which keeps its conversation, and nothing restarts', async () => {
     const seen: Seen = { starts: [], steps: [] };
-    const { client, p, chat } = await answered(seen, false);
+    const { client, p, chat, lines } = await answered(seen, false);
     const starts = seen.starts.length;
 
     await emptied(client, chat);
 
-    expect(actions(p).filter((e) => e.rejectionReason !== undefined).at(-1)?.rejectionReason).toContain('not a conversation entire');
+    expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
+    expect(actions(p, chat).some((e) => e.action.type === 'chat/truncated')).toBe(true);
     expect(seen.steps).toEqual([]);
     expect(seen.starts.length).toBe(starts);
-    expect(await turnsOf(client, chat)).toEqual(['t1']);
+    expect(await turnsOf(client, chat)).toEqual([]);
+    expect(lines.some((line) => line.includes('its backend cannot delete a conversation'))).toBe(true);
   });
 
   it('starts the Claude CLI again under the same id, once its transcript is gone', async () => {
@@ -167,18 +177,28 @@ describe('a chat truncated whole', () => {
     expect(await turnsOf(client, chat)).toEqual([]);
   });
 
-  it('comes back on the conversation it had when the delete fails, and says why', async () => {
+  /*
+   * The truncation is said before the backend stops, as the reference host
+   * says it before its provider cuts anything. A delete that fails is logged,
+   * and the backend comes back on the conversation it had under a chat that
+   * keeps what the truncation left, as the reference's agent resumes the
+   * transcript its failed delete left while the chat state stays cut; a client
+   * that subscribes afterwards reads what the watching one was told.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1990
+   */
+  it('is said when the delete fails, logs why, and the backend comes back on the conversation it had', async () => {
     const seen: Seen = { starts: [], steps: [], failing: new Error('the store is read-only') };
-    const { client, p, chat } = await answered(seen);
+    const { client, p, chat, lines } = await answered(seen);
 
     await emptied(client, chat);
 
-    expect(actions(p).filter((e) => e.rejectionReason !== undefined).at(-1)?.rejectionReason).toContain('the store is read-only');
-    // The refusal is the only word of it: no client was told to clear anything.
-    expect(actions(p, chat).some((e) => e.action.type === 'chat/truncated' && e.rejectionReason === undefined)).toBe(false);
+    expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
+    expect(actions(p, chat).some((e) => e.action.type === 'chat/truncated')).toBe(true);
+    expect(seen.steps).toEqual(['stopped stopping', 'deleted live']);
     const back = seen.starts.at(-1);
     expect(back?.resume).toBe('live');
-    expect(((back?.seed ?? []) as Bag[]).map((turn) => turn.id)).toEqual(['t1']);
-    expect(await turnsOf(client, chat)).toEqual(['t1']);
+    expect(back?.seed).toEqual([]);
+    expect(lines.some((line) => line.includes('kept its conversation: the store is read-only'))).toBe(true);
+    expect(await turnsOf(client, chat)).toEqual([]);
   });
 });
