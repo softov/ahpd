@@ -255,13 +255,16 @@ it('a turn goes in and the inner session\'s actions come out unchanged', async (
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
 
   expect(seen.some(({ action }) => action.type === 'session/creationFailed')).toBe(false);
+  /*
+   * The start is the host's to say, which says it before it hands a turn over,
+   * so the start the host inside said stays inside: a session handed a message
+   * says no start of its own, as VS Code's agent says none for `sendMessage`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1303-L1311
+   */
   const types = seen.filter(({ channel }) => channel === 'chat').map(({ action }) => action.type);
-  expect(types).toContain('chat/turnStarted');
+  expect(types).not.toContain('chat/turnStarted');
   expect(types).toContain('chat/responsePart');
   expect(types).toContain('chat/turnComplete');
-  const began = seen.find(({ action }) => action.type === 'chat/turnStarted')?.action;
-  expect(began?.turnId).toBe('t1');
-  expect(began?.message?.text).toBe('hello world');
   // The streamed text, as the inner backend wrote it: same chunks, same turn.
   const delta = seen.filter(({ action }) => action.type === 'chat/delta').map(({ action }) => String(action.content)).join('');
   expect(delta).toBe('hello world');
