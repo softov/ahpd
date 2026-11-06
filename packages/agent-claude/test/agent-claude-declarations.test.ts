@@ -125,7 +125,7 @@ it('leaves the output style to the flag settings, which the CLI takes live', () 
 });
 
 it('says what an option is when nothing named one', () => {
-  expect(optionDefaults()).toEqual({ thinking: 'adaptive', hostTasks: true, enableTasks: true, stopEnds: 'turn', dontAsk: true, writtenBy: 'listing', portFailures: 'spawn', taskOutputFirstWaitMs: 500, taskOutputLongestWaitMs: 10_000 });
+  expect(optionDefaults()).toEqual({ thinking: 'adaptive', hostTasks: true, enableTasks: true, stopEnds: 'turn', dontAsk: true, writtenBy: 'listing', portFailures: 'spawn', subagentsFrom: 'meta', taskOutputFirstWaitMs: 500, taskOutputLongestWaitMs: 10_000 });
 });
 
 /*

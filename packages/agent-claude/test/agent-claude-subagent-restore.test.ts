@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, expect, it, vi } from 'vitest';
@@ -20,6 +20,8 @@ import type { Peer } from '../../sdk/src/types/rpc.js';
 const sdk = vi.hoisted(() => ({
   sessions: [] as Record<string, unknown>[],
   messages: [] as Record<string, unknown>[],
+  /** How many times the SDK was asked for a session's workers. */
+  listed: 0,
 }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
@@ -28,6 +30,20 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
   // directory is settled without listing every path to find it.
   getSessionInfo: async (id: string) => sdk.sessions.find((one) => one['sessionId'] === id),
   getSessionMessages: async () => sdk.messages,
+  // The SDK's readers of a session's workers, over the files a case lays: the
+  // agent ids in their files' order, and a worker's entries with
+  // `toolUseResult` left out, as the SDK leaves it out.
+  listSubagents: async () => {
+    sdk.listed += 1;
+    return readdirSync(subagentsDir()).filter((name) => name.endsWith('.jsonl'))
+      .map((name) => name.slice('agent-'.length, -'.jsonl'.length)).sort();
+  },
+  getSubagentMessages: async (_session: string, agentId: string) =>
+    readFileSync(join(subagentsDir(), `agent-${agentId}.jsonl`), 'utf8').split('\n').filter((one) => one !== '')
+      .map((one) => {
+        const { toolUseResult: _left, ...kept } = JSON.parse(one) as Record<string, unknown>;
+        return kept;
+      }),
   createSdkMcpServer: () => ({}),
   /*
    * A CLI that answers each message it is sent with one line of text and the
@@ -83,6 +99,9 @@ afterAll(() => {
   if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR;
   else process.env.CLAUDE_CONFIG_DIR = before;
 });
+
+/** Where the session's workers are, as the CLI lays them out. */
+const subagentsDir = (): string => join(CONFIG, 'projects', DIR.replace(/[^A-Za-z0-9]/g, '-'), SESSION, 'subagents');
 
 /** A session directory, exactly as the CLI lays one out. */
 function laid(): { project: string; session: string } {
@@ -215,6 +234,33 @@ it('keeps the answers of a question a restored worker asked', async () => {
   const call = parts.map((part) => part.toolCall as Bag | undefined).find((one) => one?.toolCallId === 'toolu_pick');
   // On the request part, the call completed with its text alone.
   expect(call).not.toHaveProperty('structuredContent');
+  const asked = parts.find((part) => part.kind === 'inputRequest' && part.response === 'accept');
+  expect(Object.keys(((asked?.request as Bag | undefined)?.answers ?? {}) as Bag)).not.toHaveLength(0);
+});
+
+/*
+ * A record whose `subagentsFrom` is `sdk` reads the workers through the SDK's
+ * readers and links each as VS Code's Claude resolver links it: the `agentId`
+ * line its spawning call's result ends with, else the worker run with the
+ * call's prompt, else the one worker whose last answer is the call's result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentResolver.ts#L384-L396
+ */
+it('reads the workers through the SDK and links them as VS Code does, where the record says subagentsFrom sdk', async () => {
+  laid();
+  sdk.listed = 0;
+  const agent = claude({ paths: [DIR], preset: { subagentsFrom: 'sdk' } });
+  const found = await agent.subagents?.(SESSION);
+  expect(sdk.listed).toBe(1);
+  const byCall = new Map((found ?? []).map((one) => [one.toolCallId, one]));
+  expect([...byCall.keys()].sort()).toEqual(['toolu_nested', 'toolu_second', 'toolu_task', 'toolu_third']);
+  // By the prompt each was run with, the nested one among its parent's calls.
+  expect(byCall.get('toolu_task')).toMatchObject({ title: 'List files', agentName: 'Explore' });
+  expect(byCall.get('toolu_nested')?.parentToolCallId).toBe('toolu_task');
+  // By the `agentId` line, titled by the task its call described.
+  expect(byCall.get('toolu_second')).toMatchObject({ title: 'Audit', description: 'Audit' });
+  expect(byCall.get('toolu_third')).toMatchObject({ title: 'Plan', agentName: 'Plan' });
+  // The answered question keeps its answers, read from the worker's own file.
+  const parts = byCall.get('toolu_third')?.turns.flatMap((turn) => turn.responseParts as Bag[]) ?? [];
   const asked = parts.find((part) => part.kind === 'inputRequest' && part.response === 'accept');
   expect(Object.keys(((asked?.request as Bag | undefined)?.answers ?? {}) as Bag)).not.toHaveLength(0);
 });

@@ -4,7 +4,7 @@ import { createSession } from './session.js';
 import { restoreTerminalOutputs } from './session/savedoutput.js';
 import { configDirOf } from './session/disk.js';
 import { watchFolders } from './session/watch.js';
-import { turnsOf, subagentsOf } from './transcript.js';
+import { turnsOf, subagentsBySdk, subagentsOf } from './transcript.js';
 import { catalogue, findSession, forgetSession, transcriptOf, written } from './catalog.js';
 import { BEFORE_TOKEN, loginsOf } from './logins.js';
 import type { AgentLogins } from './logins.js';
@@ -630,11 +630,13 @@ export function claude(options: ClaudeOptions): Agent<Session> {
      * tool call that spawned it - which is the link, read exactly rather than
      * inferred. The spawning call's own result is the fallback for a harness
      * that writes no meta file, and a worker neither names is left out rather
-     * than linked to the wrong call.
+     * than linked to the wrong call. A record whose `subagentsFrom` is `sdk`
+     * reads them through the SDK's readers instead, linked as VS Code links them.
      */
     subagents: async (id, turns) => {
       if (await findSession(id) === undefined) return undefined;
-      return subagentsOf(id, turns ?? await turnsOf(id));
+      const main = turns ?? await turnsOf(id);
+      return (options.presetOf?.() ?? options.preset ?? {})['subagentsFrom'] === 'sdk' ? subagentsBySdk(id, main) : subagentsOf(id, main);
     },
 
     /*

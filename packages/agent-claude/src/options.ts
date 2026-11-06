@@ -196,6 +196,25 @@ export const stopEnds: Declaration = {
 };
 
 /**
+ * Where a restored session's worker chats are read from.
+ *
+ * `meta`, the default, reads each worker's file beside the session and links
+ * it by the `toolUseId` its meta file names, which links two identical
+ * delegations exactly (`.project/decisions/subagent-chats-are-restored-from-the-cli-meta-file.md`);
+ * `sdk` reads the workers through the SDK's `listSubagents` and
+ * `getSubagentMessages` and links them as VS Code's Claude resolver does.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentResolver.ts#L384-L396
+ */
+export const subagentsFrom: Declaration = {
+  schema: {
+    type: 'string',
+    enum: ['meta', 'sdk'],
+    description: "Where a restored session's worker chats are read from: meta reads the CLI's worker files and links each by its meta file; sdk reads them through the SDK's listSubagents and getSubagentMessages and links them as VS Code does. meta by default.",
+  },
+  default: 'meta',
+};
+
+/**
  * How a machine's port that could not start the CLI is said.
  *
  * `spawn`, the default, files the port's failure as a failure to start, so the
@@ -350,7 +369,7 @@ export const extraArgs: Declaration = {
 
 /** Every declared option, by the name a record gives it. */
 export const DECLARED: Record<string, Declaration> = {
-  sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, writtenBy, portFailures,
+  sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, writtenBy, portFailures, subagentsFrom,
   taskOutputFirstWaitMs, taskOutputLongestWaitMs, outputStyle, env, logins, extraArgs,
 };
 
