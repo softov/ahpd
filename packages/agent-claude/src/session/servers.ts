@@ -223,6 +223,9 @@ export function createServers(ctx: SessionContext): Servers {
       for (const [callId, running] of ctx.onServer) {
         if (running.server !== name || running.blocked === asking) continue;
         running.blocked = asking;
+        // The session entry's id, as VS Code's host names a tool's sign-in.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L220
+        const entry = `toolAuthentication:${ctx.options.chatUri}:${running.turnId}:${callId}`;
         const at = ctx.parts.get(callId);
         const call = bag(at?.toolCall);
         if (asking) {
@@ -233,7 +236,7 @@ export function createServers(ctx: SessionContext): Servers {
           // The same block at the session level, which is where a client
           // looking at a list rather than at a conversation sees it.
           ctx.inputNeededSet({
-            id: `auth:${callId}`,
+            id: entry,
             chat: ctx.options.chatUri,
             kind: 'toolAuthentication',
             turnId: running.turnId,
@@ -244,7 +247,7 @@ export function createServers(ctx: SessionContext): Servers {
           call.status = 'running';
           delete call.auth;
           ctx.emit('chat', { type: 'chat/toolCallAuthResolved', turnId: running.turnId, toolCallId: callId });
-          ctx.inputNeededRemoved(`auth:${callId}`);
+          ctx.inputNeededRemoved(entry);
         }
       }
       held.state = fresh.state;

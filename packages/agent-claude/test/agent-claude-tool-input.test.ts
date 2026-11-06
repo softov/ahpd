@@ -481,6 +481,24 @@ it('names an MCP call\'s contributor by its server\'s customization, and none fo
 });
 
 /*
+ * A call blocked on its server's sign-in is the session's entry under the id
+ * VS Code's host gives a tool's sign-in.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L220
+ */
+it('puts a call waiting on its server\'s sign-in on the session under VS Code\'s id', async () => {
+  sdk.mcp = [{ name: 'docs', status: 'connected' }];
+  const { sent, session } = await live();
+  // A server nothing answers for, so the sign-in's metadata is the bare one.
+  sdk.mcp = [{ name: 'docs', status: 'needs-auth', config: { type: 'http', url: 'http://127.0.0.1:1/mcp' } }];
+  await session.startMcpServer?.('claude-internal:/mcp/docs#mcp=docs');
+  sdk.mcp = [];
+
+  const set = sent.find((one) => one.type === 'session/inputNeededSet' && (one.request as Bag | undefined)?.kind === 'toolAuthentication');
+  expect((set?.request as Bag | undefined)?.id).toBe('toolAuthentication:ahp-chat:/input:t1:toolu_mcp');
+  await session.close();
+});
+
+/*
  * How long a tool call ran, live and restored.
  *
  * The protocol gives a call no time of its own, so how long it ran rides its

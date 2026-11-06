@@ -182,14 +182,17 @@ it('says which running call a sign-in is blocking, and says when it is not', asy
   const blocked = actions(p).find((one) => one.action.type === 'session/inputNeededSet');
   // The chat under this host's own name, which is what a client dispatches
   // to whether or not it has subscribed under a spelling of its own.
-  expect(blocked?.action.request).toMatchObject({ kind: 'toolAuthentication', turnId: 't1' });
+  // Its id is the one VS Code's host gives a tool's sign-in.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L220
+  const entry = `toolAuthentication:${chatUri}:t1:tc1`;
+  expect(blocked?.action.request).toMatchObject({ id: entry, kind: 'toolAuthentication', turnId: 't1' });
   expect(String((blocked?.action.request as { chat?: string }).chat)).toContain('ahp-chat:');
 
   await becomes(client, 'connected');
   const freed = actions(p).find((one) => one.action.type === 'chat/toolCallAuthResolved');
   expect(freed?.action.toolCallId).toBe('tc1');
   const lifted = actions(p).filter((one) => one.action.type === 'session/inputNeededRemoved');
-  expect(lifted.some((one) => one.action.id === 'auth:tc1')).toBe(true);
+  expect(lifted.some((one) => one.action.id === entry)).toBe(true);
 });
 
 it('says nothing about a call that had already finished', async () => {

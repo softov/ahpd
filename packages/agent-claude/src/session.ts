@@ -303,7 +303,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
           one.settle({ behavior: 'deny', message: 'The session was stopped' });
           ctx.inputNeededRemoved(one.id);
         }
-        for (const [callId, running] of ctx.onServer) if (running.blocked) ctx.inputNeededRemoved(`auth:${callId}`);
+        for (const [callId, running] of ctx.onServer) {
+          if (running.blocked) ctx.inputNeededRemoved(`toolAuthentication:${ctx.options.chatUri}:${running.turnId}:${callId}`);
+        }
         for (const scope of [...ctx.scopes.values()]) {
           if (scope.parent !== '' && scope.chat !== undefined) ctx.endSubagent(scope.parent, 'cancelled');
         }
