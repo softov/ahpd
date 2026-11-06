@@ -70,6 +70,24 @@ export const storedSandbox = (settings: Record<string, unknown> | undefined): Ba
 };
 
 /**
+ * Whether a session's stored `sandboxEnabled` is kept over its record.
+ *
+ * `kept`, the default, carries an `on` over the record as `storedSandbox`
+ * says, so an upgrade never runs a session less sandboxed than it was
+ * (upstream's 662bc817, host/64); `schema` reads the session's config against
+ * its schema alone, as VS Code does, so a value the schema does not declare
+ * moves nothing. Read where a session's values are built.
+ */
+export const storedSandboxDeclaration: Declaration = {
+  schema: {
+    type: 'string',
+    enum: ['kept', 'schema'],
+    description: "Whether a session's stored sandboxEnabled is kept: kept turns the sandbox on for a session stored with it on; schema reads the session's config against its schema alone, as VS Code does. kept by default.",
+  },
+  default: 'kept',
+};
+
+/**
  * Extended thinking, which the query is built with.
  *
  * Adaptive by default: an install whose record names nothing is the empty
@@ -293,7 +311,9 @@ export const extraArgs: Declaration = {
 };
 
 /** Every declared option, by the name a record gives it. */
-export const DECLARED: Record<string, Declaration> = { sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, outputStyle, env, logins, extraArgs };
+export const DECLARED: Record<string, Declaration> = {
+  sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, storedSandbox: storedSandboxDeclaration, outputStyle, env, logins, extraArgs,
+};
 
 /** One model a record writes out: an id, and the name the picker draws. */
 const MODEL: Bag = {
