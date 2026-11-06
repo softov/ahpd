@@ -406,7 +406,7 @@ describe('completing a hash sign', () => {
     await settle();
     // The CLI naming its conversation, and then the end of the turn: this is
     // what leaves the chat a completed turn for an attachment to be pinned to.
-    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
+    await emit({ type: 'system', subtype: 'init', session_id: `sdk-${turnId}` });
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   };
 
@@ -431,9 +431,10 @@ describe('completing a hash sign', () => {
   };
 
   /**
-   * A session with three chats, each titled by the message it opened with.
+   * A session with three chats, each titled by the message it opened with and
+   * each with a finished turn, which is what a chat is offered for.
    *
-   * A pause between the two, so the order they are offered in is the order they
+   * A pause between them, so the order they are offered in is the order they
    * were last spoken to rather than a tie between two timestamps read in the
    * same millisecond.
    */
@@ -443,17 +444,13 @@ describe('completing a hash sign', () => {
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/chats' } }) as {
       snapshot: { state: { defaultChat: string } };
     };
-    await client.handle({
-      method: 'createChat',
-      params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/review', initialMessage: { text: 'Review the diff', origin: { kind: 'user' } } },
-    });
-    await settle();
-    await new Promise((r) => { setTimeout(r, 5); });
-    await client.handle({
-      method: 'createChat',
-      params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/plan', initialMessage: { text: 'Plan the work', origin: { kind: 'user' } } },
-    });
-    await settle();
+    await spoken(client, opened.snapshot.state.defaultChat, 't0', 'Look around');
+    for (const [chat, turnId, text] of [['ahp-chat:/review', 't1', 'Review the diff'], ['ahp-chat:/plan', 't2', 'Plan the work']] as const) {
+      await new Promise((r) => { setTimeout(r, 5); });
+      await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/chats', chat } });
+      await settle();
+      await spoken(client, chat, turnId, text);
+    }
     return { client, handed: opened.snapshot.state.defaultChat };
   };
 
@@ -548,7 +545,12 @@ describe('completing a hash sign', () => {
     expect(await completing(client, 'ahp-session:/chats', 'tell #chat:Explore')).toEqual([]);
   });
 
-  it('pins a chat to the last turn it finished, and offers one that has none', async () => {
+  /*
+   * VS Code's provider pins a chat to its last completed turn and skips one
+   * with none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatCompletionProvider.ts#L170-L195
+   */
+  it('pins a chat to the last turn it finished, and skips one that has none, as VS Code\'s provider', async () => {
     const { client } = await holding();
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/chats', provider: 'claude' } });
     await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/review' } });
@@ -559,14 +561,9 @@ describe('completing a hash sign', () => {
     await settle();
 
     const found = await completing(client, 'ahp-session:/chats', 'tell #chat:');
-    expect(found.map((one) => one.attachment.resource)).toEqual(['ahp-chat:/blank', 'ahp-chat:/review']);
-    const review = found.find((one) => one.attachment.resource === 'ahp-chat:/review');
-    expect(review?.attachment).toMatchObject({ type: 'chat', label: 'Review the diff', endTurn: 't1' });
-    // Nothing rather than a key that says nothing: the protocol reads an absent
-    // `endTurn` as a chat whose whole transcript is meant, and a chat with no
-    // completed turn has no id to name.
-    const blank = found.find((one) => one.attachment.resource === 'ahp-chat:/blank');
-    expect(blank?.attachment).toEqual({ type: 'chat', resource: 'ahp-chat:/blank', label: 'New session' });
+    expect(found.map((one) => one.attachment)).toEqual([
+      { type: 'chat', resource: 'ahp-chat:/review', endTurn: 't1', label: 'Review the diff' },
+    ]);
   });
 
   it('answers a chat token with nothing where there is no session', async () => {

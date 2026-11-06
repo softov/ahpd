@@ -699,6 +699,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
                */
               const made = madeFrom.get(uri);
               if (made !== undefined && made.kind === 'tool') return false;
+              /*
+               * A chat with no completed turn has nothing to pin the reference
+               * to, and VS Code's provider skips it; one a client attaches all
+               * the same is taken, `endTurn` being optional.
+               * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatCompletionProvider.ts#L170-L182
+               */
+              if (chat.allTurns().length === 0) return false;
               return filter === '' || oneLine(chat.title()).toLowerCase().includes(filter);
             })
             // Newest first, as VS Code sorts them: the chat somebody means is
@@ -716,23 +723,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
                * The last turn that finished, pinned now rather than when the
                * message is sent: what gets attached is what the person saw when
                * they picked the chat, and a turn run in it afterwards must not
-               * extend that. VS Code skips a chat with no completed turn; this
-               * host offers it with no `endTurn`, because the protocol's is
-               * optional and a chat worth pointing at is worth offering before
-               * it has said anything.
+               * extend that, as VS Code pins it.
                */
-              const last = chat.allTurns().at(-1) as Bag | undefined;
-              const endTurn = String(last?.id ?? '');
+              const endTurn = String((chat.allTurns().at(-1) as Bag).id ?? '');
               return {
                 insertText: `#chat:${title} `,
                 rangeStart: from,
                 rangeEnd: offset,
-                attachment: {
-                  type: 'chat',
-                  resource: uri,
-                  label: title,
-                  ...(endTurn === '' ? {} : { endTurn }),
-                },
+                attachment: { type: 'chat', resource: uri, endTurn, label: title },
               };
             }), ...(partial ? await files() : [])],
           };
