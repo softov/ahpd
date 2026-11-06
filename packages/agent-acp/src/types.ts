@@ -161,6 +161,17 @@ export interface AcpOptions {
    */
   cutTurns?: 'error' | 'complete';
   /**
+   * Where the last of a failed server's stderr goes.
+   *
+   * `sentence`, the default, puts it under the failure's own words in the
+   * error a client is shown, since a person on a client cannot read the
+   * daemon's log (Softov's "stderr tail"); `log` leaves it to the log alone,
+   * as VS Code's agents log a runtime's stderr. Each line goes to the log
+   * either way.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2716
+   */
+  stderrTail?: 'sentence' | 'log';
+  /**
    * Where a session says what it left out or had to invent.
    *
    * A server left out of its MCP list, and a `tools/call` the agent reported no

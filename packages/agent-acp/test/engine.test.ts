@@ -159,7 +159,7 @@ it('registers the acp engine, its templates, host-only fields and key variables'
   // spells.
   const fields = Object.keys((engine?.schema.properties ?? {}) as Bag).sort();
   expect(fields).toEqual([
-    'args', 'authenticate', 'base', 'command', 'cutTurns', 'cwd', 'env', 'honoursTrust', 'hostTools', 'install', 'machine', 'page', 'toolsChanged',
+    'args', 'authenticate', 'base', 'command', 'cutTurns', 'cwd', 'env', 'honoursTrust', 'hostTools', 'install', 'machine', 'page', 'stderrTail', 'toolsChanged',
   ]);
   for (const owned of ['name', 'description', 'icon', 'model', 'provider']) expect(fields).not.toContain(owned);
 

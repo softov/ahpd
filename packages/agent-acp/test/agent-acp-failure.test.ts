@@ -52,10 +52,20 @@ const pause = async (times: number): Promise<void> => {
 };
 
 /** A session of `command`, with every action it emits kept, and every line the agent logs. */
-async function start(command: string, args: string[] = []): Promise<{ session: Session; actions: Bag[]; logged: string[] }> {
+async function start(
+  command: string,
+  args: string[] = [],
+  stderrTail?: 'sentence' | 'log',
+): Promise<{ session: Session; actions: Bag[]; logged: string[] }> {
   const actions: Bag[] = [];
   const logged: string[] = [];
-  const agent = acpAgent({ command, args, provider: 'acp-failure', log: (line) => { logged.push(line); } });
+  const agent = acpAgent({
+    command,
+    args,
+    provider: 'acp-failure',
+    log: (line) => { logged.push(line); },
+    ...(stderrTail === undefined ? {} : { stderrTail }),
+  });
   const opening: Start = {
     uri: 'ahp-session:/failure',
     chatUri: 'ahp-chat:/failure',
@@ -151,6 +161,23 @@ it('never surfaces the stderr of a server that answered, and logs it', async () 
   expect(actions.some((action) => action.type === 'chat/error')).toBe(false);
   expect(JSON.stringify(actions)).not.toContain('a line the server said to nobody');
   expect(logged.some((line) => line.endsWith('stderr: a line the server said to nobody'))).toBe(true);
+  expect(escaped).toEqual([]);
+});
+
+/*
+ * A record whose `stderrTail` is `log` leaves the trace to the log, as VS
+ * Code's agents log a runtime's stderr, and the error a client is shown is the
+ * failure's own words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2716
+ */
+it('leaves the stderr to the log when the record says stderrTail log', async () => {
+  const { session, actions, logged } = await start(process.execPath, [FIXTURE], 'log');
+  session.sendMessage('t1', 'be noisy');
+  await until(() => failure(actions) !== undefined && logged.some((line) => line.includes('backend.js:41')));
+
+  expect(failure(actions)).toContain('exited with code 4');
+  expect(failure(actions)).not.toContain('the model backend refused the request');
+  expect(logged.join('\n')).toContain('stderr: the model backend refused the request');
   expect(escaped).toEqual([]);
 });
 

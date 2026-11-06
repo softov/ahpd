@@ -474,11 +474,13 @@ export function createTurn(ctx: SessionContext): Turn {
        * code is rarely why and the trace under it is, and a person on a client
        * cannot read the daemon's log. Read from the connection this turn
        * prompted: a server that died is already off `live`, which is exactly
-       * the case a person most wants the trace for.
+       * the case a person most wants the trace for. A record whose
+       * `stderrTail` is `log` leaves the trace to the log alone, as VS Code's
+       * agents log a runtime's stderr.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2574
        */
       const said = messageOf(why);
-      const tail = connection === undefined ? '' : await connection.stderrTail();
+      const tail = connection === undefined || ctx.options.stderrTail === 'log' ? '' : await connection.stderrTail();
       endTurn(turnId, 'error', { errorType: 'sendFailed', message: tail === '' ? said : `${said}\n${tail}` });
     }
   };
