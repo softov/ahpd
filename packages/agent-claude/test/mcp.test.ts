@@ -80,4 +80,33 @@ describe('the servers a session declares', () => {
     const found = serversFor([dir], vouched);
     expect(urlOf(found.shared)).toBe('https://project/one');
   });
+
+  /*
+   * The CLI's scopes for one folder: local over project over user, the local
+   * servers kept in the home file under the folder's path.
+   * https://code.claude.com/docs/en/mcp#scope-hierarchy-and-precedence
+   */
+  it('reads a folder\'s local-scope servers from the home file, above the project\'s and the user\'s', () => {
+    const dir = project({ shared: { type: 'http', url: 'https://project/one' } });
+    const home = mkdtempSync(join(tmpdir(), 'ahpd-home-'));
+    made.push(home);
+    writeFileSync(join(home, '.claude.json'), JSON.stringify({
+      mcpServers: { shared: { type: 'http', url: 'https://user/one' }, mine: { type: 'http', url: 'https://user/mine' } },
+      projects: { [dir]: { mcpServers: { shared: { type: 'http', url: 'https://local/one' }, notes: { type: 'http', url: 'https://local/notes' } } } },
+    }));
+    const before = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const found = serversFor([dir], vouched);
+      expect(urlOf(found.shared)).toBe('https://local/one');
+      expect(urlOf(found.notes)).toBe('https://local/notes');
+      expect(urlOf(found.mine)).toBe('https://user/mine');
+      // The person's own, read for a folder nobody vouched for as well.
+      expect(urlOf(serversFor([dir], () => false).notes)).toBe('https://local/notes');
+    }
+    finally {
+      if (before === undefined) delete process.env.HOME;
+      else process.env.HOME = before;
+    }
+  });
 });

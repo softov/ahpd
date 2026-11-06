@@ -686,7 +686,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * The MCP servers, declared by this host rather than found by the CLI.
        *
        * The same files the CLI reads - `.mcp.json` beside the project and
-       * `mcpServers` in `~/.claude.json` - and the servers the host offers
+       * `~/.claude.json`, every scope of it - and the servers the host offers
        * every session, its own and its client plugins', all handed to the SDK
        * so they are *its* servers. That is what makes a token a client signed
        * in with applicable: `setMcpServers` re-declares only what the SDK was

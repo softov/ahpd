@@ -54,7 +54,8 @@ export function toClaudeMcpServers(
  * `setMcpServers` can re-declare, and a server that came from a settings file
  * is not - so a token a client signs in with has nowhere to go unless this
  * host owns the declaration. The files are the CLI's own: `.mcp.json` beside
- * the project, and `mcpServers` in `~/.claude.json`.
+ * the project, and `~/.claude.json`, its `mcpServers` and those under the
+ * folder's path.
  *
  * A file that is missing, unreadable or not JSON contributes nothing. This is
  * a best effort by design: the CLI still reads the same files, and a server
@@ -64,27 +65,38 @@ export function toClaudeMcpServers(
  * only where it says yes. A `.mcp.json` names servers this host starts as
  * commands, so a folder nobody vouched for contributes none of them - and an
  * absent `trusted` is the host having said nothing, which is the same answer. The home file
- * is the person's own rather than a project's and is read either way, as the
- * CLI's own `user` source is.
+ * is the person's own rather than a project's and is read either way: its
+ * top-level servers, the CLI's user scope, and the servers it keeps under each
+ * folder's path, the CLI's local scope.
+ *
+ * Every scope the CLI loads for the folder, in its precedence: local over
+ * project over user, a server of one name taken whole from the highest.
+ * https://code.claude.com/docs/en/mcp#scope-hierarchy-and-precedence
  */
 export function serversFor(directories: string[], trusted?: (folder: string) => boolean): Record<string, Bag> {
+  // Synchronous on purpose: these are small files read once when a session
+  // is created.
+  const read = (file: string): Bag => {
+    try {
+      const held = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+      return typeof held === 'object' && held !== null ? held as Bag : {};
+    }
+    catch { return {}; }
+  };
+  const serversOf = (holder: unknown): Bag => {
+    const servers = typeof holder === 'object' && holder !== null ? (holder as Bag).mcpServers : undefined;
+    return typeof servers === 'object' && servers !== null ? servers as Bag : {};
+  };
+  const home = read(join(homedir(), '.claude.json'));
+  const projects = typeof home.projects === 'object' && home.projects !== null ? home.projects as Bag : {};
   const found: Record<string, Bag> = {};
-  const files = [
-    join(homedir(), '.claude.json'),
-    ...directories.filter((dir) => trusted?.(dir) === true).map((dir) => join(dir, '.mcp.json')),
-  ];
-  for (const file of files) {
-    let held: unknown;
-    // Synchronous on purpose: these are two small files read once when a
-    // session is created, and a backend's `create` answers with a session
-    // rather than a promise of one.
-    try { held = JSON.parse(readFileSync(file, 'utf8')) as unknown; }
-    catch { continue; }
-    const bag = typeof held === 'object' && held !== null ? held as Bag : {};
-    const servers = typeof bag.mcpServers === 'object' && bag.mcpServers !== null ? bag.mcpServers as Bag : {};
+  // Lowest first, so a nearer scope's server of the same name wins.
+  for (const servers of [
+    serversOf(home),
+    ...directories.filter((dir) => trusted?.(dir) === true).map((dir) => serversOf(read(join(dir, '.mcp.json')))),
+    ...directories.map((dir) => serversOf(projects[dir])),
+  ]) {
     for (const [name, config] of Object.entries(servers)) {
-      // Later wins: a project's own `.mcp.json` is nearer than the home file,
-      // which is the order the CLI resolves them in.
       if (typeof config === 'object' && config !== null) found[name] = config as Bag;
     }
   }
