@@ -943,7 +943,8 @@ describe('a compacted context', () => {
       .filter((e) => e.action.type === 'chat/responsePart')
       .map((e) => e.action.part as Record<string, unknown>)
       .find((held) => held.kind === 'systemNotification');
-    expect(part?.content).toBe('Context compacted automatically: 120000 tokens to 30000.');
+    // In the CLI's own words for the boundary.
+    expect(part?.content).toBe('Conversation compacted');
     // And as the protocol declares the notice, which has no id of its own.
     expect(undeclaredIn(p.notes)).toEqual([]);
 

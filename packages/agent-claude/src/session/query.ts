@@ -799,22 +799,14 @@ export function createQuery(ctx: SessionContext): Query {
          *
          * Said as a notice in the running turn instead, because somebody
          * watching an answer change character halfway through deserves to
-         * know why.
+         * know why, in the CLI's own words for the boundary, the text its
+         * transcript keeps for it, which VS Code's Claude draws as a notice.
+         * The frame carries no text of its own, and a turn read back shows
+         * none, since the SDK reads the boundary's entry with no message.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L305-L314
          */
         if (type === 'system' && str(message.subtype) === 'compact_boundary') {
-          const turn = ctx.active;
-          if (turn) {
-            const about = bag(message.compact_metadata);
-            const was = typeof about.pre_tokens === 'number' ? about.pre_tokens : undefined;
-            const now = typeof about.post_tokens === 'number' ? about.post_tokens : undefined;
-            const how = str(about.trigger) === 'manual' ? 'Context compacted' : 'Context compacted automatically';
-            ctx.addPart(ctx.mainScope, {
-              kind: 'systemNotification',
-              content: was !== undefined && now !== undefined
-                ? `${how}: ${String(was)} tokens to ${String(now)}.`
-                : `${how}.`,
-            });
-          }
+          if (ctx.active) ctx.addPart(ctx.mainScope, { kind: 'systemNotification', content: 'Conversation compacted' });
           continue;
         }
 

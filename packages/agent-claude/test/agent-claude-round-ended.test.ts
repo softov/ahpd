@@ -89,6 +89,18 @@ it('announces a round that ended with no text and no tool call', async () => {
   expect(parts.findIndex((one) => one.kind === 'systemNotification')).toBeGreaterThan(reasoning);
 });
 
+/*
+ * A compacted conversation, in the CLI's own words for the boundary, the text
+ * its transcript keeps and VS Code's Claude draws as a notice.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L305-L314
+ */
+it('says a compacted conversation in the CLI\'s own words', async () => {
+  const { parts } = await replay([
+    { type: 'system', subtype: 'compact_boundary', session_id: 'cli-1', compact_metadata: { trigger: 'auto', pre_tokens: 180000, post_tokens: 22000 } },
+  ]);
+  expect(parts.filter((one) => one.kind === 'systemNotification')).toEqual([{ kind: 'systemNotification', content: 'Conversation compacted' }]);
+});
+
 it('says nothing extra for a round that answered with text', async () => {
   const { parts } = await replay(fixture('claude-answered-round.jsonl'));
   expect(parts.some((one) => one.kind === 'markdown')).toBe(true);

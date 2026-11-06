@@ -240,11 +240,11 @@ See [`code://packages/sdk/src/host/history.ts`](../../packages/sdk/src/host/hist
 ### A compacted session keeps its history and shows a notice
 
 WHEN the Claude backend gets a `compact_boundary` message during a turn
-THEN it adds a `systemNotification` part: "Context compacted" or "Context compacted automatically"
-AND when it knows the token counts it adds ": X tokens to Y."
+THEN it adds a `systemNotification` part in the CLI's own words for the boundary: "Conversation compacted"
 AND it does not send `chat/truncated`, so the earlier turns stay.
 
-The cofold backend uses the same words, live and when it reads a transcript back.
+The cofold backend says "Context compacted" or "Context compacted automatically", live and when it reads a transcript back.
+It adds ": X tokens to Y." when it knows the token counts.
 A Claude transcript read back skips the summary frame and shows no notice.
 
 ### A listed session belongs to the provider the host recorded
