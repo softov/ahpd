@@ -193,12 +193,12 @@ export const createTurns = (ctx: SessionContext): Turns => {
         // beside the words the turn was accepted with - and so a message the
         // queue handed over keeps what was pasted into it.
         ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-        // The protocol's `Message.model`: the model this turn runs on, so a
-        // client that reconnects shows it. The client's own `config` travels
-        // with it, as a claude turn's does.
-        ...(reference !== undefined
-          ? { model: { id: reference, ...(model?.config === undefined ? {} : { config: model.config }) } }
-          : {}),
+        // The protocol's `Message.model` as the client sent it, the start every
+        // client holds, as VS Code's host says a client's start; the model the
+        // run used is the turn's as it is read back.
+        ...(model === undefined
+          ? {}
+          : { model: { id: model.id, ...(model.config === undefined ? {} : { config: model.config }) } }),
       },
       responseParts: [],
     };

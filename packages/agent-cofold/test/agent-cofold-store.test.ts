@@ -1231,6 +1231,22 @@ it('rebuilds a turn with the model it ran on, after a restart', async () => {
   expect(turn?.usage?.model).toBe('open_router/x');
 });
 
+/*
+ * The start every client holds is the message as the client sent it, as VS
+ * Code's host says a client's start: a turn that names no model holds none,
+ * whatever model the backend runs it on.
+ */
+it('holds a turn that names no model as it was sent', async () => {
+  const { root, sweep } = place();
+  const agent = cofoldAgent({ adapter: createFakeModel({ script: [{ text: 'ok' }], stream: true }), store: root, model: 'configured/model', policy: allowAll() });
+  const one = open(agent, 'one', sweep);
+  one.session.sendMessage('t1', 'hi');
+  await until(() => ended(one.view));
+
+  expect(((one.session.chatState().turns as Bag[])[0]?.message as Bag | undefined)).not.toHaveProperty('model');
+  one.session.close();
+});
+
 it('rebuilds a turn with no model when its run recorded none', async () => {
   const { root, sweep } = place();
   const agent = backend(root, createFakeModel({ script: [{ text: 'ok' }], stream: true }), allowAll());

@@ -95,9 +95,13 @@ const endings = (sent: Bag[]): string[] => sent
   .map((action) => String(action.type))
   .filter((type) => type === 'chat/turnComplete' || type === 'chat/error' || type === 'chat/turnCancelled');
 
-/** The message each turn the session holds ran with, in order. */
-const ran = (session: Session): Bag[] => (session.chatState().turns as Bag[])
-  .map((turn) => turn.message as Bag);
+/**
+ * The message each turn ran with, in order, as the agent reads its turns back:
+ * the read names the model a turn ran on, where the start every client holds
+ * is the message as the client sent it. The fake pi's session is `pi-session-1`.
+ */
+const ran = async (agent: ReturnType<Engine['open']>): Promise<Bag[]> =>
+  ((await agent.transcript?.('pi-session-1')) ?? []).map((turn) => turn.message as unknown as Bag);
 
 it('registers the pi engine, its form, its template, its host-only field and its key variables', () => {
   const engine = kindWith(async () => fakePi().backend);
@@ -179,8 +183,10 @@ it('opens one backend per record, with the record\'s own id, name, model, trust 
   expect(opens.map(({ at }) => at.trustProject)).toEqual([true, false]);
 
   // The model each turn ran on is the record's own.
-  expect(ran(one.session)[0]?.model).toMatchObject({ id: 'anthropic/claude-opus-5' });
-  expect(ran(two.session)[0]?.model).toMatchObject({ id: 'openai/gpt-5' });
+  expect((await ran(first))[0]?.model).toMatchObject({ id: 'anthropic/claude-opus-5' });
+  expect((await ran(second))[0]?.model).toMatchObject({ id: 'openai/gpt-5' });
+  // The start every client holds is the message as it was sent, which named none.
+  expect((one.session.chatState().turns as Bag[])[0]?.message).not.toHaveProperty('model');
 });
 
 it('applies an edit of the record at the next turn, not to the one already running', async () => {
@@ -192,7 +198,8 @@ it('applies an edit of the record at the next turn, not to the one already runni
   });
   let held: Bag = { env: { ANTHROPIC_API_KEY: 'first-key' } };
   let model: string | undefined;
-  const { session, sent } = opened(engine.open(viewOf('pi-live', () => held, { model: () => model })));
+  const agent = engine.open(viewOf('pi-live', () => held, { model: () => model }));
+  const { session, sent } = opened(agent);
 
   session.sendMessage('t1', 'first');
   await until(() => endings(sent).length === 1);
@@ -221,5 +228,7 @@ it('applies an edit of the record at the next turn, not to the one already runni
   ]);
   // The model moved at the second turn, and not before it.
   expect(pi.asked.filter((one) => one.kind === 'setModel')).toEqual([{ kind: 'setModel', id: 'openai/gpt-5' }]);
-  expect(ran(session)[1]?.model).toMatchObject({ id: 'openai/gpt-5' });
+  expect((await ran(agent))[1]?.model).toMatchObject({ id: 'openai/gpt-5' });
+  // The start every client holds is the message as it was sent, which named none.
+  expect((session.chatState().turns as Bag[])[1]?.message).not.toHaveProperty('model');
 });

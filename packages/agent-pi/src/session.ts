@@ -845,16 +845,17 @@ export function piSession(
   /** Everything pi says while a turn runs, turned into what a client reads. */
   const heard = (event: AgentSessionEvent): void => {
     /*
-     * The turn's message as the turn had it, kept just before pi writes the
-     * turn's prompt: pi writes a message after its listeners hear it, so the
-     * entry kept here is the prompt's parent, which is how `replay.ts` pairs
-     * them. The turn's own prompt is the first person's message pi says once it
-     * has the prompt; a steering message after it is not the turn's.
+     * The turn's message as the turn had it, with the model it ran on, kept
+     * just before pi writes the turn's prompt: pi writes a message after its
+     * listeners hear it, so the entry kept here is the prompt's parent, which
+     * is how `replay.ts` pairs them. The turn's own prompt is the first
+     * person's message pi says once it has the prompt; a steering message
+     * after it is not the turn's.
      */
     if (event.type === 'message_end' && event.message.role === 'user' && !kept
       && active !== undefined && live !== undefined && prompted === String(active.id)) {
       kept = true;
-      live.appendEntry(MESSAGE_ENTRY, { message: active.message });
+      live.appendEntry(MESSAGE_ENTRY, { message: turn?.message ?? active.message });
     }
 
     // Each new answer replaces the last, so a retried error is forgotten the
@@ -1176,6 +1177,11 @@ export function piSession(
      * to, then the model the session is already on, then the record's default.
      */
     const ran = model?.id ?? (moved ? options.model : undefined) ?? live?.modelSelection()?.id ?? options.model;
+    /*
+     * The message as the client sent it, the start every client holds, as VS
+     * Code's host says a client's start; the turn read back names the model
+     * it ran on.
+     */
     const message: Bag = {
       text,
       ...(from?.origin !== undefined ? { origin: from.origin } : { origin: { kind: 'user' } }),
@@ -1183,9 +1189,9 @@ export function piSession(
       // Kept on the turn's own message, so a client reopening the chat reads
       // the picture beside the words the turn was accepted with.
       ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-      ...(ran !== undefined
-        ? { model: { id: ran, ...(model?.config !== undefined ? { config: model.config } : {}) } }
-        : {}),
+      ...(model === undefined
+        ? {}
+        : { model: { id: model.id, ...(model.config !== undefined ? { config: model.config } : {}) } }),
     };
     // No part yet: each is opened when pi starts writing the block it holds.
     // The fields `ActiveTurn` declares; `finish` gives it the `state` a `Turn`
@@ -1204,7 +1210,10 @@ export function piSession(
       calls: new Map(),
       ownerOf: contributorOf,
     };
-    turn = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[] };
+    const ranOn: Bag = ran === undefined
+      ? message
+      : { ...message, model: { id: ran, ...(model?.config !== undefined ? { config: model.config } : {}) } };
+    turn = { turnId, startedAt: String(active.startedAt), message: ranOn, parts: active.responseParts as Bag[] };
     watchedTurns.push(turn);
     // A turn's start is the chat's `modifiedAt`, as the reducer moves it, and
     // the record's.

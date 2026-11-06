@@ -8,6 +8,7 @@ import { resolveNeeds } from '../../sdk/src/machines/machine.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
 import { piAgent } from '../src/agent.js';
+import { watchedSession } from '../src/catalog.js';
 import { idOf, listed, modelFor, THINKING_KEY } from '../src/models.js';
 import { optionsOf } from '../src/plugin.js';
 import { piSession } from '../src/session.js';
@@ -446,11 +447,14 @@ it('runs a turn that names a model pi does not offer on the model pi is on, and 
   expect(types('chat')).not.toContain('chat/error');
   expect(pi.asked.some((one) => one.kind === 'prompt')).toBe(true);
   expect(lines.filter((line) => line.includes('ahp-chat:/s1') && line.includes('openrouter/nobody'))).toHaveLength(1);
-  // The model is where it was, so the next turn runs on it.
+  // The model is where it was, so the next turn runs on it, which the turn
+  // read back names.
   session.sendMessage('t2', 'again');
   await settled();
-  const turn = (session.chatState().turns as Bag[]).find((one) => one.id === 't2');
-  expect((turn?.message as Bag).model).toEqual({ id: 'anthropic/claude-opus-5' });
+  const kept = watchedSession('pi', 'pi-session-1')?.turns.find((one) => one.turnId === 't2');
+  expect(kept?.message.model).toEqual({ id: 'anthropic/claude-opus-5' });
+  // The start every client holds is the message as it was sent, which named none.
+  expect((session.chatState().turns as Bag[]).find((one) => one.id === 't2')?.message).not.toHaveProperty('model');
   expect(types('chat')).toContain('chat/turnComplete');
 });
 
@@ -495,12 +499,19 @@ it('carries the model a turn runs on its message', async () => {
   expect((turn?.message as Bag).model).toEqual({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'high' } });
 });
 
-it('carries the configured model when the turn names none', async () => {
+/*
+ * The start every client holds is the message as the client sent it, as VS
+ * Code's host says a client's start; the turn read back names the model it
+ * ran on.
+ */
+it('holds a turn that names no model as it was sent, and reads it back with the configured model', async () => {
   const { session } = opened({}, { model: 'openai/gpt-5' });
   session.sendMessage('t1', 'hello');
   await settled();
   const turn = (session.chatState().turns as Bag[]).find((one) => one.id === 't1');
-  expect(((turn?.message as Bag).model as Bag).id).toBe('openai/gpt-5');
+  expect(turn?.message).not.toHaveProperty('model');
+  const kept = watchedSession('pi', 'pi-session-1')?.turns.find((one) => one.turnId === 't1');
+  expect((kept?.message.model as Bag | undefined)?.id).toBe('openai/gpt-5');
 });
 
 it('leaves the model off a turn that has none', async () => {
