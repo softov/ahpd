@@ -48,13 +48,13 @@ const CLOSE_GRACE_MS = 1000;
  * One conversation over one ACP server.
  *
  * `options` is the backend's identity and wiring; `start` is what this
- * particular session was told. The server is spawned lazily, on the first
- * turn, so a session somebody opened and never used costs no subprocess.
+ * particular session was told. The session is answered once its server has
+ * opened, so what the server offers is in the first state a client is served.
  */
 export function acpSession(
   options: AcpOptions,
   start: Start,
-): Session {
+): Promise<Session> {
   const provider = options.provider ?? 'acp';
   const emit = start.emit;
   /*
@@ -167,7 +167,7 @@ export function acpSession(
   /** The model a client picked, taken by the next send: the server keeps a model it took. */
   let chosen: Chosen | undefined;
 
-  return {
+  const session: Session = {
     uri: start.uri,
     chatUri: start.chatUri,
 
@@ -431,4 +431,16 @@ export function acpSession(
       await connection?.close();
     },
   };
+  /*
+   * The server is opened before the session is answered, so the state a
+   * client is first served carries what the server offers, its modes, its
+   * options and its models, as VS Code seeds a session's config and schema
+   * before its first snapshot. It is built from what the record says now. An
+   * open that fails, or a record that can no longer be used, is the first
+   * turn's to say: that turn opens the server again, and ends with the
+   * failure it meets.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
+   */
+  if (ctx.refreshOptions() !== undefined) return Promise.resolve(session);
+  return ctx.open().then(() => session, () => session);
 }

@@ -173,9 +173,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * What the record said when this session's server was last spawned, as one
    * string to compare.
    *
-   * Empty until the first turn, which settles it: a record can be edited
-   * between the open and the turn that first uses it, and the values read then
-   * are the ones the first server is built with.
+   * Read as the session is created, which is when its first server is built,
+   * and empty for a backend that has no record behind it.
    */
   startedWith: string;
   /** Whether a client asked to stop, read when the prompt settles. */

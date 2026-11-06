@@ -8,7 +8,6 @@ import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Emit, McpServer, MessageAttachment, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
-import { startedNow } from '../../sdk/test/support/started.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { acpAgent, watchedRows, watchSession } from '../src/index.js';
@@ -111,10 +110,10 @@ const opening = (id: string, over: Partial<Start> = {}): Start => ({
   ...over,
 });
 
-/** One session of a backend, watched and remembered for cleanup. */
-function start(agent: Agent, id: string, over: Partial<Start> = {}): { session: Session; watch: Watcher } {
+/** One session of a backend, answered once its server has opened, watched and remembered for cleanup. */
+async function start(agent: Agent, id: string, over: Partial<Start> = {}): Promise<{ session: Session; watch: Watcher }> {
   const watch = watcher();
-  const session = startedNow(agent.create(opening(id, { ...over, emit: watch.emit })));
+  const session = await agent.create(opening(id, { ...over, emit: watch.emit }));
   started.push(session);
   return { session, watch };
 }
@@ -194,36 +193,41 @@ it('keeps no per-session state file of its own', () => {
   expect(acpAgent({ command: 'node' }).stateFile?.('acp-session-1', '/tmp')).toBeUndefined();
 });
 
-it('reports the server model options once a session has opened', async () => {
+/*
+ * What the server offers is in the session it answers, before any turn: the
+ * open runs before the session is answered, so the first state a client is
+ * served carries the server's models, modes and options, as VS Code seeds a
+ * session's config and schema before its first snapshot.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
+ */
+it('answers the session with the server\'s models, modes and options in its state', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'models');
-  // Nothing has asked the server yet, and ACP has no model list before it does.
-  expect(session.models()).toEqual([]);
-  await runTurn(session, watch, 't1', 'hi');
+  const { session } = await start(agent, 'models');
+
   expect(session.models()).toEqual([
     { id: 'fast', name: 'Fast' },
     { id: 'thorough', name: 'Thorough' },
   ]);
+  const properties = propertiesOf(session);
+  expect(Object.keys(properties).sort()).toEqual(['acp.telemetry', 'acp.thinking', 'permissionMode']);
+  expect(properties.permissionMode?.enum).toEqual(['ask', 'code']);
+  expect(configOf(session).values).toMatchObject({ permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false });
 });
 
 it('tells the host once the server has named its models', async () => {
   const { agent } = backend();
-  const seen: { id: string; name: string }[][] = [];
-  const { session, watch } = start(agent, 'handshake', { onHandshake: () => seen.push(session.models()) });
-  expect(seen).toEqual([]);
+  let told = 0;
+  const { session, watch } = await start(agent, 'handshake', { onHandshake: () => { told++; } });
+  // Once, as the session was opened, which is before it was answered.
+  expect(told).toBe(1);
   await runTurn(session, watch, 't1', 'hi');
-  // Once, and only after the models are known, so the host reads a full list.
-  expect(seen).toEqual([[
-    { id: 'fast', name: 'Fast' },
-    { id: 'thorough', name: 'Thorough' },
-  ]]);
   await runTurn(session, watch, 't2', 'again');
-  expect(seen).toHaveLength(1);
+  expect(told).toBe(1);
 });
 
 it('sets the model a turn chose on the server before prompting', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'chosen');
+  const { session, watch } = await start(agent, 'chosen');
   const before = watch.endings().length;
   session.changeModel({ id: 'thorough' });
   session.sendMessage('t1', 'hi');
@@ -240,7 +244,7 @@ it('sets the model a turn chose on the server before prompting', async () => {
 it('runs a turn naming a model the server does not offer on the model in force', async () => {
   for (const flags of [[], ['--legacy']]) {
     const { agent, log } = backend(flags);
-    const { session, watch } = start(agent, `unoffered${flags.join('')}`);
+    const { session, watch } = await start(agent, `unoffered${flags.join('')}`);
     const before = watch.endings().length;
     session.changeModel({ id: 'no-such-model' });
     session.sendMessage('t1', 'hi');
@@ -255,10 +259,13 @@ it('runs a turn naming a model the server does not offer on the model in force',
 
 it('reads the legacy models list, and sets a chosen model the old way', async () => {
   const { agent, log } = backend(['--legacy']);
-  const { session, watch } = start(agent, 'legacy');
-  // The list comes with the answer that opens the session, so before that
-  // there is none to offer.
-  expect(session.models()).toEqual([]);
+  const { session, watch } = await start(agent, 'legacy');
+  // The list comes with the answer that opens the session, which is opened
+  // before the session is answered.
+  expect(session.models()).toEqual([
+    { id: 'fast', name: 'Fast' },
+    { id: 'thorough', name: 'Thorough' },
+  ]);
   const before = watch.endings().length;
   session.changeModel({ id: 'thorough' });
   session.sendMessage('t1', 'hi');
@@ -308,7 +315,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('carries a stdio server whatever the server says it can take', async () => {
     const { agent, log } = withLog();
-    const { session, watch } = start(agent, 'stdio', { mcpServers: servers });
+    const { session, watch } = await start(agent, 'stdio', { mcpServers: servers });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -331,7 +338,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('leaves an http server out of a server that takes none, and says which', async () => {
     const { agent, log, said } = withLog({}, ['--no-http-mcp']);
-    const { session, watch } = start(agent, 'nohttp', { mcpServers: servers });
+    const { session, watch } = await start(agent, 'nohttp', { mcpServers: servers });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -345,7 +352,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('offers the host\'s own tools as one server with its token, on by default', async () => {
     const { agent, log } = withLog();
-    const { session, watch } = start(agent, 'tools', { toolsServer: () => hostTools });
+    const { session, watch } = await start(agent, 'tools', { toolsServer: () => hostTools });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -360,7 +367,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('leaves the host\'s tools out where the deployment said hostTools: false', async () => {
     const { agent, log } = withLog({ hostTools: false });
-    const { session, watch } = start(agent, 'notools', { toolsServer: () => hostTools });
+    const { session, watch } = await start(agent, 'notools', { toolsServer: () => hostTools });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -370,7 +377,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('leaves the host\'s own tools out of a server that takes none over HTTP, and says which', async () => {
     const { agent, log, said } = withLog({}, ['--no-http-mcp']);
-    const { session, watch } = start(agent, 'notoolshttp', { toolsServer: () => hostTools });
+    const { session, watch } = await start(agent, 'notoolshttp', { toolsServer: () => hostTools });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -384,7 +391,7 @@ describe('the MCP servers a session is opened with', () => {
   it('keeps one endpoint of the host\'s own across a server that died', async () => {
     const { agent, log } = withLog();
     let asked = 0;
-    const { session, watch } = start(agent, 'respawn', {
+    const { session, watch } = await start(agent, 'respawn', {
       toolsServer: () => {
         asked += 1;
         return hostTools;
@@ -405,7 +412,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('carries the same list on a load, which is the session that continues', async () => {
     const { agent, log } = withLog();
-    const { session, watch } = start(agent, 'loaded', { mcpServers: servers, resume: 'old-one' });
+    const { session, watch } = await start(agent, 'loaded', { mcpServers: servers, resume: 'old-one' });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -442,7 +449,7 @@ describe('the MCP servers a session is opened with', () => {
   ] as const) {
     it(`leaves the host's tools out of a session in a machine when the daemon is at ${at}, and says why`, async () => {
       const { agent, log, said } = withLog();
-      const { session, watch } = start(agent, `boxed-${at}`, inBox(url));
+      const { session, watch } = await start(agent, `boxed-${at}`, inBox(url));
       const before = watch.endings().length;
       session.sendMessage('t1', 'hi');
       await until(() => watch.endings().length > before);
@@ -457,7 +464,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('offers the host\'s tools to a session in a machine where the daemon is on an address it can reach', async () => {
     const { agent, log, said } = withLog();
-    const { session, watch } = start(agent, 'boxed-reach', inBox('http://10.0.0.5:4242/ahp-mcp/one'));
+    const { session, watch } = await start(agent, 'boxed-reach', inBox('http://10.0.0.5:4242/ahp-mcp/one'));
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -491,7 +498,7 @@ describe('toolsReachable', () => {
 
 it('learns the server modes and reports where the session sits after a change', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'modes');
+  const { session, watch } = await start(agent, 'modes');
   await runTurn(session, watch, 't1', 'hi');
 
   expect(propertiesOf(session).permissionMode).toMatchObject({
@@ -509,7 +516,7 @@ it('learns the server modes and reports where the session sits after a change', 
 
 it('announces a mode the agent moved itself, once', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'announced');
+  const { session, watch } = await start(agent, 'announced');
   await runTurn(session, watch, 't1', 'hi');
   // What the server opened with is said once, in one action, because the
   // session held none of it; after that nothing is said until the server
@@ -531,7 +538,7 @@ it('announces a mode the agent moved itself, once', async () => {
 
 it('says nothing for a mode the client set itself', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'announced-by-us');
+  const { session, watch } = await start(agent, 'announced-by-us');
   await runTurn(session, watch, 't1', 'hi');
 
   expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
@@ -550,7 +557,7 @@ it('opens a session in the mode it was started with', async () => {
   const { agent, log } = backend();
   // The fixture starts in `ask` and offers `ask` and `code`, so a session asked
   // for `code` is one the server has to be moved into.
-  const { session, watch } = start(agent, 'asked', { settings: { permissionMode: 'code' } });
+  const { session, watch } = await start(agent, 'asked', { settings: { permissionMode: 'code' } });
   await runTurn(session, watch, 't1', 'hi');
 
   expect(requests(log).find((one) => one.method === 'session/set_mode')?.params)
@@ -564,7 +571,7 @@ it('opens a session in the mode it was started with', async () => {
 
 it('opens a session in its asked mode through the server mode option', async () => {
   const { agent, log } = backend(['--modes']);
-  const { session, watch } = start(agent, 'asked-option', { settings: { permissionMode: 'code' } });
+  const { session, watch } = await start(agent, 'asked-option', { settings: { permissionMode: 'code' } });
   await runTurn(session, watch, 't1', 'hi');
 
   // A server naming the mode as an option of its own is moved through that
@@ -578,7 +585,7 @@ it('opens a session in its asked mode through the server mode option', async () 
 
 it('sends nothing for a session that asks for the mode the server is already in', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'asked-same', { settings: { permissionMode: 'ask' } });
+  const { session, watch } = await start(agent, 'asked-same', { settings: { permissionMode: 'ask' } });
   await runTurn(session, watch, 't1', 'hi');
 
   expect(requests(log).some((one) => one.method === 'session/set_mode')).toBe(false);
@@ -588,7 +595,7 @@ it('sends nothing for a session that asks for the mode the server is already in'
 
 it('leaves a session in the server mode when the one it asked for is not offered', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'asked-unknown', { settings: { permissionMode: 'plan' } });
+  const { session, watch } = await start(agent, 'asked-unknown', { settings: { permissionMode: 'plan' } });
   await runTurn(session, watch, 't1', 'hi');
 
   // The server serves the modes, and one it did not name is a request it would
@@ -604,7 +611,7 @@ it('leaves a session in the server mode when the one it asked for is not offered
 
 it('says the mode the server stays in when it refuses the one the session asked for', async () => {
   const { agent, log } = backend(['--refuse-mode']);
-  const { session, watch } = start(agent, 'asked-refused', {
+  const { session, watch } = await start(agent, 'asked-refused', {
     settings: { permissionMode: 'code', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
   });
   await runTurn(session, watch, 't1', 'hi');
@@ -618,7 +625,7 @@ it('says the mode the server stays in when it refuses the one the session asked 
 
 it('says an option the server moved with a value a client set', async () => {
   const { agent } = backend(['--model-thinks']);
-  const { session, watch } = start(agent, 'moved-with', {
+  const { session, watch } = await start(agent, 'moved-with', {
     settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
   });
   await runTurn(session, watch, 't1', 'hi');
@@ -633,7 +640,7 @@ it('says an option the server moved with a value a client set', async () => {
 
 it('says the model a turn chose and an option the server moved with it', async () => {
   const { agent } = backend(['--model-thinks']);
-  const { session, watch } = start(agent, 'chosen-with', {
+  const { session, watch } = await start(agent, 'chosen-with', {
     settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
   });
   await runTurn(session, watch, 't1', 'hi');
@@ -645,7 +652,7 @@ it('says the model a turn chose and an option the server moved with it', async (
 
 it('sends the mode again when the server is opened after a death', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'died-mode');
+  const { session, watch } = await start(agent, 'died-mode');
   await runTurn(session, watch, 't1', 'hi');
   // A mode a person set after the open, which a server that starts fresh has
   // no memory of.
@@ -661,7 +668,7 @@ it('sends the mode again when the server is opened after a death', async () => {
 
 it('holds the chat\'s modified time where the reducer moves it, at a turn\'s end and nowhere else', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'stamped');
+  const { session, watch } = await start(agent, 'stamped');
   await runTurn(session, watch, 't1', 'hi');
   const ended = session.allTurns().at(-1) as Bag;
   const at = new Date(Date.parse(String(ended.startedAt)) + Number(ended.duration)).toISOString();
@@ -676,7 +683,7 @@ it('holds the chat\'s modified time where the reducer moves it, at a turn\'s end
 
 it('holds a turn a call outlived as the reducer ends it, the call cancelled', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'outlived');
+  const { session, watch } = await start(agent, 'outlived');
   await runTurn(session, watch, 't1', 'client cstatus=pending ctitle=Lookup');
 
   // The server ended the turn with its call never started: the chat a client
@@ -689,7 +696,7 @@ it('holds a turn a call outlived as the reducer ends it, the call cancelled', as
 
 it('reports a command the server advertises as a built-in skill', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'commands');
+  const { session, watch } = await start(agent, 'commands');
   await runTurn(session, watch, 't1', 'hi');
 
   // A skill in the one read-only built-in container, as VS Code's Claude
@@ -714,7 +721,7 @@ it('reports a command the server advertises as a built-in skill', async () => {
 
 it("takes the agent's name for the session over the one the first prompt gave it", async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'title');
+  const { session, watch } = await start(agent, 'title');
   await runTurn(session, watch, 't1', 'name it please');
   expect(session.title()).toBe('Naming the work');
   // The prompt's own words first, which is all a client had until the agent
@@ -728,7 +735,7 @@ it("takes the agent's name for the session over the one the first prompt gave it
 
 it('keeps the name a person gave the session, whatever the agent calls it', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'renamed');
+  const { session, watch } = await start(agent, 'renamed');
   session.setTitle?.('The name I want');
   await runTurn(session, watch, 't1', 'name it anyway');
 
@@ -948,7 +955,7 @@ it('answers the watched record for a command that does not start, and nothing el
 
 it('reads back the turn this process watched and nothing for one it did not', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'transcript');
+  const { session, watch } = await start(agent, 'transcript');
   await runTurn(session, watch, 't1', 'hi');
 
   const id = session.agentId();
@@ -963,7 +970,7 @@ it('reads back the turn this process watched and nothing for one it did not', as
 
 it('reads back each turn with the usage it last reported', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'usage');
+  const { session, watch } = await start(agent, 'usage');
   await runTurn(session, watch, 't1', 'spend some of it and count the tokens');
   await runTurn(session, watch, 't2', 'spend some more');
 
@@ -1016,7 +1023,7 @@ it('reads back a session this process never watched by loading it from the serve
  */
 it('answers a refusal that names no decline with a cancel, and leaves a skipped question out', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'elicit-answers');
+  const { session, watch } = await start(agent, 'elicit-answers');
   const said = (): string => watch.actions
     .filter((one) => one.action.type === 'chat/delta')
     .map((one) => String(one.action.content))
@@ -1102,7 +1109,7 @@ it('answers a second read of the same session from the record, and spawns nothin
 
 it('reads back an interleaved turn with its parts in the order they streamed', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'interleaved');
+  const { session, watch } = await start(agent, 'interleaved');
   await runTurn(session, watch, 't1', 'ponder it');
 
   const turns = await agent.transcript?.(String(session.agentId()));
@@ -1116,7 +1123,7 @@ it('reads back an interleaved turn with its parts in the order they streamed', a
 
 it('reads back a part for a message that was only whitespace, with the ids the live turn held', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'blank');
+  const { session, watch } = await start(agent, 'blank');
   await runTurn(session, watch, 't1', 'blank it');
 
   const turns = await agent.transcript?.(String(session.agentId()));
@@ -1132,7 +1139,7 @@ it('reads back a part for a message that was only whitespace, with the ids the l
 
 it('reaches the server for permissionMode and model, and refuses another key naming it', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'config');
+  const { session, watch } = await start(agent, 'config');
   await runTurn(session, watch, 't1', 'hi');
 
   expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
@@ -1150,7 +1157,7 @@ it('reaches the server for permissionMode and model, and refuses another key nam
 
 it('draws every option of its own as a control, and sets each through the server', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'controls');
+  const { session, watch } = await start(agent, 'controls');
   await runTurn(session, watch, 't1', 'hi');
 
   // The model's and the mode's own names, and every other option under the
@@ -1200,7 +1207,7 @@ it('draws every option of its own as a control, and sets each through the server
  */
 it('carries the description the server gave each value as the picker\'s enumDescriptions', async () => {
   const { agent } = backend(['--described']);
-  const { session, watch } = start(agent, 'described');
+  const { session, watch } = await start(agent, 'described');
   await runTurn(session, watch, 't1', 'hi');
 
   const properties = propertiesOf(session);
@@ -1210,7 +1217,7 @@ it('carries the description the server gave each value as the picker\'s enumDesc
 
   // The mode option, the newer account of the same modes, with both described.
   const { agent: optioned } = backend(['--described', '--modes']);
-  const { session: moded, watch: seen } = start(optioned, 'described-option');
+  const { session: moded, watch: seen } = await start(optioned, 'described-option');
   await runTurn(moded, seen, 't1', 'hi');
   expect(propertiesOf(moded).permissionMode?.enumDescriptions)
     .toEqual(['Request permission before making any changes', 'Write and modify code with full tool access']);
@@ -1218,7 +1225,7 @@ it('carries the description the server gave each value as the picker\'s enumDesc
 
 it('sets the mode through the option the server named, not the legacy call', async () => {
   const { agent, log } = backend(['--modes']);
-  const { session, watch } = start(agent, 'mode-option');
+  const { session, watch } = await start(agent, 'mode-option');
   await runTurn(session, watch, 't1', 'hi');
 
   // The option is the server's own account of the mode, so its values are the
@@ -1232,32 +1239,22 @@ it('sets the mode through the option the server named, not the legacy call', asy
     .toMatchObject({ configId: 'mode', value: 'code' });
 });
 
-it('keeps a value set on a session that has not run a turn, and sends it when the server opens', async () => {
+it('sends the server a value the session was created with, once the server has named the option', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'unopened');
+  const { session } = await start(agent, 'unopened', { settings: { 'acp.thinking': 'deep' } });
 
-  // A value is no reason to start a server: it is kept, and nothing has been
-  // asked of a server yet.
-  expect(await session.setConfig?.('acp.thinking', 'deep')).toBe(true);
-  expect(requests(log)).toEqual([]);
-  expect(session.settings()['acp.thinking']).toBe('deep');
-
-  // The turn opens the server, which is sent the kept value once it has named
-  // the option, and the session runs with it.
-  await runTurn(session, watch, 't1', 'hi');
+  // The open sends the session's own values once the server has said what it
+  // offers, and the session is answered running with them.
   expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
     .toMatchObject({ configId: 'thinking', value: 'deep' });
   expect(configOf(session).values['acp.thinking']).toBe('deep');
 });
 
-it('runs with the server value when a kept one is not offered, and says so', async () => {
+it('runs with the server value when one the session was created with is not offered, and says so', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'unopened-unoffered', {
-    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.telemetry': false },
+  const { watch } = await start(agent, 'unopened-unoffered', {
+    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.telemetry': false, 'acp.thinking': 'shallow' },
   });
-
-  expect(await session.setConfig?.('acp.thinking', 'shallow')).toBe(true);
-  await runTurn(session, watch, 't1', 'hi');
 
   // The server serves the values, and one it does not name is a request it
   // would refuse: nothing is sent, and the value in force is said.
@@ -1267,7 +1264,7 @@ it('runs with the server value when a kept one is not offered, and says so', asy
 
 it('sets the model through the older call on a server with no options', async () => {
   const { agent, log } = backend(['--legacy']);
-  const { session, watch } = start(agent, 'legacy');
+  const { session, watch } = await start(agent, 'legacy');
   await runTurn(session, watch, 't1', 'hi');
 
   // A server from before config options named its models in a list, and takes
@@ -1295,7 +1292,7 @@ const HELD: Bag[] = [{
 
 it('loads a resumed session when the host holds none of its turns', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'resume', { resume: 'acp-session-resumed' });
+  const { session, watch } = await start(agent, 'resume', { resume: 'acp-session-resumed' });
   await runTurn(session, watch, 't1', 'hi');
 
   expect(session.agentId()).toBe('acp-session-resumed');
@@ -1316,7 +1313,7 @@ it('takes a resumed session back without the server replaying it', async () => {
   // whole conversation back, which is exactly what a host that holds it wants
   // not to happen.
   const { agent, log } = backend(['--replay']);
-  const { session, watch } = start(agent, 'taken-back', { resume: 'acp-session-taken-back', seed: HELD });
+  const { session, watch } = await start(agent, 'taken-back', { resume: 'acp-session-taken-back', seed: HELD });
   await runTurn(session, watch, 't1', 'hi');
 
   expect(session.agentId()).toBe('acp-session-taken-back');
@@ -1336,7 +1333,7 @@ it('takes a resumed session back without the server replaying it', async () => {
 
 it('takes a session back on a server that cannot load one at all', async () => {
   const { agent, log } = backend(['--no-load']);
-  const { session, watch } = start(agent, 'no-load', { resume: 'acp-session-no-load', seed: HELD });
+  const { session, watch } = await start(agent, 'no-load', { resume: 'acp-session-no-load', seed: HELD });
   await runTurn(session, watch, 't1', 'hi');
 
   // A conversation continued on a server whose only way to continue one is a
@@ -1353,7 +1350,7 @@ it('is resumable on a server whose only way to continue a conversation is a resu
   // `--no-load` is a server that never advertised `loadSession`, so a resume is
   // the whole of what it can be handed a conversation by.
   const { agent, log } = backend(['--no-load']);
-  const { session, watch } = start(agent, 'resume-only');
+  const { session, watch } = await start(agent, 'resume-only');
   await runTurn(session, watch, 't1', 'hi');
 
   // Answered from the handshake, so it exists only once the server has spoken:
@@ -1380,7 +1377,7 @@ it('is resumable on a server whose only way to continue a conversation is a resu
 
 it('holds a load\'s replay out of the turn that asked for it', async () => {
   const { agent } = backend(['--replay']);
-  const { session, watch } = start(agent, 'replayed', { resume: 'acp-session-replayed' });
+  const { session, watch } = await start(agent, 'replayed', { resume: 'acp-session-replayed' });
   await runTurn(session, watch, 't1', 'hi');
 
   // The replay is what the server said before it answered the load, and it is
@@ -1392,7 +1389,7 @@ it('holds a load\'s replay out of the turn that asked for it', async () => {
 
 it('reads a loaded session back with its replayed turns ahead of the new one', async () => {
   const { agent } = backend(['--replay']);
-  const { session, watch } = start(agent, 'replayed-history', { resume: 'acp-session-replayed-history' });
+  const { session, watch } = await start(agent, 'replayed-history', { resume: 'acp-session-replayed-history' });
   await runTurn(session, watch, 't1', 'hi');
 
   const turns = await agent.transcript?.(String(session.agentId()));
@@ -1482,7 +1479,7 @@ it.each([
  */
 it('reads a watched turn back with what was attached to its message', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'attached');
+  const { session, watch } = await start(agent, 'attached');
   const note = { type: 'simple', label: 'note', modelRepresentation: 'a note to keep' } as MessageAttachment;
   session.sendMessage('t1', 'hi', undefined, [note]);
   await until(() => watch.endings().length > 0);
@@ -1573,7 +1570,7 @@ it('does not replay a conversation twice when a read is followed by a turn', asy
   // so the conversation is replayed twice - and the second replay must not land
   // in the history, or a client reads one conversation as having happened twice.
   await agent.transcript?.('acp-session-once');
-  const { session, watch } = start(agent, 'once', { resume: 'acp-session-once' });
+  const { session, watch } = await start(agent, 'once', { resume: 'acp-session-once' });
   await runTurn(session, watch, 't1', 'hi again');
 
   expect(requests(log).filter((one) => one.method === 'session/load').length).toBeGreaterThan(1);
@@ -1588,7 +1585,7 @@ it('does not replay a conversation twice when a read is followed by a turn', asy
 
 it('continues the same session after the server dies, rather than starting a new one', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'died');
+  const { session, watch } = await start(agent, 'died');
   // The fixture exits mid-prompt, so the first turn fails and the death that
   // caused it is already heard before the second turn asks for a server.
   await runTurn(session, watch, 't1', 'die now');
@@ -1616,7 +1613,7 @@ it('continues the same session after the server dies, rather than starting a new
 
 it('loads the conversation again after a death on a server that cannot take one back', async () => {
   const { agent, log } = backend(['--no-resume']);
-  const { session, watch } = start(agent, 'died-no-resume');
+  const { session, watch } = await start(agent, 'died-no-resume');
   await runTurn(session, watch, 't1', 'die now');
   const named = session.agentId();
 
@@ -1633,7 +1630,7 @@ it('loads the conversation again after a death on a server that cannot take one 
 
 it('fails the turn after a death when the server can neither load nor resume a session', async () => {
   const { agent, log } = backend(['--no-load', '--no-resume']);
-  const { session, watch } = start(agent, 'died-no-load');
+  const { session, watch } = await start(agent, 'died-no-load');
   await runTurn(session, watch, 't1', 'die now');
 
   await runTurn(session, watch, 't2', 'hi again');
@@ -1653,21 +1650,21 @@ it('offers no fork for an agent whose server cannot make one, and a fork once it
   // they can fork their chats.
   const { agent } = backend();
   expect(agent.chats?.fork).toBeUndefined();
-  const { session, watch } = start(agent, 'no-fork');
+  const { session, watch } = await start(agent, 'no-fork');
   await runTurn(session, watch, 't1', 'hi');
   expect(agent.chats?.fork).toBeUndefined();
   expect(session.forkPoint?.('t1')).toBeUndefined();
 
   // A server that advertises it is an agent a client may fork in.
   const { agent: forking } = backend(['--fork']);
-  const { session: other, watch: seen } = start(forking, 'can-fork');
+  const { session: other, watch: seen } = await start(forking, 'can-fork');
   await runTurn(other, seen, 't1', 'hi');
   expect(forking.chats?.fork).toBe(true);
 });
 
 it('offers a fork of the last turn only, and copies the conversation into a new session', async () => {
   const { agent, log } = backend(['--fork']);
-  const { session, watch } = start(agent, 'forked-from');
+  const { session, watch } = await start(agent, 'forked-from');
   await runTurn(session, watch, 't1', 'first');
   await runTurn(session, watch, 't2', 'second');
   const from = String(session.agentId());
@@ -1681,7 +1678,7 @@ it('offers a fork of the last turn only, and copies the conversation into a new 
   // What the host sends for a fork, built the way `createSession` builds it.
   const seed = session.allTurns();
   const point = String(session.forkPoint?.('t2'));
-  const { session: forked, watch: forkedWatch } = start(agent, 'forked', { resume: from, forkAt: point, seed });
+  const { session: forked, watch: forkedWatch } = await start(agent, 'forked', { resume: from, forkAt: point, seed });
   await runTurn(forked, forkedWatch, 't3', 'third');
 
   const copies = requests(log).filter((one) => one.method === 'session/fork');
@@ -1701,11 +1698,11 @@ it('offers a fork of the last turn only, and copies the conversation into a new 
 
 it('takes a forked session back under its own id after its server died, and forks nothing again', async () => {
   const { agent, log } = backend(['--fork']);
-  const { session, watch } = start(agent, 'fork-dies-from');
+  const { session, watch } = await start(agent, 'fork-dies-from');
   await runTurn(session, watch, 't1', 'first');
   const from = String(session.agentId());
 
-  const { session: forked, watch: forkedWatch } = start(agent, 'fork-dies', {
+  const { session: forked, watch: forkedWatch } = await start(agent, 'fork-dies', {
     resume: from,
     forkAt: String(session.forkPoint?.('t1')),
     seed: session.allTurns(),
@@ -1726,14 +1723,14 @@ it('takes a forked session back under its own id after its server died, and fork
 
 it('refuses a fork at a turn the server was never offered one for', async () => {
   const { agent, log } = backend(['--fork']);
-  const { session, watch } = start(agent, 'forked-earlier-from');
+  const { session, watch } = await start(agent, 'forked-earlier-from');
   await runTurn(session, watch, 't1', 'first');
   await runTurn(session, watch, 't2', 'second');
 
   // `t1` is not where the conversation ends, so no control was offered for it
   // and this is a caller out of step - served rather than refused, it would be
   // a copy of a conversation that still holds `t2`.
-  const { session: forked, watch: forkedWatch } = start(agent, 'forked-earlier', {
+  const { session: forked, watch: forkedWatch } = await start(agent, 'forked-earlier', {
     resume: String(session.agentId()),
     forkAt: 't1',
     seed: session.allTurns(),
@@ -1748,7 +1745,7 @@ it('refuses a fork at a turn the server was never offered one for', async () => 
 
 it('tells a server that advertised session/close to close, and one that did not is not told', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'close-capability');
+  const { session, watch } = await start(agent, 'close-capability');
   await runTurn(session, watch, 't1', 'hi');
   const named = String(session.agentId());
 
@@ -1756,7 +1753,7 @@ it('tells a server that advertised session/close to close, and one that did not 
   expect(requests(log).find((one) => one.method === 'session/close')?.params).toMatchObject({ sessionId: named });
 
   const silent = backend(['--no-close']);
-  const other = start(silent.agent, 'close-not-advertised');
+  const other = await start(silent.agent, 'close-not-advertised');
   await runTurn(other.session, other.watch, 't1', 'hi');
   await other.session.close?.();
   expect(requests(silent.log).some((one) => one.method === 'session/close')).toBe(false);
@@ -1765,7 +1762,7 @@ it('tells a server that advertised session/close to close, and one that did not 
 it('leaves no process behind when a session closes', async () => {
   const pidFile = join(scratch(), 'grandchild.pid');
   const { agent } = backend([`--grandchild=${pidFile}`]);
-  const { session, watch } = start(agent, 'close');
+  const { session, watch } = await start(agent, 'close');
   await runTurn(session, watch, 't1', 'hi');
   await until(() => existsSync(pidFile));
   const pid = Number(readFileSync(pidFile, 'utf8'));
@@ -1789,6 +1786,22 @@ const running = (pid: number): boolean => {
     return false;
   }
 };
+
+/*
+ * An open the server refused, here for a sign-in nobody named, lets go of the
+ * server it spawned, as the session is answered and as the turn that opens it
+ * again ends with the refusal: no process of it is left running.
+ */
+it('lets go of every server an open that failed had spawned', async () => {
+  const { agent, log } = backend(['--signin']);
+  const { session, watch } = await start(agent, 'refused');
+  await runTurn(session, watch, 't1', 'hi');
+
+  expect(watch.endings()).toEqual(['chat/error']);
+  const spawned = [...new Set(requests(log).flatMap((one) => (one.pid === undefined ? [] : [one.pid])))];
+  expect(spawned.length).toBeGreaterThan(0);
+  await until(() => spawned.every((pid) => !running(pid)));
+});
 
 /*
  * When an ACP tool call ran.
@@ -1820,7 +1833,7 @@ const forCall = (watch: Watcher, toolCallId: string): Bag[] => watch.actions
 
 it('says how long a call ran at its completion, and reads back with the same number', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'times');
+  const { session, watch } = await start(agent, 'times');
   await runTurn(session, watch, 't1', 'fetch it later');
 
   const sent = forCall(watch, 'call-later');
@@ -2024,7 +2037,7 @@ it('opens a new part for a chunk of a new message, and runs on within one', () =
  */
 it('completes a call the person refused as a denial, in the words of a failure', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'refused');
+  const { session, watch } = await start(agent, 'refused');
   session.sendMessage('t1', 'ask me first');
   await until(() => watch.types().includes('session/inputNeededSet'));
   expect(session.confirm?.('call-perm', false)).toBe(true);
@@ -2046,7 +2059,7 @@ it('completes a call the person refused as a denial, in the words of a failure',
  */
 it('holds a refused call cancelled as denied in the session\'s own snapshot', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'refused-held');
+  const { session, watch } = await start(agent, 'refused-held');
   session.sendMessage('t1', 'ask me first');
   await until(() => watch.types().includes('session/inputNeededSet'));
   expect(session.confirm?.('call-perm', false)).toBe(true);
@@ -2064,7 +2077,7 @@ it('holds a refused call cancelled as denied in the session\'s own snapshot', as
  */
 it('lists the permission and the question the server waits on in the session\'s state', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'waiting-listed');
+  const { session, watch } = await start(agent, 'waiting-listed');
   const said = (kind: string): Bag | undefined => watch.actions
     .filter((one) => one.action.type === 'session/inputNeededSet')
     .map((one) => one.action.request as Bag)
@@ -2085,7 +2098,7 @@ it('lists the permission and the question the server waits on in the session\'s 
   expect(session.sessionState().inputNeeded).toBeUndefined();
 });
 
-it('reports the folder a session is in as a URI a host reads back as that folder', () => {
+it('reports the folder a session is in as a URI a host reads back as that folder', async () => {
   const { agent } = backend();
   /*
    * The session's own directory, as the host reads it: a folder called `C# a b`
@@ -2096,7 +2109,7 @@ it('reports the folder a session is in as a URI a host reads back as that folder
    */
   const where = join(scratch(), 'C# a b');
   mkdirSync(where);
-  const { session } = start(agent, 'uris', { workingDirectory: where });
+  const { session } = await start(agent, 'uris', { workingDirectory: where });
   const asked = [uriOf(where)];
   expect(session.workingDirectories()).toEqual(asked);
   expect((session.sessionState() as { workingDirectories: string[] }).workingDirectories).toEqual(asked);
@@ -2104,7 +2117,7 @@ it('reports the folder a session is in as a URI a host reads back as that folder
 
 it('never writes a bare timing key on a call', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'bare');
+  const { session, watch } = await start(agent, 'bare');
   await runTurn(session, watch, 't1', 'fetch it later');
   const bare = ['startedAt', 'endedAt', 'durationMs'];
   expect(watch.actions.every((one) => bare.every((key) => metaOf(one.action)[key] === undefined))).toBe(true);

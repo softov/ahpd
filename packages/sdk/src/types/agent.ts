@@ -941,9 +941,10 @@ export interface Agent<Started extends Session | Promise<Session> = Session | Pr
    * Start one.
    *
    * A backend with a step to make before the session can be answered for,
-   * a fork's copy or a truncation's cut of the conversation it resumes, or
-   * the earlier turns of a resumed conversation read from its own record,
-   * answers a promise of the session, which settles once that step is made:
+   * a fork's copy or a truncation's cut of the conversation it resumes, the
+   * earlier turns of a resumed conversation read from its own record, or the
+   * server opened whose offers the session's first state carries, answers a
+   * promise of the session, which settles once that step is made:
    * the host answers the request that asked for the session when it settles,
    * and a rejection is that request's failure, as VS Code's agent provisions
    * a fork inside the `createChat` that asked for it.

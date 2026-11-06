@@ -10,7 +10,6 @@ import { loadPlugins } from '../../server/src/plugins.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { acpAgent } from '../src/agent.js';
-import { startedNow } from '../../sdk/test/support/started.js';
 import { name } from '../src/plugin.js';
 import { presets } from '../src/presets.js';
 import { readParts } from '../../computer/src/parts.js';
@@ -204,7 +203,7 @@ it('gives a host spawn none of the machine env', async () => {
     machine: { env: { AHPD_MACHINE_ONLY: 'machine-value', AHPD_MACHINE_SECRET: { $secret: 'host:codex' } } },
   });
   const ended: string[] = [];
-  const session = agent.create({
+  const session = await agent.create({
     uri: 'ahp-session:/host',
     chatUri: 'ahp-chat:/host',
     settings: {},
@@ -233,7 +232,7 @@ it('hands a machine port none of the machine env with the command it runs there'
     machine: { env: { AHPD_MACHINE_ONLY: 'machine-value' } },
   });
   const ended: string[] = [];
-  const session = agent.create({
+  const session = await agent.create({
     uri: 'ahp-session:/boxed',
     chatUri: 'ahp-chat:/boxed',
     settings: { computer: 'computer://box' },
@@ -253,8 +252,10 @@ it('hands a machine port none of the machine env with the command it runs there'
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
 
-  expect(asked).toHaveLength(1);
-  expect(asked[0]?.env).toEqual({ HOST_SIDE: '1' });
+  // Asked as the session was opened and again by its first turn, the machine
+  // having answered no command either time, and neither ask carried the
+  // machine's own variables.
+  expect(asked.map((one) => one.env)).toEqual([{ HOST_SIDE: '1' }, { HOST_SIDE: '1' }]);
 });
 
 /*
@@ -358,7 +359,7 @@ const signedIn = async (placed: boolean) => {
   const ended: string[] = [];
   // A folder that is there and that no case removes: a server on this host runs in it.
   const folder = join(REPO, 'packages', 'agent-acp');
-  const session = startedNow(agent.create({
+  const session = await agent.create({
     uri: `ahp-session:/signin-${String(placed)}`,
     chatUri: `ahp-chat:/signin-${String(placed)}`,
     workingDirectory: folder,
@@ -381,7 +382,7 @@ const signedIn = async (placed: boolean) => {
         if (action.type === 'chat/error') said.push(String(action.message));
       }
     },
-  } as never));
+  } as never);
   started.push(session);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
@@ -430,7 +431,7 @@ const terminalIn = async (placed: boolean) => {
   const asked: SpawnOptions[] = [];
   const opened: OpenTerminal[] = [];
   const agent = acpAgent({ command: process.execPath, args: [SERVER], provider: 'codex' });
-  const session = agent.create({
+  const session = await agent.create({
     uri: `ahp-session:/terminal-${String(placed)}`,
     chatUri: `ahp-chat:/terminal-${String(placed)}`,
     workingDirectory: folder,
@@ -558,7 +559,7 @@ it('keeps the row\'s machine variables out of a host spawn', async () => {
   const { kind } = await load({});
   const agent = kind.open(viewOf('gemini', () => ({ command: process.execPath, args: ['-e', script] })));
   const ended: string[] = [];
-  const session = startedNow(agent.create({
+  const session = await agent.create({
     uri: 'ahp-session:/row-host',
     chatUri: 'ahp-chat:/row-host',
     settings: {},
@@ -567,7 +568,7 @@ it('keeps the row\'s machine variables out of a host spawn', async () => {
     emit: (_channel: string, action: Bag) => {
       if (action.type === 'chat/error' || action.type === 'chat/turnComplete') ended.push(String(action.type));
     },
-  } as never));
+  } as never);
   started.push(session);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });

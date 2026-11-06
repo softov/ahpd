@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
-import { startedNow } from '../../sdk/test/support/started.js';
 import type { Agent, Bag, Emit, Session, Start } from '@ahpd/sdk';
 import { acpAgent } from '../src/index.js';
 
@@ -76,10 +75,10 @@ const opening = (id: string, over: Partial<Start> = {}): Start => ({
 });
 
 /** Open one session and watch it, so this process holds a record of it. */
-function start(agent: Agent, id: string): Session {
+async function start(agent: Agent, id: string): Promise<Session> {
   const actions: Bag[] = [];
   const emit: Emit = (channel, action) => { actions.push(action); void channel; };
-  const session = startedNow(agent.create(opening(id, { emit })));
+  const session = await agent.create(opening(id, { emit }));
   started.push(session);
   return session;
 }
@@ -143,7 +142,7 @@ it('forgets a session this process watched, so the next listing does not offer i
   const { agent } = backend(['--no-load']);
   // A server that cannot reopen a conversation still lists its own, so the
   // record this process holds is the only catalogue there would be.
-  const one = start(agent, 'watched-1');
+  const one = await start(agent, 'watched-1');
   expect(one).toBeDefined();
   await agent.list?.();
 

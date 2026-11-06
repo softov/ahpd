@@ -10,10 +10,10 @@ import type { AcpOptions } from '../src/types.js';
  *
  * A harness signed in out of band - Codex through its own CLI - tells the
  * client it is given: the handshake says it reports one with an `authStatus`
- * key of its own, and `_auth/status_update` carries it. The bridge spawns no
- * server until a session runs, so what the host has for such an agent comes
- * from a live connection, which is why this is a session's report rather than
- * a probe's answer.
+ * key of its own, and `_auth/status_update` carries it. The bridge spawns a
+ * server for each session it opens, so what the host has for such an agent
+ * comes from a live connection, which is why this is a session's report
+ * rather than a probe's answer.
  *
  * The states are VS Code's, read off `codexAccountState.ts`: a signed-in
  * account carries its email and plan, a key or a gateway is one this host does
@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 
 /** A session of the fixture, with every action it emits and every account it reports. */
-function talking(flags: string[], options: Partial<AcpOptions> = {}): { session: Session; actions: Bag[]; accounts: Account[] } {
+async function talking(flags: string[], options: Partial<AcpOptions> = {}): Promise<{ session: Session; actions: Bag[]; accounts: Account[] }> {
   const actions: Bag[] = [];
   const accounts: Account[] = [];
   const agent = acpAgent({ command: process.execPath, args: [FIXTURE, ...flags], provider: 'acp-account', ...options });
@@ -54,12 +54,12 @@ function talking(flags: string[], options: Partial<AcpOptions> = {}): { session:
     trusted: () => true,
     onAccount: (account) => { accounts.push(account); },
   };
-  const session = agent.create(opening);
+  const session = await agent.create(opening);
   started.push(session);
   return { session, actions, accounts };
 }
 
-/** One turn, run to its end, which is also what opens the connection. */
+/** One turn, run to its end. */
 async function turn(session: Session, actions: Bag[], text = 'hi'): Promise<void> {
   session.sendMessage('t1', text);
   await until(() => actions.some((action) => action.type === 'chat/turnComplete'
@@ -68,7 +68,7 @@ async function turn(session: Session, actions: Bag[], text = 'hi'): Promise<void
 }
 
 it('takes the account a server reports, with its email and its plan', async () => {
-  const { session, actions, accounts } = talking(['--auth-status=account']);
+  const { session, actions, accounts } = await talking(['--auth-status=account']);
   await turn(session, actions);
 
   expect(accounts).toHaveLength(1);
@@ -96,7 +96,7 @@ const ELSEWHERE: [kind: string, state: Account['status']][] = [
 
 for (const [kind, state] of ELSEWHERE) {
   it(`reads a ${kind} sign-in as ${state}, with no email`, async () => {
-    const { session, actions, accounts } = talking([`--auth-status=${kind}`]);
+    const { session, actions, accounts } = await talking([`--auth-status=${kind}`]);
     await turn(session, actions);
 
     expect(accounts).toHaveLength(1);
@@ -109,7 +109,7 @@ it('ignores a sign-in reported by a server that never said it would', async () =
   // A server that sends the update without the handshake key is one this
   // bridge was never told to expect it from, and an account is a claim about
   // who is billed.
-  const { session, actions, accounts } = talking(['--auth-status=account', '--auth-silent']);
+  const { session, actions, accounts } = await talking(['--auth-status=account', '--auth-silent']);
   await turn(session, actions);
 
   expect(actions.some((action) => action.type === 'chat/turnComplete')).toBe(true);

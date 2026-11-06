@@ -53,9 +53,9 @@ const needsOf = (provider: string, machine: AcpMachine): Record<string, MachineN
  *
  * The provider is per registration rather than per package, so two of these
  * with two commands are two backends, which is how one package serves Copilot
- * and Codex at once.
+ * and Codex at once. A session is answered once its server has opened.
  */
-export function acpAgent(options: AcpOptions): Agent<Session> {
+export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
   const provider = options.provider ?? 'acp';
   const displayName = options.displayName ?? 'ACP';
 

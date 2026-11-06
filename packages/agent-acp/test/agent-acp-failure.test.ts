@@ -52,7 +52,7 @@ const pause = async (times: number): Promise<void> => {
 };
 
 /** A session of `command`, with every action it emits kept, and every line the agent logs. */
-function start(command: string, args: string[] = []): { session: Session; actions: Bag[]; logged: string[] } {
+async function start(command: string, args: string[] = []): Promise<{ session: Session; actions: Bag[]; logged: string[] }> {
   const actions: Bag[] = [];
   const logged: string[] = [];
   const agent = acpAgent({ command, args, provider: 'acp-failure', log: (line) => { logged.push(line); } });
@@ -70,7 +70,7 @@ function start(command: string, args: string[] = []): { session: Session; action
     // otherwise` - so the folder is one the host vouched for.
     trusted: () => true,
   };
-  const session = agent.create(opening);
+  const session = await agent.create(opening);
   started.push(session);
   return { session, actions, logged };
 }
@@ -83,7 +83,7 @@ const failure = (actions: Bag[]): string | undefined => {
 };
 
 it('fails the first turn of a session whose command is missing, and nothing escapes', async () => {
-  const { session, actions } = start(MISSING);
+  const { session, actions } = await start(MISSING);
   session.sendMessage('t1', 'hi');
   await until(() => failure(actions) !== undefined);
 
@@ -114,7 +114,7 @@ it('answers a listing with the watched sessions when the command is missing', as
 });
 
 it('fails the turn with the exit code when the server exits mid-prompt', async () => {
-  const { session, actions } = start(process.execPath, [FIXTURE]);
+  const { session, actions } = await start(process.execPath, [FIXTURE]);
   session.sendMessage('t1', 'die now');
   await until(() => failure(actions) !== undefined);
 
@@ -123,7 +123,7 @@ it('fails the turn with the exit code when the server exits mid-prompt', async (
 });
 
 it('fails the turn with the failure\'s own words, as a failed send, and logs what the server wrote on stderr', async () => {
-  const { session, actions, logged } = start(process.execPath, [FIXTURE]);
+  const { session, actions, logged } = await start(process.execPath, [FIXTURE]);
   session.sendMessage('t1', 'be noisy');
   await until(() => failure(actions) !== undefined && logged.some((line) => line.includes('backend.js:41')));
 
@@ -140,7 +140,7 @@ it('fails the turn with the failure\'s own words, as a failed send, and logs wha
 });
 
 it('never surfaces the stderr of a server that answered, and logs it', async () => {
-  const { session, actions, logged } = start(process.execPath, [FIXTURE]);
+  const { session, actions, logged } = await start(process.execPath, [FIXTURE]);
   session.sendMessage('t1', 'chatter a little');
   await until(() => actions.some((action) => action.type === 'chat/turnComplete') && logged.length > 0);
 

@@ -17,15 +17,16 @@ export interface Opening {
    * Read the record again, and put a new server behind the conversation when
    * what it spawns with changed.
    *
-   * Called at the start of every turn. Answers a sentence when the record can
-   * no longer be used, which is the turn's own refusal, and nothing otherwise.
+   * Called as the session is created and at the start of every turn. Answers
+   * a sentence when the record can no longer be used, which is the turn's own
+   * refusal, and nothing otherwise.
    */
   refreshOptions(): string | undefined;
   /**
-   * The host's own tools endpoint, once a turn has opened it.
+   * The host's own tools endpoint, once the session's open has opened it.
    *
    * Asked rather than kept, because it is opened inside the first `session/new`
-   * and a session that has run no turn has none yet. What asks is the offering
+   * and a session whose server has not opened has none. What asks is the offering
    * being replaced: a client that arrives or goes moves the list the agent was
    * handed, and the endpoint is the only thing serving it.
    */
@@ -348,7 +349,8 @@ export function createOpening(ctx: SessionContext): Opening {
    *
    * One promise for the whole of it, so a second turn that arrives while the
    * first is still shaking hands waits on the same server rather than spawning
-   * another. A failure clears it, so the next turn tries again.
+   * another. A failure clears it and stops the server it spawned, so the next
+   * turn tries again.
    *
    * A fork is asked first and is the one case that copies rather than
    * continues: the conversation it was given stays where it is and this session
@@ -375,6 +377,8 @@ export function createOpening(ctx: SessionContext): Opening {
      * session's own are what the open sends.
      */
     const values = { ...ctx.values };
+    /** The server this open spawned, once it has. */
+    let made: AcpConnection | undefined;
     const pending = (async () => {
       /*
        * A folder the host did not vouch for, and an agent that loads the
@@ -439,6 +443,7 @@ export function createOpening(ctx: SessionContext): Opening {
         ...(options.log === undefined ? {} : { log: options.log }),
       });
       ctx.live = connection;
+      made = connection;
       // A server that dies between turns is let go, so the next turn spawns
       // another rather than prompting a process that is no longer there.
       void connection.ended.then(() => {
@@ -629,6 +634,17 @@ export function createOpening(ctx: SessionContext): Opening {
       ctx.syncConfig(values);
     };
     void pending.then(opened, opened);
+    /*
+     * An open that fails lets go of itself and of the server it spawned, so a
+     * server that refused the session or its sign-in leaves no process behind
+     * and the next open spawns one of its own.
+     */
+    void pending.catch(() => {
+      if (ctx.opening === pending) ctx.opening = undefined;
+      if (made === undefined) return;
+      if (ctx.live === made) ctx.live = undefined;
+      void made.close();
+    });
     return pending;
   };
 
@@ -645,8 +661,9 @@ export function createOpening(ctx: SessionContext): Opening {
    * The conversation is kept by leaving `acpSessionId` where it is and letting
    * the old server go, so `open` reopens it the way it reopens one that died -
    * a resume where the server advertised that it can take one back without
-   * replaying, and a load otherwise. The first turn settles what the server was
-   * opened with, because a record can be edited between the open and that turn.
+   * replaying, and a load otherwise. The session's creation reads what its
+   * first server is built with, so an edit made after that is one the next
+   * turn spawns a server for.
    *
    * A record that can no longer be used is the turn's own refusal rather than a
    * session that died, which is why it comes back as a sentence.

@@ -9,7 +9,6 @@ import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { posix } from '../../../tools/posix.js';
 import { name } from '../src/plugin.js';
-import { startedNow } from '../../sdk/test/support/started.js';
 import { keyVariablesOf, presets as shipped } from '../src/presets.js';
 
 /*
@@ -92,14 +91,14 @@ const startOf = (label: string, extra: Record<string, unknown> = {}): Start => (
 } as never);
 
 /** One record's session, released after the case. */
-const sessionOf = (
+const sessionOf = async (
   kind: Engine,
   id: string,
   held: () => Bag,
   label: string,
   extra: Record<string, unknown> = {},
-): Session => {
-  const session = startedNow(kind.open(viewOf(id, held)).create(startOf(label, extra)));
+): Promise<Session> => {
+  const session = await kind.open(viewOf(id, held)).create(startOf(label, extra));
   started.push(session);
   return session;
 };
@@ -148,7 +147,7 @@ const spawnOf = async (
   if (savedPath === undefined) savedPath = process.env.PATH;
   process.env.PATH = `${dir}${delimiter}${process.env.PATH ?? ''}`;
 
-  const session = sessionOf(kind, id, held, `run-${id}`);
+  const session = await sessionOf(kind, id, held, `run-${id}`);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && !existsSync(out); i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
   if (!existsSync(out)) throw new Error(`${command} was not run`);
@@ -167,7 +166,7 @@ const turnOf = async (
   const env = { ACP_LOG: log, ...(typeof own === 'object' && own !== null ? own as Record<string, string> : {}) };
   const ended: string[] = [];
   const said: string[] = [];
-  const session = sessionOf(kind, id, () => ({
+  const session = await sessionOf(kind, id, () => ({
     ...config,
     command: process.execPath,
     args: [FIXTURE, ...(extra.flags ?? [])],
@@ -419,11 +418,11 @@ it('keeps a row\'s modes on the agent, and the modes a session hears on that ses
   expect(approvalsOf()['enum']).toEqual(['read-only', 'workspace-write', 'agent', 'agent-full-access']);
 
   const ended: string[] = [];
-  const session = startedNow(agent.create(startOf('heard', {
+  const session = await agent.create(startOf('heard', {
     emit: (_channel: string, action: Bag) => {
       if (action.type === 'chat/turnComplete' || action.type === 'chat/error') ended.push(String(action.type));
     },
-  })));
+  }));
   started.push(session);
   session.sendMessage('t1', 'hi');
   for (let i = 0; i < 3000 && ended.length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
