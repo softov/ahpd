@@ -15,6 +15,12 @@ const DECLINED = 'The person declined this action';
  * question allows many. The value sits two levels in, and a value that is
  * already a string or a list is taken as it is, so a caller that hands over
  * cofold's own shape is not unwrapped into nothing.
+ *
+ * The words a person typed beside the choices, or instead of them, go with
+ * the answer, as VS Code's Claude agent hands them on: after a single choice,
+ * joined with it, as the answer where nothing was chosen, and in a list beside
+ * the choices.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L133-L156
  */
 const answersOf = (given: Bag): Record<string, string | string[]> => {
   /** One value as cofold reads it, or nothing for a shape it would refuse. */
@@ -25,9 +31,10 @@ const answersOf = (given: Bag): Record<string, string | string[]> => {
     const answer = bag(value);
     const inner = bag(answer.value);
     const raw = inner.value ?? answer.value;
-    if (typeof raw === 'string') return raw;
-    if (Array.isArray(raw)) return strings(raw);
-    return undefined;
+    const typed = Array.isArray(inner.freeformValues) ? strings(inner.freeformValues) : [];
+    if (Array.isArray(raw)) return [...strings(raw), ...typed];
+    if (typeof raw === 'string') return typed.length === 0 ? raw : [raw, ...typed].filter((one) => one !== '').join(', ');
+    return typed.length === 0 ? undefined : typed.join(', ');
   };
   const answers: Record<string, string | string[]> = {};
   for (const [id, value] of Object.entries(given)) {

@@ -622,6 +622,51 @@ it('raises a chatInput entry for cofold\'s own ask tool and answers it back', as
   expect(requested(after.snapshot.state, 'last').map((part) => part.response)).toEqual(['accept']);
 });
 
+/*
+ * The words a person typed beside a choice, or instead of one, go with it, as
+ * VS Code's Claude agent hands a model its answers.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L133-L156
+ */
+it('hands the model the words a person typed beside a choice, or instead of one', async () => {
+  const questions: AskQuestion[] = [
+    { id: 'which', question: 'Which note?', header: 'Note', options: [{ label: 'monday' }, { label: 'tuesday' }] },
+    { id: 'when', question: 'When?', header: 'When', options: [{ label: 'now' }, { label: 'later' }] },
+  ];
+  const model = createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'ask_user', input: { questions }, callId: 'call-q' }] },
+      { text: 'noted' },
+    ],
+    stream: true,
+  });
+  const { client, peer: p } = await talking(model, [], asksFor([]));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'ask me');
+  await until(() => needed(p, uri, 'chatInput') !== undefined);
+  const entry = needed(p, uri, 'chatInput') as { request: { id: string } };
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: {
+        type: 'chat/inputCompleted',
+        requestId: entry.request.id,
+        response: 'accept',
+        answers: {
+          which: { state: 'submitted', value: { kind: 'selected', value: 'monday', freeformValues: ['the long one'] } },
+          when: { state: 'submitted', value: { kind: 'selected', freeformValues: ['after lunch'] } },
+        },
+      },
+    },
+  });
+  await until(() => ended(p, chatUri));
+
+  const told = JSON.stringify(model.requests[1]?.messages);
+  expect(told).toContain('monday, the long one');
+  expect(told).toContain('A: after lunch');
+});
+
 it('declines cofold\'s own ask tool as a denial the model reads', async () => {
   const questions: AskQuestion[] = [{ id: 'which', question: 'Which note?' }];
   const model = createFakeModel({
