@@ -16,11 +16,12 @@ import { join } from 'node:path';
 import { EFFORT_LEVELS, PERMISSION_MODES, PERMISSION_MODE_DESCRIPTIONS, createMemoryStore, effortOf, textOf } from '@cofold/agents';
 import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Store } from '@cofold/agents';
 import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
+import type { ProviderConfig } from '@cofold/model-openai-compat';
 import { createFileStore } from '@cofold/store-file';
 import { titleFrom, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
 import { harnessConfig, harnessConfigPath } from './config.js';
-import type { HarnessConfig, HarnessProvider } from './config.js';
+import type { HarnessConfig } from './config.js';
 import type { ToolsConfig } from './capabilities.js';
 import { cofoldSession } from './session.js';
 import { turnsOf } from './transcript.js';
@@ -180,7 +181,7 @@ const endpointOf = (
   options: CofoldOptions,
   harness: HarnessConfig,
   ref?: string,
-): HarnessProvider | undefined => {
+): ProviderConfig | undefined => {
   const model = ref ?? options.model ?? harness.model;
   if (model === undefined) return undefined;
   const named = splitModel(model);
@@ -253,7 +254,7 @@ const keyOf = (
   options: CofoldOptions,
   credentials: Record<string, string>,
   harness: HarnessConfig,
-  owner?: HarnessProvider,
+  owner?: ProviderConfig,
 ): Connection['apiKey'] => {
   const own = owner !== undefined && owner.baseUrl === baseUrl
     ? owner.apiKey

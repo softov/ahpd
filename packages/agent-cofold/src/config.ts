@@ -19,20 +19,17 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ProviderConfig } from '@cofold/model-openai-compat';
 
-/**
- * One provider as the harness configuration names it.
- *
- * The shape is cofold's own `ProviderConfig`, which is what its `providers`
- * section validates against: the id a model is written in front of, an
- * OpenAI-compatible base URL, the key for it and any headers the endpoint
- * needs. Reading it is what keeps a key from being lent or repeated.
- */
-export type HarnessProvider = ProviderConfig;
-
 /** What this backend reads out of the harness configuration. */
 export interface HarnessConfig {
-  /** The providers, in the order the file lists them. */
-  providers: HarnessProvider[];
+  /**
+   * The providers, in the order the file lists them.
+   *
+   * Each is cofold's own `ProviderConfig`, which is what its `providers`
+   * section validates against: the id a model is written in front of, an
+   * OpenAI-compatible base URL, the key for it and any headers the endpoint
+   * needs. Reading it is what keeps a key from being lent or repeated.
+   */
+  providers: ProviderConfig[];
   /** The model the harness runs on, as `<provider>/<model>`. */
   model?: string;
   /** The harness's own instructions, a default under the session's. */
@@ -87,7 +84,7 @@ export const harnessConfig = (env: NodeJS.ProcessEnv = process.env, home: string
     // No file is no file's values; the variables below may still name a provider.
   }
 
-  const providers: HarnessProvider[] = [];
+  const providers: ProviderConfig[] = [];
   for (const entry of Array.isArray(found.providers) ? found.providers : []) {
     if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) continue;
     const held = entry as Record<string, unknown>;
@@ -109,7 +106,7 @@ export const harnessConfig = (env: NodeJS.ProcessEnv = process.env, home: string
   const baseUrl = word(env['COFOLD_BASE_URL']);
   if (baseUrl !== undefined) {
     const apiKey = word(env['COFOLD_API_KEY']);
-    const fromEnv: HarnessProvider = { id: 'default', baseUrl, ...(apiKey === undefined ? {} : { apiKey }) };
+    const fromEnv: ProviderConfig = { id: 'default', baseUrl, ...(apiKey === undefined ? {} : { apiKey }) };
     providers.splice(0, providers.length, fromEnv, ...providers.filter((provider) => provider.id !== 'default'));
   }
   const named = word(env['COFOLD_MODEL']);
