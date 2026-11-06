@@ -12,7 +12,7 @@ import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
 import type { EnablementStore } from '../plugins/enablement.js';
-import type { ChatPreamble, GrantEntry, PluginConnects, PluginStarts, PluginTriggers, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta } from './plugin.js';
+import type { ChatPreamble, GrantEntry, PluginConnects, PluginStarts, PluginTriggers, ProviderConfiguration, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta } from './plugin.js';
 import type { ConnectorRef, ServedAdapter } from './connectors.js';
 import type { AgentOwner, ServedEngine } from './agents.js';
 import type { ServedTunnelKind } from './tunnels.js';
@@ -708,6 +708,17 @@ export interface HostOptions {
    * an embedder with its own control wants.
    */
   sessionConfig?: Record<string, Record<string, unknown>>;
+  /**
+   * Providers' settings at the top of the root config, as VS Code registers a
+   * provider's configuration: each registration's `properties` join the root
+   * config's schema, a default held where nothing is set, and the rest is an
+   * entry of the root's `_meta['vscode.agentCustomizationSettings']`.
+   *
+   * The fold fills this from `registerProviderConfiguration`; a host that sets
+   * it itself declares the settings without a plugin.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1340
+   */
+  providerConfigurations?: ProviderConfiguration[];
   /**
    * Who answers `sessionConfigCompletions` for a contributed key.
    *

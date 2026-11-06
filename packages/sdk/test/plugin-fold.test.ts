@@ -51,6 +51,7 @@ const contribution = (
     methods?: Contribution['methods'];
     sessionConfig?: Record<string, Record<string, unknown>>;
     sessionCompletions?: Contribution['sessionCompletions'];
+    providerConfigurations?: Contribution['providerConfigurations'];
     routes?: Route;
     closers?: (() => void | Promise<void>)[];
     preambles?: Contribution['preambles'];
@@ -61,6 +62,7 @@ const contribution = (
   tools: parts.tools ?? [],
   sessionConfig: parts.sessionConfig ?? {},
   sessionCompletions: parts.sessionCompletions ?? {},
+  providerConfigurations: parts.providerConfigurations ?? [],
   ports: parts.ports ?? {},
   providers: parts.providers ?? {},
   channels: parts.channels ?? {},
@@ -306,6 +308,35 @@ it('takes a session setting from a plugin, and reports a second one with the sam
   expect(folded.problems).toHaveLength(1);
   expect(folded.problems[0]).toContain('session setting computer');
   expect(folded.problems[0]).toContain('plugin one');
+});
+
+it('takes a provider configuration from a plugin, and reports a second one declaring the same root setting', () => {
+  const sandbox = {
+    provider: 'sandbox', title: 'Sandbox', description: 'Where commands run.',
+    settings: [{ key: 'sandbox.enabled', group: 'Sandbox' }],
+    properties: { 'sandbox.enabled': { type: 'boolean', default: false } },
+  };
+  const other = { ...sandbox, provider: 'other' };
+  const folded = foldHostOptions(base(), [
+    contribution('one', { providerConfigurations: [sandbox] }),
+    contribution('two', { providerConfigurations: [other] }),
+  ]);
+  expect(folded.options.providerConfigurations).toEqual([sandbox]);
+  expect(folded.problems).toEqual(['plugin two registers root setting sandbox.enabled, which the configuration of sandbox already declares']);
+});
+
+it('registers a provider configuration through a plugin host, named in its contracts', () => {
+  const ADAPTER = pluginHost('sandboxes', ADAPTER_CONTEXT, { contracts: { providerConfigurations: ['sandbox'] } });
+  ADAPTER.host.registerProviderConfiguration({
+    provider: 'sandbox', title: 'Sandbox', description: 'Where commands run.',
+    settings: [{ key: 'sandbox.enabled', group: 'Sandbox' }],
+    properties: { 'sandbox.enabled': { type: 'boolean', default: false } },
+  });
+  expect(() => ADAPTER.host.registerProviderConfiguration({
+    provider: 'firewall', title: 'Firewall', description: 'What may be reached.', settings: [], properties: {},
+  })).toThrow('contracts.providerConfigurations');
+  ADAPTER.seal();
+  expect(ADAPTER.contribution.providerConfigurations.map((one) => one.provider)).toEqual(['sandbox']);
 });
 
 it('refuses a session setting a backend already declares', () => {

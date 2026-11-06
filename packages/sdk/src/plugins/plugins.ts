@@ -798,6 +798,32 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
     }
   }
   if (Object.keys(sessionConfig).length > 0) options.sessionConfig = sessionConfig;
+
+  /*
+   * The providers' root settings, one registration per provider and one
+   * declaration per key: a second plugin registering a provider, or declaring
+   * a key another registration declares, is a collision, reported, and the
+   * first one stands.
+   */
+  const providerConfigurations = [...(base.providerConfigurations ?? [])];
+  const rootKeys = new Map<string, string>();
+  for (const one of providerConfigurations) for (const key of Object.keys(one.properties)) rootKeys.set(key, one.provider);
+  for (const contribution of contributions) {
+    for (const registration of contribution.providerConfigurations) {
+      if (providerConfigurations.some((one) => one.provider === registration.provider)) {
+        problems.push(`plugin ${contribution.by} registers the configuration of ${registration.provider}, which is already registered`);
+        continue;
+      }
+      const taken = Object.keys(registration.properties).filter((key) => rootKeys.has(key));
+      if (taken.length > 0) {
+        problems.push(`plugin ${contribution.by} registers root setting ${taken.join(', ')}, which the configuration of ${rootKeys.get(taken[0] as string) ?? ''} already declares`);
+        continue;
+      }
+      for (const key of Object.keys(registration.properties)) rootKeys.set(key, registration.provider);
+      providerConfigurations.push(registration);
+    }
+  }
+  if (providerConfigurations.length > 0) options.providerConfigurations = providerConfigurations;
   if (Object.keys(sessionCompletions).length > 0) options.sessionConfigCompletions = sessionCompletions;
   if (Object.keys(keyCatalogs).length > 0 || Object.keys(agentCatalogs).length > 0) {
     options.catalogs = {
@@ -1217,6 +1243,7 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
     tools: [],
     sessionConfig: {},
     sessionCompletions: {},
+    providerConfigurations: [],
     ports: {},
     providers: {},
     grants: {},
@@ -1607,6 +1634,29 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
       reportGaps([{ where: `session config ${named}`, gaps: schemaGaps(schema) }]);
       contribution.sessionConfig[named] = schema as Record<string, unknown>;
       if (completions !== undefined) contribution.sessionCompletions[named] = completions;
+    },
+    registerProviderConfiguration(registration) {
+      open();
+      const named = typeof registration?.provider === 'string' ? registration.provider.trim() : '';
+      if (named === '') throw new Error(miss(by, 'registerProviderConfiguration', String(registration?.provider), 'a non-empty provider'));
+      if (typeof registration.title !== 'string' || typeof registration.description !== 'string') {
+        throw new Error(miss(by, 'registerProviderConfiguration', named, 'a title and a description'));
+      }
+      if (!Array.isArray(registration.settings)
+        || !registration.settings.every((one) => typeof one?.key === 'string' && typeof one.group === 'string')) {
+        throw new Error(miss(by, 'registerProviderConfiguration', named, 'settings, each with a key and a group'));
+      }
+      const properties = registration.properties;
+      if (typeof properties !== 'object' || properties === null || Array.isArray(properties)
+        || Object.values(properties).some((one) => typeof one !== 'object' || one === null || Array.isArray(one))) {
+        throw new Error(miss(by, 'registerProviderConfiguration', named, 'properties, each a JSON Schema property object'));
+      }
+      declared(by, options.contracts, 'providerConfigurations', named);
+      if (contribution.providerConfigurations.some((one) => one.provider === named)) {
+        throw new Error(miss(by, 'registerProviderConfiguration', named, 'a provider no other configuration in this plugin registers'));
+      }
+      reportGaps(Object.entries(properties).map(([key, schema]) => ({ where: `root config ${key}`, gaps: schemaGaps(schema) })));
+      contribution.providerConfigurations.push(frozenCopy({ ...registration, provider: named }));
     },
     registerResources: (store, when) => { setPort('resources', 'registerResources', store, when); },
     registerResourceProvider(scheme, provider) {

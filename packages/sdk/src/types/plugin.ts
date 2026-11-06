@@ -1193,6 +1193,18 @@ export interface PluginHost extends PluginContext {
     schema: Record<string, unknown>,
     completions?: SessionConfigAnswerer,
   ): void;
+  /**
+   * Declare a provider's settings at the top of the root config, as VS Code
+   * registers a provider's configuration: each of `properties` joins the root
+   * config's schema, its `default` held where nothing is set, so a client
+   * pushes, reads and draws it as any root setting; and the rest of the
+   * registration is the entry a client draws the provider's settings page
+   * from, in the root's `_meta['vscode.agentCustomizationSettings']`. A key the
+   * host or another plugin already declares is a collision, reported, and the
+   * provider is named in `contracts.providerConfigurations`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1340
+   */
+  registerProviderConfiguration(registration: ProviderConfiguration): void;
   /** Set `HostOptions.resources`, or take the daemon's over with `'replace'`. */
   registerResources(store: PortOf<'resources'>, when?: 'replace'): void;
   /**
@@ -1538,6 +1550,34 @@ export interface PluginLink {
 export type PluginContracts = Record<string, string[]>;
 
 /**
+ * A provider's settings in the root config, VS Code's registration: who they
+ * are for and how a client groups them on a settings page, the file they live
+ * in where a client may open it, and the root config properties they are.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentCustomizationSettings.ts#L10-L34
+ */
+export interface ProviderConfiguration {
+  /** The provider the settings are for, which names the entry. */
+  provider: string;
+  /** The page's title. */
+  title: string;
+  /** One line under it. */
+  description: string;
+  /** Each setting the page draws, by its root config key, in the group it is drawn under. */
+  settings: { key: string; group: string; kind?: 'multiline'; saveLabel?: string }[];
+  /** The file the settings are kept in, where a client may offer to open it. */
+  configurationFile?: {
+    resource: string;
+    title: string;
+    description: string;
+    openLabel: string;
+    documentationUrl?: string;
+    documentationLabel?: string;
+  };
+  /** The root config properties, by key, each one property of a JSON Schema object. */
+  properties: Record<string, Record<string, unknown>>;
+}
+
+/**
  * What a plugin says about itself before a person uses it.
  *
  * The fields a client draws: a description, the categories it files the plugin
@@ -1677,6 +1717,8 @@ export interface Contribution {
   sessionConfig: Record<string, Record<string, unknown>>;
   /** Who answers the picker for a contributed key, by key. */
   sessionCompletions: Record<string, SessionConfigAnswerer>;
+  /** The provider configurations this plugin registered, each with the root config properties it declares. */
+  providerConfigurations: ProviderConfiguration[];
   /** The singleton ports this plugin set, and whether each took one over. */
   ports: Partial<Record<PortKey, PortContribution>>;
   /**

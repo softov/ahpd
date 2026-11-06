@@ -242,6 +242,27 @@ describe('pluginHost', () => {
     expect(options.methods?.['x-alpha/echo']?.method).toBe(method);
   });
 
+  it('accepts a complete provider configuration, and refuses an empty one or one missing a member', () => {
+    const { host, contribution } = pluginHost('alpha', context());
+    const named = { provider: 'notes', title: 'Notes', description: 'Notes the agent keeps.' };
+    const registration = {
+      ...named,
+      settings: [{ key: 'notes.enabled', group: 'Notes' }],
+      properties: { 'notes.enabled': { type: 'boolean', title: 'Notes', default: false } },
+    };
+    expect(() => host.registerProviderConfiguration(registration as never)).not.toThrow();
+    expect(() => host.registerProviderConfiguration({} as never)).toThrow(/alpha.*registerProviderConfiguration.*a non-empty provider/);
+    expect(() => host.registerProviderConfiguration({ provider: 'other' } as never)).toThrow(/a title and a description/);
+    expect(() => host.registerProviderConfiguration({ ...named, provider: 'other', settings: [{ key: 'other.enabled' }], properties: {} } as never))
+      .toThrow(/settings, each with a key and a group/);
+    expect(() => host.registerProviderConfiguration({ ...named, provider: 'other', settings: [], properties: { 'other.enabled': true } } as never))
+      .toThrow(/properties, each a JSON Schema property object/);
+    expect(() => host.registerProviderConfiguration(registration as never)).toThrow(/alpha.*registerProviderConfiguration.*notes/);
+    const { options, problems } = foldHostOptions(base(), [contribution]);
+    expect(problems).toEqual([]);
+    expect(options.providerConfigurations?.map((one) => one.provider)).toEqual(['notes']);
+  });
+
   it('refuses a scheme that is not one, and the schemes the host already owns', () => {
     const { host } = pluginHost('alpha', context());
     expect(() => host.registerResourceProvider('9bad', provider as never)).toThrow(/URI scheme/);

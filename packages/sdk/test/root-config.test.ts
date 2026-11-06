@@ -1097,3 +1097,54 @@ it('gives a running session the advanced tools as soon as the daemon key is writ
   await settle();
   expect(await offered()).not.toContain('launch_missiles');
 });
+
+/*
+ * A provider's settings at the top of the root config, as VS Code registers a
+ * provider's configuration: its properties join the schema, a default is held
+ * where nothing set the key, and the registration without its properties is
+ * the root's `_meta['vscode.agentCustomizationSettings']` entry.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1340
+ */
+it('declares a provider\'s settings at the top of the root config, its default held, and lists its page in _meta', async () => {
+  const host = createHost({
+    path: DIR,
+    agents: [echo({ path: DIR, pace: 0 })],
+    providerConfigurations: [{
+      provider: 'sandbox',
+      title: 'Sandbox',
+      description: 'Where commands run.',
+      settings: [{ key: 'sandbox.enabled', group: 'Sandbox' }, { key: 'sandbox.allowedDomains', group: 'Network', kind: 'multiline' }],
+      properties: {
+        'sandbox.enabled': { type: 'boolean', title: 'Sandbox', default: false },
+        'sandbox.allowedDomains': { type: 'string', title: 'Allowed domains' },
+      },
+    }],
+  });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'one', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
+  const root = async (): Promise<{ config: { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> }; _meta?: Record<string, unknown> }> =>
+    ((await client.handle({ method: 'subscribe', params: { channel: ROOT } })) as { snapshot: { state: never } }).snapshot.state;
+
+  const before = await root();
+  expect(before.config.schema.properties['sandbox.enabled']).toEqual({ type: 'boolean', title: 'Sandbox', default: false });
+  expect(before.config.schema.properties['sandbox.allowedDomains']).toEqual({ type: 'string', title: 'Allowed domains' });
+  expect(before.config.values['sandbox.enabled']).toBe(false);
+  expect(Object.hasOwn(before.config.values, 'sandbox.allowedDomains')).toBe(false);
+  expect(before._meta?.['vscode.agentCustomizationSettings']).toEqual([{
+    provider: 'sandbox',
+    title: 'Sandbox',
+    description: 'Where commands run.',
+    settings: [{ key: 'sandbox.enabled', group: 'Sandbox' }, { key: 'sandbox.allowedDomains', group: 'Network', kind: 'multiline' }],
+  }]);
+
+  // Declared, so a push of it is kept and read back as any root setting.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { 'sandbox.enabled': true, 'sandbox.allowedDomains': 'example.test' } } },
+  });
+  await settle();
+  const after = await root();
+  expect(after.config.values['sandbox.enabled']).toBe(true);
+  expect(after.config.values['sandbox.allowedDomains']).toBe('example.test');
+  await host.close();
+});

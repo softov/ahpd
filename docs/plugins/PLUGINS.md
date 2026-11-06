@@ -202,6 +202,7 @@ against its contract before it is recorded.
 | `registerEngine(engine)` | register, open key | One engine, whose records are the agents a client makes on `x-ahpd-agents` |
 | `registerTool(tool)` | append | A server tool offered to every session's model |
 | `registerSessionConfig(key, schema, completions?)` | register, open key | One setting a client draws on every session, merged into the backend's own schema. With a third argument, the key becomes a picker every client can draw |
+| `registerProviderConfiguration(registration)` | register, by provider | A provider's settings at the top of the root config, as VS Code registers a provider's configuration: each of `properties` joins the root config's schema with its `default` held where nothing is set, and `{ provider, title, description, settings, configurationFile? }` is the page a client draws them on, listed in the root's `_meta['vscode.agentCustomizationSettings']`. A key the host or another registration declares is reported, and the first stands |
 | `registerResources(store)` | set | `list`, `read`, `resolve`, `complete`, and the optional write half |
 | `registerResourceProvider(scheme, provider)` | register, open key | One host-owned URI scheme, routed beside the `file:` store |
 | `registerChannel(scheme, channel)` | register, open key | One channel a client subscribes to, under an `x-` scheme; answers a handle to publish on |
@@ -1520,6 +1521,7 @@ that method may be called with:
 | `tunnelKinds` | `registerTunnelKind(kind)`, by the kind's name |
 | `tools` | `registerTool(tool)`, by the tool's `name` |
 | `sessionConfigs` | `registerSessionConfig(key, ...)`, by key |
+| `providerConfigurations` | `registerProviderConfiguration(registration)`, by `provider` |
 | `resourceProviders` | `registerResourceProvider(scheme, provider)`, by scheme |
 | `channels` | `registerChannel(scheme, channel)`, by scheme |
 | `methods` | `registerMethod(name, method)`, by name |

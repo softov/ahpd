@@ -188,6 +188,13 @@ export const accountKey = (provider: string): string =>
  */
 export const RESTART_KEY = 'ahpd.restartNeeded';
 
+/**
+ * The root's `_meta` key the providers' settings pages are listed under,
+ * VS Code's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentCustomizationSettings.ts#L8
+ */
+export const PROVIDER_SETTINGS_META = 'vscode.agentCustomizationSettings';
+
 /** What the root channel advertises, and the config a client pushes to it. */
 export interface Root {
   rootConfig: Record<string, unknown>;
@@ -575,7 +582,23 @@ export function createRoot(ctx: HostContext): Root {
    * exists and a push of it is a write this host may make, so `seesConfig`
    * decides what a connection is shown and this decides what is real.
    */
-  const declaresConfigKey = (key: string): boolean => Object.hasOwn(ROOT_CONFIG_SCHEMA.properties, key) || daemonKey(key);
+  const declaresConfigKey = (key: string): boolean =>
+    Object.hasOwn(ROOT_CONFIG_SCHEMA.properties, key) || Object.hasOwn(providerProperties(), key) || daemonKey(key);
+  /**
+   * The root config properties the providers' configurations declare, as VS
+   * Code adds a registered provider's properties to the root config's schema;
+   * a key this host's own schema declares stays the host's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1340
+   */
+  const providerProperties = (): Record<string, Record<string, unknown>> => Object.fromEntries(
+    (options.providerConfigurations ?? []).flatMap((one) => Object.entries(one.properties))
+      .filter(([key]) => !Object.hasOwn(ROOT_CONFIG_SCHEMA.properties, key)),
+  );
+  /** Each provider property's `default`, held where nothing set the key, as VS Code fills one. */
+  const providerDefaults = (): Record<string, unknown> => Object.fromEntries(
+    Object.entries(providerProperties()).filter(([, property]) => property.default !== undefined)
+      .map(([key, property]) => [key, property.default]),
+  );
   /**
    * What this host serves beside `file:`, as one map a client reads.
    *
@@ -685,8 +708,8 @@ export function createRoot(ctx: HostContext): Root {
        * no-op on every client - including the one that had just pushed it.
        */
       config: {
-        schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...daemonProperties() } },
-        values: { ...rootConfig, ...daemon, ...accountValues(), ...(ctx.restartNeeded ? { [RESTART_KEY]: true } : {}) },
+        schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...providerProperties(), ...daemonProperties() } },
+        values: { ...providerDefaults(), ...rootConfig, ...daemon, ...accountValues(), ...(ctx.restartNeeded ? { [RESTART_KEY]: true } : {}) },
       },
     };
   };
@@ -807,6 +830,15 @@ export function createRoot(ctx: HostContext): Root {
        * strength of a number it does not have.
        */
       ...(build === 'unknown' ? {} : { hostBuild: { version: build } }),
+      /*
+       * Each provider's settings page, the registration without its
+       * properties, which the root config's schema carries, as VS Code records
+       * a registered provider's configuration in root state's `_meta`.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentCustomizationSettings.ts#L8
+       */
+      ...((options.providerConfigurations ?? []).length === 0 ? {} : {
+        [PROVIDER_SETTINGS_META]: (options.providerConfigurations ?? []).map(({ properties: _properties, ...entry }) => entry),
+      }),
       ...(schemes === undefined ? {} : { 'ahpd.resourceProviders': schemes }),
       ...(channels === undefined ? {} : { 'ahpd.channels': channels }),
       ...(methods === undefined ? {} : { 'ahpd.methods': methods }),
