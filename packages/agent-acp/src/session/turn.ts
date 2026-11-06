@@ -51,8 +51,16 @@ export function createTurn(ctx: SessionContext): Turn {
     emit('session', { type: 'session/titleChanged', title: said });
   };
 
-  /** Start a turn the host said: hold it as the one running, before the prompt is sent. */
-  const startTurn = (turnId: string, text: string, from: MessageFrom | undefined): void => {
+  /**
+   * Start a turn the host said: hold it as the one running, before the prompt is sent.
+   *
+   * The attachments stay on the turn's message, live and on the watched record,
+   * so a client reopening the chat reads them beside the words they came with,
+   * as VS Code reads a message back with its attachments.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L858-L859
+   */
+  const startTurn = (turnId: string, text: string, from: MessageFrom | undefined, attachments: MessageAttachment[] | undefined): void => {
+    const attached = attachments !== undefined && attachments.length > 0 ? { attachments } : {};
     ctx.active = {
       id: turnId,
       startedAt: new Date().toISOString(),
@@ -60,6 +68,7 @@ export function createTurn(ctx: SessionContext): Turn {
         text,
         ...(from?.origin !== undefined ? { origin: from.origin } : {}),
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+        ...attached,
       },
       responseParts: [],
     };
@@ -70,6 +79,7 @@ export function createTurn(ctx: SessionContext): Turn {
       message: {
         text,
         ...(from?.origin !== undefined ? { origin: from.origin } : {}),
+        ...attached,
       },
       state: 'complete',
       updates: [],
@@ -89,7 +99,7 @@ export function createTurn(ctx: SessionContext): Turn {
     ctx.cancelRequested = false;
     ctx.error = undefined;
     titled(next.text);
-    startTurn(next.turnId, next.text, next.from);
+    startTurn(next.turnId, next.text, next.from, next.attachments);
     // What the host has to say on this turn, asked now that the turn exists.
     const instructions = (next.options?.instructions?.() ?? []).filter((one) => one.trim() !== '');
     void send(next.turnId, next.text, next.model, next.attachments, instructions);

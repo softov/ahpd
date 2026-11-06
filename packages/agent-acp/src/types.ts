@@ -47,7 +47,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import type { Account, Bag, MessageFrom, SecretRef, Seed, ToolsChanged } from '@ahpd/sdk';
+import type { Account, Bag, MessageAttachment, MessageFrom, SecretRef, Seed, ToolsChanged } from '@ahpd/sdk';
 
 /**
  * What a machine needs for one agent to run in it, as the agent declares it.
@@ -511,8 +511,8 @@ export interface WatchedTurn {
   turnId: string;
   /** ISO 8601 timestamp, taken from the action the turn began with. */
   startedAt: string;
-  /** What began the turn, as the transcript reports it. */
-  message: { text: string; origin?: MessageFrom['origin'] };
+  /** What began the turn, as the transcript reports it, with what was attached to it. */
+  message: { text: string; origin?: MessageFrom['origin']; attachments?: MessageAttachment[] };
   /** How it ended, once it has. */
   state: 'complete' | 'cancelled' | 'error';
   /**

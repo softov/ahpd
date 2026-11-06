@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { uriOf } from '@ahpd/sdk';
-import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
+import type { Agent, Bag, Emit, McpServer, MessageAttachment, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { startedNow } from '../../sdk/test/support/started.js';
 import { loadPlugins } from '../../server/src/plugins.js';
@@ -1401,6 +1401,71 @@ it.each([
     kind: 'error',
     error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
   });
+});
+
+/*
+ * A person's message reads back with what was attached to it, as VS Code reads
+ * a message back with its attachments: a turn this process watched keeps them
+ * on its record, and a replayed one has its image and resource chunks read
+ * into them, bytes as an embedded resource and a file by its URI.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1238-L1288
+ */
+it('reads a watched turn back with what was attached to its message', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'attached');
+  const note = { type: 'simple', label: 'note', modelRepresentation: 'a note to keep' } as MessageAttachment;
+  session.sendMessage('t1', 'hi', undefined, [note]);
+  await until(() => watch.endings().length > 0);
+
+  const turns = await agent.transcript?.(String(session.agentId()));
+  expect(turns?.[0]?.message).toEqual({ text: 'hi', origin: { kind: 'user' }, attachments: [note] });
+});
+
+it('reads a replayed person\'s image and resources back as the message\'s attachments', () => {
+  const at = '2026-11-01T00:00:00.000Z';
+  const updates = [
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'look at these' } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'resource', resource: { uri: 'file:///w/notes.md', text: '# notes', mimeType: 'text/markdown' } } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'resource_link', uri: 'file:///w/plan.pdf', name: 'plan.pdf', mimeType: 'application/pdf', size: 2048 } },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Seen.' } },
+  ] as SessionUpdate[];
+  const turns = turnsOf({
+    provider: 'acp', id: 'replayed', cwd: '/tmp', additional: [], title: 'replayed',
+    createdAt: at, modifiedAt: at, held: [], turns: replayedTurns(updates, at),
+  } as unknown as WatchedSession);
+  expect(turns[0]?.message).toEqual({
+    text: 'look at these',
+    origin: { kind: 'user' },
+    attachments: [
+      { type: 'embeddedResource', label: 'attachment', data: 'aW1hZ2U=', contentType: 'image/png', displayKind: 'image' },
+      { type: 'resource', uri: 'file:///w/notes.md', label: 'notes.md', contentType: 'text/markdown', displayKind: 'document' },
+      { type: 'resource', uri: 'file:///w/plan.pdf', label: 'plan.pdf', contentType: 'application/pdf', sizeHint: 2048, displayKind: 'document' },
+    ],
+  });
+});
+
+/*
+ * What a replay says before any message of the person's is a turn no person
+ * began, so its message is the agent's, the protocol's origin for a message
+ * the agent produced itself.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L760-L767
+ */
+it('reads what a replay says before any message back as the agent\'s', () => {
+  const at = '2026-11-01T00:00:00.000Z';
+  const updates = [
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Welcome back.' } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'hi' } },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello.' } },
+  ] as SessionUpdate[];
+  const turns = turnsOf({
+    provider: 'acp', id: 'replayed', cwd: '/tmp', additional: [], title: 'replayed',
+    createdAt: at, modifiedAt: at, held: [], turns: replayedTurns(updates, at),
+  } as unknown as WatchedSession);
+  expect(turns.map((one) => one.message)).toEqual([
+    { text: '', origin: { kind: 'agent' } },
+    { text: 'hi', origin: { kind: 'user' } },
+  ]);
 });
 
 it('reads a replay whose last turn the agent answered back as complete', () => {
