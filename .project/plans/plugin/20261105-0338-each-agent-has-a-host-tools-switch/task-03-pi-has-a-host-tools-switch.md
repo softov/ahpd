@@ -4,7 +4,7 @@ status: todo
 depends: []
 layer: agent-pi
 refs:
-  - "[code://packages/agent-pi/src/session.ts#L176](../../../../packages/agent-pi/src/session.ts#L176) - where the session takes the host's tools"
+  - "[code://packages/agent-pi/src/session.ts#L173](../../../../packages/agent-pi/src/session.ts#L173) - where the session takes the host's tools"
 ---
 
 ## Objective
@@ -18,7 +18,7 @@ A pi plugin option and a pi record field `hostTools` turn the host's tools off, 
 - `UPDATE: packages/agent-pi/i18n/pt.json` - the option's text in Portuguese.
 - `UPDATE: packages/agent-pi/src/plugin.ts` - the record field `hostTools`, and the record's value over the plugin's.
 - `UPDATE: packages/agent-pi/src/backend.ts` - `hostTools` in the options a session is built with.
-- `UPDATE: packages/agent-pi/src/session.ts:176` - with `hostTools` false, `offering` stays empty at the start and on a change.
+- `UPDATE: packages/agent-pi/src/session.ts:173` - with `hostTools` false, `offering` stays empty at the start and on a change.
 - `UPDATE: packages/agent-pi/test/agent-pi-tools.test.ts` - cases for the plugin off, the record off over the plugin on, and the default.
 
 ## Steps

@@ -7,7 +7,7 @@ created: 2026-11-04
 revalidated: 2026-11-04
 refs:
   - git://0538977c - the commit of ahpd the facts were checked at, and the last that holds `problems/a-symlink-loop-in-claude-rules-hangs-the-daemon.md`, which this plan replaces
-  - "[code://packages/agent-claude/src/session/disk.ts#L202-L214](../../../../packages/agent-claude/src/session/disk.ts#L202-L214) - `markdownUnder` follows a linked folder and keeps no visited set"
+  - "[code://packages/agent-claude/src/session/disk.ts#L202-L224](../../../../packages/agent-claude/src/session/disk.ts#L202-L224) - `markdownUnder`, which keeps the real path of each folder it walked"
   - "[code://packages/agent-claude/src/session/disk.ts#L48-L52](../../../../packages/agent-claude/src/session/disk.ts#L48-L52) - `RULE_DEPTH` is 32, and `RULE_MOST` counts only `.md` files"
 ---
 

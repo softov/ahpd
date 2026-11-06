@@ -4,7 +4,7 @@ status: todo
 depends: []
 layer: agent-cofold
 refs:
-  - "[code://packages/agent-cofold/src/session.ts#L210](../../../../packages/agent-cofold/src/session.ts#L210) - where the session takes the host's tools"
+  - "[code://packages/agent-cofold/src/session.ts#L215](../../../../packages/agent-cofold/src/session.ts#L215) - where the session takes the host's tools"
 ---
 
 ## Objective
@@ -18,7 +18,7 @@ A cofold plugin option and a cofold record field `hostTools` turn the host's too
 - `UPDATE: packages/agent-cofold/i18n/pt.json` - the option's text in Portuguese.
 - `UPDATE: packages/agent-cofold/src/plugin.ts` - the record field `hostTools`, and the record's value over the plugin's.
 - `UPDATE: packages/agent-cofold/src/agent.ts` - `hostTools` in the options a session is built with.
-- `UPDATE: packages/agent-cofold/src/session.ts:210` - with `hostTools` false, `offered` stays empty at the start and on a change.
+- `UPDATE: packages/agent-cofold/src/session.ts:215` - with `hostTools` false, `offered` stays empty at the start and on a change.
 - `UPDATE: packages/agent-cofold/test/agent-cofold-plugin.test.ts` - cases for the plugin off, the record off over the plugin on, and the default.
 
 ## Steps

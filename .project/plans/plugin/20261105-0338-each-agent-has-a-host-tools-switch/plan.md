@@ -6,14 +6,14 @@ priority: medium
 created: 2026-11-05
 revalidated: 2026-11-05
 refs:
-  - git://fb02aaf6 - the commit of ahpd the facts were checked at
+  - git://ad89aa2d - the commit of ahpd the facts were checked at, after the merges of #240, #241 and #242
   - "[code://packages/agent-acp/src/plugin.ts#L118](../../../../packages/agent-acp/src/plugin.ts#L118) - acp's record field `hostTools`: the pattern to copy"
   - "[code://packages/agent-acp/src/plugin.ts#L184-L189](../../../../packages/agent-acp/src/plugin.ts#L184-L189) - acp's plugin option, read once"
   - "[code://packages/agent-acp/src/plugin.ts#L353](../../../../packages/agent-acp/src/plugin.ts#L353) - the record's value wins over the plugin's"
   - "[code://packages/agent-acp/src/session/opening.ts#L167](../../../../packages/agent-acp/src/session/opening.ts#L167) - with it off, a session gets no host tools"
-  - "[code://packages/agent-claude/src/session.ts#L163](../../../../packages/agent-claude/src/session.ts#L163) - Claude wires `start.tools` in as the `ahp` MCP server"
-  - "[code://packages/agent-cofold/src/session.ts#L210](../../../../packages/agent-cofold/src/session.ts#L210) - cofold takes `start.tools`"
-  - "[code://packages/agent-pi/src/session.ts#L176](../../../../packages/agent-pi/src/session.ts#L176) - pi takes `start.tools`"
+  - "[code://packages/agent-claude/src/session/clienttools.ts#L545-L592](../../../../packages/agent-claude/src/session/clienttools.ts#L545-L592) - `declaring`, `buildClientMcpServers` and `rebindForClientTools`: a session's tools reach the CLI on a `client` and a `host` server"
+  - "[code://packages/agent-cofold/src/session.ts#L215](../../../../packages/agent-cofold/src/session.ts#L215) - cofold takes `start.tools`"
+  - "[code://packages/agent-pi/src/session.ts#L173](../../../../packages/agent-pi/src/session.ts#L173) - pi takes `start.tools`"
 ---
 
 ## Goal

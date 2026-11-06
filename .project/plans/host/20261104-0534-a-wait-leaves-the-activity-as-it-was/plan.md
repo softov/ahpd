@@ -31,7 +31,7 @@ refs:
 A session that waits on the person says so once, by its status.
 Today the activity says it a second time, so an ahpc row shows "waiting on you" twice.
 No agent changes its activity when a confirmation or a question waits, as in VS Code.
-cofold names each tool while it runs, as Claude does.
+No agent names a running tool in its activity, as the decision in *Answers* says.
 
 ## Reconnaissance
 
