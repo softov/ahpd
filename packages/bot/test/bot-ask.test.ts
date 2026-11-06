@@ -181,10 +181,12 @@ it('sends an approval from the main chat to the back session', async () => {
       selectedOptionId: 'allow-once',
     },
   }]);
-  // The host does not echo a tool confirmation, so the backend draws it.
-  expect(sent.filter((one) => one['type'] === 'chat/toolCallConfirmed')).toMatchObject([{
-    turnId: 't1', toolCallId: 'toolu_run', approved: true, confirmed: 'user-action', selectedOptionId: 'allow-once',
-  }]);
+  // The host says the client's decision, as VS Code's host echoes a client's
+  // confirmation and hands it to its agent, which says none of its own
+  // (src/vs/platform/agentHost/node/agentSideEffects.ts L1878-L1904 at 6b68d3fe).
+  expect(sent.filter((one) => one['type'] === 'chat/toolCallConfirmed')).toEqual([]);
+  const call = (session.chatState().activeTurn as Bag)['responseParts'] as Bag[];
+  expect(call[0]?.['toolCall']).toMatchObject({ status: 'running', confirmed: 'user-action', selectedOptionId: 'allow-once' });
 });
 
 it('sends a question answered in the main chat to the back session', async () => {

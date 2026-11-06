@@ -1098,8 +1098,11 @@ export function botChatAgent(
        * this package is the chat, and the door onto another session is the
        * plugin's connection.
        *
-       * A tool confirmation is not echoed by the host, so the approval or the
-       * denial is emitted here; a question's is, on the true this returns.
+       * The host says the client's decision on a call, and a question's answer
+       * on the true this returns, as VS Code's host echoes a client's
+       * confirmation once and hands it to its agent
+       * (src/vs/platform/agentHost/node/agentSideEffects.ts L1878-L1904 at
+       * 6b68d3fe); so nothing is said again here.
        */
       confirm: (toolCallId, approved, optionId) => {
         const held = open;
@@ -1117,25 +1120,9 @@ export function botChatAgent(
             confirmed: 'user-action',
             ...(optionId === undefined ? {} : { selectedOptionId: optionId }),
           });
-          start.emit('chat', {
-            type: 'chat/toolCallConfirmed',
-            turnId: held.id,
-            toolCallId,
-            approved: true,
-            confirmed: 'user-action',
-            ...(optionId === undefined ? {} : { selectedOptionId: optionId }),
-          });
         }
         else {
           Object.assign(toolCall, { status: 'cancelled', reason: 'denied' });
-          start.emit('chat', {
-            type: 'chat/toolCallConfirmed',
-            turnId: held.id,
-            toolCallId,
-            approved: false,
-            reason: 'denied',
-            ...(optionId === undefined ? {} : { selectedOptionId: optionId }),
-          });
         }
         handle.onConfirm?.(toolCallId, approved, optionId);
         return true;

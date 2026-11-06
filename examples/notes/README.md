@@ -116,13 +116,13 @@ the other end, is a person pressing Approve and nothing at all happening.
 that announced the question is behind a client that opened the session after it
 was asked.
 
-### Say it back
+### Said back by the host
 
-`chat/toolCallConfirmed` is dispatched by a client and emitted again by the
-backend. Nothing in a client applies what it sent itself, so without the echo
-the row stays `pending-confirmation` on every screen watching it - including
-the one that just answered. `chat/inputCompleted` is said back by the host once
-`answer` returns true, so the backend does not emit it.
+`chat/toolCallConfirmed` is dispatched by a client, and the host says it to
+every client of the chat before it hands the decision to `confirm`, as VS
+Code's host echoes a confirmation and hands it to its agent. The backend moves
+the call in its own state and says nothing of its own. `chat/inputCompleted` is
+said back by the host the same way once `answer` returns true.
 
 ### Cancelling answers as well as stops
 

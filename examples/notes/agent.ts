@@ -394,14 +394,10 @@ export function notes(options: NotesOptions): Agent {
         call.status = allowed ? 'running' : 'cancelled';
         if (allowed) call.confirmed = 'user-action';
         else call.reason = 'denied';
-        // Said back, like every other action a client originates.
-        start.emit('chat', {
-          type: 'chat/toolCallConfirmed',
-          turnId: turn.id,
-          toolCallId: callId,
-          approved: allowed,
-          ...(allowed ? { confirmed: 'user-action' } : { reason: 'denied' }),
-        });
+        // The host has said the client's decision, as VS Code's host echoes a
+        // confirmation once and hands it to its agent
+        // (src/vs/platform/agentHost/node/agentSideEffects.ts L1878-L1904 at
+        // 6b68d3fe), so it is not said again here.
         if (!allowed) return false;
       }
 

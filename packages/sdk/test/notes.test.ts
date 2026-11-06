@@ -268,7 +268,9 @@ it('asks before it writes, and writes once it is allowed', async () => {
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/toolCallConfirmed', toolCallId: request.id, approved: true, confirmed: 'user-action' },
+      // The turn the call is in, which the protocol's tool call actions carry
+      // (types/channels-chat/actions.ts L43-L47 at spec v1.0.0).
+      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.id, approved: true, confirmed: 'user-action' },
     },
   });
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
@@ -285,17 +287,21 @@ it('writes nothing when it is told not to', async () => {
   const { dir, client, peer: p, uri, chatUri } = await talking();
   say(client, chatUri, 'write secrets everything');
   await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
-  const request = actions(p, uri).find((a) => a.type === 'session/inputNeededSet')?.request as { id: string };
+  const request = actions(p, uri).find((a) => a.type === 'session/inputNeededSet')?.request as { id: string; turnId: string };
 
   void client.handle({
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/toolCallConfirmed', toolCallId: request.id, approved: false, reason: 'denied' },
+      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.id, approved: false, reason: 'denied' },
     },
   });
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
 
+  // The denial is said once, by the host, as VS Code's host echoes a client's
+  // confirmation and hands it to its agent, which says none of its own
+  // (src/vs/platform/agentHost/node/agentSideEffects.ts L1878-L1904 at 6b68d3fe).
+  expect(actions(p, chatUri).filter((a) => a.type === 'chat/toolCallConfirmed')).toHaveLength(1);
   await expect(readFile(join(dir, 'secrets.md'), 'utf8')).rejects.toThrow();
   const { chat, session } = reduced(p, uri, chatUri);
   expect(session.inputNeeded).toBeUndefined();
