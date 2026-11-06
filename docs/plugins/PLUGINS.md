@@ -211,6 +211,7 @@ against its contract before it is recorded.
 | `registerMethod(name, method)` | register, open key | One command a client sends by name, under an `x-` name |
 | `registerTerminals(store)` | set | `create` |
 | `registerChanges(source)` | set | `scopes`, `state`, `summary`, and the optional operations |
+| `registerChangesetOperations(contribution)` | register, by operation id | One feature area's changeset operations beside the source's, as VS Code registers a changeset operation contribution: `operations(dir, session, scope, context)` answers what to advertise after the source's own, and `handlers` runs each by its id. An id the source offers stays the source's, and an id another contribution handles is reported |
 | `registerDirectories(facts)` | set | `meta`, and the optional `refresh` |
 | `registerWorktrees(worktrees)` | set | `repository`, `branches`, `create`, `dirty`, `remove`, and the optional `gitDir` |
 | `registerGithub(pullRequests)` | set | `resource`, `forBranch`, `create` |
@@ -1522,6 +1523,7 @@ that method may be called with:
 | `tools` | `registerTool(tool)`, by the tool's `name` |
 | `sessionConfigs` | `registerSessionConfig(key, ...)`, by key |
 | `providerConfigurations` | `registerProviderConfiguration(registration)`, by `provider` |
+| `changesetOperations` | `registerChangesetOperations(contribution)`, by each handled operation id |
 | `resourceProviders` | `registerResourceProvider(scheme, provider)`, by scheme |
 | `channels` | `registerChannel(scheme, channel)`, by scheme |
 | `methods` | `registerMethod(name, method)`, by name |

@@ -371,7 +371,7 @@ const CONFLICT = -32011;
         ctx.operationStatusSaid(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
         try {
           const meta = typeof params._meta === 'object' && params._meta !== null ? params._meta as Record<string, unknown> : undefined;
-          const result = await need(source.invoke, 'invokeChangesetOperation').call(source, {
+          const request = {
             ...context,
             dir: at.dir,
             session: at.owner,
@@ -379,7 +379,20 @@ const CONFLICT = -32011;
             operationId,
             ...(target !== undefined ? { target } : {}),
             ...(meta !== undefined ? { meta } : {}),
-          });
+          };
+          /*
+           * The source's own operation runs through its `invoke`, and one a
+           * contribution offered through the handler it registered for it, as
+           * VS Code invokes the handler registered for an operation's id.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L424
+           */
+          const own = (source.operations?.(at.dir, at.owner, at.scope, context) ?? []).some((one) => one.id === operationId);
+          const handler = own ? undefined : (options.changesetOperations ?? [])
+            .find((one) => (one.operations(at.dir, at.owner, at.scope, context) ?? []).some((offer) => offer.id === operationId))
+            ?.handlers[operationId];
+          const result = handler !== undefined
+            ? await handler(request)
+            : await need(source.invoke, 'invokeChangesetOperation').call(source, request);
           ctx.operationStatusSaid(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
           // Before the refresh, so GitHub's later answer is what survives.
           if (result.pullRequest !== undefined) recordPullRequest(at.owner, at.dir, result.pullRequest);

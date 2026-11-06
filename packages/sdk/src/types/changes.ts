@@ -300,6 +300,28 @@ export interface ChangesetOperationResult {
 }
 
 /**
+ * One feature area's changeset operations, beside the changes source's own:
+ * the operations it advertises on a changeset and the handler of each, as a
+ * VS Code changeset operation contribution registers its handlers one by one
+ * and answers the operations it offers in a context.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChangesetOperationService.ts#L140-L157
+ */
+export interface ChangesetOperationContribution {
+  /**
+   * The operations this contribution offers on one scope of a session's
+   * changeset, in the order to draw them, or nothing where it has none to
+   * offer there. Asked with the same arguments the source's `operations` is.
+   */
+  operations(dir: string, session: string, scope: string, context?: ChangesetOperationContext): ChangesetOperation[] | undefined;
+  /**
+   * The handler of each operation this contribution offers, by operation id:
+   * run once the host has checked the invocation as it checks every one, and
+   * throwing where it did not work, as the source's `invoke` does.
+   */
+  handlers: Record<string, (request: ChangesetOperationRequest) => Promise<ChangesetOperationResult>>;
+}
+
+/**
  * What `ChangesetSource.watch` returns: a call that stops the watch.
  *
  * `ready` resolves once the source's watchers are armed, or once it has given

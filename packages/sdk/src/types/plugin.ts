@@ -17,6 +17,7 @@ import type { AutomationTriggerDefinition, CanvasState, ChatOrigin, ChatSummary,
 import type { Agent } from './agent.js';
 import type { Engine, AgentOwner, ServedEngine } from './agents.js';
 import type { StartSession } from './automations.js';
+import type { ChangesetOperationContribution } from './changes.js';
 import type { SessionConfigAnswerer } from './completions.js';
 import type { Adapter, ConnectorOwner, ServedAdapter } from './connectors.js';
 import type { EventHandler, EventName, HostHandlers } from './events.js';
@@ -1205,6 +1206,16 @@ export interface PluginHost extends PluginContext {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1340
    */
   registerProviderConfiguration(registration: ProviderConfiguration): void;
+  /**
+   * Offer changeset operations beside the changes source's own, one feature
+   * area's, as VS Code registers a changeset operation contribution: every
+   * changeset a session holds advertises what `operations` answers after the
+   * source's, and an invocation of one runs the handler registered for its id.
+   * Each handler's id is named in `contracts.changesetOperations`, and an id
+   * another plugin's contribution handles is a collision, reported.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChangesetOperationService.ts#L140-L157
+   */
+  registerChangesetOperations(contribution: ChangesetOperationContribution): void;
   /** Set `HostOptions.resources`, or take the daemon's over with `'replace'`. */
   registerResources(store: PortOf<'resources'>, when?: 'replace'): void;
   /**
@@ -1719,6 +1730,8 @@ export interface Contribution {
   sessionCompletions: Record<string, SessionConfigAnswerer>;
   /** The provider configurations this plugin registered, each with the root config properties it declares. */
   providerConfigurations: ProviderConfiguration[];
+  /** The changeset operation contributions this plugin registered. */
+  changesetOperations: ChangesetOperationContribution[];
   /** The singleton ports this plugin set, and whether each took one over. */
   ports: Partial<Record<PortKey, PortContribution>>;
   /**

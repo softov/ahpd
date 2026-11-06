@@ -263,6 +263,19 @@ describe('pluginHost', () => {
     expect(options.providerConfigurations?.map((one) => one.provider)).toEqual(['notes']);
   });
 
+  it('accepts a complete changeset operation contribution, and refuses an empty one or a handler that is not a function', () => {
+    const { host, contribution } = pluginHost('alpha', context());
+    const offered = { operations: () => [], handlers: { 'merge-request': async () => ({}) } };
+    expect(() => host.registerChangesetOperations(offered as never)).not.toThrow();
+    expect(() => host.registerChangesetOperations({} as never)).toThrow(/alpha.*registerChangesetOperations.*an operations function/);
+    expect(() => host.registerChangesetOperations({ operations: () => [], handlers: { 'merge-request': 'merge' } } as never))
+      .toThrow(/handlers, each a function by operation id/);
+    expect(() => host.registerChangesetOperations(offered as never)).toThrow(/alpha.*registerChangesetOperations.*merge-request/);
+    const { options, problems } = foldHostOptions(base(), [contribution]);
+    expect(problems).toEqual([]);
+    expect(options.changesetOperations?.map((one) => one.operations)).toEqual([offered.operations]);
+  });
+
   it('refuses a scheme that is not one, and the schemes the host already owns', () => {
     const { host } = pluginHost('alpha', context());
     expect(() => host.registerResourceProvider('9bad', provider as never)).toThrow(/URI scheme/);

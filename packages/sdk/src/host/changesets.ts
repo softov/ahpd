@@ -457,7 +457,18 @@ export function createChangesets(ctx: HostContext): Changesets {
     const at = changesetAt(channel);
     if (!at) return [];
     const busy = (ctx.statusOf(at.owner) & Status.InProgress) !== 0;
-    return (options.changes?.operations?.(at.dir, at.owner, at.scope, operationContext(at.owner, at.dir)) ?? []).map((operation) => ({
+    const context = operationContext(at.owner, at.dir);
+    /*
+     * The source's operations, then each contribution's, as VS Code builds a
+     * changeset's list from every contribution; an id offered twice is the
+     * first one's.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L178-L185
+     */
+    const offered = [
+      ...(options.changes?.operations?.(at.dir, at.owner, at.scope, context) ?? []),
+      ...(options.changesetOperations ?? []).flatMap((one) => one.operations(at.dir, at.owner, at.scope, context) ?? []),
+    ].filter((operation, at_, all) => all.findIndex((other) => other.id === operation.id) === at_);
+    return offered.map((operation) => ({
       id: operation.id,
       label: operation.label,
       ...(operation.description !== undefined ? { description: operation.description } : {}),

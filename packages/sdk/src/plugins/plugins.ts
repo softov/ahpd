@@ -824,6 +824,26 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
     }
   }
   if (providerConfigurations.length > 0) options.providerConfigurations = providerConfigurations;
+
+  /*
+   * The changeset operation contributions, an operation id handled once, as
+   * VS Code refuses a second handler registered for one: a contribution whose
+   * handler names an id another already handles is reported and left out.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L506-L516
+   */
+  const changesetOperations = [...(base.changesetOperations ?? [])];
+  for (const contribution of contributions) {
+    for (const offered of contribution.changesetOperations) {
+      const taken = Object.keys(offered.handlers)
+        .filter((id) => changesetOperations.some((one) => Object.hasOwn(one.handlers, id)));
+      if (taken.length > 0) {
+        problems.push(`plugin ${contribution.by} handles changeset operation ${taken.join(', ')}, which another contribution already handles`);
+        continue;
+      }
+      changesetOperations.push(offered);
+    }
+  }
+  if (changesetOperations.length > 0) options.changesetOperations = changesetOperations;
   if (Object.keys(sessionCompletions).length > 0) options.sessionConfigCompletions = sessionCompletions;
   if (Object.keys(keyCatalogs).length > 0 || Object.keys(agentCatalogs).length > 0) {
     options.catalogs = {
@@ -1244,6 +1264,7 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
     sessionConfig: {},
     sessionCompletions: {},
     providerConfigurations: [],
+    changesetOperations: [],
     ports: {},
     providers: {},
     grants: {},
@@ -1657,6 +1678,23 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
       }
       reportGaps(Object.entries(properties).map(([key, schema]) => ({ where: `root config ${key}`, gaps: schemaGaps(schema) })));
       contribution.providerConfigurations.push(frozenCopy({ ...registration, provider: named }));
+    },
+    registerChangesetOperations(offered) {
+      open();
+      if (typeof offered?.operations !== 'function') {
+        throw new Error(miss(by, 'registerChangesetOperations', 'the contribution', 'an operations function'));
+      }
+      const handlers = offered.handlers;
+      if (typeof handlers !== 'object' || handlers === null || Object.values(handlers).some((one) => typeof one !== 'function')) {
+        throw new Error(miss(by, 'registerChangesetOperations', 'the contribution', 'handlers, each a function by operation id'));
+      }
+      for (const id of Object.keys(handlers)) {
+        declared(by, options.contracts, 'changesetOperations', id);
+        if (contribution.changesetOperations.some((one) => Object.hasOwn(one.handlers, id))) {
+          throw new Error(miss(by, 'registerChangesetOperations', id, 'an operation no other contribution in this plugin handles'));
+        }
+      }
+      contribution.changesetOperations.push({ operations: offered.operations, handlers: { ...handlers } });
     },
     registerResources: (store, when) => { setPort('resources', 'registerResources', store, when); },
     registerResourceProvider(scheme, provider) {

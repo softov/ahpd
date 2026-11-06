@@ -7,7 +7,7 @@ import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
 import type { Grant, Principal, Users } from './users.js';
 import type { TerminalStore } from './terminals.js';
-import type { ChangesetSource } from './changes.js';
+import type { ChangesetOperationContribution, ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
@@ -418,6 +418,15 @@ export interface HostOptions {
    * ships with this package, and the daemon uses it.
    */
   changes?: ChangesetSource;
+  /**
+   * Changeset operations beside the source's own, one feature area each, as
+   * VS Code registers a changeset operation contribution: every changeset a
+   * session holds advertises the operations each offers after the source's,
+   * and an invocation of one runs its handler. The fold fills this from
+   * `registerChangesetOperations`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L88-L118
+   */
+  changesetOperations?: ChangesetOperationContribution[];
   /**
    * What this host can say about the directories it serves.
    *

@@ -52,6 +52,7 @@ const contribution = (
     sessionConfig?: Record<string, Record<string, unknown>>;
     sessionCompletions?: Contribution['sessionCompletions'];
     providerConfigurations?: Contribution['providerConfigurations'];
+    changesetOperations?: Contribution['changesetOperations'];
     routes?: Route;
     closers?: (() => void | Promise<void>)[];
     preambles?: Contribution['preambles'];
@@ -63,6 +64,7 @@ const contribution = (
   sessionConfig: parts.sessionConfig ?? {},
   sessionCompletions: parts.sessionCompletions ?? {},
   providerConfigurations: parts.providerConfigurations ?? [],
+  changesetOperations: parts.changesetOperations ?? [],
   ports: parts.ports ?? {},
   providers: parts.providers ?? {},
   channels: parts.channels ?? {},
@@ -337,6 +339,17 @@ it('registers a provider configuration through a plugin host, named in its contr
   })).toThrow('contracts.providerConfigurations');
   ADAPTER.seal();
   expect(ADAPTER.contribution.providerConfigurations.map((one) => one.provider)).toEqual(['sandbox']);
+});
+
+it('takes a changeset operation contribution from a plugin, and reports a second handler for the same operation', () => {
+  const open = { operations: () => [], handlers: { 'merge-request': async () => ({}) } };
+  const again = { operations: () => [], handlers: { 'merge-request': async () => ({ message: 'again' }) } };
+  const folded = foldHostOptions(base(), [
+    contribution('one', { changesetOperations: [open] }),
+    contribution('two', { changesetOperations: [again] }),
+  ]);
+  expect(folded.options.changesetOperations).toEqual([open]);
+  expect(folded.problems).toEqual(['plugin two handles changeset operation merge-request, which another contribution already handles']);
 });
 
 it('refuses a session setting a backend already declares', () => {

@@ -120,6 +120,46 @@ const refused = async (run: Promise<unknown>): Promise<{ code: number; message: 
   }
 };
 
+/*
+ * A feature area's operations beside the source's, as VS Code registers a
+ * changeset operation contribution: advertised after the source's own, an id
+ * the source offers staying the source's, and invoked through the handler the
+ * contribution registered for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L88-L118
+ */
+it('offers a contribution\'s operations after the source\'s, and runs one through its handler', async () => {
+  const { source, invoked } = scripted();
+  const handled: ChangesetOperationRequest[] = [];
+  const host = createHost({
+    path: DIR,
+    agents: [echo({ path: DIR })],
+    changes: source,
+    changesetOperations: [{
+      operations: () => [
+        { id: 'merge-request', label: 'Open Merge Request', scopes: ['changeset'] },
+        { id: 'commit', label: 'Commit Elsewhere', scopes: ['changeset'] },
+      ],
+      handlers: { 'merge-request': async (request) => { handled.push(request); return { message: 'opened' }; } },
+    }],
+  });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  const uri = 'ahp-session:/one';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+  const changeset = `${uri}/changeset/uncommitted`;
+  const opened = await client.handle({ method: 'subscribe', params: { channel: changeset } }) as {
+    snapshot: { state: { operations?: { id: string; label: string }[] } };
+  };
+  expect(opened.snapshot.state.operations?.map((one) => `${one.id}:${one.label}`))
+    .toEqual(['commit:Commit', 'discard:Discard Changes', 'look:Look', 'merge-request:Open Merge Request']);
+
+  expect(await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'merge-request' } }))
+    .toMatchObject({ message: 'opened' });
+  expect(handled.map((one) => [one.operationId, one.session, one.scope])).toEqual([['merge-request', uri, 'uncommitted']]);
+  expect(invoked).toHaveLength(0);
+  await host.close();
+});
+
 it('puts the verbs on the changeset, idle, alongside the files', async () => {
   const { snapshot } = await watching(scripted().source);
   const state = snapshot.state as { operations?: Record<string, unknown>[] };
