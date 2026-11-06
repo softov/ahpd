@@ -1,4 +1,3 @@
-import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
@@ -75,10 +74,11 @@ const KEPT_IN: Record<string, string> = {
  * from `<server>/<tool>`, so that is the name the host is asked about; a tool
  * the CLI runs itself keeps its own name, which is what the rule names for it.
  *
- * A hook is told which server served the call, and that is the name the rule
- * uses: the prefix can spell a server differently, and a server's own name can
- * contain the `__` a split would stop at. `canUseTool` is told no server, so it
- * keeps the split, which is the best reading of a name alone.
+ * `canUseTool` is told which server served the call, the SDK's `mcpServer`,
+ * and that is the name the rule uses: the prefix can spell a server
+ * differently, and a server's own name can contain the `__` a split would stop
+ * at. A call no server is named for keeps the split, the best reading of a
+ * name alone.
  */
 const referenceName = (toolName: string, server?: string): string => {
   if (server !== undefined) {
@@ -166,14 +166,6 @@ export interface Asking {
   /** The SDK’s own gate between a tool call and the host that runs it. */
   canUseTool: (toolName: string, input: Bag, options?: Bag) => Promise<unknown>;
   /**
-   * The `PreToolUse` hook that asks for a tool the operator's rule names.
-   *
-   * `canUseTool` is only consulted by the modes that would ask anyway, and an
-   * allow list or auto mode skips it, so this is the one place a matched call
-   * reaches a person in every mode.
-   */
-  ruleFirst: HookCallback;
-  /**
    * Drop the preview of one call, or of every call this session is holding.
    *
    * A preview is the file as it *would* be, which stops being true the moment
@@ -237,31 +229,9 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     return undefined;
   };
 
-  /*
-   * What the rule hook already answered, by the call it answered for.
-   *
-   * The hook runs before the CLI decides whether a call reaches `canUseTool`
-   * at all, so in most modes the entry is never read. It is kept for the modes
-   * that would have asked anyway: a hook's answer can still be followed by the
-   * CLI's own question, and the person must not be asked a second time.
-   * Bounded, because the modes the hook alone answers for would otherwise keep
-   * one entry per matched call for the session's whole life.
-   */
-  const ruledBy = new Map<string, 'allow' | 'deny'>();
-  const RULED_HELD = 256;
-  const remember = (callId: string, answer: 'allow' | 'deny'): void => {
-    ruledBy.set(callId, answer);
-    if (ruledBy.size > RULED_HELD) ruledBy.delete(ruledBy.keys().next().value!);
-  };
-
   /**
-   * Put one call to a person, and settle on their answer.
-   *
-   * `canUseTool` awaits this as the CLI's own question; the rule hook awaits it
-   * for a tool the operator's rule names, in the modes where `canUseTool` is
-   * never reached. Both get the same entry, the same preview and the same
-   * answer, so the two roads to a person are one question rather than two that
-   * have to be kept alike.
+   * Put one call to a person, and settle on their answer: `canUseTool`
+   * awaits this as the CLI's own question.
    *
    * A call the SDK has already cancelled is answered before a question is put:
    * the request would go on the chat and stay there, and its caller is a call
@@ -482,28 +452,17 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      */
     const id = str(about.toolUseID) ?? `req-${Date.now()}`;
     /*
-     * The rule hook's answer, when it was already asked.
-     *
-     * The hook runs before the CLI gets here, and in the modes that would not
-     * have asked it is the only one that runs at all. In the modes that would,
-     * the person has answered this call once and the CLI must not put it
-     * again. Read before anything else: the answer is a person's, and the
-     * lists below are only other answers about the same tool.
-     */
-    const ruled = ruledBy.get(id);
-    if (ruled !== undefined) {
-      ruledBy.delete(id);
-      return ruled === 'allow' ? { behavior: 'allow', updatedInput: input } : { behavior: 'deny', message: DECLINED };
-    }
-    /*
-     * The operator's rule, read for every call before anything else.
+     * The operator's rule, read for every call the CLI asks about, before
+     * anything else, as VS Code's host applies its rules to the confirmations
+     * a provider raises.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1698
      *
      * A match means the call asks every time, so the lists, a host tool's own
      * `confirm` and the terminal rules are all skipped: each is a way not to
      * ask, and the rule is the operator saying to ask. Read without a
      * connection, because the rule is the host's rather than a window's.
      */
-    const matched = ctx.options.getAutoApproval?.('tool', referenceName(toolName)) === 'ask';
+    const matched = ctx.options.getAutoApproval?.('tool', referenceName(toolName, str(bag(about.mcpServer).name))) === 'ask';
     if (!matched) {
       /*
        * Answered from the lists, before anybody is asked.
@@ -542,10 +501,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
     const agentId = str(about.agentID);
     /*
-     * A matched call, put where a harness that asks anyway would reach it.
-     *
-     * The hook normally asks first and this callback is never called. When it
-     * is, the question is the same one - approve or deny - with no suggestion
+     * A matched call, put to a person as approve or deny with no suggestion
      * kept: the rule is that the call asks every time, and a suggestion is a
      * way to stop asking.
      */
@@ -584,59 +540,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       ...(agentId !== undefined ? { agentId } : {}),
       ...(signal !== undefined ? { signal } : {}),
     });
-  };
-
-  /**
-   * The `PreToolUse` hook that asks for a tool the operator's rule names.
-   *
-   * The one road that reaches a person in every mode: `canUseTool` is not
-   * consulted in `bypassPermissions`, in auto mode or for a tool on the
-   * `allowedTools` list, and the CLI's own `ask` is the prompt those skip. So
-   * this answers `allow` or `deny` itself, with what the person said.
-   *
-   * `dontAsk` refuses without a question, because refusing is that mode's
-   * answer: the rule adds questions and takes none of the mode's answers away.
-   */
-  const ruleFirst: HookCallback = async (input, _toolUseID, options) => {
-    if (input.hook_event_name !== 'PreToolUse') return {};
-    const toolName = input.tool_name;
-    /*
-     * A question is not a tool call to confirm.
-     *
-     * `AskUserQuestion` asks its own question, and the answers it is handed are
-     * its input: a confirmation answered here would settle the question on the
-     * chat and then run the tool with nothing the person said.
-     */
-    if (toolName === 'AskUserQuestion') return {};
-    if (ctx.options.getAutoApproval?.('tool', referenceName(toolName, input.mcp_server?.name)) !== 'ask') return {};
-    const callId = input.tool_use_id;
-    if (ctx.config.permissionMode === 'dontAsk') {
-      remember(callId, 'deny');
-      return {
-        hookSpecificOutput: {
-          hookEventName: 'PreToolUse',
-          permissionDecision: 'deny',
-          permissionDecisionReason: `${toolName} would need approval and the mode is dontAsk`,
-        },
-      };
-    }
-    const agentId = input.agent_id;
-    const answered = await askPerson({
-      toolName,
-      input: bag(input.tool_input),
-      toolUseID: callId,
-      suggestions: [],
-      ...(agentId !== undefined ? { agentId } : {}),
-      ...(options?.signal !== undefined ? { signal: options.signal } : {}),
-    });
-    remember(callId, answered.behavior);
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: answered.behavior,
-        permissionDecisionReason: answered.behavior === 'allow' ? 'Approved by a person' : answered.message,
-      },
-    };
   };
 
   const methods: Asking['methods'] = {
@@ -800,5 +703,5 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     },
   };
 
-  return { pending, canUseTool, ruleFirst, settleEdits, methods };
+  return { pending, canUseTool, settleEdits, methods };
 }

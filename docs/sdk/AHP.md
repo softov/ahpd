@@ -200,8 +200,9 @@ A daemon that restarts therefore holds no rule until a window pushes it again.
 A key names one tool exactly, or every tool of a server through `<server>/*`.
 A key is the backend's own tool name, matched with its case, so Claude's `Bash` and pi's `bash` are different keys.
 A tool this host offers is `ahp/<name>` in every backend.
-A matched call asks in every backend and every permission mode, `bypassPermissions` included.
-A `dontAsk` session refuses the call instead of asking.
+A matched call asks whenever its backend puts the call to a person, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1698) applies its rules to the confirmations a provider raises.
+Claude's backend puts it when the CLI asks about the call, which the CLI does in neither `auto` nor `bypassPermissions`.
+The operator's switch that takes those modes away, `autoApprovePolicyRestricted`, is declared here and changes nothing in this host.
 The question offers no "always" option, so an answer applies to that call alone.
 cofold puts the question for a matched call and deletes the approval it remembered for that tool first; in `dontAsk` it denies the call instead.
 A call to a matched host tool through `/mcp` is refused, because that door has no session to ask in.

@@ -425,10 +425,8 @@ it('is busy while the Stop hook lists a session cron', async () => {
 
 it('keeps the hooks the session already had', async () => {
   await open();
-  // The rule hook that every tool reaches.
-  expect(sdk.hooks?.PreToolUse).toEqual([
-    { hooks: [expect.any(Function)], timeout: 24 * 60 * 60 },
-  ]);
+  // None before a tool runs: a call is put to a person when the CLI asks about it.
+  expect(sdk.hooks?.PreToolUse).toBeUndefined();
   expect(sdk.hooks?.UserPromptSubmit).toEqual([{ hooks: [expect.any(Function)] }]);
   expect(sdk.hooks?.Stop).toEqual([{ hooks: [expect.any(Function)] }]);
 });
