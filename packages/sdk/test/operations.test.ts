@@ -394,6 +394,31 @@ it('keeps the failure on the operation, and hands it to the next reader', async 
   expect(operations[0]).toMatchObject({ id: 'commit', status: 'error' });
 });
 
+/*
+ * A list said again after an invocation failed carries the operation as the
+ * source declares it, as VS Code's host builds every list from its providers:
+ * the failure is said by `changeset/operationStatusChanged`, and the next list
+ * replaces it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L206-L219
+ */
+it('says a list again with a failed operation idle, as VS Code\'s host', async () => {
+  const { source } = scripted('git said no');
+  const { client, peer: p, chatUri, changeset } = await watching(source);
+  await refused(client.handle({
+    method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' },
+  }));
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await vi.waitFor(() => { expect(actions(p, chatUri).some((one) => one.type === 'chat/turnComplete')).toBe(true); });
+  await vi.waitFor(() => {
+    const last = actions(p, changeset).filter((one) => one.type === 'changeset/operationsChanged').at(-1);
+    expect((last?.operations as { id: string; status: string }[] | undefined)?.find((one) => one.id === 'commit')?.status).toBe('idle');
+  });
+});
+
 it('hands the source the request\'s _meta and what the host knows, and passes a coded refusal through', async () => {
   const { source, invoked, asked } = scripted();
   const { client, changeset } = await watching(source);

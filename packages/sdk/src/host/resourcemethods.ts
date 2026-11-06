@@ -26,7 +26,7 @@ export interface ResourceMethods {
 export function createResourceMethods(ctx: HostContext, conn: ConnectionContext): ResourceMethods {
   const { connection } = conn;
   const {
-    bringBackOf, clientResources, followOf, changesetAt, contentMoved, dispatch, fire, inFlight, lastError, log, operationContext,
+    bringBackOf, clientResources, followOf, changesetAt, contentMoved, dispatch, fire, log, operationContext,
     opKey, options, ownerFor, recordPullRequest, refreshFacts, statusOf, wroteThrough,
   } = ctx;
 
@@ -363,9 +363,7 @@ const CONFLICT = -32011;
           throw new RpcError(CONFLICT, `the work of ${at.owner} waits in ${brought.waiting}: nothing acts on ${at.dir} until it is on the branch`);
         }
 
-        inFlight.add(lane);
-        lastError.delete(lane);
-        dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
+        ctx.operationStatusSaid(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
         try {
           const meta = typeof params._meta === 'object' && params._meta !== null ? params._meta as Record<string, unknown> : undefined;
           const result = await need(source.invoke, 'invokeChangesetOperation').call(source, {
@@ -377,8 +375,7 @@ const CONFLICT = -32011;
             ...(target !== undefined ? { target } : {}),
             ...(meta !== undefined ? { meta } : {}),
           });
-          inFlight.delete(lane);
-          dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
+          ctx.operationStatusSaid(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
           // Before the refresh, so GitHub's later answer is what survives.
           if (result.pullRequest !== undefined) recordPullRequest(at.owner, at.dir, result.pullRequest);
           // Something wrote to the tree, so every changeset of this session
@@ -411,12 +408,10 @@ const CONFLICT = -32011;
         }
         catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          inFlight.delete(lane);
-          lastError.set(lane, message);
           // The failure as the protocol's ErrorInfo, named and traced as the
           // reference host's changeset operations say one.
           // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L519-L524
-          dispatch(channel, {
+          ctx.operationStatusSaid(channel, {
             type: 'changeset/operationStatusChanged',
             operationId,
             status: 'error',

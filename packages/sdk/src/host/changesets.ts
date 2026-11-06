@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
-import type { ChangesetFile } from '@microsoft/agent-host-protocol';
+import { changesetReducer } from '@microsoft/agent-host-protocol';
+import type { ChangesetAction, ChangesetFile } from '@microsoft/agent-host-protocol';
 import { idOf, Status, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { chatOfCanvas, chatUriFor } from './channels.js';
@@ -50,17 +51,17 @@ export interface Changesets {
   relayedChannel(channel: string): SessionChannel | undefined;
   operationContext(asked: string, dir: string): ChangesetOperationContext;
   opKey(channel: string, id: string): string;
-  inFlight: Set<string>;
   /** The last invocation of each operation of a changeset, which the next one waits behind, by `opKey`. */
   operationLanes: Map<string, Promise<unknown>>;
   /** The invocation in flight for each identical request, which another one shares, by its key. */
   inFlightOperations: Map<string, Promise<unknown>>;
-  lastError: Map<string, string>;
   /**
    * What every client watching a changeset was last told it holds, by channel:
    * its files, its status, an error status with its error, and its operations.
    */
   shown: Map<string, { files: ChangesetFile[]; status: string; error?: { errorType: string; message: string }; operations?: Bag[] }>;
+  /** Say a `changeset/operationStatusChanged`, and hold it in what the channel's watchers hold. */
+  operationStatusSaid(channel: string, action: Bag): void;
 }
 
 export function createChangesets(ctx: HostContext): Changesets {
@@ -147,15 +148,9 @@ export function createChangesets(ctx: HostContext): Changesets {
   };
 
   /**
-   * Invocations in flight, and the last one that failed.
-   *
-   * Keyed by changeset and operation, because status is per operation on a
-   * changeset rather than per source: two clients looking at the same
-   * changeset must see the same spinner, which is the whole reason the
-   * protocol reflects an imperative call back into state.
+   * An operation of a changeset, as one key: the lane its invocations wait in
+   * one behind another.
    */
-  const inFlight = new Set<string>();
-  const lastError = new Map<string, string>();
   const opKey = (channel: string, id: string): string => `${channel}\u0000${id}`;
   const operationLanes = new Map<string, Promise<unknown>>();
   const inFlightOperations = new Map<string, Promise<unknown>>();
@@ -450,34 +445,28 @@ export function createChangesets(ctx: HostContext): Changesets {
    * The operations a changeset offers, with the status the host owns.
    *
    * The source declares the verbs and this decides what may be pressed:
-   * `Disabled` while the session is mid-turn, because the working tree is
+   * `disabled` while the session is mid-turn, because the working tree is
    * being written by the agent and an operation that mutated it underneath
-   * would race the thing that is doing the work; `Running` while an invocation
-   * is out; `Error` carrying whatever the last one said.
+   * would race the thing that is doing the work, and `idle` otherwise. An
+   * invocation's `running`, `idle` and `error` are said by
+   * `changeset/operationStatusChanged` alone, and the next list replaces them,
+   * as VS Code's host builds every list from its providers.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L206-L219
    */
   const operationsOf = (channel: string): Bag[] => {
     const at = changesetAt(channel);
     if (!at) return [];
     const busy = (ctx.statusOf(at.owner) & Status.InProgress) !== 0;
-    return (options.changes?.operations?.(at.dir, at.owner, at.scope, operationContext(at.owner, at.dir)) ?? []).map((operation) => {
-      const key = opKey(channel, operation.id);
-      const failure = lastError.get(key);
-      const status = inFlight.has(key) ? 'running'
-        : busy ? 'disabled'
-          : failure !== undefined ? 'error'
-            : 'idle';
-      return {
-        id: operation.id,
-        label: operation.label,
-        ...(operation.description !== undefined ? { description: operation.description } : {}),
-        scopes: operation.scopes,
-        ...(operation.confirmation !== undefined ? { confirmation: operation.confirmation } : {}),
-        ...(operation.icon !== undefined ? { icon: operation.icon } : {}),
-        ...(operation.group !== undefined ? { group: operation.group } : {}),
-        status,
-        ...(status === 'error' && failure !== undefined ? { error: { message: failure } } : {}),
-      };
-    });
+    return (options.changes?.operations?.(at.dir, at.owner, at.scope, operationContext(at.owner, at.dir)) ?? []).map((operation) => ({
+      id: operation.id,
+      label: operation.label,
+      ...(operation.description !== undefined ? { description: operation.description } : {}),
+      scopes: operation.scopes,
+      ...(operation.confirmation !== undefined ? { confirmation: operation.confirmation } : {}),
+      ...(operation.icon !== undefined ? { icon: operation.icon } : {}),
+      ...(operation.group !== undefined ? { group: operation.group } : {}),
+      status: busy ? 'disabled' : 'idle',
+    }));
   };
 
   /**
@@ -522,6 +511,24 @@ export function createChangesets(ctx: HostContext): Changesets {
    * goes to everyone, so what one subscriber has is what all of them have.
    */
   const shown = new Map<string, { files: ChangesetFile[]; status: string; error?: { errorType: string; message: string }; operations?: Bag[] }>();
+
+  /*
+   * An invocation's status, said on its changeset and held as the protocol's
+   * own reducer holds it, so the channel's watchers and the next subscriber
+   * read it until the next list replaces it, as VS Code's host keeps a
+   * changeset's state.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L474-L499
+   */
+  const operationStatusSaid = (channel: string, action: Bag): void => {
+    dispatch(channel, action);
+    const held = shown.get(channel);
+    if (held?.operations === undefined) return;
+    const next = changesetReducer(
+      { status: held.status, files: held.files, operations: held.operations } as unknown as Parameters<typeof changesetReducer>[0],
+      action as unknown as ChangesetAction,
+    );
+    shown.set(channel, { ...held, operations: (next.operations ?? []) as unknown as Bag[] });
+  };
 
   /** Two file lists, same order-independent contents. */
   const sameFiles = (a: ChangesetFile[], b: ChangesetFile[]): boolean => {
@@ -719,6 +726,6 @@ export function createChangesets(ctx: HostContext): Changesets {
 
   return {
     dirOf, catalogueOf, changesetAt, changesetOf, operationsOf, operationsMoved, contentMoved,
-    changesetsOf, relaysChangesets, relayedChannel, operationContext, opKey, inFlight, operationLanes, inFlightOperations, lastError, shown,
+    changesetsOf, relaysChangesets, relayedChannel, operationContext, opKey, operationLanes, inFlightOperations, shown, operationStatusSaid,
   };
 }

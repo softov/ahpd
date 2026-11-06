@@ -449,10 +449,20 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       startWatchingDir(at.dir);
       const state = await options.changes?.state(at.dir, at.owner, at.scope, at.base);
       if (!state) throw new RpcError(-32001, `No changeset at ${channel}`);
-      // The verbs, alongside the files. Omitted when there are none, which
-      // the protocol asks for and which is what a changeset with nothing to
-      // do to it says.
-      const operations = operationsOf(channel);
+      /*
+       * The verbs, alongside the files. Omitted when there are none, which
+       * the protocol asks for and which is what a changeset with nothing to
+       * do to it says. An invocation's `running` or `error` the channel holds
+       * is what a new subscriber reads as well, until the next list replaces
+       * it, as VS Code's host hands out the changeset state it holds.
+       */
+      const held = shown.get(channel)?.operations ?? [];
+      const operations = operationsOf(channel).map((one) => {
+        const was = held.find((other) => other.id === one.id);
+        return was !== undefined && (was.status === 'running' || was.status === 'error')
+          ? { ...one, status: was.status, ...(was.error === undefined ? {} : { error: was.error }) }
+          : one;
+      });
       /*
        * What this subscriber now holds, which is what the next change is
        * against.

@@ -1562,7 +1562,7 @@ export function createHost(options: HostOptions): Host {
     sessionHolding, channelKind, sessionChannel, homeOf,
     answeredAs, visible, sessionVisible, chatShown, claimable, unheld, ownId, clients, clientResources, heard, clientGone,
     dirOf, catalogueOf, changesetAt, changesetOf, operationsOf, operationsMoved, contentMoved,
-    changesetsOf, operationContext, opKey, inFlight, lastError, shown,
+    changesetsOf, operationContext, opKey, shown,
     describes, setArtifacts, captureBaseline, recordPullRequest, metaMoved, dirOfFile, wroteThrough,
     refreshWatched, startWatchingDir, stopUnwatched, refreshPullRequests, readFacts, refreshFacts,
     LOGS, TRACES, METRICS, log, fire, telemetered,
