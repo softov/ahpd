@@ -759,16 +759,17 @@ describe('more than one chat in a session', () => {
    * name it answers with is the only one a restart can resume by, so the record
    * has to be that one rather than the name that was asked for.
    */
-  const renaming = (starts: Start[]): Agent => {
+  const renaming = (starts: Start[], firstChat = false): Agent => {
     // The example, so the transcript is kept under the id `create` is handed -
     // which is what makes the minted name the one a restart has to resume by.
     const base = echo({ path: DIR, pace: 0 });
     return {
       ...base,
+      find: async (id) => (await base.list?.())?.find((one) => one.id === id),
       create: (start: Start): Session => {
-        const mine = start.chatId === undefined || start.chatId === idOf(start.uri)
-          ? idOf(start.uri)
-          : `${start.chatId}-minted`;
+        const mine = start.resume ?? (start.chatId === undefined || start.chatId === idOf(start.uri)
+          ? `${idOf(start.uri)}${firstChat ? '-minted' : ''}`
+          : `${start.chatId}-minted`);
         starts.push(start);
         const session = base.create({ ...start, resume: mine });
         return { ...session, agentId: () => mine };
@@ -1153,6 +1154,89 @@ describe('more than one chat in a session', () => {
       expect(resuming(starts.slice(before)).at(-1))
         .toEqual({ chatId: `${UUID}-minted`, resume: `${UUID}-minted`, first: 'made here' });
       expect(said(await opened(second.client, PEER))).toEqual(['made here', 'said again']);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])('lists the original session when its first chat has a backend-minted id (find only: %s)', async (findOnly) => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const starts: Start[] = [];
+      const agent = renaming(starts, true);
+      const first = await hostAt(dir, agent);
+      await first.client.handle({
+        method: 'createSession',
+        params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`] },
+      });
+      await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await send(first.client, LIVE, 't1', 'first');
+      await send(first.client, PEER, 't2', 'second');
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      const second = await hostAt(dir, findOnly ? { ...agent, directories: () => [], list: async () => [] } : agent);
+      const rows = await second.client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+        items: { resource: string }[];
+      };
+      expect(rows.items.map((one) => one.resource)).toEqual([LIVE]);
+      expect(said(await opened(second.client, chatUriFor(LIVE)))).toEqual(['first']);
+      expect(said(await opened(second.client, PEER))).toEqual(['second']);
+      expect(starts).toHaveLength(2);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not list a recorded session whose backend-minted conversation is gone', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const agent = renaming([], true);
+      const first = await chatty(dir, agent);
+      await send(first.client, LIVE, 't1', 'first');
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      const second = await hostAt(dir, { ...agent, list: async () => [], find: async () => undefined });
+      const rows = await second.client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+        items: { resource: string }[];
+      };
+      expect(rows.items).toEqual([]);
+      await expect(opened(second.client, LIVE)).rejects.toMatchObject({ message: `No agent for session ${LIVE}` });
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('opens and continues the original chats before listing when the first backend id was minted', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const starts: Start[] = [];
+      const agent = renaming(starts, true);
+      const first = await chatty(dir, agent);
+      await send(first.client, LIVE, 't1', 'first');
+      await send(first.client, PEER, 't2', 'second');
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      const second = await hostAt(dir, agent);
+      expect(said(await opened(second.client, chatUriFor(LIVE)))).toEqual(['first']);
+      expect(said(await opened(second.client, PEER))).toEqual(['second']);
+      const session = await opened(second.client, LIVE);
+      expect(session.state.defaultChat).toBe(chatUriFor(LIVE));
+      expect(listed(session)).toEqual([chatUriFor(LIVE), PEER]);
+      const before = starts.length;
+      await send(second.client, chatUriFor(LIVE), 't3', 'again');
+      await send(second.client, PEER, 't4', 'also again');
+      expect(resuming(starts.slice(before))).toEqual([
+        { chatId: undefined, resume: 'live-minted', first: 'first' },
+        { chatId: `${UUID}-minted`, resume: `${UUID}-minted`, first: 'second' },
+      ]);
+      expect(said(await opened(second.client, chatUriFor(LIVE)))).toEqual(['first', 'again']);
+      expect(said(await opened(second.client, PEER))).toEqual(['second', 'also again']);
     }
     finally {
       rmSync(root, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 import { idOf } from '../sessions/catalog.js';
-import { chatIdFor } from './channels.js';
+import { chatIdFor, chatUriFor } from './channels.js';
 import type { StoredChat } from '../types/sessions.js';
 import type { HostContext } from './context.js';
 
@@ -32,6 +32,8 @@ export interface ChatRecord {
   heldChats(id: string): StoredChat[];
   /** One open chat of a session, as the store records it. */
   recordedChat(id: string, chatUri: string): StoredChat | undefined;
+  /** The backend's name for the session's original chat, which may differ from its container id. */
+  sessionBackendId(id: string): string;
   /**
    * Write down one chat of a session that is running, where it was opened.
    *
@@ -114,6 +116,8 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
   const recordedChats = (id: string): StoredChat[] => heldChats(id).filter((one) => one.closed !== true);
   const recordedChat = (id: string, chatUri: string): StoredChat | undefined =>
     recordedChats(id).find((one) => one.uri === chatUri);
+  const sessionBackendId = (id: string): string =>
+    heldChats(id).find((one) => one.uri === chatUriFor(ctx.nameOf(id)))?.backendId ?? id;
 
   const keepChat = (
     uri: string, chatUri: string, backendId: string | undefined, isDefault: boolean,
@@ -254,6 +258,6 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
   return {
     homeId: (chat) => chatHome.get(chat),
     chatBackends: () => chatBackends,
-    recordedChats, recordedChat, heldChats, keepChat, orderChats, dropChat, forgetChats,
+    recordedChats, recordedChat, sessionBackendId, heldChats, keepChat, orderChats, dropChat, forgetChats,
   };
 }

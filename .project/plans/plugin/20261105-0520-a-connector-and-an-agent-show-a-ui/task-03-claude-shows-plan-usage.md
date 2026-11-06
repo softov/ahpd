@@ -1,6 +1,6 @@
 ---
 title: Claude shows plan usage
-status: implemented
+status: dropped
 depends: [task-02-the-rows-carry-a-uis-data.md]
 layer: "agent-claude"
 refs:
@@ -52,34 +52,3 @@ agent-claude declares both schemas and sends the data; the connector health no l
 
 ## Resume
 
-Done. `packages/agent-claude/src/ui.ts` holds the two schemas and the builders.
-`LOGIN_UI` is a Column of the plan type and a List of window rows.
-`AGENT_UI` is a List of login rows, and each row has its name, its plan and the same window rows.
-`loginDataOf` builds `{ plan?, windows }` from the last `PlanNote` of a login.
-`agentDataOf` builds `{ logins: [{ name, plan?, windows }] }` for each login that a record names.
-A window's name is its key in title case (`Session`, `Weekly: opus`), `left` is its `remainingPercentage`, and `reset` is its `resetDate`.
-
-`adapter.ts` declares `LOGIN_UI` as the adapter's `ui` capability and passes the handle of `open` to `logins.opened`.
-`plugin.ts` declares `AGENT_UI` as the engine's `ui` capability.
-Its `open` keeps the handle and the record of each agent before it builds the backend.
-`OpenLogins` keeps the handle and the last plan answer of each open login, and the handle and the record of each open agent.
-`noted` draws the answer on the login's ui, and again on each open agent whose record names that login now.
-`publish` sends the same values, and only its doc changed.
-`onLimits` and `throughHost.onLimits` are removed, because no plan goes to the host as a note now.
-`ConnectorHealth` has no `quotaSnapshots` or `account` now.
-`note` takes `{ id, ok, status?, error? }`, and the command refuses a note with no `ok`.
-
-Verified: `pnpm exec tsc -p tsconfig.json --noEmit` printed nothing, and `pnpm boundary` reported no undeclared package.
-`pnpm exec vitest run packages/sdk/` passed 226 files: 4288 tests and 4 skipped.
-`pnpm exec vitest run packages/agent-claude/` passed 61 files: 587 tests.
-`pnpm -s schema` ran first, and the two sdk cases of a note with `quotaSnapshots` or `account` are removed.
-
-Found: the host gives an engine no hook when a record changes, so step 10 reads the record's `logins` at each send.
-The agents channel fills the same view object again on an edit, so the next plan answer builds the new list.
-A record that stops naming a login changes at the next answer for a login that it still names.
-`adapter.ts` is not in the task's *Files*, but the adapter is built there, so its capability and its `open` are declared there.
-
-Left: the checks by hand wait for Softov, because this task starts no daemon.
-They need a daemon with a `claude-login` connector and a Claude agent, and they read the `ui` of the two rows after a turn.
-`OpenLogins` keeps an agent's handle until the id opens again or the plugin unloads.
-The handle of a removed agent writes nothing, as task 02 holds.
