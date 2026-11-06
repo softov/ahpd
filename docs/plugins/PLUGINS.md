@@ -2395,9 +2395,12 @@ never asked to stop for it - one already mid-prompt stays mid-prompt.
 
 A command that is not there fails the turn that asked for it in a sentence naming
 what was wrong, and leaves the daemon and every other session alone. A server that
-dies fails its turn the same way, with the exit code; each line it writes on stderr
-goes to the daemon's log as it arrives, as VS Code's agents log a runtime's stderr.
-A failed turn's error is typed `sendFailed`, VS Code's name for a send that failed.
+dies fails its turn the same way, with the last of what it wrote on stderr under
+the exit code, since a person on a client cannot read the daemon's log; each line
+it writes on stderr also goes to that log as it arrives, as VS Code's agents log a
+runtime's stderr. A failed turn's error is typed `sendFailed`, VS Code's name for a
+send that failed, and a turn the server stopped at `max_tokens`,
+`max_turn_requests` or by a refusal ends in an error typed by the reason.
 The next turn spawns the server again and reopens the conversation it was
 holding, and a server that cannot reopen one says so rather than answering with an
 empty conversation. Closing a session tells the server to close it where it

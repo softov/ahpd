@@ -5,6 +5,17 @@ import type { AcpConnection } from '../types.js';
 import { bag, messageOf, UNTITLED } from './common.js';
 import type { SessionContext } from './context.js';
 
+/**
+ * What each stop reason that is not an answer says, by name: the model ran out
+ * of room, the session used up the requests it was allowed, or the agent
+ * declined.
+ */
+const NOT_AN_ANSWER: Partial<Record<StopReason, string>> = {
+  max_tokens: 'The agent ran out of tokens before it answered',
+  max_turn_requests: 'The agent used every turn request this session allowed',
+  refusal: 'The agent declined to answer this prompt',
+};
+
 /** One prompted turn, from its opening to its ending, and the turns handed behind it. */
 export interface Turn {
   /**
@@ -195,14 +206,24 @@ export function createTurn(ctx: SessionContext): Turn {
   /**
    * End the turn the way the server's stop reason says to.
    *
-   * A stop is the end of what the agent did, so every reason but `cancelled`
-   * completes the turn: a turn the model ended at its token or request limit,
-   * or by declining, is one VS Code's agents complete, an error being a turn
-   * whose send or execution failed.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+   * `end_turn` completes it and `cancelled` cancels it. The other three are the
+   * server saying it stopped early, and a turn that stopped early is not an
+   * answer: the model ran out of room, the session used up the requests it was
+   * allowed, or the agent declined. AHP has no field saying a completed turn
+   * was cut short, so each ends in an error typed by its reason, which lets a
+   * client tell a refusal from a ceiling reached without reading prose, with a
+   * sentence saying what the agent did. A reason this bridge has not heard of
+   * completes the turn, a stop this code cannot describe being better read as
+   * an answer than reported as a failure with no reason.
    */
   const stopReasonFor = (turnId: string, reason: StopReason): void => {
-    endTurn(turnId, reason === 'cancelled' ? 'cancelled' : 'complete');
+    if (reason === 'cancelled') {
+      endTurn(turnId, 'cancelled');
+      return;
+    }
+    const said = NOT_AN_ANSWER[reason];
+    if (said === undefined) endTurn(turnId, 'complete');
+    else endTurn(turnId, 'error', { errorType: reason, message: said });
   };
 
   /**
@@ -444,9 +465,18 @@ export function createTurn(ctx: SessionContext): Turn {
         endTurn(turnId, 'error', authentication);
         return;
       }
-      // The failure's own words: what the server wrote on stderr went to the
-      // log as it arrived, as VS Code's agents log a runtime's stderr.
-      endTurn(turnId, 'error', { errorType: 'sendFailed', message: messageOf(why) });
+      /*
+       * The failure's own words, typed as the failed send VS Code's host names,
+       * and whatever the server said on stderr rides on it, because an exit
+       * code is rarely why and the trace under it is, and a person on a client
+       * cannot read the daemon's log. Read from the connection this turn
+       * prompted: a server that died is already off `live`, which is exactly
+       * the case a person most wants the trace for.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2574
+       */
+      const said = messageOf(why);
+      const tail = connection === undefined ? '' : await connection.stderrTail();
+      endTurn(turnId, 'error', { errorType: 'sendFailed', message: tail === '' ? said : `${said}\n${tail}` });
     }
   };
 

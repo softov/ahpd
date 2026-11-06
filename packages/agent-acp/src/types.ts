@@ -273,6 +273,15 @@ export interface AcpConnectionOptions {
 /** One open ACP connection over a server's stdio. */
 export interface AcpConnection {
   /**
+   * The last of what the server wrote on stderr, for a failure to carry.
+   *
+   * Nothing surfaces it while the server runs: a healthy server's chatter is
+   * the server's and the log's, and a client is told about it only when its
+   * turn failed. Settles once a dead server's last words have been read off
+   * the pipe.
+   */
+  stderrTail(): Promise<string>;
+  /**
    * The handshake, which is where the server says what it can do.
    *
    * Asks once and answers the held reply on a second call, because a server is

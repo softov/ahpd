@@ -1018,12 +1018,23 @@ const stoppedWith = async (reason: string): Promise<{ type?: string | undefined;
   return { type: types(p, chatUri).at(-1), ...(part === undefined ? {} : { error: part.error }) };
 };
 
-it('completes a turn the server stopped at a limit or by declining, as VS Code\'s agents complete one', async () => {
-  for (const reason of ['end_turn', 'max_tokens', 'max_turn_requests', 'refusal']) {
-    // A stop is the end of what the agent did: an error is a turn whose send
-    // or execution failed.
-    expect((await stoppedWith(reason)).type).toBe('chat/turnComplete');
+it('ends a turn the server stopped for its own reasons as an error naming the reason', async () => {
+  for (const reason of ['max_tokens', 'max_turn_requests', 'refusal']) {
+    const stopped = await stoppedWith(reason);
+    // Not a finished answer: a turn that stopped early is not what was asked
+    // for, and AHP has no field saying a completed turn was cut short.
+    expect(stopped.type).toBe('chat/error');
+    // The reason is the error's type, so a client can tell the three apart
+    // without reading the sentence.
+    expect(stopped.error?.errorType).toBe(reason);
+    expect(String(stopped.error?.message)).not.toBe('');
   }
+});
+
+it('completes an end_turn, and words a refusal as the agent declining', async () => {
+  expect((await stoppedWith('end_turn')).type).toBe('chat/turnComplete');
+  // A refusal is the agent declining, and its sentence says so.
+  expect(String((await stoppedWith('refusal')).error?.message)).toContain('declined');
 });
 
 it('ends a turn whose prompt failed as a failed send, in the failure\'s own words', async () => {
