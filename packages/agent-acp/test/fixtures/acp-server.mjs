@@ -100,9 +100,10 @@
  * - text containing `erroratend` does whatever else the text asks and then
  *   answers the prompt with a JSON-RPC error, so a turn fails after its calls;
  * - text containing `blocks` reports the content blocks the prompt arrived in,
- *   as `blocks=text|image|resource` with each block's text or its URI - a
- *   resource block saying its URI and then its own text on the next line - so a
- *   test can read exactly what a client sent;
+ *   as `blocks=text|image|resource` with each block's text, an image's type and
+ *   the URI it names, or a resource's URI - a resource block saying its URI and
+ *   then its own text on the next line - so a test can read exactly what a
+ *   client sent;
  * - text containing `chatter` says one line on stderr and answers normally, so
  *   a test can read that a healthy server's noise never reaches a client;
  * - text containing `noisy` says two lines on stderr and then exits with code
@@ -781,12 +782,17 @@ const promptScript = async (id, params) => {
     const blocks = Array.isArray(params?.prompt) ? params.prompt : [];
     /*
      * One block as `<type>:<what it carries>`, which is enough to tell an image
-     * block from a text block naming the same image. A resource block says its
-     * URI and then its own text on the next line, so a test can read the words
-     * a client sent for a file as well as which file they are under.
+     * block from a text block naming the same image. An image block says its
+     * type, and after an `@` the URI it names where it names one. A resource
+     * block says its URI and then its own text on the next line, so a test can
+     * read the words a client sent for a file as well as which file they are
+     * under.
      */
     const said = blocks.map((block) => {
       if (block?.type === 'text') return `text:${String(block.text ?? '')}`;
+      if (block?.type === 'image') {
+        return `image:${String(block.mimeType ?? '')}${block.uri === undefined || block.uri === null ? '' : `@${String(block.uri)}`}`;
+      }
       if (block?.type === 'resource') {
         return `resource:${String(block.resource?.uri ?? '')}\n${String(block.resource?.text ?? '')}`;
       }

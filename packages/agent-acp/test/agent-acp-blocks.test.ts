@@ -180,11 +180,16 @@ const written = (path: string, label: string, type: string): MessageAttachment =
   _meta: { [SNAPSHOT_TAG]: { isSnapshot: true, contentType: type } },
 });
 
+/*
+ * An image as an image block, its bytes and its type, with no URI: a pasted
+ * image has nothing to point at, and ACP makes the block's URI optional.
+ * https://agentclientprotocol.com/protocol/content#image-content
+ */
 it('sends an image as an image block to a server that takes images', async () => {
   const { agent } = backend(['--prompt-caps']);
   const { session, watch } = start(agent, 'image');
   expect(await prompt(session, watch, [PICTURE]))
-    .toBe('blocks=text:what are these blocks?|image:acp-attachment:acp/shot.png');
+    .toBe('blocks=text:what are these blocks?|image:image/png');
 });
 
 it('names the image in the text for a server that does not take them', async () => {
@@ -312,7 +317,8 @@ it('sends a turn handed while another runs with its attachments when its turn st
   session.sendMessage('t1', 'hello');
   session.sendMessage('t2', 'what are these blocks?', undefined, [PICTURE]);
   await until(() => watch.prose().includes('blocks='));
-  expect(watch.prose()).toContain('blocks=text:what are these blocks?|image:acp-attachment:acp/shot.png');
+  const prose = watch.prose();
+  expect(prose.slice(prose.indexOf('blocks='))).toBe('blocks=text:what are these blocks?|image:image/png');
 });
 
 it('sends the directories beside the working one only to a server that advertised them', async () => {

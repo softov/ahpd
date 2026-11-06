@@ -29,7 +29,7 @@ export interface Turn {
 }
 
 export function createTurn(ctx: SessionContext): Turn {
-  const { emit, provider, start, inside, turns } = ctx;
+  const { emit, start, inside, turns } = ctx;
 
   /**
    * The first message titles a session nobody has named, and replaces a title
@@ -249,16 +249,6 @@ export function createTurn(ctx: SessionContext): Turn {
   };
 
   /**
-   * The URI an attachment with no URI of its own is sent under.
-   *
-   * A pasted image is bytes with a name and nothing to point at, and ACP's
-   * blocks name what they carry. The scheme is this bridge's own, as the one a
-   * command leaf uses: nothing reads it, so it has to be honest rather than
-   * resolve.
-   */
-  const attachmentUri = (label: string): string => `acp-attachment:${provider}/${label}`;
-
-  /**
    * Whether the session's instructions have gone out.
    *
    * ACP gives a prompt rather than a system prompt, so what the host wants the
@@ -302,13 +292,14 @@ export function createTurn(ctx: SessionContext): Turn {
     }
     if (instructions.length > 0) blocks.push({ type: 'text', text: instructions.join('\n\n') });
     for (const part of parts) {
+      /*
+       * An image goes as its bytes and its type, the two fields ACP requires of
+       * an image block: a pasted image has nothing to point at, and the block's
+       * URI is an optional reference to where an image came from.
+       * https://agentclientprotocol.com/protocol/content#image-content
+       */
       if (part.type === 'image') {
-        blocks.push({
-          type: 'image',
-          data: part.data,
-          mimeType: part.mimeType,
-          uri: attachmentUri(part.source?.label ?? 'attachment'),
-        });
+        blocks.push({ type: 'image', data: part.data, mimeType: part.mimeType });
         continue;
       }
       /*
