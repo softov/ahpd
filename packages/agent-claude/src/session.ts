@@ -57,7 +57,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
   const valuesOf = (preset: Bag): Bag => ({
     ...optionDefaults(),
     ...preset,
-    ...(preset['sandbox'] === 'off' || preset['storedSandbox'] === 'schema' ? {} : storedSandbox(options.settings)),
+    ...(preset['sandbox'] === 'off' ? {} : storedSandbox(options.settings)),
   });
 
   const ctx = {

@@ -125,7 +125,7 @@ it('leaves the output style to the flag settings, which the CLI takes live', () 
 });
 
 it('says what an option is when nothing named one', () => {
-  expect(optionDefaults()).toEqual({ thinking: 'adaptive', hostTasks: true, enableTasks: true, stopEnds: 'turn', dontAsk: true, storedSandbox: 'kept', taskOutputFirstWaitMs: 500, taskOutputLongestWaitMs: 10_000 });
+  expect(optionDefaults()).toEqual({ thinking: 'adaptive', hostTasks: true, enableTasks: true, stopEnds: 'turn', dontAsk: true, taskOutputFirstWaitMs: 500, taskOutputLongestWaitMs: 10_000 });
 });
 
 /*
@@ -190,11 +190,4 @@ it('a record with no sandbox keeps a stored on', async () => {
   // than it was, so a stored on still turns it on where the record is silent.
   expect((await queried({ thinking: 'disabled' }, { sandboxEnabled: 'on' })).settings)
     .toEqual({ sandbox: { enabled: true } });
-});
-
-it('reads a session against its schema alone when the record says storedSandbox schema', async () => {
-  // As VS Code reads a session's config: a stored value its schema does not
-  // declare moves nothing, and the record says what the sandbox is.
-  expect((await queried({ thinking: 'disabled', storedSandbox: 'schema' }, { sandboxEnabled: 'on' })).settings)
-    .toBeUndefined();
 });

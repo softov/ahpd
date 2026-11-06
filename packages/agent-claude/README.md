@@ -68,7 +68,6 @@ An agent is a record on `x-ahpd-agents`: `{ id, engine, owner, name, description
 | `hostTasks` | `true` | Whether Claude leaves its own task tools to the host's `task_add`. Off keeps them, and their calls write the session's plan |
 | `enableTasks` | `true` | Whether Claude's own Task tools are on when Claude keeps its task tools; off starts the CLI with `CLAUDE_CODE_ENABLE_TASKS=0`, which gives it `TodoWrite` instead |
 | `dontAsk` | `true` | Whether the Approvals control offers the SDK's `dontAsk` beside VS Code's five modes; off offers VS Code's five alone |
-| `storedSandbox` | `kept` | Whether a session's stored `sandboxEnabled` is kept: `kept` turns the sandbox on for a session stored with it on, so an upgrade never runs a session less sandboxed than it was; `schema` reads the session's config against its schema alone, as VS Code does |
 | `taskOutputFirstWaitMs` | `500` | The first wait between the reads that follow a background shell's output, in milliseconds, as VS Code's output monitor waits |
 | `taskOutputLongestWaitMs` | `10000` | The longest wait between those reads, in milliseconds, each wait twice the last until it |
 | `stopEnds` | `turn` | What a stop ends: `turn` interrupts the turn through the SDK and keeps the CLI, ending only the workers the stopped turn spawned; `query` aborts the query as VS Code's agent does, its workers and tasks with it |
