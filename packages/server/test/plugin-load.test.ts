@@ -326,7 +326,7 @@ describe('a first-party plugin', () => {
       'model', 'baseUrl', 'instructions', 'computerConfigDir', 'store', 'memory', 'tools', 'strictTools', 'apiKey',
       'resource', 'autoCompactTokens', 'hostTools',
     ]],
-    ['agent-pi', ['model', 'projectTrust', 'sessionDir']],
+    ['agent-pi', ['model', 'projectTrust', 'sessionDir', 'hostTools']],
     ['bot', ['root', 'lastChats', 'mainTurnPostMessageAbsent']],
     ['computer', [
       'runtime', 'command', 'args', 'ssh', 'libvirt', 'proxmox', 'env', 'image', 'cpus', 'memory', 'max', 'label',

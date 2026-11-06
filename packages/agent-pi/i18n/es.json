@@ -12,6 +12,9 @@
     },
     "sessionDir": {
       "description": "Carpeta donde pi guarda sus sesiones. Por defecto, la de pi. Cada agente puede cambiarla."
+    },
+    "hostTools": {
+      "description": "Ofrece las herramientas del host a cada sesión. Activado por defecto. Cada agente puede cambiarlo."
     }
   },
   "session": {
