@@ -9,10 +9,10 @@ import type { Bag } from '@ahpd/sdk';
  * all of that is one turn; read back, it is one turn too.
  */
 
-const sdk = vi.hoisted(() => ({ messages: [] as Record<string, unknown>[] }));
+const sdk = vi.hoisted(() => ({ messages: [] as Record<string, unknown>[], asked: [] as unknown[] }));
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  getSessionMessages: async () => sdk.messages,
+  getSessionMessages: async (_id: string, options?: unknown) => { sdk.asked.push(options); return sdk.messages; },
 }));
 
 const { turnsOf } = await import('../src/transcript.js');
@@ -35,6 +35,30 @@ async function read(messages: Record<string, unknown>[]): Promise<Bag[]> {
   sdk.messages = messages;
   return await turnsOf('session') as unknown as Bag[];
 }
+
+/*
+ * The transcript is read once, with its system entries, and a compaction
+ * boundary or a notification is drawn on its turn as a notification part,
+ * other system entries dropped, as VS Code's replay keeps them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L186-L208
+ */
+it('draws a compaction boundary and a notification on their turn, read with the system entries', async () => {
+  const system = (uuid: string, message: Bag): Record<string, unknown> => ({ type: 'system', uuid, timestamp: '2020-01-01T00:00:00.000Z', message });
+  sdk.asked = [];
+  const turns = await read([
+    prompt('u1', 'look around'),
+    said('a1', 'm1', [{ type: 'text', text: 'Looking.' }]),
+    system('s1', { subtype: 'compact_boundary' }),
+    system('s2', { subtype: 'notification', text: 'Context was compacted.' }),
+    system('s3', { subtype: 'api_retry' }),
+  ]);
+
+  expect(sdk.asked).toEqual([{ includeSystemMessages: true }]);
+  expect((turns[0]?.responseParts as Bag[]).filter((one) => one.kind === 'systemNotification')).toEqual([
+    { kind: 'systemNotification', content: '[compact_boundary]' },
+    { kind: 'systemNotification', content: 'Context was compacted.' },
+  ]);
+});
 
 it('reads a prompt and every round that answered it as one turn', async () => {
   const turns = await read([

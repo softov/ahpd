@@ -39,15 +39,10 @@ function resultText(content: unknown): string | undefined {
  * catalogue said the session exists and the catalogue is right. Refusing to
  * open a row because its file is odd would be the host arguing with itself.
  *
- * A read that threw is tried once more before it is, though. A transcript
- * being written as it is read and a transient filesystem error are both
- * failures this cannot tell from a session with nothing in it, and empty is
- * the answer a client draws nothing for - so it is worth one more attempt
- * rather than being shown as a session that has no turns.
- *
- * The SDK is asked by the session's id alone, which searches every project,
- * as VS Code's Claude agent reads a transcript back, so a session is read
- * wherever it ran.
+ * The SDK is asked once, by the session's id alone, which searches every
+ * project, and for the system entries as well, as VS Code's Claude agent
+ * reads a transcript back: a session is read wherever it ran, and its
+ * compaction boundaries and notifications are drawn on their turns.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSavedChatReader.ts#L67-L68
  *
  * `ends`, when given, is filled with where each turn ended, by turn id: the
@@ -56,13 +51,9 @@ function resultText(content: unknown): string | undefined {
 export async function turnsOf(sessionId: string, ends?: Map<string, string>): Promise<WireTurn<Turn>[]> {
   let messages: unknown[];
   try {
-    messages = await getSessionMessages(sessionId);
+    messages = await getSessionMessages(sessionId, { includeSystemMessages: true });
   } catch {
-    try {
-      messages = await getSessionMessages(sessionId);
-    } catch {
-      return [];
-    }
+    return [];
   }
 
   const asked = askedIn(messages);
@@ -446,6 +437,23 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       };
       built.push(opened);
       lastAt.set(opened, Date.parse(at));
+      continue;
+    }
+
+    /*
+     * A compaction boundary or a notification the CLI recorded, drawn on the
+     * turn it came in as its own notification part, with its text or its
+     * subtype in brackets; any other system entry, and one before any turn,
+     * is dropped, as VS Code's replay keeps them.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L186-L208
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L306-L319
+     */
+    if (role === 'system') {
+      const subtype = str(message.subtype);
+      const turn = built[built.length - 1];
+      if (turn === undefined || (subtype !== 'compact_boundary' && subtype !== 'notification')) continue;
+      const content = str(message.text) ?? str(message.message) ?? `[${subtype}]`;
+      turn.responseParts = [...(turn.responseParts as Bag[]), { kind: 'systemNotification', content }];
       continue;
     }
 
