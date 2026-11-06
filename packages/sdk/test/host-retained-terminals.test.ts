@@ -166,7 +166,7 @@ describe('a command typed into the conversation', () => {
     expect(rebuilt.cwd).toBeUndefined();
     expect(rebuilt.content).toEqual([{ type: 'unclassified', value: expect.stringContaining('rebuilt-output') }]);
     expect(rebuilt.lifecycle).toEqual({ status: 'exited', exitCode: 3 });
-    expect(rebuilt.exitCode).toBe(3);
+    expect(rebuilt.exitCode).toBeUndefined();
     expect(rebuilt.isPty).toBe(false);
     // Held by the chat and the call, as the live one was; the turn is not part
     // of a rebuilt claim, as it is not of the reference's.
@@ -407,6 +407,18 @@ describe('an output a backend keeps', () => {
     outputs.keep('toolu_code', 'out', 1);
     k.turns.set(chat, [naming('t1', 'toolu_code', outputs.uri('toolu_code'), { exitCode: 2 })]);
     expect((await stateOf(client, outputs.uri('toolu_code'))).lifecycle).toEqual({ status: 'exited', exitCode: 2 });
+  });
+
+  /*
+   * A rebuilt terminal is VS Code's five fields, the exit code in its
+   * lifecycle alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L273-L284
+   */
+  it('rebuilds a terminal with VS Code\'s five fields', async () => {
+    const { k, client, chat, outputs } = await kept();
+    outputs.keep('toolu_five', 'out', 0);
+    k.turns.set(chat, [naming('t1', 'toolu_five', outputs.uri('toolu_five'), { exitCode: 0 })]);
+    expect(Object.keys(await stateOf(client, outputs.uri('toolu_five'))).sort()).toEqual(['claim', 'content', 'isPty', 'lifecycle', 'title']);
   });
 
   it('is not kept over 10 MB, counted in bytes', async () => {

@@ -45,7 +45,7 @@ export interface Outputs {
    * to any other channel takes its snapshot in the tick it arrived in, so what
    * a client dispatches straight after it is replayed after the snapshot.
    */
-  retainedState(channel: string): Promise<(OnWire<TerminalState> & { exitCode?: number }) | undefined> | undefined;
+  retainedState(channel: string): Promise<OnWire<TerminalState> | undefined> | undefined;
   /** Forget the outputs that some dropped turns of a chat name. */
   forgetTurnOutputs(session: string, chat: string, turns: readonly Bag[]): void;
   /** Forget every output a chat kept. */
@@ -218,7 +218,7 @@ export function createOutputs(ctx: HostContext): Outputs {
     return turns === undefined ? undefined : { session, turns: turns as unknown as Bag[] };
   };
 
-  const retainedState = (channel: string): Promise<(OnWire<TerminalState> & { exitCode?: number }) | undefined> | undefined => {
+  const retainedState = (channel: string): Promise<OnWire<TerminalState> | undefined> | undefined => {
     const named = retainedTerminalOf(channel);
     return named === undefined ? undefined : rebuilt(channel, named);
   };
@@ -226,7 +226,7 @@ export function createOutputs(ctx: HostContext): Outputs {
   const rebuilt = async (
     channel: string,
     named: { chat: string; key: string },
-  ): Promise<(OnWire<TerminalState> & { exitCode?: number }) | undefined> => {
+  ): Promise<OnWire<TerminalState> | undefined> => {
     const held = await turnsOf(named.chat);
     if (held === undefined) return undefined;
     const found = callNaming(held.turns, named);
@@ -241,23 +241,22 @@ export function createOutputs(ctx: HostContext): Outputs {
     // with the output for a call that carries none: an ACP call's content names
     // its terminal and nothing about how it ended.
     const exitCode = typeof result?.exitCode === 'number' ? result.exitCode : kept?.exitCode;
+    /*
+     * The five fields VS Code's host rebuilds a retained terminal with, its
+     * `isPty` the one kept with the output.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L273-L284
+     */
     return {
       title: str(found.content.title) ?? 'Terminal',
-      // The size, the detection and the flat code every terminal state of this
-      // host carries, so a rebuilt one reads as a live one that exited.
-      cols: 80,
-      rows: 24,
       content: output === '' ? [] : [{ type: 'unclassified', value: output }],
+      lifecycle: { status: 'exited', ...(exitCode === undefined ? {} : { exitCode }) },
       claim: {
         kind: 'session',
         session: held.session,
         chat: named.chat,
         ...(found.toolCallId === undefined ? {} : { toolCallId: found.toolCallId }),
       },
-      supportsCommandDetection: false,
       isPty: kept?.isPty ?? found.content.isPty === true,
-      lifecycle: { status: 'exited', ...(exitCode === undefined ? {} : { exitCode }) },
-      ...(exitCode === undefined ? {} : { exitCode }),
     };
   };
 
