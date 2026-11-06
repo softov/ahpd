@@ -234,14 +234,27 @@ it('keeps the turn\'s one Plan call while the list goes to the host', async () =
   ]);
 });
 
-it('draws the Plan call from the host\'s tasks when the tasks plugin holds them', async () => {
+/*
+ * The host draws the session's tasks as a call in each turn running when the
+ * list changes, and completes it as the turn ends; the turn's end is said as
+ * the server says it, holding for no read, as VS Code says a turn's end as
+ * its agent ends it. So the turn here stays open on a question while the
+ * list is drawn, and ends once it is answered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L917
+ */
+it('draws the todo list call from the host\'s tasks when the tasks plugin holds them', async () => {
   const { client, peer: p, chatUri, heard } = await planning(true);
-  begin(client, chatUri, 't1', 'plan it');
+  begin(client, chatUri, 't1', 'plan, then ask');
   await until(() => heard.length >= 2);
+  await until(() => planContent(p, chatUri, 't1')[0] === '- [x] Read the file');
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-perm', approved: true } },
+  });
   await until(() => finished(p, chatUri, 1));
 
   // The bridge draws none of its own: one row, opened once and completed by
-  // the turn ending, whose lines are the session's tasks rather than the
+  // the turn ending, whose lines are the session's tasks, apart from the
   // entries the server sent.
   const calls = planCalls(p, chatUri, 't1');
   expect(calls.filter((type) => type === 'chat/toolCallStart')).toHaveLength(1);
@@ -253,24 +266,30 @@ it('draws the Plan call from the host\'s tasks when the tasks plugin holds them'
     '- [x] Read the file',
     '- [ ] Write the answer',
   ]);
+  const all = types(p, chatUri);
+  const completed = actions(p, chatUri)
+    .findIndex((e) => e.action.type === 'chat/toolCallComplete' && e.action.toolCallId === 't1:plan');
+  expect(completed).toBeLessThan(actions(p, chatUri).findIndex((e) => e.action.type === 'chat/turnComplete'));
+  expect(all.filter((type) => type === 'chat/turnComplete')).toHaveLength(1);
 });
 
-it('ends the turn after the cap when a plan update never settles', async () => {
+/*
+ * A plugin that hears a plan update and never settles holds nothing: the
+ * turn's end is said as the server says it, as VS Code says a turn's end as
+ * its agent ends it, and well inside the two seconds a held end would take.
+ */
+it('says the turn\'s end as the server says it while a plan listener never settles', async () => {
   const { client, peer: p, chatUri } = await planning(true, true);
+  const began = Date.now();
   begin(client, chatUri, 't1', 'plan it');
-
-  // The tasks plugin drew the row; the stuck one never will settle. The turn
-  // end waits out the cap rather than the turn never ending, and the row is
-  // still completed before it.
   await until(() => finished(p, chatUri, 1), 8000);
+  expect(Date.now() - began).toBeLessThan(2000);
 
-  const calls = planCalls(p, chatUri, 't1');
-  expect(calls.filter((type) => type === 'chat/toolCallStart')).toHaveLength(1);
-  expect(calls.filter((type) => type === 'chat/toolCallComplete')).toHaveLength(1);
-  expect(planContent(p, chatUri, 't1')).toEqual([
-    '- [x] Read the file',
-    '- [ ] Write the answer',
-  ]);
-  const all = types(p, chatUri);
-  expect(all.indexOf('chat/toolCallComplete')).toBeLessThan(all.indexOf('chat/turnComplete'));
+  // A todo list call drawn before the end is completed before it.
+  const all = actions(p, chatUri);
+  const started = all.findIndex((e) => e.action.type === 'chat/toolCallStart' && e.action.toolCallId === 't1:plan');
+  const completed = all.findIndex((e) => e.action.type === 'chat/toolCallComplete' && e.action.toolCallId === 't1:plan');
+  const ended = all.findIndex((e) => e.action.type === 'chat/turnComplete');
+  if (started !== -1) expect(completed).toBeLessThan(ended);
+  expect(completed === -1).toBe(started === -1);
 }, 20000);
