@@ -1,6 +1,6 @@
 ---
 title: devtunnel shows its account
-status: todo
+status: dropped
 depends: [task-02-the-rows-carry-a-uis-data.md]
 layer: "tunnel-devtunnel"
 refs:
