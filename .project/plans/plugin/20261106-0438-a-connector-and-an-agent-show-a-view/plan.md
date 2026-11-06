@@ -151,12 +151,12 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a view takes a data model](task-01-a-view-takes-a-data-model.md) | todo | - |
-| [02 - a record shows its views](task-02-a-record-shows-its-views.md) | todo | 01 |
-| [03 - a data event sets a value](task-03-a-data-event-sets-a-value.md) | todo | 02 |
-| [04 - claude shows plan usage](task-04-claude-shows-plan-usage.md) | todo | 03 |
-| [05 - devtunnel shows its account](task-05-devtunnel-shows-its-account.md) | todo | 03 |
-| [06 - the docs say how a view is made](task-06-the-docs-say-how-a-view-is-made.md) | todo | 03 |
+| [01 - a view takes a data model](task-01-a-view-takes-a-data-model.md) | implemented | - |
+| [02 - a record shows its views](task-02-a-record-shows-its-views.md) | implemented | 01 |
+| [03 - a data event sets a value](task-03-a-data-event-sets-a-value.md) | implemented | 02 |
+| [04 - claude shows plan usage](task-04-claude-shows-plan-usage.md) | implemented | 03 |
+| [05 - devtunnel shows its account](task-05-devtunnel-shows-its-account.md) | implemented | 03 |
+| [06 - the docs say how a view is made](task-06-the-docs-say-how-a-view-is-made.md) | implemented | 03 |
 
 ## Risks and tradeoffs
 
@@ -166,8 +166,8 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 
 ## Resume state
 
-- **Done so far:** nothing. #248's branch holds the work of the replaced plan.
-- **Next action:** [task-01-a-view-takes-a-data-model.md](task-01-a-view-takes-a-data-model.md).
+- **Done so far:** tasks 01 to 06 are `implemented` on 2026-11-06, on #248's branch.
+- **Next action:** Softov tests the views with a daemon, as task 04's *Validation* says.
 - **Open questions:** none.
 - **Watch out for:** a plugin, a connector and an agent must stay one structure. A change to one needs the same change to the others.
 

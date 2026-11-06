@@ -1,6 +1,6 @@
 ---
 title: devtunnel shows its account
-status: todo
+status: implemented
 depends: [task-03-a-data-event-sets-a-value.md]
 layer: "tunnel-devtunnel"
 refs:
@@ -36,3 +36,9 @@ A devtunnel connector shows the account it signed in as, and the time of its las
 - `pnpm exec vitest run packages/tunnel-devtunnel/` passes.
 
 ## Resume
+
+Done. `TUNNEL_VIEW` binds `/account` and `/refreshed`, and the adapter declares `{ type: 'view', name: 'main' }`.
+`open` shows the view with the account the record holds.
+Each refresh that stores a new pair sets `/refreshed`.
+
+Verified: `pnpm exec vitest run packages/tunnel-devtunnel/` passes 54 tests.

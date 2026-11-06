@@ -1,6 +1,6 @@
 ---
 title: Claude shows plan usage
-status: todo
+status: implemented
 depends: [task-03-a-data-event-sets-a-value.md]
 layer: "agent-claude"
 refs:
@@ -55,3 +55,15 @@ A plan answer changes the data with `setViewData`, and the connector health has 
 - By hand, after Softov restarts the daemon: a `claude-login` connector and a Claude agent show the view after a turn.
 
 ## Resume
+
+Done. `views.ts` holds `LOGIN_VIEW`, `AGENT_VIEW` and the data builders, and `ui.ts` is removed.
+The `claude-login` adapter and the Claude engine declare `{ type: 'view', name: 'main' }`.
+A login shows its view at its open, and a plan answer sets `/` of its data.
+An agent shows its view at its open, and a plan answer for a login it names sets `/logins`.
+
+Verified: `pnpm exec vitest run packages/agent-claude/` passes 595 tests.
+
+Found: `agent-claude-limits.test.ts` and `agent-claude-session-usage.test.ts` changed, beside the task's *Files*, because their fake handle had `show`.
+
+Left: the checks by hand wait for Softov, because they need a daemon.
+`OpenLogins` keeps a closed agent's entry, as `deferred.md` says.

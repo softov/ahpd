@@ -1,6 +1,6 @@
 ---
 title: A record shows its views
-status: todo
+status: implemented
 depends: [task-01-a-view-takes-a-data-model.md]
 layer: "sdk"
 refs:
@@ -68,3 +68,14 @@ Their rows carry `views`, as a plugin row does, and the `view` capability names 
 - `pnpm exec vitest run packages/sdk/` passes.
 
 ## Resume
+
+Done. `ViewHandle` has `showView`, `setViewData` and `clearView`, and `UiHandle` is removed.
+The capability type `ui` is `view`, and a `view` capability's name must be a surface in `VIEW_SURFACES`.
+`plugins/views.ts` holds `recordViews`: the views of each record by id and surface, one handle for each opening.
+The connectors channel and the agents channel use it, and their rows carry `views`.
+
+Verified: `connectors-channel.test.ts` passes 62 tests, `agents-channel.test.ts` 41, `plugin-validate.test.ts` 38 and `engines-channel.test.ts` 6.
+
+Found: a Button in a record's view needs the methods of its plugin for `checkView`.
+`ServedAdapter` and `ServedEngine` have `methods` now, the plugin's own map, which `registerAdapter` and `registerEngine` set.
+`types/connectors.ts` and `plugins/plugins.ts` changed for it, beside the task's *Files*.
