@@ -445,6 +445,8 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
      * the current model's would offer a control the other rows do not have.
      */
     levels: (model) => sdk.getSupportedThinkingLevels(model as never) as string[],
+    // The model pi is on, with the level it is on in the config the model's
+    // schema puts it in, wherever pi moved it.
     modelSelection: () => {
       const model = session.model as PiModel | undefined;
       return model === undefined

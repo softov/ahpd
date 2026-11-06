@@ -911,19 +911,6 @@ export function piSession(
       }
 
       /*
-       * The level moved, which is a value in force rather than a turn part:
-       * pi can change it itself, and a client that drew the form should see
-       * where it actually sits.
-       */
-      case 'thinking_level_changed': {
-        settings.thinkingLevel = event.level;
-        // `config`, the action's own field, which a reducer merges into the
-        // values every client holds.
-        emit('session', { type: 'session/configChanged', config: { thinkingLevel: event.level } });
-        return;
-      }
-
-      /*
        * A run that pi will retry itself is not a turn that ended. `willRetry`
        * is exactly that case, and closing the turn on it would draw a finished
        * answer that is about to be replaced.

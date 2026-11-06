@@ -2,7 +2,6 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import { sessionReducer } from '@microsoft/agent-host-protocol';
 import { bag, uriOf } from '@ahpd/sdk';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { resolveNeeds } from '../../sdk/src/machines/machine.js';
@@ -746,19 +745,19 @@ it('opens pi under the chat\'s own name, so a second chat is a conversation of i
   expect(pi.opens[0]?.id).toBe(CHAT);
 });
 
-it('reports the level pi moved to as a value in force, which a client reduces', async () => {
+/*
+ * A level pi moved itself is a model's, which the session's schema does not
+ * declare: it is read on the model selection, whose config the agent's schema
+ * puts it in, and said in no session config.
+ */
+it('says no session config for a level pi moved itself', async () => {
   const { session, pi, last } = opened();
   session.sendMessage('t1', 'hello');
   await settled();
   pi.raise({ type: 'thinking_level_changed', level: 'high' as never });
-  // Through the protocol's reducer, which merges the action's `config` into
-  // the values a client holds.
-  const held = sessionReducer(
-    { config: { schema: { type: 'object', properties: {} }, values: {} } } as never,
-    last('session/configChanged') as never,
-  ) as unknown as { config: { values: Bag } };
-  expect(held.config.values.thinkingLevel).toBe('high');
-  expect(session.settings().thinkingLevel).toBe('high');
+  await settled();
+  expect(last('session/configChanged')).toBeUndefined();
+  expect(session.settings()).not.toHaveProperty('thinkingLevel');
 });
 
 it('truncates by moving pi own leaf back', async () => {
