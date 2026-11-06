@@ -1008,6 +1008,38 @@ it('reads back a session this process never watched by loading it from the serve
   expect(requests(log).some((one) => one.method === 'session/new')).toBe(false);
 });
 
+/*
+ * A refusal is a decline only where the client said decline, and a cancel
+ * otherwise; a skipped question is one nobody answered. VS Code's Claude agent
+ * answers its elicitations so.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L164-L169
+ */
+it('answers a refusal that names no decline with a cancel, and leaves a skipped question out', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'elicit-answers');
+  const said = (): string => watch.actions
+    .filter((one) => one.action.type === 'chat/delta')
+    .map((one) => String(one.action.content))
+    .join('');
+  const asked = (count: number): Promise<void> =>
+    until(() => watch.types().filter((type) => type === 'chat/inputRequested').length === count);
+
+  session.sendMessage('t1', 'elicitform please');
+  await asked(1);
+  expect(session.answer?.('call-elicit:elicitation', false, {})).toBe(true);
+  await until(() => watch.endings().length === 1);
+  expect(said()).toContain('elicit=cancel|branch=-|force=-|retries=-|mode=-|tags=-');
+
+  session.sendMessage('t2', 'elicitform please');
+  await asked(2);
+  session.answer?.('call-elicit:elicitation', true, {
+    branch: { state: 'skipped', value: { kind: 'text', value: 'never mind' } },
+    force: { state: 'submitted', value: { kind: 'boolean', value: true } },
+  }, 'accept');
+  await until(() => watch.endings().length === 2);
+  expect(said()).toContain('elicit=accept|branch=-|force=true|retries=-|mode=-|tags=-');
+});
+
 it('answers nothing for a session a server that cannot load does not have', async () => {
   const { agent, log } = backend(['--no-load']);
   // `undefined` rather than an empty session, which is what the host reads as

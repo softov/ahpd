@@ -841,7 +841,10 @@ const wordsOf = (answer: unknown): string[] => {
  * Keyed by the field its question was drawn for, so an answer to a key nothing
  * asked about is left out rather than sent under a name the schema does not
  * have, and a question nobody answered is absent rather than empty: a form with
- * a field left blank is a form with that field left blank.
+ * a field left blank is a form with that field left blank. A question the
+ * person skipped is one nobody answered, whatever its answer still holds, as
+ * VS Code's agents leave a skipped answer out.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L270
  *
  * A question the server marked open to an answer of its own is the exception,
  * and only when words were typed into it, which is what `typed` says about it.
@@ -859,7 +862,7 @@ export function contentOf(
 ): Record<string, string | number | boolean | string[]> {
   const content: Record<string, string | number | boolean | string[]> = {};
   for (const [key, answer] of Object.entries(answers)) {
-    if (!fields.has(key)) continue;
+    if (!fields.has(key) || bag(answer).state === 'skipped') continue;
     const value = answerOf(answer);
     const folded = typed.get(key);
     if (folded === undefined) {

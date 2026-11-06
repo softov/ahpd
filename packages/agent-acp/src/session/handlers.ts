@@ -833,11 +833,10 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * False when nothing here is waiting on that id, which the host reads as an
    * answer to something this session never asked.
    *
-   * `response` is the kind the client sent, where it sent one: a cancel is
-   * answered `cancel`, and every other refusal is a decline. The two are not
-   * the same thing to say to a server - a decline is somebody saying no, a
-   * cancel is nobody having been asked - and a client that named no kind is
-   * answered by the boolean it did send.
+   * `response` is the kind the client sent: a decline is answered `decline`,
+   * somebody saying no, and every other refusal `cancel`, a question that
+   * stopped being asked, as VS Code's Claude agent answers its elicitations.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L164-L169
    */
   const answerElicitation = (
     requestId: string,
@@ -853,7 +852,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const content = contentOf(answers, open.fields, open.typed);
     open.settle(accepted
       ? { action: 'accept', ...(Object.keys(content).length === 0 ? {} : { content }) }
-      : { action: response === 'cancel' ? 'cancel' : 'decline' });
+      : { action: response === 'decline' ? 'decline' : 'cancel' });
     return true;
   };
 
