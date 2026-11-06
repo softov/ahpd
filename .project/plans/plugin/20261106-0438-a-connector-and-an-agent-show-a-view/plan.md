@@ -142,6 +142,7 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | The plan line shows nothing when the account names no plan type; the provider is not a plan, and `firstParty` is not shown | Softov, 2026-11-06, chose "Nothing in the plan line" | 04 |
 | A login's view carries extra usage on the window it rides: whether it continues, the credits spent and the cap, as the old health held them | Softov, 2026-11-06, chose "Yes, add it to the view" | 04 |
 | A login that opens again with the same token shows its last plan at once; a new token starts empty | (defaulted: a session sends a plan only when it changes, so a reopen showed none) | 04 |
+| The `claude-login` sign-in asks `user:profile` beside `user:inference`; reading the profile and the usage without a session stays in the brief | Softov, 2026-11-06, chose "Scope only" | 07 |
 
 ## Proposed architecture
 
@@ -161,6 +162,7 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | [04 - claude shows plan usage](task-04-claude-shows-plan-usage.md) | implemented | 03 |
 | [05 - devtunnel shows its account](task-05-devtunnel-shows-its-account.md) | implemented | 03 |
 | [06 - the docs say how a view is made](task-06-the-docs-say-how-a-view-is-made.md) | implemented | 03 |
+| [07 - a login asks the profile scope](task-07-a-login-asks-the-profile-scope.md) | implemented | 04 |
 
 ## Risks and tradeoffs
 
@@ -170,8 +172,8 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 06 are `implemented` on 2026-11-06, on #248's branch.
-- **Next action:** Softov tests the views with a daemon, as task 04's *Validation* says.
+- **Done so far:** tasks 01 to 07 are `implemented` on 2026-11-06, on #249's branch.
+- **Next action:** Softov signs in again and tests the login's view, as task 07's *Validation* says.
 - **Open questions:** none.
 - **Watch out for:** a plugin, a connector and an agent must stay one structure. A change to one needs the same change to the others.
 

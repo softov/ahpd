@@ -14,16 +14,20 @@ import { LOGIN_ADAPTER, type OpenLogins } from './logins.js';
 /*
  * Claude Code's own sign-in for a long-lived token, as the CLI 2.1.301 that
  * SDK 0.3.301 runs holds it: the claude.ai authorize URL, the token URL, the
- * code page and the client id of its `builtInOauthConfig`; the one scope
- * `CLAUDE_AI_INFERENCE_SCOPE` that `setup-token` asks for; and its
+ * code page and the client id of its `builtInOauthConfig`; and its
  * `LONG_LIVED_OAUTH_TOKEN_TTL_SECONDS`, the expiry it asks the token URL for.
  * https://code.claude.com/docs/en/authentication#generate-a-long-lived-token
+ *
+ * The scopes are `CLAUDE_AI_PROFILE_SCOPE` and `CLAUDE_AI_INFERENCE_SCOPE`,
+ * where `setup-token` asks the second alone. Without the profile scope the CLI
+ * reads no email and no plan type of the account, and its usage request answers
+ * no plan limits, so a login's view could show nothing of either.
  */
 const AUTHORIZE_URL = 'https://claude.com/cai/oauth/authorize';
 const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 const CODE_PAGE = 'https://platform.claude.com/oauth/code/callback';
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const SCOPE = 'user:inference';
+const SCOPE = 'user:profile user:inference';
 const YEAR_SECONDS = 31_536_000;
 
 /** The API a login's token is for, and the version a call to it names. */

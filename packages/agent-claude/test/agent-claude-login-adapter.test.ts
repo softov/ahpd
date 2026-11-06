@@ -12,9 +12,9 @@ import { OpenLogins } from '../src/logins.js';
  * A Claude login as a connector of `claude-login`.
  *
  * A person signs in on claude.ai as `claude setup-token` does and pastes the
- * code the page shows, or puts a token the CLI printed. The sign-in's URLs,
- * client and scope are the CLI's own, read from the CLI 2.1.301 that SDK
- * 0.3.301 runs. No network is touched: the exchange and the check go out
+ * code the page shows, or puts a token the CLI printed. The sign-in's URLs
+ * and client are the CLI's own, read from the CLI 2.1.301 that SDK 0.3.301
+ * runs, and its scopes are the CLI's profile and inference scopes. No network is touched: the exchange and the check go out
  * through the `fetch` a test hands over.
  */
 
@@ -82,7 +82,7 @@ describe('the sign-in', () => {
       ['client_id', '9d1c250a-e61b-44d9-88ed-5944d1962f5e'],
       ['response_type', 'code'],
       ['redirect_uri', 'https://platform.claude.com/oauth/code/callback'],
-      ['scope', 'user:inference'],
+      ['scope', 'user:profile user:inference'],
       ['code_challenge', 'the-challenge'],
       ['code_challenge_method', 'S256'],
       ['state', 'the-state'],
