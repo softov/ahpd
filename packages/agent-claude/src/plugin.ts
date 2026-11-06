@@ -128,22 +128,31 @@ const engineOf = (paths: string[], shared: Shared, hostTools: boolean | undefine
   }],
   hostOnly: ['extraArgs'],
   keyVariables: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
-  open: (record) => claude({
-    ...shared,
-    paths,
-    provider: record.id,
-    displayName: record.name,
-    ...(record.model === undefined ? {} : { model: record.model }),
-    ...(Array.isArray(record.config['models']) ? { models: modelsOf(record.config['models']) } : {}),
-    ...(Array.isArray(record.config['modelSources']) ? { modelSources: sourcesOf(record.config['modelSources']) } : {}),
-    ...(typeof record.config['keepCliModels'] === 'boolean' ? { keepCliModels: record.config['keepCliModels'] } : {}),
-    // The plugin's answer under the record's: a record that names one wins.
-    presetOf: () => ({
-      ...(hostTools === undefined ? {} : { hostTools }),
-      ...record.config,
-    }),
-    logins: { open: logins, owner: () => record.owner },
-  }),
+  capabilities: [{
+    type: 'view',
+    name: 'main',
+    title: 'Plan usage',
+    description: 'The plan of each login this agent names, and what is left of each window.',
+  }],
+  open: (record, view) => {
+    logins.agentOpened(record, view);
+    return claude({
+      ...shared,
+      paths,
+      provider: record.id,
+      displayName: record.name,
+      ...(record.model === undefined ? {} : { model: record.model }),
+      ...(Array.isArray(record.config['models']) ? { models: modelsOf(record.config['models']) } : {}),
+      ...(Array.isArray(record.config['modelSources']) ? { modelSources: sourcesOf(record.config['modelSources']) } : {}),
+      ...(typeof record.config['keepCliModels'] === 'boolean' ? { keepCliModels: record.config['keepCliModels'] } : {}),
+      // The plugin's answer under the record's: a record that names one wins.
+      presetOf: () => ({
+        ...(hostTools === undefined ? {} : { hostTools }),
+        ...record.config,
+      }),
+      logins: { open: logins, owner: () => record.owner },
+    });
+  },
 });
 
 /** The client name this plugin's own connection to its host gives. */
@@ -169,7 +178,7 @@ const CLIENT = 'agent-claude';
  * `packages/sdk/src/channels/owners.ts` holds. A command the host refuses is
  * one line in the log.
  */
-const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall' | 'onLimits'> => {
+const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall'> => {
   let opened: Promise<PluginPeer> | undefined;
   const connection = (): Promise<PluginPeer> => {
     opened ??= (async () => {
@@ -189,11 +198,6 @@ const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall' 
       void connection()
         .then((conn) => conn.request('x-ahpd/connectors/note', { id, ...outcome }))
         .catch((error: unknown) => { host.log(`${name}: the host did not note a call of login ${id}: ${reason(error)}`); });
-    },
-    onLimits: (id, said) => {
-      void connection()
-        .then((conn) => conn.request('x-ahpd/connectors/note', { id, ...said }))
-        .catch((error: unknown) => { host.log(`${name}: the host did not note the plan limits of login ${id}: ${reason(error)}`); });
     },
   };
 };

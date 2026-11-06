@@ -14,7 +14,8 @@
 
 import type { Icon } from '@microsoft/agent-host-protocol';
 import type { Agent } from './agent.js';
-import type { ConnectorOwner } from './connectors.js';
+import type { Capability, ConnectorOwner } from './connectors.js';
+import type { ServedMethod, ViewHandle } from './plugin.js';
 
 /**
  * Whose agent it is: the same three owners a connector takes.
@@ -111,6 +112,14 @@ export interface Engine {
   description: string;
   /** The JSON Schema a client draws a record's own fields from. */
   schema: Record<string, unknown>;
+  /**
+   * What an agent of this engine does, as a client lists it.
+   *
+   * The same type an adapter's capabilities are. The host reads only `view` on
+   * an engine now: a `view` capability names a surface an agent of this engine
+   * shows a view on.
+   */
+  capabilities?: Capability[];
   /** What a client draws beside the engine's title. */
   icons?: Icon[];
   /** What a new record of this engine starts from. */
@@ -146,15 +155,19 @@ export interface Engine {
    *
    * Called once when a record is made, and when the daemon starts with it
    * stored. The view is live, so what `open` builds reads an edit at the next
-   * turn rather than holding the values it saw.
+   * turn rather than holding the values it saw. `view` shows the agent's views
+   * on the surfaces the engine's `view` capabilities name; the host makes one
+   * handle for each opening, and it is this record's alone.
    */
-  open(record: AgentView): Agent;
+  open(record: AgentView, view?: ViewHandle): Agent;
 }
 
 /** One engine as the fold keeps it, with the plugin that registered it. */
 export interface ServedEngine extends Engine {
   /** The plugin that registered it. */
   by: string;
+  /** The methods that plugin registered, which a Button in an agent's view must name. */
+  methods?: Record<string, ServedMethod>;
   /** What configuration named that plugin by, a package or a path, where it named one. */
   spec?: string;
 }

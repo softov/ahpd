@@ -1,6 +1,6 @@
 ---
 title: The docs say how a view is made
-status: todo
+status: implemented
 depends: [task-03-a-data-event-sets-a-value.md]
 layer: "docs"
 refs:
@@ -38,3 +38,11 @@ It names the three calls, the data model, the `view` capability and the `viewDat
 - `node <do-spec>/scripts/lint-prose.mjs docs/plugins/PLUGINS.md` reports no finding on a line that this task wrote.
 
 ## Resume
+
+Done. *The view a connector or an agent shows* replaces the section on a `ui`.
+The plugin view section has the data model, the bindings and `setViewData`.
+The adapter and engine sections name the `view` capability and `open(connector, view)`.
+The `x-ahpd-plugins`, `x-ahpd-connectors` and `x-ahpd-agents` sections name `views` and the `viewData` action.
+
+Verified: a search of `docs/` finds no `ui` name of #248.
+`lint-prose.mjs` reports no finding on a line that this task wrote.

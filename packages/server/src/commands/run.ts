@@ -1706,6 +1706,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     viewsChanged: () => {
       void pluginLists.refresh();
     },
+    // One value of a view's data goes to the readers alone, and the row stays as they hold it.
+    viewData: (id, surface, path, value) => {
+      void pluginLists.viewData(id, surface, path, value);
+    },
   };
   /*
    * The set this daemon keeps for as long as it runs.

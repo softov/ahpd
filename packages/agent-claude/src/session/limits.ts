@@ -12,7 +12,7 @@ import type { SessionContext } from './context.js';
  * another account's token leaves the old account's limits behind rather than
  * drawing them for the new one. A session on the CLI's own sign-in has no
  * login to share them by, so it keeps its own, and only a login's limits reach
- * the connector's health. A restart forgets them, as it forgets a login's
+ * the views that show them. A restart forgets them, as it forgets a login's
  * rest, and the next handshake fills them again.
  *
  * The account's plan type and provider are kept beside them, because they say
@@ -28,6 +28,8 @@ interface Plan {
   snapshots?: QuotaSnapshots | undefined;
   /** The plan type and the provider the account named. Absent until it answers. */
   account?: ConnectorAccount;
+  /** The account's email, masked by `maskedEmail`. Absent until it answers, or when it names none. */
+  email?: string;
   /** Whether the account's answer says it has no plan limits at all. */
   planless?: boolean;
   /** When the usage request last ran, or nought when only events have spoken. */
@@ -85,12 +87,14 @@ const windowsOf = (plan: Plan | undefined, planless: boolean | undefined): Quota
   planless === true && Object.keys(plan?.snapshots ?? {}).length === 0 ? {} : plan?.snapshots;
 
 /**
- * Keep the plan type and the provider of the account a session signs in to.
+ * Keep the plan type, the provider and the masked email of the account a
+ * session signs in to.
  *
- * `accountInfo()` also answers the email, the organization and where the
- * token came from. The two sources say whether the account has a plan, and
- * none of the four is kept, so none can leave the host. An answer with neither
- * kept field says nothing and changes nothing.
+ * `accountInfo()` also answers the organization and where the token came from.
+ * The two sources say whether the account has a plan, and none of the three is
+ * kept, so none can leave the host. The email is kept only masked, for the
+ * login's view, and never in `ahpd.account`. An answer with neither the plan
+ * type nor the provider says nothing and changes nothing.
  */
 export const noteAccount = (ctx: SessionContext, info: unknown): void => {
   const found = bag(info);
@@ -103,7 +107,30 @@ export const noteAccount = (ctx: SessionContext, info: unknown): void => {
   };
   const planless = planlessOf(found);
   const held = planOf(ctx);
-  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, account, planless, snapshots: windowsOf(held, planless) });
+  const email = maskedEmail(found.email);
+  publish(ctx, {
+    ...held,
+    askedAt: held?.askedAt ?? 0,
+    account,
+    ...(email === undefined ? {} : { email }),
+    planless,
+    snapshots: windowsOf(held, planless),
+  });
+};
+
+/**
+ * An email with all of its name but the first three letters as `*`, and its
+ * domain whole: `someone@example.com` is `som****@example.com`. A name of three
+ * letters or fewer keeps only its first. Anything that is not an email answers
+ * nothing, so nothing of it is shown.
+ */
+export const maskedEmail = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const at = value.lastIndexOf('@');
+  if (at <= 0 || at === value.length - 1) return undefined;
+  const name = value.slice(0, at);
+  const kept = name.length > 3 ? 3 : 1;
+  return `${name.slice(0, kept)}${'*'.repeat(Math.max(name.length - kept, 4))}${value.slice(at)}`;
 };
 
 /** A finite number, or nothing. A utilization of zero is a measurement. */
@@ -228,7 +255,9 @@ export const noteLimit = (ctx: SessionContext, info: unknown): void => {
   const snapshot = snapshotOf(utilization, reset);
   if (Object.keys(snapshot).length === 0) return;
   const held = planOf(ctx);
-  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, snapshots: { ...held?.snapshots, [key]: snapshot } });
+  // Merged into the window it names: an event with a reset and no utilization
+  // keeps the share the usage request answered, and the window's extra usage.
+  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, snapshots: { ...held?.snapshots, [key]: { ...held?.snapshots?.[key], ...snapshot } } });
 };
 
 /**
@@ -271,18 +300,18 @@ export const refreshLimits = async (ctx: SessionContext, now: number = Date.now(
 };
 
 /**
- * Keep the plan, and tell the host when a login's plan is not what it was told.
+ * Keep the plan, and send it to the views that show it when it is not what they were told.
  *
- * The plugin sends the snapshots and the account with a note, as it sends a
- * call's outcome, so the host keeps them in the connector's health without a
- * message of its own. A session on the CLI's own sign-in has no connector to
- * tell, and a plan with neither says nothing.
+ * The login's connector draws it, and so does each open agent that names the
+ * login. A session on the CLI's own sign-in has no connector to tell, and a
+ * plan with neither a window nor an account says nothing.
  */
 const publish = (ctx: SessionContext, plan: Plan): void => {
   const before = planOf(ctx);
   const said: PlanNote = {
     ...(plan.snapshots === undefined ? {} : { quotaSnapshots: plan.snapshots }),
     ...(plan.account === undefined ? {} : { account: plan.account }),
+    ...(plan.email === undefined ? {} : { email: plan.email }),
   };
   const text = JSON.stringify(said);
   keep(ctx, { ...plan, sent: text });

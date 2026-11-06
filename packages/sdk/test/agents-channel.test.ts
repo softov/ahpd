@@ -13,6 +13,7 @@ import type { Agent } from '../src/types/agent.js';
 import type { Engine, AgentView, AgentTemplate, ServedEngine } from '../src/types/agents.js';
 import type { ConnectorRef } from '../src/types/connectors.js';
 import type { HostOptions, Users } from '../src/types/index.js';
+import type { PluginView, ViewHandle } from '../src/types/plugin.js';
 import type { RecordCollection } from '../src/types/records.js';
 import type { Vault } from '../src/types/vault.js';
 import type { Icon } from '@microsoft/agent-host-protocol';
@@ -174,15 +175,17 @@ const TEMPLATES: AgentTemplate[] = [
  * it offers, and an answer moves the root list a second time, so a case about
  * one `root/agentsChanged` is served an engine that answers nothing.
  */
-const engineOf = (name: string, opened: Opened[], probing: boolean): Engine => ({
+const engineOf = (name: string, opened: Opened[], probing: boolean, handles: Map<string, ViewHandle>): Engine => ({
   name,
   title: 'Checker',
   description: 'Answers what it is told.',
   schema: SCHEMA,
   hostOnly: ['command'],
   keyVariables: ['API_KEY'],
-  open: (record: AgentView): Agent => {
+  capabilities: [{ type: 'view', name: 'main', title: 'Status', description: 'What the agent last answered.' }],
+  open: (record: AgentView, view?: ViewHandle): Agent => {
     opened.push(record);
+    if (view !== undefined) handles.set(record.id, view);
     const base = echo({ path: home, pace: 0 });
     // The echo backend has a probe of its own, and a probe that answers moves
     // the root list again: an engine that says nothing offers none.
@@ -208,12 +211,12 @@ const engineOf = (name: string, opened: Opened[], probing: boolean): Engine => (
  * An engine whose backend serves another id: a record may not be one of these,
  * because a client names a record by its id and the fold keys on the backend's.
  */
-const misnamed = (opened: Opened[]): ServedEngine => {
-  const engine = engineOf('misnamed', opened, false);
+const misnamed = (opened: Opened[], handles: Map<string, ViewHandle>): ServedEngine => {
+  const engine = engineOf('misnamed', opened, false, handles);
   return {
     ...engine,
     by: 'test',
-    open: (record: AgentView) => ({ ...engine.open(record), provider: 'not-the-id' }),
+    open: (record: AgentView, view?: ViewHandle) => ({ ...engine.open(record, view), provider: 'not-the-id' }),
   };
 };
 
@@ -230,18 +233,20 @@ async function served(options: { register?: boolean; fold?: (agents: Agent[]) =>
   const problems: string[] = [];
   const ended: string[] = [];
   const vault = made();
+  /** The view handle each opening was handed, by agent id. */
+  const handles = new Map<string, ViewHandle>();
   const engines: Record<string, ServedEngine> = register
     ? {
-        checker: { ...engineOf('checker', opened, false), templates: TEMPLATES, by: 'test' },
-        prober: { ...engineOf('prober', opened, true), by: 'test' },
+        checker: { ...engineOf('checker', opened, false, handles), templates: TEMPLATES, by: 'test' },
+        prober: { ...engineOf('prober', opened, true, handles), by: 'test' },
         picker: {
-          ...engineOf('picker', opened, false),
+          ...engineOf('picker', opened, false, handles),
           templates: TEMPLATES,
           templateOf: (record, made) => made.find((one) => one.name.toLowerCase() === record.id),
           by: 'test',
         },
-        misnamed: misnamed(opened),
-        linked: { ...engineOf('linked', opened, false), schema: LINKED, by: 'test' },
+        misnamed: misnamed(opened, handles),
+        linked: { ...engineOf('linked', opened, false, handles), schema: LINKED, by: 'test' },
       }
     : {};
   // What serves an id the records do not hold: the daemon's own backend, and
@@ -288,7 +293,7 @@ async function served(options: { register?: boolean; fold?: (agents: Agent[]) =>
   wire = servedRecords('ahpd', [lists.channel], lists.methods);
   host = createHost(hostOptions([]));
   await lists.openAll();
-  return { host, users, collection, lists, engines, opened, ended, problems, vault, close: async () => { await host?.close(); } };
+  return { host, users, collection, lists, engines, opened, ended, problems, handles, vault, close: async () => { await host?.close(); } };
 }
 
 /** A client signed in as `id`, whose channel actions are kept. */
@@ -892,7 +897,7 @@ it('refuses an agent whose backend serves another id, and does not serve it', as
 });
 
 it('opens a record again when the plugin that registered its engine is reloaded', async () => {
-  const { host, users, lists, engines, opened, ended, close } = await served();
+  const { host, users, lists, engines, opened, ended, handles, close } = await served();
   const cy = await as(host, users, 'cy');
   await cy.call('x-ahpd/agents/put', {
     id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' },
@@ -900,7 +905,7 @@ it('opens a record again when the plugin that registered its engine is reloaded'
   expect(opened.filter((one) => one.engine === 'checker')).toHaveLength(1);
 
   // A reload imports the module again: the same name, a new engine object.
-  engines['checker'] = { ...engineOf('checker', opened, false), by: 'test' };
+  engines['checker'] = { ...engineOf('checker', opened, false, handles), by: 'test' };
   await lists.openAll();
   expect(opened.filter((one) => one.engine === 'checker')).toHaveLength(2);
   // The backend the old module built goes, and its sessions with it.
@@ -967,5 +972,114 @@ it('runs the commands one at a time, so two owners cannot both take an id', asyn
   expect(answers.filter((one) => 'code' in one && one.code === -32009)).toHaveLength(1);
   // The record the last answer left is the one owner's, not both.
   expect(['user:cy', 'team:backend']).toContain((await collection.get('shared'))?.owner);
+  await close();
+});
+
+/** A view with one bound Text, and the data it starts from. */
+const viewOf = (dataModel: Record<string, unknown>): PluginView => ({
+  root: 'plan',
+  components: { plan: { id: 'plan', component: 'Text', text: { path: '/plan' } } },
+  dataModel,
+});
+
+it('puts a view on the agent row, and sends the change to a subscriber', async () => {
+  const { host, users, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', { id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' } });
+  // The caller reads its own agent, and its subscription is what the change reaches.
+  await cy.rows();
+
+  expect((await cy.rows())['mine']).not.toHaveProperty('views');
+  handles.get('mine')!.showView(viewOf({ plan: 'max' }));
+  await until(() => cy.actions('x-ahpd-agents/changed').length > 0);
+
+  expect((await cy.rows())['mine']?.['views']).toEqual({ main: viewOf({ plan: 'max' }) });
+  // A subscriber is sent the changed row, not only the next snapshot.
+  expect(cy.actions('x-ahpd-agents/changed').at(-1)).toMatchObject({ id: 'mine', record: { views: { main: viewOf({ plan: 'max' }) } } });
+  await close();
+});
+
+it('replaces the view on a second show, and clear takes it away', async () => {
+  const { host, users, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', { id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' } });
+  const handle = handles.get('mine')!;
+
+  handle.showView(viewOf({ plan: 'max' }));
+  handle.showView(viewOf({ plan: 'pro' }));
+  expect((await cy.rows())['mine']?.['views']).toEqual({ main: viewOf({ plan: 'pro' }) });
+
+  handle.clearView();
+  expect((await cy.rows())['mine']).not.toHaveProperty('views');
+  await close();
+});
+
+it('takes the view away when the engine unloads, and ignores the old handle', async () => {
+  const { host, users, lists, engines, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', { id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' } });
+  const handle = handles.get('mine')!;
+  handle.showView(viewOf({ plan: 'max' }));
+  expect((await cy.rows())['mine']).toHaveProperty('views');
+
+  delete engines['checker'];
+  await lists.openAll();
+  expect((await cy.rows())['mine']).not.toHaveProperty('views');
+
+  handle.showView(viewOf({ plan: 'pro' }));
+  expect((await cy.rows())['mine']).not.toHaveProperty('views');
+  await close();
+});
+
+it('takes the view away when the agent is removed, and ignores the old handle', async () => {
+  const { host, users, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', { id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' } });
+  const handle = handles.get('mine')!;
+  handle.showView(viewOf({ plan: 'max' }));
+
+  expect(await cy.call('x-ahpd/agents/remove', { id: 'mine' })).toEqual({ result: {} });
+  expect(await cy.rows()).not.toHaveProperty('mine');
+  handle.showView(viewOf({ plan: 'pro' }));
+  expect(await cy.rows()).not.toHaveProperty('mine');
+  await close();
+});
+
+it('refuses a bad view, or one on a surface no capability names, and the row keeps what it held', async () => {
+  const { host, users, handles, problems, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', { id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' } });
+  const handle = handles.get('mine')!;
+  handle.showView(viewOf({ plan: 'max' }));
+
+  handle.showView(viewOf({ over: 'x'.repeat(64 * 1024) }));
+  handle.showView(viewOf({ plan: 'pro' }), 'side' as never);
+
+  expect((await cy.rows())['mine']?.['views']).toEqual({ main: viewOf({ plan: 'max' }) });
+  expect(problems).toEqual([
+    'x-ahpd-agents: mine\'s view was not kept: plugin test: showView needs the view to be at most 65536 bytes of JSON',
+    'x-ahpd-agents: mine: showView on side, a surface no view capability of checker names',
+  ]);
+  await close();
+});
+
+it('sends one value of the view data to the agent\'s readers, and the row holds it', async () => {
+  const { host, users, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/agents/put', { id: 'mine', engine: 'checker', owner: 'user:cy', name: 'Mine', config: { target: 'a' } });
+  await cy.rows();
+  const handle = handles.get('mine')!;
+  handle.showView(viewOf({ plan: 'max' }));
+  await until(() => cy.actions('x-ahpd-agents/changed').length > 0);
+  const changes = cy.actions('x-ahpd-agents/changed').length;
+
+  handle.setViewData('/plan', 'pro');
+  await until(() => cy.actions('x-ahpd-agents/viewData').length > 0);
+
+  expect(cy.actions('x-ahpd-agents/viewData')).toEqual([
+    { type: 'x-ahpd-agents/viewData', id: 'mine', surface: 'main', path: '/plan', value: 'pro' },
+  ]);
+  expect(cy.actions('x-ahpd-agents/changed')).toHaveLength(changes);
+  expect((await cy.rows())['mine']?.['views']).toEqual({ main: viewOf({ plan: 'pro' }) });
   await close();
 });

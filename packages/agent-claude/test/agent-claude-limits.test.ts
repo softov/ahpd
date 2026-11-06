@@ -5,15 +5,16 @@ import { expect, it, vi } from 'vitest';
 import type { Bag, ConnectorAccount, QuotaSnapshots } from '@ahpd/sdk';
 import type { Login, PlanNote } from '../src/logins.js';
 import type { SessionContext } from '../src/session/context.js';
-import { limitsOf, noteAccount, noteLimit, quotaSnapshotsOf, refreshLimits } from '../src/session/limits.js';
+import { accountOf, limitsOf, maskedEmail, noteAccount, noteLimit, quotaSnapshotsOf, refreshLimits } from '../src/session/limits.js';
 
 /*
  * A login says its plan limits.
  *
  * The CLI names one window in each `rate_limit_event`, and the usage request
- * answers every window at once. Both are kept by the login's token, ride the
- * turn's usage as `quotaSnapshots`, and go to the host through `OpenLogins`. A
- * login whose account has no plan reports an empty map rather than nothing.
+ * answers every window at once. Both are kept by the login's token and ride the
+ * turn's usage as `quotaSnapshots`; the login's ui draws them through
+ * `OpenLogins`. A login whose account has no plan reports an empty map rather
+ * than nothing.
  */
 
 const sdk = vi.hoisted(() => {
@@ -240,6 +241,45 @@ it('keeps no map for a setup token, whose account names no plan type', async () 
   expect(fake.noted).toEqual([{ id: 'limits-setup', account: { apiProvider: 'firstParty' } }]);
 });
 
+it('sends the email masked to the login, and keeps it out of the account a turn says', () => {
+  const login: Login = { id: 'limits-email', token: 'token-email' };
+  const fake = fakeOf(login, {});
+  const ctx = ctxOf(fake);
+  noteAccount(ctx, { tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty', email: 'someone@example.com', organization: 'Example Org' });
+  expect(fake.noted).toEqual([{ id: 'limits-email', account: { apiProvider: 'firstParty' }, email: 'som****@example.com' }]);
+  expect(accountOf(ctx)).toEqual({ apiProvider: 'firstParty' });
+});
+
+it('masks all of an email\'s name but its first letters, and answers nothing for what is not an email', () => {
+  expect(maskedEmail('someone@example.com')).toBe('som****@example.com');
+  expect(maskedEmail('abc@example.org')).toBe('a****@example.org');
+  expect(maskedEmail('ab@example.io')).toBe('a****@example.io');
+  expect(maskedEmail('a.very.long.name@example.io')).toBe('a.v*************@example.io');
+  expect(maskedEmail('not an email')).toBeUndefined();
+  expect(maskedEmail('@example.io')).toBeUndefined();
+  expect(maskedEmail(undefined)).toBeUndefined();
+});
+
+it('keeps the share the usage request answered when an event names only a reset', async () => {
+  const login: Login = { id: 'limits-reset-only', token: 'token-reset-only' };
+  const fake = fakeOf(login, {
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => usageAnswer(),
+  });
+  const ctx = ctxOf(fake);
+  await refreshLimits(ctx, 1_000);
+  // The CLI's event during a turn often carries the reset and no utilization.
+  noteLimit(ctx, { rateLimitType: 'five_hour', resetsAt: 1_800_000_000 });
+  noteLimit(ctx, { rateLimitType: 'seven_day', resetsAt: 1_800_000_000 });
+  expect(limitsOf(ctx)?.['session']).toEqual({ remainingPercentage: 60, resetDate: new Date(1_800_000_000_000).toISOString() });
+  expect(limitsOf(ctx)?.['weekly']).toEqual({
+    remainingPercentage: 90,
+    resetDate: new Date(1_800_000_000_000).toISOString(),
+    overageAllowedWithExhaustedQuota: true,
+    overage: 250,
+    overageEntitlement: 1000,
+  });
+});
+
 it('keeps the events\' windows when the usage request has no limits to answer', async () => {
   const login: Login = { id: 'limits-unavailable', token: 'token-unavailable' };
   const fake = fakeOf(login, {
@@ -278,11 +318,13 @@ it('keeps the limits of a session on the CLI\'s own sign-in, and tells no connec
   expect(fake.noted).toEqual([]);
 });
 
-it('carries a login\'s windows on a turn, and notes the answer to the host', async () => {
+it('carries a login\'s windows on a turn, and draws them on the login', async () => {
   const logins = new OpenLogins();
-  logins.opened({ id: 'work', adapter: 'claude-login', owner: 'host', config: { token: 'token-work' } });
-  const noted: Noted[] = [];
-  logins.onLimits = (id, said) => { noted.push({ id, ...said }); };
+  const shown: Bag[] = [];
+  logins.opened(
+    { id: 'work', adapter: 'claude-login', owner: 'host', config: { token: 'token-work' } },
+    { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Bag); }, clearView: () => {} },
+  );
   sdk.reset();
   sdk.usageAsked = 0;
 
@@ -296,16 +338,17 @@ it('carries a login\'s windows on a turn, and notes the answer to the host', asy
     logins: { open: logins, owner: () => 'host' },
   });
   // The handshake asked the account's own answer, which filled every window,
-  // and the host heard it through the login, as it hears a call.
-  await until(() => noted.length >= 1);
+  // and the login drew it, as it draws a call.
+  await until(() => shown.length >= 1);
   expect(sdk.usageAsked).toBe(1);
-  expect(noted[0]).toMatchObject({
-    id: 'work',
-    quotaSnapshots: {
-      session: { remainingPercentage: 60, resetDate: '2026-11-04T12:00:00.000Z' },
-      weekly: { remainingPercentage: 90 },
+  // The two windows the account answered, beside the ones its plan names.
+  expect((shown[0]?.['windows'] as Bag[]).slice(0, 2)).toEqual([
+    { name: 'Session', left: 60, used: 40, reset: '2026-11-04T12:00:00.000Z', resetInSeconds: 0 },
+    {
+      name: 'Weekly', left: 90, used: 10, reset: '2026-11-10T12:00:00.000Z', resetInSeconds: expect.any(Number),
+      extra: true, extraUsed: 250, extraCap: 1000,
     },
-  });
+  ]);
 
   session.sendMessage('one', 'how much is left');
   await settle();
@@ -321,9 +364,9 @@ it('carries a login\'s windows on a turn, and notes the answer to the host', asy
     session: { remainingPercentage: 70, resetDate: new Date(1_800_000_000_000).toISOString() },
     weekly: { remainingPercentage: 90, resetDate: '2026-11-10T12:00:00.000Z' },
   });
-  // The event moved the session window, so the host heard it. The minute had
-  // not passed, so the turn's end asked nothing.
-  await until(() => noted.length >= 2);
-  expect(noted[1]?.quotaSnapshots?.session?.remainingPercentage).toBe(70);
+  // The event moved the session window, so the login drew it again. The minute
+  // had not passed, so the turn's end asked nothing.
+  await until(() => shown.length >= 2);
+  expect((shown[1]?.['windows'] as Bag[])[0]?.['left']).toBe(70);
   expect(sdk.usageAsked).toBe(1);
 });

@@ -634,15 +634,14 @@ host.registerAdapter({
 - `schema` is checked as a whole, so a `oneOf` with an alternative for each kind
   of connector refuses a field that belongs to another kind, rather than letting
   `open` discover it.
-- `capabilities` are listed for a client. The types are `receive`, `command`,
-  `action` and `models`, and `ui` is reserved for a later plan; a type this
-  version does not know is shown by its title. An `action` is the one type the
-  host runs, as a tool a session calls - [An action offered as a
-  tool](#an-action-offered-as-a-tool).
+- `capabilities` are listed for a client. The types are `receive`, `command`, `action`, `models` and `view`; a type this version does not know is shown by its title. An `action` is the one type the host runs, as a tool a session calls - [An action offered as a tool](#an-action-offered-as-a-tool). A `view` names a surface each connector of the adapter shows a view on - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
+- A `view` capability's `name` is its surface, and it is one the host knows: `main` now. Another name is refused when the adapter registers.
 - A `receive` capability may carry `path`: where its connectors receive, relative to the daemon's HTTP root, with `{id}` standing for the connector id, such as `/plugins/webhook/{id}`. A client puts the root before it to build a connector's URL. A `path` on any other type, or one that does not start with `/`, is refused when the adapter registers, and `x-ahpd-adapters` sends it with the capability.
-- `open(connector)` starts answering for one connector, which carries `id`,
+- `open(connector, view)` starts answering for one connector, which carries `id`,
   `adapter`, `owner`, an optional `title`, and `config` with each secret read
-  back from the vault. The answer is the function that stops it, or nothing when
+  back from the vault. `view` is the handle that shows the connector's views,
+  and it is handed whether or not the adapter declares a `view` capability. The
+  answer is the function that stops it, or nothing when
   there is nothing to stop. An `open` that throws leaves the connector stored
   and shown as `invalid`.
 - `run(connector, action, input, call?)` is optional, and runs one `action`
@@ -697,6 +696,44 @@ The `@ahpd/activepieces` plugin makes one adapter for each Activepieces piece it
 The schema can change between versions, and nothing migrates a stored
 connector: one whose config no longer fits shows as `invalid`, and one whose
 adapter no plugin registers shows as `unavailable`. Neither is opened.
+
+### The view a connector or an agent shows
+
+A connector and an agent show views the way a plugin shows one on its page, with the same three calls and the same view. The calls are on the handle that `open` is handed. The handle names that one record, so two connectors of one adapter can each show a view of their own. A `view` capability on the adapter or the engine names the surface its records show a view on.
+
+```ts
+host.registerAdapter({
+  // ...the name, the title, the schema of the form, and the other members...
+  capabilities: [
+    { type: 'view', name: 'main', title: 'Account', description: 'The account this connector signed in as, and when it last refreshed.' },
+  ],
+  open(connector, view) {
+    view?.showView({
+      root: 'account',
+      components: {
+        account: { id: 'account', component: 'Column', children: ['name', 'refreshed'] },
+        name: { id: 'name', component: 'Text', text: { path: '/account' } },
+        refreshed: { id: 'refreshed', component: 'Text', text: { path: '/refreshed' } },
+      },
+      dataModel: { account: connector.config['account'] },
+    });
+    // Later, when the token refreshes:
+    view?.setViewData('/refreshed', new Date().toISOString());
+    return () => { /* ... */ };
+  },
+});
+```
+
+- `showView(view, surface?)` replaces the view on the surface, components and data model together, and the connector's row is sent again with `views`, by surface.
+- `setViewData(path, value, surface?)` sets one value of the view's data model. `/` replaces the whole model, and the value must then be an object. Each reader of the connector gets `x-ahpd-connectors/viewData` `{ id, surface, path, value }`, and the row is not sent again.
+- `clearView(surface?)` takes the view off the surface.
+- `surface` is `main` by default, and it must be one that a `view` capability names. A view on another surface is refused.
+- The view is checked as a plugin view is: the same kinds, and props as literals or `{ path }`. It holds at most 200 components, and 64 KiB of JSON with its data. A Button's event names a method the same plugin registered.
+- A refused call goes to the host's problem log, and the record keeps what it showed.
+- Closing or removing the record, or unloading the plugin, takes its views away. A handle kept past that writes nothing.
+- A path the data does not hold draws nothing, and the check cannot see the data. So a plugin puts a value at each path it can.
+- On an engine, `capabilities` takes the same entries, and `open(record, view)` is handed the same handle for that agent. Each reader of the agent gets `x-ahpd-agents/viewData`.
+- A record's view text is sent as the plugin wrote it. Only a plugin's own page is translated today.
 
 ### A tunnel kind of your own
 
@@ -819,7 +856,12 @@ host.registerEngine({
   templates: [{ name: 'Claude Code', config: {} }],
   hostOnly: ['extraArgs'],
   keyVariables: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
-  open(record) {
+  capabilities: [
+    { type: 'view', name: 'main', title: 'Plan usage', description: 'The plan of each login this agent names.' },
+  ],
+  open(record, view) {
+    // Each agent shows the logins its own record names.
+    view?.showView({ ...PLAN_VIEW, dataModel: { logins: loginsOf(record.config) } });
     return claude({ provider: record.id, displayName: record.name });
   },
 });
@@ -862,12 +904,14 @@ host.registerEngine({
 - `keyVariables` names the `env` variables any owner may set, once the engine has
   a key a person would hold. Every other `env` variable is host-only, because a
   free environment can run a program, and `NODE_OPTIONS` is enough.
-- `open(record)` builds the backend for one record and answers an `Agent`. The
+- `open(record, ui)` builds the backend for one record and answers an `Agent`. The
   record is a live view rather than a copy: `id`, `engine`, `owner`, `name`,
   `description`, `icon`, `model` and `config` are read at each call, so an edit
   reaches a running session at its next turn. `config` is the engine's own values
   with each secret read back from the vault. The backend's `provider` must be
-  the record's id, because a client names the agent by its id alone.
+  the record's id, because a client names the agent by its id alone. `view` is the
+  handle that shows the agent's views, as an adapter's is.
+- `capabilities` works as an adapter's does. `view` is the one type the host reads on an engine - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 
 A record whose `config` no longer fits shows as `invalid`, and one whose engine no
 plugin registers shows as `unavailable`; neither is opened, and neither is
@@ -1008,9 +1052,13 @@ nothing behaves exactly as it did before the field existed.
 
 `alert(alert)` puts one alert on the plugin's row in the plugins channel: `{ level, text, ref? }`, where `level` is one of `notice`, `info`, `warning` and `error`. `ref` names what the alert is about, as `<kind>:<id>` such as `adapter:ap-postgres`. A client shows it beside that item, and an alert with the same `ref` replaces the one before it. `clearAlert(ref)` takes it out again. An alert raised after `apply` returned is on the row at once. The channel sends the row again, which is what a plugin holding a watch uses. A plugin holds at most 50 alerts, and the oldest goes first. A reload or an unload clears them.
 
-`showView(view, surface?)` draws what a plugin is doing on its own page, when one sentence is not enough. It is the same road an alert takes: the daemon keeps the view on the plugin's row, a client draws it, and a new view sends the row again. `clearView(surface?)` takes it away. A reload or an unload clears it too.
+`showView(view, surface?)` draws what a plugin is doing on its own page, when one sentence is not enough. It is the same road an alert takes: the daemon keeps the view on the plugin's row, a client draws it, and a new view sends the row again. `setViewData(path, value, surface?)` sets one value of the view's data model, and `clearView(surface?)` takes the view away. A reload or an unload clears it too. A connector and an agent show views with the same calls - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 
-A view is a small A2UI v0.10 surface, so a client needs no code for the plugin that sent it. The shape is `{ root, components }`: `root` is the `id` of the component drawn first, and `components` holds each component by its own `id`. A component has an `id`, a `component` kind, and the kind's own properties. `child` names one component below it, `children` names a list, and `action` is what a Button calls. The kinds are `Text`, `Link`, `Button`, `Card`, `Row`, `Column`, `List`, `Divider` and `Icon`.
+A view is a small A2UI v0.10 surface, so a client needs no code for the plugin that sent it. The shape is `{ root, components, dataModel? }`. `root` is the `id` of the component drawn first, and `components` holds each component by its own `id`. `dataModel` is the data a bound prop reads. A component has an `id`, a `component` kind, and the kind's own properties. `child` names one component below it, `children` names a list, and `action` is what a Button calls. The kinds are `Text`, `Link`, `Button`, `Card`, `Row`, `Column`, `List`, `Divider`, `Icon`, `Progress`, `DateTime` and `KeyValue`.
+
+- `Progress` is a bar: `value` out of `max`, which is 100 when absent. `label` is the text above it, and `display: 'percent'` shows the share beside the label. `value` and `max` are numbers or `{ path }`. Its `child` is drawn small below the bar, as a footer.
+- `DateTime` is a time a client shows in its reader's own zone, so the host needs no zone. `value` is an ISO time or `{ path }`. `format` is `time`, `date`, `datetime` or `auto`, the default: `auto` shows the hour on the reader's today, and the weekday, the day and the hour on another day. `label` goes before the time, as `Resets 05:10 AM`.
+- `KeyValue` is one line: its `label` at the start and its `value` at the end. Each is text or `{ path }`.
 
 ```ts
 host.showView({
@@ -1024,9 +1072,16 @@ host.showView({
 });
 ```
 
-Every property is a literal value. A `{ path }` binding is refused, because this host sends no data model yet; bindings come in a later plan. A `Link` takes an absolute http(s) URL with a host. A Button's `action` is `{ event: { name, context? } }`, where `name` is an `x-` method the same plugin registered and `context` is the request's params. A person who clicks the Button sends a normal request, so the host checks the method's grant for that person. A view is one page of state, not a document: at most 200 components and 64 KiB of JSON.
+A property is a literal value or a `{ path }` binding, which reads the value at that path of `dataModel`. `children` may be `{ path, componentId }`, which draws `componentId` once for each item of the list at `path`. A path inside that row reads the row's own item. A path the data does not hold draws nothing. A `Link` takes an absolute http(s) URL with a host, or a `{ path }`. A Button's `action` is `{ event: { name, context? } }`, where `name` is an `x-` method the same plugin registered and `context` is the request's params. A person who clicks the Button sends a normal request, so the host checks the method's grant for that person. A view is one page of state, not a document: at most 200 components, and 64 KiB of JSON with its data model.
 
-`surface` says where the view is drawn, and its default is `main`, the plugin's page. `main` is the only surface this host knows. A second view on `main` replaces the first, and a plugin sends the whole view again rather than a change to it. The check names the rule it refuses: an unknown component kind, a missing component, a component two parents name, a cycle from `root`, a bad URL, an unknown method, a binding or an unknown surface.
+`surface` says where the view is drawn, and its default is `main`, the plugin's page. `main` is the only surface this host knows. A second view on `main` replaces the first, components and data together. `setViewData` changes one value without the components: `/` replaces the whole model, and each reader of the plugins channel gets `x-ahpd-plugins/viewData` `{ id, surface, path, value }` without the row. The check names the rule it refuses:
+
+- An unknown component kind, a missing component, or a component two parents name.
+- A cycle from `root`.
+- A bad URL, or an unknown method.
+- A bad binding, or a data model that is not an object.
+- An unknown surface.
+ A `setViewData` on a surface with no view, with a bad path, or past 64 KiB throws, and the view keeps its data.
 
 `install(spec)` installs one npm package a plugin needs but does not ship. `installed` is the folder it installs into: `installed/` inside the plugin's own folder. `spec` is what npm takes, so a version rides in the name: `@activepieces/piece-postgres@0.5.1`. A name with no version installs the newest version at the time of the install. npm runs with `--ignore-scripts`, `--no-audit` and `--no-fund`, so a package's own install script never runs. The first install writes an `installed/package.json` of its own, so npm never changes the plugin's own manifest or `node_modules`. A source plugin is in the pnpm workspace, and its `node_modules` is not npm's to change. One install runs at a time for one plugin, and a second waits for the first. The answer is `{ version }`, the version npm left in `node_modules`, or `{ error }`, one line of npm's own error. A plugin with no folder of its own answers `{ error }`. A spec that starts with `-`, or holds whitespace, a quote or `%`, answers `{ error }` and runs no npm.
 
@@ -1585,10 +1640,10 @@ with it:
 | `version` | The version the plugin's package.json declares, when it has one |
 | `loaded` | Whether this daemon loaded it at its start |
 | `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref? }` alert: `error` for the line that says it did not load and `warning` for the rest. Every text has the userinfo of any URL and each `writeOnly` option value an error quoted answered `<set>`. Empty when the plugin has none |
-| `views` | The view the plugin draws on its own page, by surface: `{ main: { root, components } }`. A Text's `text` and a Link's `label` come in a reader's locale when the plugin's catalog has them. Absent when the plugin shows no view, after a clear, and on a reload or an unload |
+| `views` | The view the plugin draws on its own page, by surface: `{ main: { root, components, dataModel? } }`. A literal Text `text` and Link `label` come in a reader's locale when the plugin's catalog has them; a bound one and the data are served as the plugin wrote them. Absent when the plugin shows no view, after a clear, and on a reload or an unload |
 | `optionsSchema` | The form a client draws and the values `x-ahpd/plugins/options` is checked against, read from the manifest with no import, so a plugin switched off carries it too |
 
-Reading the channel needs `plugin:list`.
+Reading the channel needs `plugin:list`. Beside `added`, `changed` and `removed`, a reader of a row gets `x-ahpd-plugins/viewData` `{ id, surface, path, value }` when the plugin sets one value of a view's data. The row is not sent again, and it holds the new value.
 
 Six commands change the file the daemon loads, one moves an installed package, and one reads back the text a client wrote:
 
@@ -1657,6 +1712,8 @@ of, with `config` holding a reference where a secret was moved, and a `state`:
 | `unavailable` | No loaded plugin registers its adapter, so it cannot be opened |
 
 A row also carries a `health` when the host knows one, and no `health` key when it knows nothing. `health.check` is the last check, `{ result, message?, at }`. `health.lastCall` is the last call the connector made or answered, `{ at, ok, status?, error? }`, and `health.lastFailure` is the last such call that failed. A call is one an `action` made through `run`, one a host part reported for the connector, as the model proxy does, or one the plugin of the connector's adapter noted with `x-ahpd/connectors/note`, as the Claude plugin notes each turn a login ran. Health is kept in memory only: a restart clears it, and the checks a start runs fill the check part again. An error message is kept as the thrower gave it, at most 500 characters.
+
+A row also carries `views` when the connector shows one: its views by surface, `{ main: { root, components, dataModel? } }`, in memory only. When one value of a view's data changes, a reader of the row gets `x-ahpd-connectors/viewData` `{ id, surface, path, value }`. The row is not sent again - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 
 `connector:list` opens the channel, and reads the caller's own connectors, their teams' and the host's, and no other person's. `connector:all` reads every row, and is admitted without `connector:list`. A caller with neither grant reads no connector, its own included, and is refused the subscription. A subscribe also takes `?owner=me`, which narrows the listing to the caller's own connectors.
 
@@ -1838,6 +1895,8 @@ A row also carries a `health` when a check was run and none when it was not:
 `health.result` is `ok`, `unreachable` or `failed`, with `message` where the
 agent gave one and `at` as an ISO time. Health is kept in memory only, so a
 restart clears it.
+
+A row also carries `views` when the agent shows one: its views by surface, `{ main: { root, components, dataModel? } }`, in memory only. When one value of a view's data changes, a reader of the row gets `x-ahpd-agents/viewData` `{ id, surface, path, value }`. The row is not sent again - [The view a connector or an agent shows](#the-view-a-connector-or-an-agent-shows).
 
 `agent:list` opens the channel, and reads the host's agents, their teams' and
 the caller's own, and no other person's. `agent:all` reads every row, and is

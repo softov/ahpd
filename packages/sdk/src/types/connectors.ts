@@ -14,6 +14,7 @@
  */
 
 import type { Icon, ToolResultContent } from '@microsoft/agent-host-protocol';
+import type { ServedMethod, ViewHandle } from './plugin.js';
 import type { OnWire } from './wire.js';
 
 /**
@@ -21,17 +22,22 @@ import type { OnWire } from './wire.js';
  *
  * `receive` is a connector that answers calls, `command` is a `/` command it
  * adds, `action` is something a client offers to run, `models` is a connector
- * the model proxy may call, and `ui` is reserved for a component tree a later
- * plan adds. A type this version does not know is kept and shown by its title
- * rather than refused.
+ * the model proxy may call, and `view` is a surface a record shows a view on.
+ * A type this version does not know is kept and shown by its title rather than
+ * refused.
  */
-export type CapabilityType = 'receive' | 'command' | 'action' | 'models' | 'ui' | (string & {});
+export type CapabilityType = 'receive' | 'command' | 'action' | 'models' | 'view' | (string & {});
 
-/** One thing a connector of an adapter does. */
+/** One thing a connector of an adapter, or an agent of an engine, does. */
 export interface Capability {
   /** What kind of capability this is. */
   type: CapabilityType;
-  /** The name a client and the plugin refer to it by. */
+  /**
+   * The name a client and the plugin refer to it by.
+   *
+   * On a `view` capability it is the surface a record shows a view on, and it
+   * is one the host knows: `main` now.
+   */
   name: string;
   /** What a client prints for it. */
   title: string;
@@ -257,22 +263,6 @@ export interface ConnectorHealth {
   lastCall?: CallOutcome;
   /** The last call that failed. */
   lastFailure?: CallOutcome;
-  /**
-   * The plan limits a login last reported, by quota type, in memory only.
-   *
-   * The shape is VS Code's `UsageInfoMeta.quotaSnapshots`, so a client draws
-   * it as it draws the ones Copilot reports. An empty map is a login whose
-   * account has no plan limits, and an absent one is a login nobody has asked
-   * yet: the two are not the same answer.
-   */
-  quotaSnapshots?: QuotaSnapshots;
-  /**
-   * The plan a login's account is on, as it last reported it, in memory only.
-   *
-   * Only the plan type and the provider: no email, organization or other part
-   * of the account leaves the host.
-   */
-  account?: ConnectorAccount;
 }
 
 /** The plan an account is on, as its provider names it. */
@@ -495,9 +485,11 @@ export interface Adapter {
    *
    * Called when a connector is made and when the daemon starts with one
    * stored. The answer is the function that stops it, or nothing when there is
-   * nothing to stop.
+   * nothing to stop. `view` shows the connector's views on the surfaces the
+   * adapter's `view` capabilities name; the host makes one handle for each
+   * opening, and it is this connector's alone.
    */
-  open(connector: Connector): void | (() => void | Promise<void>);
+  open(connector: Connector, view?: ViewHandle): void | (() => void | Promise<void>);
   /**
    * Say whether one connector works, with a call that needs its credentials.
    *
@@ -540,4 +532,6 @@ export interface ActionCall {
 export interface ServedAdapter extends Adapter {
   /** The plugin that registered it. */
   by: string;
+  /** The methods that plugin registered, which a Button in a connector's view must name. */
+  methods?: Record<string, ServedMethod>;
 }

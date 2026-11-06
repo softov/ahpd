@@ -204,6 +204,28 @@ describe("a turn's login", () => {
     expect(tokenOf()).toBe('token-work');
   });
 
+  it("tells the CLI the profile scopes of a login whose profile answered, and none of one whose did not", async () => {
+    const logins = twoLogins();
+    logins.profiled('work', 'token-work', { email: 'someone@example.com', plan: 'max' });
+    // A profile of a token the login no longer holds says nothing.
+    logins.profiled('personal', 'token-old', { plan: 'pro' });
+    process.env.CLAUDE_CODE_OAUTH_SCOPES = 'user:inference user:everything';
+    try {
+      open({ logins: ['work'] }, logins);
+      await settle();
+      expect(tokenOf()).toBe('token-work');
+      expect(envOf()?.['CLAUDE_CODE_OAUTH_SCOPES']).toBe('user:profile user:inference');
+      open({ logins: ['personal'] }, logins);
+      await settle();
+      expect(tokenOf()).toBe('token-personal');
+      // The daemon's own value never reaches a CLI on a login.
+      expect(envOf()).not.toHaveProperty('CLAUDE_CODE_OAUTH_SCOPES');
+    }
+    finally {
+      delete process.env.CLAUDE_CODE_OAUTH_SCOPES;
+    }
+  });
+
   it("takes the next login in the record's order when the first is not open", async () => {
     open({ logins: ['gone', 'work', 'personal'] }, twoLogins());
     await settle();
@@ -965,8 +987,9 @@ describe('the plugin', () => {
       ]);
       expect(logged.some((line) => line.includes('work') && line.includes('authentication_failed') && line.includes(denied))).toBe(true);
       // The check is the adapter's to answer when the host asks, and the
-      // failure asked it nothing.
-      expect(fetcher).toHaveBeenCalledTimes(0);
+      // failure asked it nothing; each open asked the profile once.
+      const urls = (fetcher.mock.calls as unknown[][]).map(([url]) => String(url));
+      expect(urls).toEqual(['https://api.anthropic.com/api/oauth/profile', 'https://api.anthropic.com/api/oauth/profile']);
       expect(await adapter.check?.(connectorOf('work', 'token-work'))).toEqual({ result: 'ok' });
 
       // A failure that moves the turn is kept too, on the same connection.

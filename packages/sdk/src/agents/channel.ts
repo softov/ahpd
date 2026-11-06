@@ -7,6 +7,13 @@
  * no plugin registers its engine any more. The engines themselves are listed on
  * `x-ahpd-engines`, built in `agents/engines.ts`.
  *
+ * A row carries `views`, by surface, when the plugin that opened the agent
+ * showed one: each a view with its data model, as a plugin's own row carries
+ * its page. The views are in memory only, as health is, and a close, a removal
+ * or an unloaded plugin takes them away. A change to one value of a view's
+ * data is sent as `x-ahpd-agents/viewData` `{ id, surface, path, value }` to
+ * each reader of the agent, and the row is not sent again.
+ *
  * Where an engine's schema marks a field `secret`, or names an `env` variable
  * in `keyVariables`, the value is a secret. A put moves it to the vault under
  * `agent/<id>/<field>` in the owner's scope and keeps a
@@ -61,13 +68,14 @@ import {
 } from '../channels/owners.js';
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
+import { recordViews } from '../plugins/views.js';
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { Icon } from '@microsoft/agent-host-protocol';
 import type { Agent } from '../types/agent.js';
 import type { AgentHealth, AgentOwner, AgentState, AgentTemplate, ServedEngine } from '../types/agents.js';
 import type { HandedAgent } from '../types/computers.js';
 import type { ConnectorRef } from '../types/connectors.js';
-import type { PluginMethod } from '../types/plugin.js';
+import type { PluginMethod, ViewHandle } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { Vault } from '../types/vault.js';
@@ -243,6 +251,20 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
 
   const problem = (message: string): void => { options.onProblem?.(`${SCHEME}: ${message}`); };
 
+  /**
+   * What each open agent shows, by id and surface.
+   *
+   * A whole view sends the row again; one value of its data goes to the
+   * agent's readers alone, and the last row sent takes the same change.
+   */
+  const views = recordViews({
+    problem,
+    changed: () => { void channel.refresh().catch(() => {}); },
+    data: (id, surface, path, value) => {
+      void channel.notify(id, { type: `${SCHEME}/viewData`, surface, path, value }, (record) => ({ ...record, views: views.of(id) ?? {} }));
+    },
+  });
+
   /** The config a stored record holds, as an object. */
   const configOf = (record: StoredRecord): Record<string, unknown> => bag(record.config);
 
@@ -300,10 +322,12 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
   const row = (record: StoredRecord): Record<string, unknown> => {
     const health = healths.get(record.id);
     const icons = iconsOf(record);
+    const shows = views.of(record.id);
     return {
       ...record,
       state: stateOf(record),
       ...(icons.length === 0 ? {} : { icons }),
+      ...(shows === undefined ? {} : { views: shows }),
       ...(health === undefined ? {} : { health }),
     };
   };
@@ -345,15 +369,37 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
    * `provider`, while a client names a record by its id, so a backend under
    * another id is refused here rather than served under an id no row has.
    */
-  const opened = async (record: StoredRecord, owner: AgentOwner, engine: ServedEngine): Promise<Opened> => {
+  const opened = async (record: StoredRecord, owner: AgentOwner, engine: ServedEngine, handle?: ViewHandle): Promise<Opened> => {
     const config = await resolvedRecord(configOf(record), owner, options.vault(), AGENT_SECRETS);
     const view = blankView(record, owner);
     fill(view, record, owner, config);
-    const agent = engine.open(view);
+    const agent = engine.open(view, handle);
     if (agent.provider !== record.id) {
       throw new Error(`${engine.name} opened ${record.id} as ${agent.provider}, and an agent is served by the id of its record`);
     }
     return { engine, view, agent };
+  };
+
+  /**
+   * Build one record's backend with a view handle of its own.
+   *
+   * The views are kept only when the engine opened the record, so a backend
+   * that failed shows nothing.
+   */
+  const openRecord = async (record: StoredRecord, owner: AgentOwner, engine: ServedEngine): Promise<Opened> => {
+    const handle = views.open({
+      id: record.id,
+      from: engine.name,
+      by: engine.by,
+      surfaces: (engine.capabilities ?? []).filter((one) => one.type === 'view').map((one) => one.name),
+      methods: engine.methods ?? {},
+    });
+    try {
+      return await opened(record, owner, engine, handle);
+    } catch (error) {
+      views.drop(record.id);
+      throw error;
+    }
   };
 
   /**
@@ -416,17 +462,20 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       if (owner === undefined) {
         problem(`${record.id} names no owner, so it is not served`);
         open.delete(record.id);
+        views.drop(record.id);
         continue;
       }
       if (typeof record.engine !== 'string') {
         problem(`${record.id} names no engine, so it is unavailable`);
         open.delete(record.id);
+        views.drop(record.id);
         continue;
       }
       const engine = engines[record.engine];
       // An engine nobody registers keeps its records on disk, served as `unavailable`.
       if (engine === undefined) {
         open.delete(record.id);
+        views.drop(record.id);
         continue;
       }
       const entry = open.get(record.id);
@@ -449,7 +498,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
         continue;
       }
       try {
-        const one = await opened(record, owner, engine);
+        const one = await openRecord(record, owner, engine);
         open.set(record.id, one);
         agents.push(one.agent);
         live.add(record.id);
@@ -458,12 +507,17 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
         const message = reason(error);
         problem(`${record.id} could not be opened: ${message}`);
         open.delete(record.id);
+        views.drop(record.id);
         // The row says why, as a failed check does, so a client shows it.
         healths.set(record.id, { result: 'failed', at: new Date().toISOString(), ...(message === '' ? {} : { message }) });
         openFailures.add(record.id);
       }
     }
-    for (const id of [...open.keys()]) if (!live.has(id)) open.delete(id);
+    for (const id of [...open.keys()]) {
+      if (live.has(id)) continue;
+      open.delete(id);
+      views.drop(id);
+    }
     /*
      * An agent that is gone, or whose engine changed under it, ends its sessions
      * first: the host keeps a backend that still has one open, so a session on
@@ -744,7 +798,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
     let built: Opened | undefined;
     if (before === undefined) {
       try {
-        built = await opened(record, owner, engine);
+        built = await openRecord(record, owner, engine);
       } catch (error) {
         // The record was not written, so the secrets moved for it go back out:
         // a vault entry no record names would outlive the refusal.
@@ -822,6 +876,7 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       open.delete(id);
       healths.delete(id);
       openFailures.delete(id);
+      views.drop(id);
       try {
         await take(await sync());
       } catch (error) {
@@ -916,7 +971,11 @@ export function agentsChannel(options: AgentsChannelOptions): AgentsChannel {
       }
       await channel.refresh();
     }),
-    refresh: () => channel.refresh(),
+    refresh: () => {
+      const engines = options.engines();
+      views.dropUnless((name) => engines[name] !== undefined);
+      return channel.refresh();
+    },
     owners: ownersFor,
     handed,
   };

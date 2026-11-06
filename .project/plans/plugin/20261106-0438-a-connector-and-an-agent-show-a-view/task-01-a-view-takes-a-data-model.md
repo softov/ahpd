@@ -1,6 +1,6 @@
 ---
 title: A view takes a data model
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -51,3 +51,13 @@ A view, on any surface, may carry a `dataModel`, and its props may bind to `{ pa
 - `pnpm exec vitest run packages/sdk/` and `pnpm exec vitest run packages/server/` pass, one at a time.
 
 ## Resume
+
+Done. `PluginView` has `dataModel`, and a prop may be `{ path }`.
+`children` may be `{ path, componentId }`, and a Link's `href` may be a `{ path }`.
+`checkView` holds the binding rules of `checkUi`, checks that `dataModel` is an object, and counts it in the 64 KiB.
+`checkUi`, `literalOf`, `UiComponent` and `UiSchema` are removed.
+`VIEW_SURFACES` in `view.ts` lists the surfaces, `main` now, for every check of a surface.
+
+Verified: `plugin-view.test.ts` passes 30 tests, and `plugins-channel.test.ts` passes 48.
+
+Found: `shownIn` already translates only a string `text` or `label`, so it needed no change, and the test proves it.

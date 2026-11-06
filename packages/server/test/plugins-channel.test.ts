@@ -276,7 +276,12 @@ const live = async ({ run, fetch, version }: { run?: Runner; fetch?: Fetch; vers
     users,
     rootConfig: daemonRootConfig(optionsFrom({ configFile: config })),
   };
-  const where = { configDir: fixtures, cwd: here, log: () => {}, alertsChanged: () => { void refresh(); }, viewsChanged: () => { void refresh(); } };
+  const where = {
+    configDir: fixtures, cwd: here, log: () => {},
+    alertsChanged: () => { void refresh(); },
+    viewsChanged: () => { void refresh(); },
+    viewData: (id: string, surface: string, path: string, value: unknown) => { void lists.viewData(id, surface, path, value); },
+  };
   set = pluginSet({ base, ...where });
   const first = await loadPlugins(held().plugins as PluginSpec[], { base, ...where, set });
   host = createHost(first.options);
@@ -1081,10 +1086,12 @@ it('keeps the newest fifty alerts on a plugin, and a reload clears its row and d
 const NOTE: PluginView = {
   root: 'body',
   components: {
-    body: { id: 'body', component: 'Column', children: ['note', 'site'] },
+    body: { id: 'body', component: 'Column', children: ['note', 'site', 'plan'] },
     note: { id: 'note', component: 'Text', text: 'the store is ready' },
     site: { id: 'site', component: 'Link', label: 'Open', href: 'https://example.test/' },
+    plan: { id: 'plan', component: 'Text', text: { path: '/plan' } },
   },
+  dataModel: { plan: 'max' },
 };
 
 it('carries a view a plugin shows after its load, sends the row again, and drops it when cleared', async () => {
@@ -1106,6 +1113,33 @@ it('carries a view a plugin shows after its load, sends the row again, and drops
   after.clearView();
   await wait(50);
   expect(((await ana.rows())['after'] as Bag)['views']).toBeUndefined();
+  await close();
+});
+
+it('sends one value of a plugin view\'s data alone, and the row holds it without being sent again', async () => {
+  writeFileSync(config, JSON.stringify({ plugins: ['./fixtures/plugin-after/index.ts'] }));
+  const { host, users, close } = await live();
+  const ana = await as(host, users, 'ana');
+  await ana.rows();
+  const after = (globalThis as Record<string, unknown>).__pluginAfterHost as PluginHost;
+  const bound: PluginView = {
+    root: 'plan',
+    components: { plan: { id: 'plan', component: 'Text', text: { path: '/plan' } } },
+    dataModel: { plan: 'max' },
+  };
+  after.showView(bound);
+  await wait(50);
+  const changes = ana.heard(URI).filter((one) => one === 'changed after').length;
+
+  after.setViewData('/plan', 'pro');
+  await wait(50);
+
+  expect(ana.actions(URI).filter((one) => one['type'] === `${URI.slice(0, -3)}/viewData`))
+    .toEqual([{ type: `${URI.slice(0, -3)}/viewData`, id: 'after', surface: 'main', path: '/plan', value: 'pro' }]);
+  expect(ana.heard(URI).filter((one) => one === 'changed after')).toHaveLength(changes);
+  expect(((await ana.rows())['after'] as Bag)['views']).toEqual({ main: { ...bound, dataModel: { plan: 'pro' } } });
+  // A value the view cannot take is refused to the plugin, and the view keeps its data.
+  expect(() => { after.setViewData('plan', 'team'); }).toThrow('plugin after: setViewData needs the path to be / or /a/b, and plan is not one');
   await close();
 });
 
@@ -1170,6 +1204,9 @@ it('translates a view\'s Text and Link label in the reader\'s locale, and leaves
   const en = (await cy.rows())['speaker'] as Bag;
   expect(en['views']['main']['components']['note']['text']).toBe('the store is ready');
   expect(en['views']['main']['components']['site']['label']).toBe('Open');
+  // A bound Text is read from the data, so it is served as the plugin bound it, and so is the data.
+  expect(pt['views']['main']['components']['plan']['text']).toEqual({ path: '/plan' });
+  expect(pt['views']['main']['dataModel']).toEqual({ plan: 'max' });
   await close();
 });
 

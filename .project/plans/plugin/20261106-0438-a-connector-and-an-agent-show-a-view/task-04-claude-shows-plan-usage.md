@@ -1,6 +1,6 @@
 ---
 title: Claude shows plan usage
-status: todo
+status: implemented
 depends: [task-03-a-data-event-sets-a-value.md]
 layer: "agent-claude"
 refs:
@@ -55,3 +55,22 @@ A plan answer changes the data with `setViewData`, and the connector health has 
 - By hand, after Softov restarts the daemon: a `claude-login` connector and a Claude agent show the view after a turn.
 
 ## Resume
+
+Done. `views.ts` holds `LOGIN_VIEW`, `AGENT_VIEW` and the data builders, and `ui.ts` is removed.
+The `claude-login` adapter and the Claude engine declare `{ type: 'view', name: 'main' }`.
+A login shows its view at its open, and a plan answer sets `/` of its data.
+An agent shows its view at its open, and a plan answer for a login it names sets `/logins`.
+
+Verified: `pnpm exec vitest run packages/agent-claude/` passes 595 tests.
+
+Found: `agent-claude-limits.test.ts` and `agent-claude-session-usage.test.ts` changed, beside the task's *Files*, because their fake handle had `show`.
+
+After Softov's test on 2026-11-06, the login's view shows the account's email masked, and the plan line shows only a plan type.
+`maskedEmail` in `session/limits.ts` masks it, and the plan keeps it apart from `ahpd.account`.
+A setup token names no plan type, and its windows come from rate limit events, which may carry no utilization.
+
+Each window row carries `extra`, `extraUsed` and `extraCap` when the account has extra usage, and draws the credits spent and the cap.
+`OpenLogins` keeps the last plan answer past a stop, with its token, so a reopen with the same token shows it again.
+
+Left: Softov checks the view again after this change, with a daemon.
+`OpenLogins` keeps a closed agent's entry, as `deferred.md` says.

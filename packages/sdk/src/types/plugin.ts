@@ -821,11 +821,14 @@ export type ViewSurface = 'main';
  *
  * `id` names the component, and it is also the key the component is held under
  * in `PluginView.components`. `component` is the kind: `Text`, `Link`,
- * `Button`, `Card`, `Row`, `Column`, `List`, `Divider` or `Icon`. The rest are
- * the kind's own properties, and each is a literal value.
+ * `Button`, `Card`, `Row`, `Column`, `List`, `Divider`, `Icon`, `Progress`,
+ * `DateTime` or `KeyValue`, as `VIEW_KINDS` says. The rest are
+ * the kind's own properties, and each is a literal value or `{ path }`, the
+ * A2UI way to read the value at `path` from the view's `dataModel`.
  *
- * `child` names one component below this one, `children` names a list of them,
- * and `action` is what a Button calls when a person clicks it.
+ * `child` names one component below this one, `children` names a list of them
+ * or repeats one component over a list of the data, and `action` is what a
+ * Button calls when a person clicks it.
  */
 export interface ViewComponent {
   /** The name a parent uses, and the key this component is held under. */
@@ -834,8 +837,12 @@ export interface ViewComponent {
   component: string;
   /** The one component below this one. */
   child?: string;
-  /** The components below this one, in the order they are drawn. */
-  children?: string[];
+  /**
+   * The components below this one, in the order they are drawn, or
+   * `{ path, componentId }`: the component named by `componentId`, drawn once
+   * for each item of the list at `path`, whose own paths read that item.
+   */
+  children?: string[] | { path: string; componentId: string };
   /**
    * What a Button calls, as `{ event: { name, context? } }`.
    *
@@ -843,26 +850,57 @@ export interface ViewComponent {
    * params a client sends with the request.
    */
   action?: { event: { name: string; context?: Record<string, unknown> } };
-  /** The component's own properties, such as a Text's `text`. */
+  /** The component's own properties, such as a Text's `text`: a literal or `{ path }`. */
   [prop: string]: unknown;
 }
 
 /**
  * What a plugin draws on a surface: an A2UI v0.10 surface of components.
  *
- * The shape is scena's `A2uiCreateSurface` without `dataModel`: `root` names
- * the component drawn first, and `components` holds each one by its `id`. A
- * view is sent whole on each change, so a client draws the one it last read
- * and keeps nothing between them.
+ * The shape is scena's `A2uiCreateSurface`: `root` names the component drawn
+ * first, `components` holds each one by its `id`, and `dataModel` is the data
+ * a `{ path }` prop reads. A view is replaced whole by `showView`, components
+ * and data together, and one value of its data changes with `setViewData`.
  *
- * A view is at most 200 components, of at most 64 KiB of JSON. A Link takes an
- * absolute http(s) URL, and a Button calls a method this plugin registered.
+ * A view, with its data model, is at most 200 components and 64 KiB of JSON.
+ * A Link takes an absolute http(s) URL or a `{ path }`, and a Button calls a
+ * method this plugin registered.
  */
 export interface PluginView {
   /** The `id` of the component drawn first. */
   root: string;
   /** Every component of the view, by its own `id`. */
   components: Record<string, ViewComponent>;
+  /** The data a `{ path }` prop reads, as a JSON object. Absent is an empty model. */
+  dataModel?: Record<string, unknown>;
+}
+
+/**
+ * One open record's views, as the plugin that opened it draws them.
+ *
+ * The host makes one handle for each connector or agent it opens, and hands it
+ * to `open` beside the record. It names that one record and nothing else: a
+ * handle kept past its record's close, removal or plugin unload writes nothing,
+ * so a late answer cannot bring a view back.
+ *
+ * The calls are the plugin host's own, on the record's surfaces rather than
+ * the plugin's page. A surface is one that a `view` capability of the adapter
+ * or the engine names; a view on another is refused. A refusal goes to the
+ * host's problem log, and the record keeps what it showed.
+ */
+export interface ViewHandle {
+  /** Replace the view on one of the record's surfaces, components and data together. */
+  showView(view: PluginView, surface?: ViewSurface): void;
+  /**
+   * Set one value of the data model of the view on a surface.
+   *
+   * `path` is `/` or `/a/b`; `/` replaces the whole model with `value`, which
+   * must then be an object. Clients that hold the record get only this change,
+   * not the row again.
+   */
+  setViewData(path: string, value: unknown, surface?: ViewSurface): void;
+  /** Take the view off one of the record's surfaces. */
+  clearView(surface?: ViewSurface): void;
 }
 
 /**
@@ -948,11 +986,20 @@ export interface PluginHost extends PluginContext {
    * a tunnel, the items it found, the things a person may do next.
    *
    * The view is checked before it is kept. A view on `main` replaces the one
-   * before it, and a plugin sends the whole view rather than a change to it.
-   * `surface` is `main` by default, and it is the only surface this host
-   * knows.
+   * before it, components and data model together; one value of the data
+   * changes with `setViewData`. `surface` is `main` by default, and it is the
+   * only surface this host knows.
    */
   showView(view: PluginView, surface?: ViewSurface): void;
+  /**
+   * Set one value of the data model of this plugin's view on a surface.
+   *
+   * `path` is `/` or `/a/b`; `/` replaces the whole model with `value`, which
+   * must then be an object. A client that holds the plugin's row gets only
+   * this change, not the row again. A surface with no view, a bad path, or a
+   * view that would pass 64 KiB is refused, and the view keeps its data.
+   */
+  setViewData(path: string, value: unknown, surface?: ViewSurface): void;
   /**
    * Take the view off one surface, if this plugin set one.
    *

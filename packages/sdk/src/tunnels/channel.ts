@@ -397,6 +397,7 @@ export function tunnelsChannel(options: TunnelsChannelOptions): TunnelsChannel {
       records.bind(given);
     },
     refresh,
+    notify: records.notify,
   };
 
   /** Say one operation has started: on its record, or on the list when it has none. */

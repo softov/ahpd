@@ -35,7 +35,7 @@ import type { Pair } from '../utils/pair.js';
 import { reason } from '../utils/values.js';
 import { readSecret } from '../access/vault.js';
 import { checkAdapter, checkAgent, checkEngine, checkChannel, checkChatRequest, checkGrants, checkMethod, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, checkTunnelKind, declared, miss, reservedName, type CheckedSchema } from './validate.js';
-import { checkView } from './view.js';
+import { checkView, VIEW_SURFACES } from './view.js';
 import { gapLine, schemaGaps } from './schemagaps.js';
 
 /**
@@ -1048,6 +1048,14 @@ export interface HostRecordingOptions {
    */
   clearView?: (surface: ViewSurface) => void;
   /**
+   * Where a `setViewData` goes, for the daemon to set the value in the view it
+   * keeps and send it to the plugin's readers.
+   *
+   * Beside `showView`; it throws when the view cannot take the value, and a
+   * host with no sink drops it.
+   */
+  setViewData?: (surface: ViewSurface, path: string, value: unknown) => void;
+  /**
    * The sessions this host keeps, read when `sessionKept` is called.
    *
    * A function, and `undefined` for the store, for the same reason `usage` is:
@@ -1349,10 +1357,16 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
       options.showView?.(surface, kept);
     },
     clearView: (surface = 'main') => {
-      if (surface !== 'main') {
-        throw new Error(`plugin ${by}: clearView needs the surface to be main, the one surface a client draws`);
+      if (!(VIEW_SURFACES as readonly string[]).includes(surface)) {
+        throw new Error(`plugin ${by}: clearView needs the surface to be one a client draws: ${VIEW_SURFACES.join(', ')}`);
       }
       options.clearView?.(surface);
+    },
+    setViewData: (path, value, surface = 'main') => {
+      if (!(VIEW_SURFACES as readonly string[]).includes(surface)) {
+        throw new Error(`plugin ${by}: setViewData needs the surface to be one a client draws: ${VIEW_SURFACES.join(', ')}`);
+      }
+      options.setViewData?.(surface, path, value);
     },
     // A problem is one kind of alert - a warning about an item the plugin went
     // without - so a plugin that says one today needs no change to say it.
@@ -1933,7 +1947,8 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
         throw new Error(miss(by, 'registerAdapter', named, 'a name no other adapter in this plugin uses'));
       }
       reportGaps(checked);
-      contribution.adapters[named] = { ...adapter, by };
+      // The plugin's own map, which its later `registerMethod` calls fill too.
+      contribution.adapters[named] = { ...adapter, by, methods: contribution.methods };
     },
     registerEngine(engine) {
       open();
@@ -1944,7 +1959,7 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
         throw new Error(miss(by, 'registerEngine', named, 'a name no other engine in this plugin uses'));
       }
       reportGaps(checked);
-      held[named] = { ...engine, by, ...(options.spec === undefined ? {} : { spec: options.spec }) };
+      held[named] = { ...engine, by, methods: contribution.methods, ...(options.spec === undefined ? {} : { spec: options.spec }) };
     },
     registerTunnelKind(kind) {
       open();

@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { Bag, ConnectorAccount, QuotaSnapshots } from '@ahpd/sdk';
+import type { Bag } from '@ahpd/sdk';
 
 /*
  * A session says its context, plan limits and plan before a turn.
@@ -130,12 +130,6 @@ const answered = (id: string): Record<string, unknown>[] => [
   },
 ];
 
-interface Noted {
-  id: string;
-  quotaSnapshots?: QuotaSnapshots;
-  account?: ConnectorAccount;
-}
-
 /** A session on a fresh CLI, with what it says on the session channel. */
 const open = (name: string, extra: Bag = {}): { session: ReturnType<typeof createSession>; said: Bag[] } => {
   const said: Bag[] = [];
@@ -243,29 +237,33 @@ it('keeps no map for a plan the usage request cannot answer, and takes the event
   await session.close();
 });
 
-it('sends a login\'s plan to the host with its limits, and nothing else of the account', async () => {
+it('draws a login\'s plan with its limits and its masked email, and nothing else of the account', async () => {
   sdk.reset();
   sdk.account = async () => maxAccount();
   sdk.usage = async () => usageAnswer();
   const logins = new OpenLogins();
-  logins.opened({ id: 'usage-work', adapter: 'claude-login', owner: 'host', config: { token: 'token-usage-work' } });
-  const noted: Noted[] = [];
-  logins.onLimits = (id, said) => { noted.push({ id, ...said }); };
+  const shown: Bag[] = [];
+  logins.opened(
+    { id: 'usage-work', adapter: 'claude-login', owner: 'host', config: { token: 'token-usage-work' } },
+    { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Bag); }, clearView: () => {} },
+  );
   const { session } = open('login', {
     preset: { logins: ['usage-work'] },
     logins: { open: logins, owner: () => 'host' },
   });
 
-  await until(() => noted.some((one) => one.quotaSnapshots?.weekly !== undefined));
-  expect(noted.at(-1)).toEqual({
-    id: 'usage-work',
-    account: { subscriptionType: 'max', apiProvider: 'firstParty' },
-    quotaSnapshots: {
-      session: { remainingPercentage: 60, resetDate: '2026-11-04T12:00:00.000Z' },
-      weekly: { remainingPercentage: 90, resetDate: '2026-11-10T12:00:00.000Z' },
-    },
+  const windowsOf = (one: Bag | undefined): Bag[] => (one?.['windows'] as Bag[] | undefined) ?? [];
+  await until(() => shown.some((one) => windowsOf(one).some((window) => window['name'] === 'Weekly')));
+  expect(shown.at(-1)).toEqual({
+    email: 'som****@example.com',
+    plan: 'max',
+    windows: [
+      { name: 'Session', left: 60, used: 40, reset: '2026-11-04T12:00:00.000Z', resetInSeconds: 0 },
+      { name: 'Weekly', left: 90, used: 10, reset: '2026-11-10T12:00:00.000Z', resetInSeconds: expect.any(Number) },
+    ],
   });
-  expect(JSON.stringify(noted)).not.toContain('someone@example.com');
+  expect(JSON.stringify(shown)).not.toContain('someone@example.com');
+  expect(JSON.stringify(shown)).not.toContain('Example Org');
   await session.close();
 });
 

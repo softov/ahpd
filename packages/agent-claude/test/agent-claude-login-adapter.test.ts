@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Adapter, CodeSignIn, Connector } from '@ahpd/sdk';
+import type { Adapter, CodeSignIn, Connector, ViewHandle } from '@ahpd/sdk';
 import { echo } from '../../../examples/echo/agent.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { loginAdapter } from '../src/adapter.js';
@@ -12,9 +12,9 @@ import { OpenLogins } from '../src/logins.js';
  * A Claude login as a connector of `claude-login`.
  *
  * A person signs in on claude.ai as `claude setup-token` does and pastes the
- * code the page shows, or puts a token the CLI printed. The sign-in's URLs,
- * client and scope are the CLI's own, read from the CLI 2.1.301 that SDK
- * 0.3.301 runs. No network is touched: the exchange and the check go out
+ * code the page shows, or puts a token the CLI printed. The sign-in's URLs
+ * and client are the CLI's own, read from the CLI 2.1.301 that SDK 0.3.301
+ * runs, and its scopes are the CLI's profile and inference scopes. No network is touched: the exchange and the check go out
  * through the `fetch` a test hands over.
  */
 
@@ -41,7 +41,8 @@ const HEADERS = (init: RequestInit | undefined): Headers => new Headers(init?.he
 
 /** The adapter over a record of logins of its own, with a `fetch` that is faked. */
 const adapterOf = (fetcher?: typeof fetch, logins = new OpenLogins()): Adapter =>
-  loginAdapter(logins, fetcher === undefined ? {} : { fetch: fetcher });
+  // No case touches the network: one that hands no `fetch` gets one that fails, as an offline host's does.
+  loginAdapter(logins, { fetch: fetcher ?? fake(new Error('offline')).fetch, usage: async () => undefined });
 
 /** The pasted-code sign-in of an adapter, which is the one claude-login declares. */
 const signInOf = (adapter: Adapter): CodeSignIn => {
@@ -69,6 +70,8 @@ it('is registered by a load, with its token kept in the vault and a sign-in that
   expect(adapter?.schema['required']).toEqual(['token']);
   expect(adapter?.signIn?.field).toBe('token');
   expect(adapter?.signIn?.title).toBe('Sign in with Claude');
+  // The plan usage is shown on the connector's main view, not in a form.
+  expect(adapter?.capabilities).toEqual([expect.objectContaining({ type: 'view', name: 'main' })]);
 });
 
 describe('the sign-in', () => {
@@ -80,7 +83,7 @@ describe('the sign-in', () => {
       ['client_id', '9d1c250a-e61b-44d9-88ed-5944d1962f5e'],
       ['response_type', 'code'],
       ['redirect_uri', 'https://platform.claude.com/oauth/code/callback'],
-      ['scope', 'user:inference'],
+      ['scope', 'user:profile user:inference'],
       ['code_challenge', 'the-challenge'],
       ['code_challenge_method', 'S256'],
       ['state', 'the-state'],
@@ -169,5 +172,100 @@ describe('an open login', () => {
     expect(typeof close).toBe('function');
     (close as () => void)();
     expect(logins.held('first')).toBeUndefined();
+  });
+
+  it('sets the plan of the account when an answer arrives, with a row for each window', () => {
+    const logins = new OpenLogins();
+    const shown: Record<string, unknown>[] = [];
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    adapterOf(undefined, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+
+    logins.noted('first', 'sk-ant-oat01-first', {
+      quotaSnapshots: {
+        session: { remainingPercentage: 60, resetDate: '2026-11-04T15:00:00.000Z' },
+        'weekly:opus': { remainingPercentage: 80 },
+      },
+      account: { subscriptionType: 'max', apiProvider: 'firstParty' },
+    });
+
+    expect(shown).toEqual([{
+      plan: 'max',
+      windows: [
+        { name: 'Session', left: 60, used: 40, reset: '2026-11-04T15:00:00.000Z', resetInSeconds: 0 },
+        { name: 'Weekly: opus', left: 80, used: 20 },
+      ],
+    }]);
+  });
+
+  it('sets no window for an account with no plan limits, and no data for a stale token', () => {
+    const logins = new OpenLogins();
+    const shown: Record<string, unknown>[] = [];
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    adapterOf(undefined, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+
+    // A token a put replaced speaks for the account it belonged to, not this one.
+    logins.noted('first', 'sk-ant-oat01-old', { quotaSnapshots: { weekly: { remainingPercentage: 10 } } });
+    expect(shown).toEqual([]);
+
+    // The provider is not a plan, so an account that names no plan type shows none.
+    logins.noted('first', 'sk-ant-oat01-first', { quotaSnapshots: {}, account: { apiProvider: 'bedrock' } });
+    expect(shown).toEqual([{ windows: [] }]);
+  });
+
+  it('asks the profile at open, and shows its masked email and plan before any session', async () => {
+    const logins = new OpenLogins();
+    const shown: Record<string, unknown>[] = [];
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    const probe = fake(json({ account: { uuid: 'a-1', email: 'someone@example.com' }, organization: { uuid: 'o-1', organization_type: 'claude_max' } }));
+    adapterOf(probe.fetch, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+    await new Promise((done) => { setTimeout(done, 0); });
+
+    expect(probe.calls.map((one) => one.url)).toEqual(['https://api.anthropic.com/api/oauth/profile']);
+    expect(HEADERS(probe.calls[0]?.init).get('authorization')).toBe('Bearer sk-ant-oat01-first');
+    expect(shown).toEqual([{ email: 'som****@example.com', plan: 'max', windows: [] }]);
+    expect(logins.scopesOf('first')).toBe('user:profile user:inference');
+    // The full email stays in the call: nothing a view holds has it.
+    expect(JSON.stringify(shown)).not.toContain('someone@');
+  });
+
+  it('reads the usage once the profile answered, and shows each window before any session', async () => {
+    const logins = new OpenLogins();
+    const shown: Record<string, unknown>[] = [];
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    const asked: string[][] = [];
+    const probe = fake(json({ account: { uuid: 'a-1', email: 'someone@example.com' }, organization: { uuid: 'o-1', organization_type: 'claude_max' } }));
+    loginAdapter(logins, {
+      fetch: probe.fetch,
+      usage: async (token, scopes) => {
+        asked.push([token, scopes]);
+        return { rate_limits: { limits: [{ kind: 'session', group: 'session', percent: 23, resets_at: null, severity: 'normal', is_active: true }] } } as never;
+      },
+    }).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+    await new Promise((done) => { setTimeout(done, 0); });
+
+    expect(asked).toEqual([['sk-ant-oat01-first', 'user:profile user:inference']]);
+    expect(shown.at(-1)).toEqual({ email: 'som****@example.com', plan: 'max', windows: [{ name: 'Session', left: 77, used: 23 }] });
+  });
+
+  it('takes a refused or empty profile as a token that reads none, and shows nothing of it', async () => {
+    for (const answer of [json({ error: 'forbidden' }, 403), json({}), new Error('offline')]) {
+      const logins = new OpenLogins();
+      const shown: Record<string, unknown>[] = [];
+      const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+      adapterOf(fake(answer).fetch, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+      await new Promise((done) => { setTimeout(done, 0); });
+      expect(shown).toEqual([]);
+      expect(logins.scopesOf('first')).toBeUndefined();
+    }
+  });
+
+  it('sets the masked email beside the plan', () => {
+    const logins = new OpenLogins();
+    const shown: Record<string, unknown>[] = [];
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    adapterOf(undefined, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+
+    logins.noted('first', 'sk-ant-oat01-first', { account: { subscriptionType: 'max' }, email: 'som****@example.com' });
+    expect(shown).toEqual([{ email: 'som****@example.com', plan: 'max', windows: [] }]);
   });
 });

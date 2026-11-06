@@ -1,6 +1,6 @@
 ---
 title: A data event sets a value
-status: todo
+status: implemented
 depends: [task-02-a-record-shows-its-views.md]
 layer: "sdk, server"
 refs:
@@ -62,3 +62,17 @@ The channel sends `<scheme>/viewData` `{ id, surface, path, value }` to each rea
 - `pnpm exec vitest run packages/sdk/` and `pnpm exec vitest run packages/server/` pass, one at a time.
 
 ## Resume
+
+Done. `setViewData` is on `PluginHost` and on `ViewHandle`.
+`withViewData` in `views.ts` sets a value at a path for the records and for the server's plugin views.
+`RecordsChannel.notify(id, action, change)` sends one action to each reader who holds the record.
+`change` applies the same change to the last record sent, so the next refresh sends no `changed`.
+The connectors, agents and plugins channels send `<scheme>/viewData`.
+
+Verified: `recordschannel.test.ts` passes 28 tests, and the data event cases pass in the connectors, agents and plugins channel tests.
+`pnpm typecheck` and `pnpm boundary` are clean.
+`pnpm exec vitest run packages/sdk/` passes 4298 tests with 4 skipped, and `packages/server/` passes 1804 with 3 skipped.
+
+Found: the tunnels channel builds its `RecordsChannel` by hand, so it passes `notify` through.
+`packages/server/src/commands/run.ts` connects the plugin host's `viewData` to the plugins channel.
+A record's handle sends a refusal to the problem log, and the plugin host's `setViewData` throws, as its `showView` does.

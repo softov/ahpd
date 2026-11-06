@@ -32,6 +32,35 @@ const base = (): HostOptions => ({ path: '/tmp/validate', agents: [echo({ path: 
 
 const agent = (provider: string): Agent => ({ ...echo({ path: '/tmp/validate' }), provider });
 
+/** A view capability: a record of the adapter or engine shows a view on `main`. */
+const viewCapability = (parts: Record<string, unknown> = {}): Record<string, unknown> => ({
+  type: 'view',
+  name: 'main',
+  title: 'Plan',
+  description: 'The plan usage of the account.',
+  ...parts,
+});
+
+/** An adapter that declares the capabilities it is handed. */
+const adapterWith = (capabilities: unknown[]): Record<string, unknown> => ({
+  name: 'probe',
+  title: 'Probe',
+  description: 'An account that shows its plan.',
+  schema: { type: 'object', properties: {} },
+  capabilities,
+  open: () => {},
+});
+
+/** An engine that declares the capabilities it is handed. */
+const engineWith = (capabilities: unknown[]): Record<string, unknown> => ({
+  name: 'claude',
+  title: 'Claude',
+  description: 'An agent on Claude Code.',
+  schema: { type: 'object', properties: {} },
+  capabilities,
+  open: () => agent('claude'),
+});
+
 const tool = (name: string): HostTool => ({
   definition: { name, description: `${name} tool`, inputSchema: { type: 'object', properties: {} } },
   run: () => name,
@@ -401,6 +430,36 @@ describe('pluginHost', () => {
     };
 
     expect(() => host.registerAdapter(adapter as never)).toThrow(/alpha.*registerAdapter.*does not mark secret/);
+  });
+
+  it('registers an adapter and an engine with a view capability named main', () => {
+    const one = pluginHost('alpha', context());
+    one.host.registerAdapter(adapterWith([viewCapability()]) as never);
+    expect(one.contribution.adapters?.['probe']?.capabilities).toEqual([viewCapability()]);
+
+    const other = pluginHost('alpha', context());
+    other.host.registerEngine(engineWith([viewCapability()]) as never);
+    expect(other.contribution.engines?.['claude']?.capabilities).toEqual([viewCapability()]);
+  });
+
+  it('refuses a view capability named for a surface the host does not know', () => {
+    const side = viewCapability({ name: 'side' });
+    const one = pluginHost('alpha', context());
+    expect(() => one.host.registerAdapter(adapterWith([side]) as never))
+      .toThrow(/alpha.*registerAdapter.*name.*a view capability named for a surface, one of main, and side is not one/);
+
+    const other = pluginHost('alpha', context());
+    expect(() => other.host.registerEngine(engineWith([side]) as never))
+      .toThrow(/alpha.*registerEngine.*name.*a view capability named for a surface, one of main, and side is not one/);
+  });
+
+  it('keeps the plugin\'s methods on the adapter and the engine, for a Button in a record\'s view', () => {
+    const one = pluginHost('alpha', context());
+    one.host.registerAdapter(adapterWith([viewCapability()]) as never);
+    one.host.registerEngine(engineWith([viewCapability()]) as never);
+    one.host.registerMethod('x-alpha/go', { grant: 'demo:read', handle: () => ({}) });
+    expect(Object.keys(one.contribution.adapters?.['probe']?.methods ?? {})).toEqual(['x-alpha/go']);
+    expect(Object.keys(one.contribution.engines?.['claude']?.methods ?? {})).toEqual(['x-alpha/go']);
   });
 
   it('refuses a tunnel kind with no invoke, naming the plugin, the method and the member', () => {
