@@ -1,6 +1,6 @@
 ---
 title: The rows carry a ui's data
-status: todo
+status: implemented
 depends: [task-01-a-ui-capability-with-bindings.md]
 layer: "sdk"
 refs:
@@ -53,3 +53,10 @@ The channel keeps the data in memory by id, and the connector row and the agent 
 
 ## Resume
 
+Done. `UiHandle` is in `types/plugin.ts` beside `UiSchema`, and both `Adapter.open` and `Engine.open` take one as an optional second argument, so every plugin that opens a record without a ui still compiles. Each channel makes one handle per opening before it calls the plugin, keeps the data in memory by id in a map beside `healths`, and the connector row and the agent row carry it as `ui`. `show` keeps a copy of the data and refreshes the subscribers, and `clear` takes it away. Data that is not a JSON object or is more than 64 KiB of JSON is refused through `onProblem`, and the row keeps what it held. A handle whose opening closed, was removed, was replaced by a put, or whose plugin unloaded writes nothing, because the entry it holds is no longer the map's. The connectors channel drops data whose adapter is no longer served in its `refresh`, and the agents channel drops it in `sync` and in its `refresh`, so an unload takes it away. The two channels' `uiProblem`, `uiFor` and the `Shown` entry have the same shape.
+
+Verified: `pnpm exec tsc -p tsconfig.json --noEmit` printed nothing, `pnpm boundary` reported every package with none undeclared, and `pnpm exec vitest run packages/sdk/` passed 226 files with 4290 tests and 4 skipped. `pnpm -s schema` ran first, because the wire cases read `tools/ahp.strict.schema.json`.
+
+Found: `open`'s handle is optional (`ui?: UiHandle`) rather than required. The task writes `ui: UiHandle`, but its Validation says every existing `open` still compiles, and `packages/server/src/agents/handed.ts` and the tests of agent-acp, agent-claude and tunnel-devtunnel call `open` with a record alone; a required handle would break them outside this task's Files.
+
+Left: nothing.

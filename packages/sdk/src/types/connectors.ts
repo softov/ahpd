@@ -14,7 +14,7 @@
  */
 
 import type { Icon, ToolResultContent } from '@microsoft/agent-host-protocol';
-import type { UiSchema } from './plugin.js';
+import type { UiHandle, UiSchema } from './plugin.js';
 import type { OnWire } from './wire.js';
 
 /**
@@ -504,9 +504,11 @@ export interface Adapter {
    *
    * Called when a connector is made and when the daemon starts with one
    * stored. The answer is the function that stops it, or nothing when there is
-   * nothing to stop.
+   * nothing to stop. `ui`, when the adapter declares a `ui` capability, sends
+   * and clears the data that capability's schema draws; the host makes one
+   * handle for this connector, and it is the connector's alone.
    */
-  open(connector: Connector): void | (() => void | Promise<void>);
+  open(connector: Connector, ui?: UiHandle): void | (() => void | Promise<void>);
   /**
    * Say whether one connector works, with a call that needs its credentials.
    *

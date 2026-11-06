@@ -13,6 +13,11 @@
  * call that failed. Health is in memory only, so a restart clears it and the
  * checks at start fill the first part again.
  *
+ * A row carries a `ui`, when the plugin that opened the connector sent data
+ * for the adapter's `ui` capability: what that schema's `{ path }` bindings
+ * read. The data is in memory only, as health is, and a close, a removal or an
+ * unloaded plugin takes it away.
+ *
  * Where an adapter's schema marks a field `secret`, the value is a secret. A
  * put moves it to the vault under `connector/<id>/<field>` in the owner's
  * scope and keeps a `{ "$secret": "<name>" }` in the record instead, so a
@@ -103,9 +108,10 @@ import {
 } from '../channels/owners.js';
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
+import { MAX_VIEW_BYTES } from '../plugins/view.js';
 import { bag, isRecord, reason } from '../utils/values.js';
 import type { ActionCall, CallOutcome, CheckResult, Connector, ConnectorAccount, ConnectorHealth, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, QuotaSnapshots, ServedAdapter } from '../types/connectors.js';
-import type { PluginMethod } from '../types/plugin.js';
+import type { PluginMethod, UiHandle } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { Owner } from '../types/usage.js';
@@ -197,6 +203,14 @@ interface Opened {
   connector: Connector;
   /** What stops it, or nothing where the adapter answered nothing to stop. */
   stop?: () => void | Promise<void>;
+}
+
+/** One open connector's ui: the opening it belongs to, and the data it sent. */
+interface Shown {
+  /** The adapter it was opened from, so an unloaded plugin's data goes. */
+  adapter: string;
+  /** The data the connector's row carries as `ui`, once the plugin sent some. */
+  data?: Record<string, unknown>;
 }
 
 /** The outcome a device sign-in settles on once, and a finish waits for. */
@@ -342,12 +356,79 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   const healths = new Map<string, ConnectorHealth>();
   /** The ids whose last check is the reason their record did not open. */
   const openFailures = new Set<string>();
+  /** What each open connector's ui shows, by id; an entry is that opening's handle. */
+  const uis = new Map<string, Shown>();
   /** The provider problems already said, so a route on every call says each one once. */
   const providerProblems = new Set<string>();
   /** The sign-ins this host has started, by state, in memory only: a restart loses them. */
   const started = new Map<string, StartedSignIn>();
 
   const problem = (message: string): void => { options.onProblem?.(`${SCHEME}: ${message}`); };
+
+  /** Why a value is not a connector ui's data, or nothing when it is. */
+  const uiProblem = (data: unknown): string | undefined => {
+    if (!isRecord(data)) return 'data that is not a JSON object';
+    let json: string;
+    try {
+      json = JSON.stringify(data);
+    } catch {
+      return 'data that is not JSON';
+    }
+    if (new TextEncoder().encode(json).length > MAX_VIEW_BYTES) {
+      return `data of more than ${String(MAX_VIEW_BYTES)} bytes of JSON`;
+    }
+    return undefined;
+  };
+
+  /**
+   * One open connector's ui handle, made before its adapter is called so a
+   * `show` from inside `open` reaches the channel.
+   *
+   * The entry is the handle's own: a connector that closed, was removed or
+   * whose plugin unloaded has no entry, and this handle writes nothing.
+   */
+  const uiFor = (id: string, adapter: string): UiHandle => {
+    const shown: Shown = { adapter };
+    uis.set(id, shown);
+    return {
+      show: (data) => {
+        if (uis.get(id) !== shown) return;
+        const refused = uiProblem(data);
+        if (refused !== undefined) {
+          problem(`${id}'s ui was not kept: ${refused}`);
+          return;
+        }
+        let kept: Record<string, unknown>;
+        try {
+          // The row keeps its own copy, so a plugin editing its object later does not change a sent row.
+          kept = structuredClone(data);
+        } catch {
+          problem(`${id}'s ui was not kept: data that is not JSON`);
+          return;
+        }
+        shown.data = kept;
+        void channel.refresh().catch(() => {});
+      },
+      clear: () => {
+        if (uis.get(id) !== shown) return;
+        if (shown.data === undefined) return;
+        delete shown.data;
+        void channel.refresh().catch(() => {});
+      },
+    };
+  };
+
+  /**
+   * Take the data away from every connector whose adapter is no longer served,
+   * as unloading its plugin leaves it.
+   */
+  const dropUnserved = (): void => {
+    const adapters = options.adapters();
+    for (const [id, shown] of uis) {
+      if (adapters[shown.adapter] !== undefined) continue;
+      uis.delete(id);
+    }
+  };
 
   /** The config a stored record holds, as an object. */
   const configOf = (record: StoredRecord): Record<string, unknown> => bag(record.config);
@@ -398,13 +479,19 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
    */
   const connectorRow = (record: StoredRecord): Record<string, unknown> => {
     const health = healths.get(record.id);
+    const ui = uis.get(record.id)?.data;
     // A value its adapter marks `writeOnly` is never answered, a vault field's
     // reference aside.
     const adapter = options.adapters()[String(record.adapter)];
     const shown = adapter === undefined || record.config === undefined
       ? record
       : { ...record, config: writeOnlyHeld(adapter.schema, configOf(record)) };
-    return { ...shown, state: stateOf(record), ...(health === undefined ? {} : { health }) };
+    return {
+      ...shown,
+      state: stateOf(record),
+      ...(ui === undefined ? {} : { ui }),
+      ...(health === undefined ? {} : { health }),
+    };
   };
 
   /** The connector records the store holds, and the owner each names. */
@@ -650,6 +737,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     open.delete(id);
     healths.delete(id);
     openFailures.delete(id);
+    uis.delete(id);
     const stop = entry?.stop;
     if (stop === undefined) return;
     try {
@@ -687,7 +775,15 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       config: await resolvedRecord(config, owner, options.vault(), CONNECTOR_SECRETS),
     };
     await close(record.id);
-    const stop = adapter.open(connector);
+    const ui = uiFor(record.id, adapter.name);
+    let stop: void | (() => void | Promise<void>);
+    try {
+      stop = adapter.open(connector, ui);
+    } catch (error) {
+      // An adapter that did not open keeps no ui: the handle it was handed goes.
+      uis.delete(record.id);
+      throw error;
+    }
     open.set(record.id, { connector, ...(stop === undefined ? {} : { stop }) });
   };
 
@@ -1610,7 +1706,10 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     run,
     note,
     providers,
-    refresh: () => channel.refresh(),
+    refresh: () => {
+      dropUnserved();
+      return channel.refresh();
+    },
     refs: () => [...known.values()],
     /*
      * Every stored connector of a registered adapter, in id order, so two

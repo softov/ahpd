@@ -10,6 +10,7 @@ import { memoryRecords } from '../src/resources/records.js';
 import { servedRecords } from '../src/resources/recordschannel.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { CheckResult, Connector, ServedAdapter } from '../src/types/connectors.js';
+import type { UiHandle } from '../src/types/plugin.js';
 import type { RecordCollection } from '../src/types/records.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { Vault } from '../src/types/vault.js';
@@ -135,6 +136,8 @@ async function served(register = true) {
   const closed: string[] = [];
   const ran: Ran[] = [];
   const problems: string[] = [];
+  /** The ui handle each opening was handed, by connector id. */
+  const handles = new Map<string, UiHandle>();
   const vault = made();
   /** What the adapter's check answers, and the connectors it was asked about. */
   const probe = {
@@ -159,8 +162,9 @@ async function served(register = true) {
               input: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
             },
           ],
-          open: (connector: Connector) => {
+          open: (connector: Connector, ui?: UiHandle) => {
             opened.push({ id: connector.id, adapter: connector.adapter, owner: connector.owner, config: connector.config });
+            if (ui !== undefined) handles.set(connector.id, ui);
             return () => { closed.push(connector.id); };
           },
           check: async (connector: Connector) => {
@@ -191,7 +195,7 @@ async function served(register = true) {
     methods: wire.methods,
     users,
   });
-  return { host, users, collection, connectors, adapters, opened, closed, ran, problems, vault, probe, close: async () => { await host.close(); } };
+  return { host, users, collection, connectors, adapters, opened, closed, ran, problems, handles, vault, probe, close: async () => { await host.close(); } };
 }
 
 /** A client signed in as `id`, whose channel actions are kept. */
@@ -226,6 +230,14 @@ const readerOf = async (users: Users, id: string): Promise<Principal> => {
   if (held === undefined) throw new Error(`${id} could not sign in`);
   return held;
 };
+
+/** One turn of the event loop, long enough for a refresh to reach a subscriber. */
+const tick = (): Promise<void> => new Promise((done) => { setTimeout(done, 0); });
+
+/** Every row change one client was sent, in the order it arrived. */
+const changesOf = (seen: { method: string; params: Bag }[]): Bag[] => seen
+  .filter((one) => one.method === 'action' && (one.params as Bag)['action']?.type === 'x-ahpd-connectors/changed')
+  .map((one) => (one.params as Bag)['action'] as Bag);
 
 it('holds no adapter row, and a connector row names its adapter', async () => {
   const { host, users, close } = await served();
@@ -1408,4 +1420,96 @@ it('skips a provider that throws, and says the problem once', async () => {
   expect(connectors.providers()).toEqual([]);
   expect(connectors.providers()).toEqual([]);
   expect(problems).toEqual(['x-ahpd-connectors: work serves no model: the endpoint is missing']);
+});
+
+it('puts a ui on the connector row, and sends the change to a subscriber', async () => {
+  const { host, users, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  const iv = await as(host, users, 'iv');
+  await iv.rows();
+
+  expect((await cy.rows())['ci']).not.toHaveProperty('ui');
+  handles.get('ci')!.show({ plan: 'max', left: 3 });
+  await tick();
+
+  expect((await cy.rows())['ci']?.['ui']).toEqual({ plan: 'max', left: 3 });
+  // A subscriber is sent the changed row, not only the next snapshot.
+  expect(changesOf(iv.seen).at(-1)).toMatchObject({ id: 'ci', record: { ui: { plan: 'max', left: 3 } } });
+  await close();
+});
+
+it('replaces the ui on a second show, and clear takes it away', async () => {
+  const { host, users, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  const handle = handles.get('ci')!;
+
+  handle.show({ left: 3 });
+  handle.show({ left: 2 });
+  await tick();
+  expect((await cy.rows())['ci']?.['ui']).toEqual({ left: 2 });
+
+  handle.clear();
+  await tick();
+  expect((await cy.rows())['ci']).not.toHaveProperty('ui');
+  await close();
+});
+
+it('takes the ui away when the connector closes, and ignores the old handle', async () => {
+  const { host, users, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  const first = handles.get('ci')!;
+  first.show({ left: 3 });
+  await tick();
+  expect((await cy.rows())['ci']?.['ui']).toEqual({ left: 3 });
+
+  // A put closes the connector it replaces, so the data goes and a new handle is made.
+  await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'b' } });
+  expect(handles.get('ci')).not.toBe(first);
+  expect((await cy.rows())['ci']).not.toHaveProperty('ui');
+
+  first.show({ left: 1 });
+  await tick();
+  expect((await cy.rows())['ci']).not.toHaveProperty('ui');
+  await close();
+});
+
+it('takes the ui away when the connector is removed, and ignores the old handle', async () => {
+  const { host, users, handles, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  const handle = handles.get('ci')!;
+  handle.show({ left: 3 });
+  await tick();
+
+  expect(await cy.call('x-ahpd/connectors/remove', { id: 'ci' })).toEqual({ result: {} });
+  expect(await cy.rows()).not.toHaveProperty('ci');
+  handle.show({ left: 1 });
+  await tick();
+  expect(await cy.rows()).not.toHaveProperty('ci');
+  await close();
+});
+
+it('refuses ui data over the limit or not an object, and the row keeps what it held', async () => {
+  const { host, users, handles, problems, close } = await served();
+  const cy = await as(host, users, 'cy');
+  await cy.call('x-ahpd/connectors/put', { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' } });
+  const handle = handles.get('ci')!;
+  handle.show({ kept: true });
+  await tick();
+
+  handle.show({ over: 'x'.repeat(64 * 1024) });
+  handle.show([] as unknown as Record<string, unknown>);
+  handle.show(null as unknown as Record<string, unknown>);
+  await tick();
+
+  expect((await cy.rows())['ci']?.['ui']).toEqual({ kept: true });
+  expect(problems).toEqual([
+    'x-ahpd-connectors: ci\'s ui was not kept: data of more than 65536 bytes of JSON',
+    'x-ahpd-connectors: ci\'s ui was not kept: data that is not a JSON object',
+    'x-ahpd-connectors: ci\'s ui was not kept: data that is not a JSON object',
+  ]);
+  await close();
 });

@@ -15,6 +15,7 @@
 import type { Icon } from '@microsoft/agent-host-protocol';
 import type { Agent } from './agent.js';
 import type { Capability, ConnectorOwner } from './connectors.js';
+import type { UiHandle } from './plugin.js';
 
 /**
  * Whose agent it is: the same three owners a connector takes.
@@ -154,9 +155,12 @@ export interface Engine {
    *
    * Called once when a record is made, and when the daemon starts with it
    * stored. The view is live, so what `open` builds reads an edit at the next
-   * turn rather than holding the values it saw.
+   * turn rather than holding the values it saw. `ui`, when the engine declares
+   * a `ui` capability, sends and clears the data that capability's schema
+   * draws; the host makes one handle for this record, and it is the record's
+   * alone.
    */
-  open(record: AgentView): Agent;
+  open(record: AgentView, ui?: UiHandle): Agent;
 }
 
 /** One engine as the fold keeps it, with the plugin that registered it. */

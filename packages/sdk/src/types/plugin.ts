@@ -913,6 +913,30 @@ export interface UiSchema {
 }
 
 /**
+ * One open record's ui data, as the plugin that opened it sends it.
+ *
+ * The host makes one handle for each connector or agent it opens, and hands it
+ * to `open` beside the record. It names that one record and nothing else: a
+ * handle kept past its record's close, removal or plugin unload writes nothing,
+ * so a late answer cannot bring the data back.
+ *
+ * `show` keeps the data in memory by the record's id and sends the changed row
+ * to subscribers; `clear` takes it away the same way. The data is read by the
+ * `ui` capability's schema, so each `{ path }` names a value in it.
+ */
+export interface UiHandle {
+  /**
+   * Replace the record's ui data, and send the changed row to subscribers.
+   *
+   * Data that is not a JSON object, or is more than 64 KiB of JSON, is refused
+   * and the row keeps what it held; the refusal goes to the host's problem log.
+   */
+  show(data: Record<string, unknown>): void;
+  /** Take the record's ui data away, and send the changed row to subscribers. */
+  clear(): void;
+}
+
+/**
  * What one install answered: the version it left, or why npm could not install
  * the package.
  *

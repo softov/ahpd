@@ -159,4 +159,4 @@ export type {
 } from './access/commandautoapprover.js';
 
 export type * from './types/index.js';
-export type { PluginView, UiSchema, ViewComponent, ViewSurface } from './types/plugin.js';
+export type { PluginView, UiHandle, UiSchema, ViewComponent, ViewSurface } from './types/plugin.js';
