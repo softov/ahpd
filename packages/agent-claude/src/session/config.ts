@@ -1,9 +1,8 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import type { ConfigTaken, Session } from '@ahpd/sdk';
-import { bag, str } from './common.js';
+import { bag } from './common.js';
 import type { SessionContext } from './context.js';
 
 /**
@@ -66,15 +65,6 @@ const shellInitScripts = (value: unknown): ShellInitScript[] | undefined => {
 };
 
 /**
- * What goes in front of a shell command while a script is in force.
- *
- * Sourced, so what it sets is there for the command; its stderr dropped, as
- * the reference runtime drops it; and a nonzero status reported rather than
- * hidden, since a profile that fails is something the model should hear.
- */
-const sourcing = (path: string): string => `{ . '${path.replaceAll("'", "'\\''")}'; } 2>/dev/null || printf 'shell init script exited %s\\n' "$?"`;
-
-/**
  * A `permissions` value, if it is one.
  *
  * `undefined` for anything else, which is what makes `setConfig` able to
@@ -94,18 +84,10 @@ export const listsOf = (value: unknown): { allow: string[]; deny: string[] } | u
 export interface Config {
   /** The path the shell init script is written to, and removed from. */
   initScript: string;
+  /** The bash script in force, which a CLI of this session takes as its session environment file. */
+  scriptInForce: () => string | undefined;
   /** Take a `shellInitScripts` value, or say why it is not one. */
   setShellInit: (value: unknown) => true | string;
-  /** The `PreToolUse` hook that puts that script in front of a command. */
-  sourceFirst: HookCallback;
-  /**
-   * The command a call was written as, before `sourceFirst` put the script's
-   * line in front of it, by the call's id.
-   *
-   * The owner's rules match the line the model wrote, and `canUseTool` is
-   * handed the rewritten input: this is where the original is kept for it.
-   */
-  unprefixed: Map<string, string>;
   methods: {
     setConfig: (key: string, value: unknown) => ConfigTaken | Promise<ConfigTaken>;
     settings: () => Record<string, unknown>;
@@ -114,30 +96,24 @@ export interface Config {
 
 export function createConfig(ctx: SessionContext): Config {
   /*
-   * The shell init script, on disk where a shell can source it.
+   * The shell init script, on disk where the CLI reads it.
    *
    * The reference client pushes `shellInitScripts` for the profile and the
-   * Python environment it has selected, and the SDK's shell tool has no
-   * setting for one - so a `PreToolUse` hook on `Bash` puts a `source` of
-   * this file in front of every command. One path for the session's life,
-   * rewritten on each change, because the hook is built once with the query
-   * and reads the file by name. The bash entry only: the CLI's shell tool is
-   * bash on every platform it runs on. The operator's environment reaches the
-   * same shells through the CLI's own environment (`query.ts`), so the script
-   * sourced here can still change what the operator set.
+   * Python environment it has selected, and VS Code's Copilot writes the
+   * script to a file and hands its runtime that file. The CLI's own place for
+   * one is its session environment file, `CLAUDE_ENV_FILE`, a script whose
+   * contents it runs before each Bash command in the same shell process, so
+   * the bash entry is written to one path for the session's life and a CLI is
+   * handed the path (`query.ts`) while a script is in force. The bash entry
+   * only: the CLI's shell tool is bash on every platform it runs on. The
+   * operator's environment reaches the same shells through the CLI's
+   * `settings.env`, and the script runs after it, so it can still change what
+   * the operator set.
+   * https://code.claude.com/docs/en/hooks#persist-environment-variables
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8498-L8511
    */
   const initScript = join(tmpdir(), `ahpd-shell-init-${crypto.randomUUID()}.sh`);
-  let sourced = false;
-  /*
-   * What each rewritten command was before the script's line was put in
-   * front of it, by the call's id.
-   *
-   * The hook is told the id of the call it is rewriting, and `canUseTool` is
-   * told the same id when the CLI asks about it. Kept between the two so the
-   * owner's rules match the line the model wrote rather than the one the
-   * session runs.
-   */
-  const unprefixed = new Map<string, string>();
+  let inForce: string | undefined;
   const setShellInit = (value: unknown): true | string => {
     const list = shellInitScripts(value);
     /*
@@ -158,19 +134,9 @@ export function createConfig(ctx: SessionContext): Config {
     catch (error) {
       return `Could not write the shell init script: ${error instanceof Error ? error.message : String(error)}`;
     }
-    sourced = bash !== undefined;
+    inForce = bash?.script;
     ctx.config.shellInitScripts = list;
     return true;
-  };
-  const sourceFirst: HookCallback = async (input) => {
-    if (input.hook_event_name !== 'PreToolUse') return {};
-    const given = bag(input.tool_input);
-    const command = str(given.command);
-    // No script in force: the command goes as the model wrote it.
-    if (command === undefined || !sourced) return {};
-    // Kept for the question the CLI asks about this call after the hook runs.
-    unprefixed.set(input.tool_use_id, command);
-    return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...given, command: `${sourcing(initScript)}\n${command}` } } };
   };
 
   const methods: Config['methods'] = {
@@ -217,5 +183,5 @@ export function createConfig(ctx: SessionContext): Config {
     settings: () => ({ ...ctx.config, ...(ctx.chosen ? { model: ctx.chosen } : {}) }),
   };
 
-  return { initScript, setShellInit, sourceFirst, unprefixed, methods };
+  return { initScript, scriptInForce: () => inForce, setShellInit, methods };
 }

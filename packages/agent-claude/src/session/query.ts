@@ -372,6 +372,12 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   /**
+   * The client's shell init script a CLI of this session takes: the bash
+   * script in force, for a CLI that runs on this host, where its file is.
+   */
+  const initScriptFor = (): string | undefined => (ctx.options.spawn === undefined ? ctx.scriptInForce() : undefined);
+
+  /**
    * The operator's environment for the session's shells, handed to the CLI as
    * VS Code's Claude hands its own: a name set goes in the CLI's
    * `settings.env`, which the CLI layers onto the commands it runs, and a name
@@ -379,10 +385,16 @@ export function createQuery(ctx: SessionContext): Query {
    * commands inherit. Each command runs as the model wrote it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L129-L150
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L178
+   *
+   * A client's shell init script in force goes in the same `settings.env`, as
+   * `CLAUDE_ENV_FILE`, the CLI's session environment file: a script whose
+   * contents the CLI runs before each Bash command in the same shell process.
+   * https://code.claude.com/docs/en/hooks#persist-environment-variables
    */
   const withShellEnv = (options: Bag): Bag => {
     const entries = Object.entries(ctx.options.shellEnv ?? {});
-    const set = Object.fromEntries(entries.filter((entry): entry is [string, string] => entry[1] !== null));
+    const set: Record<string, string> = Object.fromEntries(entries.filter((entry): entry is [string, string] => entry[1] !== null));
+    if (initScriptFor() !== undefined) set.CLAUDE_ENV_FILE = ctx.initScript;
     const removed = entries.filter(([, value]) => value === null).map(([name]) => name);
     const out: Bag = { ...options };
     if (Object.keys(set).length > 0) {
@@ -518,13 +530,11 @@ export function createQuery(ctx: SessionContext): Query {
        * exactly as `take` leaves it off.
        */
       ...(ctx.chosen && ctx.chosen !== 'default' ? { model: ctx.chosen } : {}),
-      // Before every shell command, any client script in force; before every
-      // call, the question for a tool the operator's rule names; on every
-      // prompt, what the host asked said on that turn; and at the end of each
-      // turn, what the CLI still has in hand.
+      // Before every call, the question for a tool the operator's rule names;
+      // on every prompt, what the host asked said on that turn; and at the end
+      // of each turn, what the CLI still has in hand.
       hooks: {
         PreToolUse: [
-          { matcher: 'Bash', hooks: [ctx.sourceFirst] },
           /*
            * No matcher, so every tool reaches it and the hook itself reads the
            * rule. A day, because a person may take one: the CLI's default
@@ -617,10 +627,14 @@ export function createQuery(ctx: SessionContext): Query {
   /**
    * What a CLI is started from, as the string `appliedValues` holds: the record's
    * values and the login, with its token, since a put that replaces a login's
-   * token leaves the values as they were.
+   * token leaves the values as they were; and the client's shell init script,
+   * which the CLI reads from its session environment file once and keeps, so a
+   * changed script reaches a CLI started again, at the send after it, as
+   * VS Code's Copilot applies a changed script as a turn starts.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6570-L6577
    */
   const startedFrom = (values: Bag, login: SessionContext['login']): string =>
-    JSON.stringify({ values, login: login?.id ?? null, token: login?.token ?? null });
+    JSON.stringify({ values, login: login?.id ?? null, token: login?.token ?? null, script: initScriptFor() ?? null });
 
   /**
    * A CLI for this session, what it was built from, and its reader.
@@ -1190,7 +1204,8 @@ export function createQuery(ctx: SessionContext): Query {
 
   /**
    * Read a record's values again, find the login the turn runs on, and put a
-   * new CLI on the conversation when either changed.
+   * new CLI on the conversation when either changed, or the client's shell
+   * init script did.
    *
    * An edit applies at the next turn, which is the whole of the promise: the
    * turn already running finishes on the CLI it started on, and the turn that
@@ -1198,7 +1213,8 @@ export function createQuery(ctx: SessionContext): Query {
    * now. A preset, which no running daemon can edit, keeps the values it was
    * read with, and only its login can change: a login that closes or rests,
    * or whose token a put replaced, hands the next turn to a CLI on the first
-   * ready one.
+   * ready one. A script a client set or cleared is read by the CLI that
+   * answers the next turn.
    *
    * The conversation moves as `rebindForRestart` moves it: the new query
    * resumes the id the CLI gave this session, so the transcript, the model and
@@ -1221,7 +1237,7 @@ export function createQuery(ctx: SessionContext): Query {
     if (was !== undefined) {
       try { was.close(); }
       catch (error: unknown) {
-        return `The harness would not stop for the record or its login: ${error instanceof Error ? error.message : String(error)}`;
+        return `The harness would not stop for the record, its login or the shell init script: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
     ctx.values = now;

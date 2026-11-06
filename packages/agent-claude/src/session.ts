@@ -321,8 +321,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
       servers.unwatch();
       ctx.completed.clear();
       ctx.pastLines.clear();
-      // The lines the shell hook kept for the questions that never came.
-      config.unprefixed.clear();
       ctx.spawning.clear();
       ctx.background.clear();
       // What was running and what each chat was told about it. A session being

@@ -100,8 +100,6 @@ interface Question {
   toolName: string;
   /** The input the call would run with, as the caller was handed it: the SDK's and VS Code's `input`. */
   input: Bag;
-  /** The input as the model wrote it, which the question shows, where it differs from `input`. */
-  shown?: Bag;
   /** The agent's own id for the call, which is also the question's: the SDK's `toolUseID`. */
   toolUseID: string;
   /** The subagent the call runs in, when it is one. */
@@ -378,16 +376,14 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * raised comes down, and one that would be raised is not raised.
        */
       ctx.holdCall(id);
-      // The card shows the call as the model wrote it; the CLI runs `input`.
-      const written = asked.shown ?? input;
-      const toolInput = toolInputOf(toolName, written);
+      const toolInput = toolInputOf(toolName, input);
       // Named and titled from Claude's tables, as VS Code's Claude agent puts
       // its confirmation, a client's tool by the name its client announced.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L148-L162
       const shownName = ctx.clientToolOf(toolName)?.name ?? toolName;
       const displayName = ctx.displayNameOf(toolName);
-      const invocationMessage = lineOf(toolName, written, displayName);
-      ctx.pastLines.set(id, pastLineOf(toolName, written, displayName));
+      const invocationMessage = lineOf(toolName, input, displayName);
+      ctx.pastLines.set(id, pastLineOf(toolName, input, displayName));
       const confirmationTitle = getClaudeConfirmationTitle(toolName);
 
       // The call the assistant message opened, if it arrived first. Which of
@@ -546,17 +542,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
     const agentId = str(about.agentID);
     /*
-     * The command the model wrote, which `sourceFirst` kept under this call's
-     * id when it put the operator's environment in front of it: what a rule
-     * reads and what a confirmation shows, as the reference asks a person
-     * about the command as the model wrote it. The input this callback was
-     * handed is the rewritten one, which the call runs.
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L174
-     */
-    const written = ctx.unprefixed.get(id);
-    ctx.unprefixed.delete(id);
-    const shown = toolName === 'Bash' && written !== undefined ? { ...input, command: written } : undefined;
-    /*
      * A matched call, put where a harness that asks anyway would reach it.
      *
      * The hook normally asks first and this callback is never called. When it
@@ -568,7 +553,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       return await askPerson({
         toolName,
         input,
-        ...(shown !== undefined ? { shown } : {}),
         toolUseID: id,
         suggestions: [],
         ...(agentId !== undefined ? { agentId } : {}),
@@ -587,7 +571,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * question for a client to draw.
      */
     if (toolName === 'Bash') {
-      const command = written ?? str(input.command);
+      const command = str(input.command);
       if (command !== undefined && (await ctx.options.getAutoApproval?.('shell', command, 'bash', toolName)) === 'not-needed') {
         return { behavior: 'allow', updatedInput: input };
       }
@@ -595,7 +579,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     return await askPerson({
       toolName,
       input,
-      ...(shown !== undefined ? { shown } : {}),
       toolUseID: id,
       suggestions: list(about.suggestions),
       ...(agentId !== undefined ? { agentId } : {}),
@@ -610,10 +593,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
    * consulted in `bypassPermissions`, in auto mode or for a tool on the
    * `allowedTools` list, and the CLI's own `ask` is the prompt those skip. So
    * this answers `allow` or `deny` itself, with what the person said.
-   *
-   * `updatedInput` is never returned. Another hook on the same event may have
-   * rewritten the input - `sourceFirst` does for `Bash` - and a rewrite from
-   * here would be this hook's guess at what the call should run.
    *
    * `dontAsk` refuses without a question, because refusing is that mode's
    * answer: the rule adds questions and takes none of the mode's answers away.

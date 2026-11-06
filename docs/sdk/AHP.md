@@ -611,17 +611,20 @@ over that stored value. A sandbox asked for on a machine
 that cannot make one is the CLI's refusal to report, not a command run outside
 one. `shellInitScripts` is the list of
 `{ shell, script }` the window generates for the folder's shell profile and
-selected Python environment, `readOnly` so it is sent and not drawn. The
-SDK's shell tool has no setting for one, so a `PreToolUse` hook on `Bash`
-puts a `source` of the bash entry in front of every command: the script is
-written to a file of its own for the session's life and rewritten on each
-change, its stderr is dropped and a nonzero status is printed, the way the
-reference runtime treats it. A PowerShell entry is kept and not sourced, since
-the CLI's shell tool is bash everywhere; an empty list clears the file. What is
-put in front is the host's: the owner's rules read the command the model wrote,
-a confirmation shows it, and the command runs with the prefix, as
+selected Python environment, `readOnly` so it is sent and not drawn. The bash
+entry is written to a file of its own for the session's life, as
+[VS Code's Copilot](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8498-L8511)
+writes one for its runtime, and the CLI is handed that file as its
+[session environment file](https://code.claude.com/docs/en/hooks#persist-environment-variables),
+`CLAUDE_ENV_FILE` in its `settings.env`, whose contents it runs before each
+Bash command in the same shell. Every command runs as the model wrote it, so
+the owner's rules read that command and a confirmation shows it, as
 [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L174)
-asks about the command the model wrote.
+asks about it. The CLI reads the file once, so a script set or cleared while
+a CLI runs reaches the CLI that answers the next turn, as Copilot applies a
+changed script when a turn starts. A PowerShell entry is kept and not
+written, since the CLI's shell tool is bash everywhere; an empty list clears
+the file. The file is this host's, so a CLI in a machine is handed none.
 
 ### Chat URIs
 

@@ -119,19 +119,18 @@ describe('choosing a model', () => {
     expect(onTest.settings).toBeUndefined();
   });
 
-  it('sources the client\'s shell init script before every shell command, while one is in force', async () => {
+  /*
+   * The CLI's session environment file, `CLAUDE_ENV_FILE`, a script whose
+   * contents the CLI runs before each Bash command, read once by each CLI.
+   * https://code.claude.com/docs/en/hooks#persist-environment-variables
+   */
+  it('hands the CLI the client\'s shell init script as its session environment file, the CLI after a change taking the change', async () => {
     const { client, uri } = await running();
     await sendAnswered(client, uri);
-    const options = sessionQueries().at(-1)?.options as {
-      hooks?: { PreToolUse?: { matcher?: string; hooks: ((input: unknown) => Promise<{ hookSpecificOutput?: { updatedInput?: { command?: string } } }>)[] }[] };
-    };
-    const matcher = options.hooks?.PreToolUse?.[0];
-    expect(matcher?.matcher).toBe('Bash');
-    const hook = matcher?.hooks[0];
-    if (hook === undefined) throw new Error('no PreToolUse hook on Bash');
-    const before = (command: string) => hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'x', session_id: 's', transcript_path: '', cwd: '' });
-    // Nothing in force: the command runs as written.
-    expect((await before('make')).hookSpecificOutput).toBeUndefined();
+    /** The session environment file the CLI that answered the last turn was handed. */
+    const envFile = (): unknown => (sessionQueries().at(-1)?.options as { settings?: { env?: Record<string, unknown> } }).settings?.env?.CLAUDE_ENV_FILE;
+    // Nothing in force: no file.
+    expect(envFile()).toBeUndefined();
     const set = async (value: unknown) => {
       client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/configChanged', config: { shellInitScripts: value } } } });
       await settle();
@@ -140,12 +139,14 @@ describe('choosing a model', () => {
       }).snapshot.state.config.values.shellInitScripts;
     };
     // The reference client's shape, declared `readOnly` in the schema so the
-    // window sends it and draws no control for it.
+    // window sends it and draws no control for it. The turn after it is
+    // answered by a CLI that reads it.
     expect(await set([{ shell: 'bash', script: 'export FOO=bar\n' }])).toEqual([{ shell: 'bash', script: 'export FOO=bar\n' }]);
-    const sourced = (await before('make')).hookSpecificOutput?.updatedInput?.command ?? '';
-    expect(sourced).toMatch(/^\{ \. '.*ahpd-shell-init-.*\.sh'; \} 2>\/dev\/null \|\| printf 'shell init script exited %s\\n' "\$\?"\nmake$/);
-    const path = /'([^']*)'/.exec(sourced)?.[1] ?? '';
+    await sendAnswered(client, uri);
+    const path = String(envFile());
+    expect(path).toMatch(/ahpd-shell-init-.*\.sh$/);
     expect(readFileSync(path, 'utf8')).toBe('export FOO=bar\n');
+    const started = sessionQueries().length;
     /*
      * A malformed value, a shell VS Code's list does not take or more than
      * its one entry, is held as it was set and leaves the last valid script
@@ -155,12 +156,17 @@ describe('choosing a model', () => {
     const two = [{ shell: 'bash', script: 'export A=1\n' }, { shell: 'bash', script: 'export B=2\n' }];
     expect(await set(two)).toEqual(two);
     expect(await set([{ shell: 'zsh', script: 'x' }])).toEqual([{ shell: 'zsh', script: 'x' }]);
-    expect((await before('make')).hookSpecificOutput?.updatedInput?.command).toBe(sourced);
+    await sendAnswered(client, uri);
+    expect(sessionQueries()).toHaveLength(started);
     expect(readFileSync(path, 'utf8')).toBe('export FOO=bar\n');
-    // A PowerShell script is nothing to a bash tool.
+    // A PowerShell script is nothing to a bash tool: no file, and none for the CLI after it.
     expect(await set([{ shell: 'powershell', script: '$x = 1' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
-    expect((await before('make')).hookSpecificOutput).toBeUndefined();
+    expect(existsSync(path)).toBe(false);
+    await sendAnswered(client, uri);
+    expect(envFile()).toBeUndefined();
     // Cleared, and the file with it.
+    expect(await set([{ shell: 'bash', script: 'export FOO=bar\n' }])).toEqual([{ shell: 'bash', script: 'export FOO=bar\n' }]);
+    expect(existsSync(path)).toBe(true);
     expect(await set([])).toEqual([]);
     expect(existsSync(path)).toBe(false);
   });

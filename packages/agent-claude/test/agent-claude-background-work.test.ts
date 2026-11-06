@@ -425,9 +425,8 @@ it('is busy while the Stop hook lists a session cron', async () => {
 
 it('keeps the hooks the session already had', async () => {
   await open();
-  // The shell hook, then the rule hook that every tool reaches.
+  // The rule hook that every tool reaches.
   expect(sdk.hooks?.PreToolUse).toEqual([
-    { matcher: 'Bash', hooks: [expect.any(Function)] },
     { hooks: [expect.any(Function)], timeout: 24 * 60 * 60 },
   ]);
   expect(sdk.hooks?.UserPromptSubmit).toEqual([{ hooks: [expect.any(Function)] }]);
