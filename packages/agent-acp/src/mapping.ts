@@ -352,13 +352,19 @@ const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at
    *
    * The protocol's reducer builds a completed call from the running one and
    * the result, and what the call showed while it ran is not carried over:
-   * a client that watched holds the result's content and no other.
+   * a client that watched holds the result's content and no other. A call the
+   * person refused is held cancelled, the completion after it left unapplied,
+   * as the reducer leaves one for a call that is not running; the completion
+   * still goes out.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L631-L635
    */
   const part = callPartOf(turn, call.toolCallId);
   if (part !== undefined) {
     const held = bag(part.toolCall);
-    delete held.content;
-    Object.assign(held, result, { status: 'completed' });
+    if (held.status !== 'cancelled') {
+      delete held.content;
+      Object.assign(held, result, { status: 'completed' });
+    }
   }
   return [...actions, {
     type: 'chat/toolCallComplete',

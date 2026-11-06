@@ -2026,6 +2026,24 @@ it('completes a call the person refused as a denial, in the words of a failure',
   });
 });
 
+/*
+ * A refused call is held as the reducer holds it once the refusal is said:
+ * cancelled as `denied`, the completion after it left unapplied.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L635
+ */
+it('holds a refused call cancelled as denied in the session\'s own snapshot', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'refused-held');
+  session.sendMessage('t1', 'ask me first');
+  await until(() => watch.types().includes('session/inputNeededSet'));
+  expect(session.confirm?.('call-perm', false)).toBe(true);
+  await until(() => watch.endings().length > 0);
+
+  const turn = (session.chatState().turns as Bag[]).at(-1);
+  const held = (turn?.responseParts as Bag[]).find((one) => (one.toolCall as Bag | undefined)?.toolCallId === 'call-perm');
+  expect(held?.toolCall).toMatchObject({ status: 'cancelled', reason: 'denied' });
+});
+
 it('reports the folder a session is in as a URI a host reads back as that folder', () => {
   const { agent } = backend();
   /*

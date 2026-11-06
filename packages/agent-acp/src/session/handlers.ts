@@ -926,11 +926,18 @@ export function createHandlers(ctx: SessionContext): Handlers {
     // The entry follows the chat's state: the host took it down when it said
     // the confirmation that moved the call.
     const picked = held.offered.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
+    /*
+     * The row in this session's own snapshot moves with the decision, as the
+     * protocol's reducer moves it: running when approved, and cancelled as
+     * `denied` when refused, the reason its cancelled state carries.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L629
+     */
     const part = ctx.mapping === undefined ? undefined : callPartOf(ctx.mapping, toolCallId);
     if (part !== undefined) {
       const call = bag(bag(part).toolCall);
       call.status = approved ? 'running' : 'cancelled';
       if (approved) call.confirmed = 'user-action';
+      else call.reason = 'denied';
       delete call.options;
       delete call.confirmationTitle;
       if (picked !== undefined) call.selectedOption = picked;
