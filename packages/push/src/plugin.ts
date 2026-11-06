@@ -188,20 +188,37 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(contact === undefined || contact.trim() === '' ? {} : { contact: contact.trim() }),
   });
 
+  /** The clients that created or opened each session, as the host says them. */
+  const opened = new Map<string, Set<string>>();
+  host.on('session_start', (event) => {
+    if (event.client === undefined || event.client === '') return;
+    opened.set(event.session, (opened.get(event.session) ?? new Set()).add(event.client));
+  });
+  host.on('session_opened', (event) => {
+    if (event.client === '') return;
+    opened.set(event.session, (opened.get(event.session) ?? new Set()).add(event.client));
+  });
+  host.on('session_end', (event) => { opened.delete(event.session); });
+
   /**
-   * The devices of the person a session is for.
+   * The devices that hear about a session, as each registration chose
+   * (Softov 2026-10-31: "A setting per device").
    *
-   * VS Code's window tells its one user of the sessions in their list. A host
-   * with people tells the devices the session's owner registered, and a host
-   * with none has one person, whose devices hear every session.
+   * Every device hears the sessions its own client created or opened. A
+   * `person` device, which is one that says nothing, also hears every session
+   * of its person: on a host with people the ones the session's owner
+   * registered, and on a host with none every session, its one person's.
    */
   const audience = async (session: string): Promise<{ id: string; device: Device }[]> => {
     const owner = host.hasUsers === true ? await host.sessionOwner(session) : undefined;
+    const clients = opened.get(session);
     return store.ids().flatMap((id) => {
       const device = store.get(id);
       if (device === undefined) return [];
-      if (host.hasUsers === true && (owner === undefined || device.owner !== owner)) return [];
-      return [{ id, device }];
+      const byClient = device.client !== undefined && clients?.has(device.client) === true;
+      const byPerson = device.audience !== 'device'
+        && (host.hasUsers !== true || (owner !== undefined && device.owner === owner));
+      return byClient || byPerson ? [{ id, device }] : [];
     });
   };
 

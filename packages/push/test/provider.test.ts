@@ -70,8 +70,9 @@ it('keeps a device a client registered, and reads it back', async () => {
 
   const read = await provider.read('push://devices/phone-1');
   expect(read.contentType).toBe('application/json');
-  // The token is write-only, so a read answers the device without it.
-  expect(JSON.parse(read.data)).toEqual({ platform: 'ios', lang: 'pt-BR' });
+  // The token is write-only, so a read answers the device without it, with
+  // the client that registered it as the connection named it.
+  expect(JSON.parse(read.data)).toEqual({ platform: 'ios', lang: 'pt-BR', client: 'phone' });
 
   expect(await provider.list('push://')).toEqual([{ name: 'devices', type: 'directory' }]);
   expect(await provider.list('push://devices')).toEqual([{ name: 'phone-1', type: 'file' }]);
@@ -88,16 +89,21 @@ it.skipIf(!posix)('writes the devices at a mode only their owner may read', asyn
   expect(statSync(join(where, 'push-devices.json')).mode & 0o777).toBe(0o600);
 });
 
-it('keeps the person a device was written for, and no sessions setting of the body\'s', async () => {
+// Softov 2026-10-31, "A setting per device (Recommended)".
+it('keeps the person, the client and the audience a device was written with', async () => {
   const provider = over();
   await provider.write('push://devices/phone-1', body({ token: TOKEN, platform: 'ios', audience: 'device' }), 'user:ana', 'phone');
   expect(JSON.parse((await provider.read('push://devices/phone-1')).data)).toEqual({
     platform: 'ios',
+    audience: 'device',
+    client: 'phone',
     owner: 'user:ana',
   });
+  await expect(provider.write('push://devices/phone-2', body({ token: TOKEN, platform: 'ios', audience: 'everyone' }), 'user:ana', 'phone'))
+    .rejects.toThrow('push://devices/phone-2 has an audience that is not person or device');
 });
 
-it('reads a person back from a device already on disk, and leaves the client and audience it held', async () => {
+it('reads a person, a client and an audience back from a device already on disk', async () => {
   const where = dir();
   writeFileSync(join(where, 'push-devices.json'), JSON.stringify({
     'phone-1': { token: TOKEN, platform: 'ios', owner: 'user:ana', client: 'phone', audience: 'person' },
@@ -106,6 +112,8 @@ it('reads a person back from a device already on disk, and leaves the client and
   expect(JSON.parse((await provider.read('push://devices/phone-1')).data)).toEqual({
     platform: 'ios',
     owner: 'user:ana',
+    client: 'phone',
+    audience: 'person',
   });
 });
 
@@ -116,6 +124,7 @@ it('keeps a browser subscription, and reads it back without its endpoint and key
     platform: 'web',
     lang: 'pt-BR',
     owner: 'user:ana',
+    client: 'browser',
   });
 });
 
@@ -303,8 +312,9 @@ it('loads as a plugin, advertises push, and serves a registration through the ho
     const read = await client.handle({
       method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'push://devices/phone-1' },
     }) as { data: string };
-    // What the body said, the token held back as a credential.
-    expect(JSON.parse(read.data)).toEqual({ platform: 'ios' });
+    // What the body said, the token held back as a credential, and the client
+    // the connection introduced itself as.
+    expect(JSON.parse(read.data)).toEqual({ platform: 'ios', client: 'phone' });
 
     // A browser reads the public key its subscription is made against here.
     const vapid = await client.handle({
