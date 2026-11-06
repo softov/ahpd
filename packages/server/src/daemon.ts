@@ -107,15 +107,32 @@ export interface Running {
 
 /**
  * How long a start waits for the new daemon to say where it is listening.
- * `ahpd restart` gives a successor longer than this, `SUCCESSOR_WAIT_MS`, so
+ * `ahpd restart` gives a successor longer than this, `successorWaitMs`, so
  * the restarting daemon's own answer always reaches it first.
  *
- * A minute, because a first start on a machine that has never run the daemon
- * is the slow one: the pseudoterminal probe, the plugins, and whatever npm
- * does the first time it is asked for something. The stages `run` stamps are what a start that still did not make
- * it is read for; this is only how long it is given before it is killed.
+ * A minute, upstream's (plan daemon/24, Softov), unless the configuration's
+ * `readyTimeoutMs` says otherwise, because a first start on a machine that has
+ * never run the daemon is the slow one: the pseudoterminal probe, the plugins,
+ * and whatever npm does the first time it is asked for something. The stages
+ * `run` stamps are what a start that still did not make it is read for; this
+ * is only how long it is given before it is killed.
  */
 export const READY_TIMEOUT_MS = 60_000;
+
+/**
+ * A wait the configuration names, read where the verb that waits has no
+ * options of its own; `fallback` when it names none or does not load, so a
+ * verb that cannot read its configuration still waits.
+ */
+export const configuredMs = (key: 'readyTimeoutMs' | 'stopWaitMs', fallback: number): number => {
+  try {
+    const held = loadConfig().values[key];
+    return typeof held === 'number' && Number.isInteger(held) && held >= 0 ? held : fallback;
+  }
+  catch {
+    return fallback;
+  }
+};
 
 /**
  * Set in the environment of a daemon `start` spawns: the one process that will
@@ -513,7 +530,13 @@ const rotateLog = (): void => {
  * restart on, hands them to it in `CONTROL_ENV`, and records them, because the
  * record is what a verb reads and this process is the one that writes it.
  */
-export async function start(argv: string[], self: string, token?: string, replacing?: number): Promise<Running> {
+export async function start(
+  argv: string[],
+  self: string,
+  token?: string,
+  replacing?: number,
+  readyMs: number = configuredMs('readyTimeoutMs', READY_TIMEOUT_MS),
+): Promise<Running> {
   const already = running();
   if (already && already.pid !== replacing) throw new Error(`One is already running: ${already.url} (pid ${String(already.pid)})`);
 
@@ -602,7 +625,8 @@ export async function start(argv: string[], self: string, token?: string, replac
      * output any more - which is exactly the point.
      */
     await new Promise<string>((answer, fail) => {
-      const gaveUp = Date.now() + READY_TIMEOUT_MS;
+      // 0 waits for ever, as every wait the configuration names does.
+      const gaveUp = readyMs === 0 ? Number.POSITIVE_INFINITY : Date.now() + readyMs;
       const look = (): void => {
         const said = logSince(from);
         const own = child.pid === undefined ? undefined : announcementOf(said, child.pid);
@@ -766,14 +790,15 @@ export async function deliver(
 }
 
 /**
- * How long a daemon is given to answer the stop request before it is killed.
+ * How long a daemon is given to answer the stop request before it is killed,
+ * unless the configuration's `stopWaitMs` says otherwise.
  *
- * A shutdown closes plugin connections first, and a plugin's `stopping` handler
- * may take seconds, so the request is given time rather than the process being
- * ended as soon as it stops listening. A daemon that does not go within this is
- * killed, and the line for it says so.
+ * Five seconds, as VS Code's CLI gives its agent host server before it
+ * escalates to a forced kill (cli/src/tunnels/agent_host.rs L736-L752 at
+ * 6b68d3fe). A daemon that does not go within this is killed, and the line for
+ * it says so.
  */
-export const STOP_WAIT_MS = 30_000;
+export const STOP_WAIT_MS = 5_000;
 
 /** How often the wait looks at the process table, between the request and the limit. */
 const STOP_POLL_MS = 100;
@@ -817,7 +842,8 @@ const realStop = (): StopSteps => ({
   kill: (pid) => { process.kill(pid, 'SIGKILL'); },
   alive,
   wait: () => new Promise((done) => { setTimeout(done, STOP_POLL_MS); }),
-  waitMs: STOP_WAIT_MS,
+  // The configuration's 0 waits for ever, as every wait it names does.
+  waitMs: configuredMs('stopWaitMs', STOP_WAIT_MS) || Number.POSITIVE_INFINITY,
   now: () => Date.now(),
   manager: realManager(),
 });

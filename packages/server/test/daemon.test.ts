@@ -13,7 +13,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { announcementOf, claim, controlFor, deliver, forget, logSince, readyUrl, recordOf, rewritePaths, running, start, statusLine, stop } from '../src/daemon.js';
+import {
+  announcementOf, claim, configuredMs, controlFor, deliver, forget, logSince, READY_TIMEOUT_MS, readyUrl, recordOf, rewritePaths, running, start,
+  statusLine, stop, STOP_WAIT_MS,
+} from '../src/daemon.js';
 import { automationStatePath, isIdentifier, hostId, namedIssuer, personalUrl, policiesPath, signInIdentifier, vaultPath } from '../src/config.js';
 import type { Control, Running } from '../src/daemon.js';
 import type { Manager } from '../src/service.js';
@@ -227,6 +230,17 @@ describe('the record on disk', () => {
     const found = running();
     expect(found?.paths).toEqual(['/a']);
     expect(found?.argv).toBeUndefined();
+  });
+
+  // The stop's wait is VS Code's CLI's five seconds before a forced kill
+  // (cli/src/tunnels/agent_host.rs L736-L752 at 6b68d3fe), the start's
+  // upstream's minute, each the configuration's to say otherwise.
+  it('reads the start\'s and the stop\'s waits from the configuration, a minute and five seconds when it names neither', () => {
+    expect(configuredMs('stopWaitMs', STOP_WAIT_MS)).toBe(5_000);
+    expect(configuredMs('readyTimeoutMs', READY_TIMEOUT_MS)).toBe(60_000);
+    writeFileSync(join(home, 'ahpd', 'config.json'), JSON.stringify({ stopWaitMs: 2500, readyTimeoutMs: 0 }));
+    expect(configuredMs('stopWaitMs', STOP_WAIT_MS)).toBe(2500);
+    expect(configuredMs('readyTimeoutMs', READY_TIMEOUT_MS)).toBe(0);
   });
 
   // daemonRecord schemaVersion: VS Code's CLI ignores a registry entry of

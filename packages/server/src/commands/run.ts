@@ -2244,7 +2244,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       // the terminals, and the stores, so a successor is their only writer.
       await host.close();
     },
-    start: (line, token) => startDaemon(line, process.argv[1] as string, token, process.pid),
+    start: (line, token) => startDaemon(line, process.argv[1] as string, token, process.pid, options.readyTimeoutMs),
     stop: (successor) => {
       try { process.kill(successor.pid, 'SIGTERM'); }
       catch { /* it went already, which is a stop */ }

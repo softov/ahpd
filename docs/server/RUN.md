@@ -3,10 +3,10 @@
 | Command | Does |
 | --- | --- |
 | `ahpd` | Run in this terminal. Ctrl+C stops it |
-| `ahpd start` | Run in the background |
+| `ahpd start` | Run in the background, waiting up to `readyTimeoutMs` (60 s) for it to say where it listens |
 | `ahpd status` | Say if it runs, and where |
 | `ahpd doctor` | Say what is wrong, and how to fix it |
-| `ahpd stop` | Stop it, and wait up to 30 s |
+| `ahpd stop` | Stop it, and kill it after `stopWaitMs` (5 s, as VS Code's CLI) |
 | `ahpd restart` | Stop and start again with the same flags |
 | `ahpd restart --force` | Restart even while a turn runs |
 | `ahpd update` | Move to a newer ahpd and restart it. See [Upgrade](UPGRADE.md) |

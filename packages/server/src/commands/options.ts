@@ -21,6 +21,7 @@ import { isRecord, secretRef } from '@ahpd/sdk';
 import type { IssuerVerify, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
 import type { Config, HttpSetting, RoutesSetting } from '../config.js';
 import { asSpec, configDir, configPath, loadConfig, shellEnvProblems } from '../config.js';
+import { READY_TIMEOUT_MS } from '../daemon.js';
 import { ICON_LIMIT, ICON_TIMEOUT_MS } from '../icons.js';
 import { sourceOf, pluginIdOf, pluginIdsOf, runPlugins } from '../plugins.js';
 import { proxyConfiguration, proxyProblems, proxySchema, type ProxyConfiguration } from '../proxy/providers.js';
@@ -113,6 +114,8 @@ export interface Options {
   iconLimitBytes: number;
   /** How long one fetch of an `https:` plugin icon may take. */
   iconTimeoutMs: number;
+  /** How long a start waits for the daemon to say where it listens; 0 waits for ever. */
+  readyTimeoutMs: number;
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
   /** The environment every shell this host starts is given, absent when the deployment named none. */
@@ -672,6 +675,17 @@ export const serverFields = {
     description: 'How long one fetch of an https: plugin icon may take before the icon is given up. Default 10000, VS Code\'s for an image request.',
     cli: { value: 'MS' },
   },
+  readyTimeoutMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long ahpd start, and a restart starting the next daemon, waits for it to say where it is listening before stopping it. Default 60000; 0 waits for ever.',
+    cli: { value: 'MS' },
+  },
+  stopWaitMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long ahpd stop gives the daemon to go before it is killed. Default 5000, as VS Code\'s CLI gives its agent host server; 0 waits for ever. Set in the configuration file only.',
+  },
   rootConfigWrite: {
     type: 'string',
     enum: ['merged', 'replaced'],
@@ -825,7 +839,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['httpApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts', 'onPath', 'daemonRecord'] as const;
+const FILE_ONLY = ['httpApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts', 'onPath', 'daemonRecord', 'stopWaitMs'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;
@@ -1320,6 +1334,7 @@ const noCwd = input['noCwd'] === true;
     rootConfigWrite: given('rootConfigWrite') ?? 'merged',
     iconLimitBytes: given('iconLimitBytes') ?? ICON_LIMIT,
     iconTimeoutMs: given('iconTimeoutMs') ?? ICON_TIMEOUT_MS,
+    readyTimeoutMs: given('readyTimeoutMs') ?? READY_TIMEOUT_MS,
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',

@@ -18,7 +18,7 @@ import type { Command, Registry } from '@cofold/commands';
 import { INTERNAL_ERROR, RpcError } from '@ahpd/sdk';
 import type { PluginMethod } from '@ahpd/sdk';
 import { daemonLog } from '../config.js';
-import { READY_TIMEOUT_MS, deliver, logSince, running, throughPipe } from '../daemon.js';
+import { READY_TIMEOUT_MS, configuredMs, deliver, logSince, running, throughPipe } from '../daemon.js';
 import type { ControlledSignal, Running } from '../daemon.js';
 import { realManager } from '../service.js';
 import type { Manager, Service } from '../service.js';
@@ -28,12 +28,15 @@ import type { ServedFacts } from './served.js';
 
 /**
  * How long the terminal waits for the successor, counted from the daemon's
- * `STARTING` line: the daemon's own start gives up after `READY_TIMEOUT_MS`
- * and says so in the log, so a wait longer by a margin always hears that
- * answer. Before that line the old daemon is still stopping, and the terminal
- * waits for as long as it lives, since `stopping` handlers have no limit.
+ * `STARTING` line: the daemon's own start gives up after the configuration's
+ * `readyTimeoutMs`, `READY_TIMEOUT_MS` unless it says otherwise, and says so in
+ * the log, so a wait longer by a margin always hears that answer. A start that
+ * waits for ever is waited for as long. Before that line the old daemon is
+ * still stopping, and the terminal waits for as long as it lives, since
+ * `stopping` handlers have no limit.
  */
-export const SUCCESSOR_WAIT_MS = READY_TIMEOUT_MS + 5_000;
+export const successorWaitMs = (readyMs: number = configuredMs('readyTimeoutMs', READY_TIMEOUT_MS)): number =>
+  (readyMs === 0 ? Number.POSITIVE_INFINITY : readyMs + 5_000);
 
 /*
  * The two signals a recorded daemon restarts on: SIGHUP for a restart, refused
@@ -568,7 +571,7 @@ const realTerminal = (): AtTerminal => ({
   read: logSince,
   wait: () => new Promise((done) => { setTimeout(done, 100); }),
   receiptMs: RECEIPT_WAIT_MS,
-  timeoutMs: SUCCESSOR_WAIT_MS,
+  timeoutMs: successorWaitMs(),
   now: () => Date.now(),
   piped: throughPipe(),
   manager: realManager(),

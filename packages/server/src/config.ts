@@ -387,6 +387,21 @@ export interface Config {
    */
   iconTimeoutMs?: number;
   /**
+   * How long `ahpd start`, and a restart starting the next daemon, waits for
+   * it to say where it is listening before stopping it: 60000 by default,
+   * upstream's minute (plan daemon/24, Softov), where VS Code's CLI waits 30
+   * seconds for its agent host server (`STARTUP_TIMEOUT`,
+   * cli/src/tunnels/agent_host.rs L58-L59 at 6b68d3fe). 0 waits for ever.
+   */
+  readyTimeoutMs?: number;
+  /**
+   * How long `ahpd stop` gives the daemon to go before it is killed: 5000 by
+   * default, as VS Code's CLI gives its agent host server before escalating to
+   * a forced kill (cli/src/tunnels/agent_host.rs L736-L752 at 6b68d3fe). 0
+   * waits for ever.
+   */
+  stopWaitMs?: number;
+  /**
    * How `ahpd configure` and `ahpd doctor` find a command on PATH.
    *
    * `runnable`, the default, takes a regular file with an execute bit, tries
