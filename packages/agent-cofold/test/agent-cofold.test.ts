@@ -34,10 +34,17 @@ it('advertises the resource a client may lend a token for', () => {
   ]);
 });
 
+/*
+ * A resource is the https URL of the API a token is for, as VS Code's agents
+ * advertise one, so an endpoint with no https origin names none and the
+ * backend advertises none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L647-L648
+ */
 it('names the resource after the endpoint only when that is an https URL', () => {
   expect(resourceOf({ baseUrl: 'https://api.deepseek.com/v1' })).toBe('https://api.deepseek.com');
-  expect(resourceOf({ baseUrl: 'http://127.0.0.1:1234/v1' })).toBe('https://ahpd.dev/agent-cofold');
+  expect(resourceOf({ baseUrl: 'http://127.0.0.1:1234/v1' })).toBeUndefined();
   expect(resourceOf({ resource: 'https://models.example' })).toBe('https://models.example');
+  expect(cofoldAgent({ baseUrl: 'http://127.0.0.1:1234/v1' }).protectedResources).toEqual([]);
 });
 
 it('defaults name only keys the schema declares', () => {

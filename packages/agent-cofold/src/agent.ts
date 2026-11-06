@@ -117,9 +117,6 @@ export const defaultStoreRoot = (): string =>
 const text = (value: unknown): string | undefined =>
   (typeof value === 'string' && value.trim() !== '' ? value : undefined);
 
-/** The resource a client authenticates against when nothing named one. */
-export const FALLBACK_RESOURCE = 'https://ahpd.dev/agent-cofold';
-
 /**
  * The approvals modes a session may be put in, in the harness's own order.
  *
@@ -146,28 +143,30 @@ export const PERMISSION_DESCRIPTIONS: readonly string[] =
   PERMISSION_MODES.map((mode) => PERMISSION_MODE_DESCRIPTIONS[mode]);
 
 /**
- * The protected resource a token for this backend belongs to.
+ * The protected resource a token for this backend belongs to, or none.
  *
- * `resource` when it was named, the origin of an `https` endpoint when one is
- * known - the plugin's own `baseUrl`, or the endpoint the harness
- * configuration's model names - and a constant otherwise. RFC 9728 wants an
- * `https` URL with no fragment, which is why the endpoint's origin is used
- * rather than the whole URL: a token is for the service, not for one path
- * under it.
+ * `resource` when it was named, and otherwise the origin of an `https`
+ * endpoint when one is known - the plugin's own `baseUrl`, or the endpoint the
+ * harness configuration's model names - as VS Code's agents advertise the API
+ * a token is for. RFC 9728 names a resource by its own `https` URL with no
+ * fragment, which is why the endpoint's origin is the resource: a token is for
+ * the service, and one path under it is the same service. An endpoint with no
+ * `https` origin names no resource, and none is advertised.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L647-L648
+ * https://www.rfc-editor.org/rfc/rfc9728#section-2
  */
-export const resourceOf = (options: CofoldOptions = {}, harness: HarnessConfig = harnessConfig()): string => {
+export const resourceOf = (options: CofoldOptions = {}, harness: HarnessConfig = harnessConfig()): string | undefined => {
   if (options.resource !== undefined) return options.resource;
   const named = options.baseUrl ?? endpointOf(options, harness)?.baseUrl;
-  if (named !== undefined) {
-    try {
-      const url = new URL(named);
-      if (url.protocol === 'https:') return url.origin;
-    }
-    catch {
-      // Not a URL at all, so there is nothing to name a resource after.
-    }
+  if (named === undefined) return undefined;
+  try {
+    const url = new URL(named);
+    return url.protocol === 'https:' ? url.origin : undefined;
   }
-  return FALLBACK_RESOURCE;
+  catch {
+    // Not a URL at all, so there is nothing to name a resource after.
+    return undefined;
+  }
 };
 
 /**
@@ -264,7 +263,7 @@ const keyOf = (
     ? owner.apiKey
     : harness.providers.find((one) => one.baseUrl === baseUrl)?.apiKey;
   const resource = resourceOf(options, harness);
-  const lent = sameOrigin(baseUrl, resource) ? text(credentials[resource]) : undefined;
+  const lent = resource !== undefined && sameOrigin(baseUrl, resource) ? text(credentials[resource]) : undefined;
   const option = options.baseUrl !== undefined
     ? sameOrigin(baseUrl, options.baseUrl)
     : endpointOf(options, harness)?.baseUrl === baseUrl;
@@ -508,6 +507,8 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * the backend's own defaults and advertised resource follow from it.
    */
   const harness = harnessConfig();
+  /** The protected resource this backend advertises, where its endpoint names one. */
+  const advertised = resourceOf(options, harness);
 
   /**
    * What a session may be told.
@@ -798,7 +799,7 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
      */
     chats: { fork: true },
     /*
-     * The resource a client may lend a token for.
+     * The resource a client may lend a token for, where the endpoint names one.
      *
      * `required: false` because the daemon runs as whoever started it and
      * already holds its own key - its options or the harness file - so a
@@ -806,7 +807,7 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
      * refused every session until one arrived would be a backend nobody could
      * use from an automation.
      */
-    protectedResources: [{ resource: resourceOf(options, harness), resource_name: displayName, required: false }],
+    protectedResources: advertised === undefined ? [] : [{ resource: advertised, resource_name: displayName, required: false }],
     schema,
     defaults,
     /*
