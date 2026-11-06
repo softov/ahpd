@@ -15,6 +15,15 @@ import type { SessionContext } from './context.js';
  */
 export const TOOL_USE_ID = 'claudecode/toolUseId';
 
+/**
+ * The prefix of an id this bridge made up for a call.
+ *
+ * A call the agent never reported has no ACP tool call id to be held under, so
+ * this bridge gives it one: the prefix says the id is this bridge's, and no
+ * agent spells anything this way.
+ */
+const OWN_PREFIX = 'ahp-mcp-';
+
 /** What this area offers the rest of the session, and the `Session` members it brings. */
 export interface ClientCalls {
   /**
@@ -124,21 +133,77 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
     });
   };
 
+  /** How many calls this bridge has named itself, so that no two share an id. */
+  let invented = 0;
+
   /**
-   * The call one `tools/call` is for.
+   * A row of this bridge's own, for a request the agent never reported.
    *
-   * Three ways to find it, in this order: the id the agent put on the request,
-   * the one open call of that tool, and the call whose arguments are the
-   * request's. The id is what tells two identical concurrent calls apart, a
-   * lone open call is the only thing a request that names no call can be for,
-   * and the arguments tell apart two calls of one tool that were made for
-   * different things - when the agent reported them, which it need not.
+   * An ACP agent may call a client's tool without reporting the call, and the
+   * agent is blocked on the request all the same, so the call is held and its
+   * owner is asked through the entry like any other. It is drawn on the chat
+   * as well, because a client that watches the chat rather than the session
+   * has to see the call it is being asked about: everything a reported call
+   * gets, less the agent's own id, which the agent never gave. The row is
+   * named by the client's own name for the tool, as a reported call's row is.
    *
-   * A request no reported call can be for, and one two or more calls could be
-   * for with nothing to choose between them, are answered with an error result,
-   * as VS Code's client tool server answers a request it cannot name a call
-   * for: a result never lands on another call, and the agent is told to make
-   * the call again.
+   * The turn is the running one. A request arriving with no turn behind it is
+   * still held, since the entry is what asks, and has no turn to draw it in.
+   */
+  const openOwn = (owner: string, name: string, input: string): string => {
+    invented += 1;
+    const toolCallId = `${OWN_PREFIX}${invented}`;
+    const call: AcpCall = {
+      toolCallId,
+      toolName: name,
+      displayName: name,
+      readied: true,
+      asked: false,
+      contributor: owner,
+      input,
+    };
+    /*
+     * Said out loud, because the row is drawn from nothing the agent said, so
+     * a person reading a transcript with a row the agent has no account of has
+     * only this line to tell them where it came from.
+     */
+    ctx.options.log?.(`${ctx.provider}: the agent reported no call for ${name}; it is run as ${toolCallId}`);
+    const turnId = ctx.mapping?.turnId;
+    if (turnId !== undefined) {
+      const contributor = { contributor: { kind: 'client', clientId: owner } };
+      ctx.emit('chat', {
+        type: 'chat/toolCallStart', turnId, toolCallId, toolName: name, displayName: name, ...contributor,
+      });
+      ctx.emit('chat', {
+        type: 'chat/toolCallReady',
+        turnId,
+        toolCallId,
+        invocationMessage: name,
+        confirmed: 'not-needed',
+        toolInput: input,
+        ...contributor,
+      });
+    }
+    openCall(call, turnId ?? '');
+    return toolCallId;
+  };
+
+  /**
+   * The call one `tools/call` is for, opening one of this bridge's own when
+   * the agent reported none.
+   *
+   * Four ways to find it, in this order: the id the agent put on the request,
+   * the one open call of that tool, the call whose arguments are the request's,
+   * and a row of this bridge's own. The id is what tells two identical
+   * concurrent calls apart, a lone open call is the only thing a request that
+   * names no call can be for, and the arguments tell apart two calls of one
+   * tool that were made for different things, when the agent reported them,
+   * which it need not.
+   *
+   * Two or more calls and nothing to choose between them is answered with an
+   * error result, as VS Code's client tool server answers a request it cannot
+   * name a call for: a result never lands on another call, and the agent is
+   * told to make the call again.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L46-L55
    */
   const callFor = (owner: string, name: string, input: Bag, meta: Bag | undefined): string => {
@@ -151,9 +216,7 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
       .filter((entry) => String(entry.clientId) === owner)
       .map((entry) => bag(entry.toolCall))
       .filter((call) => String(call.toolName) === name);
-    if (open.length === 0) {
-      throw new Error(`Client tool "${name}" could not run: the agent reported no call it is for, and the request names none (expected at _meta["${TOOL_USE_ID}"]).`);
-    }
+    if (open.length === 0) return openOwn(owner, name, JSON.stringify(input));
     // An agent that makes one call at a time, which is most of them, has
     // nothing else this request could be for.
     if (open.length === 1) return String(open[0]?.toolCallId);
