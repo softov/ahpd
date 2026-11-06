@@ -70,9 +70,27 @@ const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning'): { part: Bag; open
  * Any text opens its part, whitespace included, as VS Code's agents open a
  * part for whatever text their runtime sends.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
+ *
+ * A chunk that names content by its URI, a link to a resource or a resource
+ * the agent embedded, is a part of its own: the spec's part for content held
+ * outside the state tree, carrying the URI with the size and the type the
+ * agent gave it.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
  */
-const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', text: string): Bag[] => {
-  if (text === '') return [];
+const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', content: ContentBlock): Bag[] => {
+  if (content.type === 'resource_link' || content.type === 'resource') {
+    const named = content.type === 'resource_link' ? content : content.resource;
+    const part: Bag = {
+      kind: 'contentRef',
+      uri: named.uri,
+      ...(content.type === 'resource_link' && typeof content.size === 'number' ? { sizeHint: content.size } : {}),
+      ...(typeof named.mimeType === 'string' ? { contentType: named.mimeType } : {}),
+    };
+    turn.parts.push(part);
+    return [{ type: 'chat/responsePart', turnId: turn.turnId, part: { ...part } }];
+  }
+  const text = textOf(content);
+  if (text === undefined || text === '') return [];
   const { part, opened } = runOf(turn, kind);
   part.content = `${String(part.content ?? '')}${text}`;
   const type = kind === 'markdown' ? 'chat/delta' : 'chat/reasoning';
@@ -456,15 +474,11 @@ export function mapUpdate(
      * would draw the whole block again in a client that appends on
      * `chat/responsePart`.
      */
-    case 'agent_message_chunk': {
-      const text = textOf(update.content);
-      return text === undefined ? [] : chunk(turn, 'markdown', text);
-    }
+    case 'agent_message_chunk':
+      return chunk(turn, 'markdown', update.content);
 
-    case 'agent_thought_chunk': {
-      const text = textOf(update.content);
-      return text === undefined ? [] : chunk(turn, 'reasoning', text);
-    }
+    case 'agent_thought_chunk':
+      return chunk(turn, 'reasoning', update.content);
 
     /*
      * A new tool call. The start action creates the row, and the ready action

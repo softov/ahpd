@@ -1788,6 +1788,34 @@ it('says a failed call failed in its past tense, and a success by its name', () 
 });
 
 /*
+ * What the agent names by URI in its answer, a link to a resource or a
+ * resource it embedded, as the spec's part for content held outside the state
+ * tree, between the prose before it and the prose after it.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
+ */
+it('answers a resource the agent linked or embedded as a content reference part', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  const said = (content: unknown): Bag[] =>
+    mapUpdate(turn, { sessionUpdate: 'agent_message_chunk', content } as unknown as SessionUpdate);
+  said({ type: 'text', text: 'Here: ' });
+  const linked = said({ type: 'resource_link', uri: 'file:///tmp/report.md', name: 'report.md', mimeType: 'text/markdown', size: 120 });
+  const embedded = said({ type: 'resource', resource: { uri: 'file:///tmp/notes.txt', text: 'notes', mimeType: 'text/plain' } });
+  said({ type: 'text', text: 'and done.' });
+
+  expect(linked).toEqual([{
+    type: 'chat/responsePart',
+    turnId: 't1',
+    part: { kind: 'contentRef', uri: 'file:///tmp/report.md', sizeHint: 120, contentType: 'text/markdown' },
+  }]);
+  expect(embedded).toEqual([{
+    type: 'chat/responsePart',
+    turnId: 't1',
+    part: { kind: 'contentRef', uri: 'file:///tmp/notes.txt', contentType: 'text/plain' },
+  }]);
+  expect(turn.parts.map((one) => one.kind)).toEqual(['markdown', 'contentRef', 'contentRef', 'markdown']);
+});
+
+/*
  * A call the person refused, which the server reports as failing: its error
  * is a denial, as VS Code's Codex agent completes a call its host declined.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L1225-L1229
