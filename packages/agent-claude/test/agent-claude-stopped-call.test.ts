@@ -100,13 +100,17 @@ const calling = {
 };
 
 /** A session with the client's tool on offer and a turn running, saying what it says to `emit`. */
-async function started(emit: (channel: string, action: Bag) => void = () => {}): Promise<{ session: ReturnType<typeof createSession> }> {
+async function started(
+  emit: (channel: string, action: Bag) => void = () => {},
+  preset?: Bag,
+): Promise<{ session: ReturnType<typeof createSession> }> {
   sdk.reset();
   const session = createSession({
     uri: 'ahp-session:/stopped-call',
     chatUri: 'ahp-chat:/stopped-call',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-stopped-call-')),
     emit: (channel, action) => { emit(channel, action as Bag); },
+    ...(preset === undefined ? {} : { preset }),
   });
   await settle();
   await session.setTools?.([offered]);
@@ -245,4 +249,25 @@ it('interrupts at once a turn whose open call the CLI runs itself, and keeps the
 
   // Nothing of the CLI's own is answered here, and only the interrupt stops it.
   expect(sdk.heard).toEqual(['interrupt']);
+});
+
+/*
+ * A record whose `stopEnds` is `query` stops as VS Code's agent does: the
+ * query is aborted, and a question still waiting is answered first, so
+ * nothing waits on it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+ */
+it('aborts the query at a stop when the record says the stop ends the query', async () => {
+  const { session } = await started(undefined, { stopEnds: 'query' });
+  void sdk.canUseTool!(CALLED, { text: 'hello' }, { toolUseID: 'toolu_post', signal: new AbortController().signal, suggestions: [] })
+    .then(heard);
+  await settle();
+
+  session.abort();
+  await settle();
+
+  const answered = sdk.heard.filter((one) => one !== 'close');
+  expect(answered).toEqual([expect.objectContaining({ behavior: 'deny' })]);
+  expect(sdk.heard).toContain('close');
+  expect(sdk.heard).not.toContain('interrupt');
 });

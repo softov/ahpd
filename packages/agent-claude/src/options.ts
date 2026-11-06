@@ -141,6 +141,27 @@ export const enableTasks: Declaration = {
 };
 
 /**
+ * What a stop ends.
+ *
+ * `turn`, the default, interrupts the turn through the SDK's `interrupt()`
+ * and keeps the CLI, ending only the workers the stopped turn spawned, so
+ * background work from earlier turns keeps running (Softov 2026-09-26: "End
+ * only the workers spawned in the cancelled turn; background workers from
+ * earlier turns keep running."). `query` aborts the query as VS Code's agent
+ * does, its workers and tasks with it. Read by the session's stop.
+ * https://code.claude.com/docs/en/agent-sdk/typescript#query-object
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+ */
+export const stopEnds: Declaration = {
+  schema: {
+    type: 'string',
+    enum: ['turn', 'query'],
+    description: "What a stop ends: turn interrupts the turn and ends only the workers it spawned; query aborts the query, its workers and tasks with it, as VS Code's agent does. turn by default.",
+  },
+  default: 'turn',
+};
+
+/**
  * The voice the CLI answers in.
  *
  * The one option here the CLI takes live rather than at startup: it is in the
@@ -254,7 +275,7 @@ export const extraArgs: Declaration = {
 };
 
 /** Every declared option, by the name a record gives it. */
-export const DECLARED: Record<string, Declaration> = { sandbox, thinking, hostTasks, enableTasks, outputStyle, env, logins, extraArgs };
+export const DECLARED: Record<string, Declaration> = { sandbox, thinking, hostTasks, enableTasks, stopEnds, outputStyle, env, logins, extraArgs };
 
 /** One model a record writes out: an id, and the name the picker draws. */
 const MODEL: Bag = {

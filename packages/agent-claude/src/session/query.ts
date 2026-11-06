@@ -59,6 +59,8 @@ export interface Query {
    * drops what came after it, as a rewind drops it.
    */
   startQuery: (agent: string | undefined, first: boolean, cut?: string) => Promise<void>;
+  /** Take the session off a CLI still starting, which a stop that aborts the query leaves nobody to answer. */
+  abandonStart: () => void;
   /** The backend's id for the *last* thing in each turn, by this host's turn id. */
   ends: Map<string, string>;
   /** Ask the CLI for a model, and say why it would not take it if it will not. */
@@ -641,8 +643,9 @@ export function createQuery(ctx: SessionContext): Query {
    * `startup`, which spawns the CLI and waits for its handshake under the
    * SDK's own bound: a CLI that does not answer within it rejects the start in
    * the SDK's words, which fail the turn that asked, and the next send starts
-   * one again. A start the session's close overtook while it ran is disposed
-   * of once it is up, as VS Code disposes of a startup its abort overtook.
+   * one again. A start the session's close, or a stop that aborts the query,
+   * overtook while it ran is disposed of once it is up, as VS Code disposes of
+   * a startup its abort overtook.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L676-L681
    *
    * It is bound as the query this session talks to, as the reference binds
@@ -673,6 +676,18 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.query = handle;
     void consume(handle);
     void ctx.describe().catch(() => {});
+  };
+
+  /**
+   * Take the session off a CLI still starting, which a stop that aborts the
+   * query leaves nobody to answer: the start is disposed of once it is up, and
+   * the reader of the CLI before it ends.
+   */
+  const abandonStart = (): void => {
+    bound += 1;
+    const replaced = ctx.pendingPromptDeferred;
+    ctx.pendingPromptDeferred = undefined;
+    replaced?.();
   };
 
   /**
@@ -1182,9 +1197,9 @@ export function createQuery(ctx: SessionContext): Query {
     } catch (error) {
       // A query this host put away is not a CLI that died: the one that
       // replaced it is already running the same conversation, a turn moving
-      // to another login is about to start it, or a death closed it
-      // for the next send to start again, a close keeping the reason it was
-      // put away for.
+      // to another login is about to start it, or a death or a stop that
+      // aborts the query closed it for the next send to start again, a close
+      // keeping the reason it was put away for.
       if (ctx.disposed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
       /*
        * The failure in its own words, as VS Code's host ends a send that
@@ -1250,5 +1265,5 @@ export function createQuery(ctx: SessionContext): Query {
     return undefined;
   };
 
-  return { toYield, startQuery, ends, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
+  return { toYield, startQuery, abandonStart, ends, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
 }

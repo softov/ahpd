@@ -637,8 +637,31 @@ export function createTurns(ctx: SessionContext): Turns {
        * one open the interrupt goes now. A session with no CLI yet has nothing
        * to interrupt, and the stop keeps its prompt from being sent.
        */
+      /*
+       * The record's `stopEnds` set to `query` stops as VS Code's agent does
+       * instead: the query is aborted, so the CLI is closed with every prompt
+       * and steering message it has not answered, every worker and task it
+       * runs ends with it, the files the turn's edit calls began changing are
+       * recorded as the stop leaves them, and the next send starts a CLI that
+       * resumes the conversation. A CLI still starting is disposed of once it
+       * is up.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+       */
+      const aborts = ctx.values['stopEnds'] === 'query';
       const running = ctx.query;
-      if (running !== undefined && ctx.active !== undefined) {
+      if (aborts) {
+        ctx.editsStopped();
+        ctx.abandonStart();
+        if (running !== undefined) {
+          ctx.rebind = running;
+          try { running.close(); }
+          catch { /* A CLI already closing is stopped all the same. */ }
+        }
+        ctx.yielded.clear();
+        ctx.parentSdkUuid = undefined;
+        ctx.noteBackgroundTasks({ tasks: [] });
+      }
+      else if (running !== undefined && ctx.active !== undefined) {
         if (answered.size === 0 || open.some((id) => !answered.has(id))) void running.interrupt().catch(() => {});
         else ctx.stopAnswers = answered;
         ctx.interrupted = true;
@@ -649,16 +672,17 @@ export function createTurns(ctx: SessionContext): Turns {
        * A worker's turn is a turn of its own, and a main turn stopped halfway
        * leaves the workers it spawned with nothing left to answer them. A
        * background worker spawned by an earlier turn is not this turn's, keeps
-       * running and ends on its own `task_notification`. A worker whose chat
-       * was never announced has nothing to end, and one whose spawn was never
-       * seen has no turn on record and ends with this one.
+       * running and ends on its own `task_notification`, unless the stop
+       * aborted the query it runs in. A worker whose chat was never announced
+       * has nothing to end, and one whose spawn was never seen has no turn on
+       * record and ends with this one.
        */
       const stopping = str(ctx.active?.id);
       for (const scope of [...ctx.scopes.values()]) {
         if (scope.waiting !== undefined) ctx.scopes.delete(scope.parent);
         else if (scope.parent !== '' && scope.chat !== undefined) {
           const made = ctx.spawning.get(scope.parent)?.turn;
-          if (made === undefined || made === stopping) ctx.endSubagent(scope.parent, 'cancelled');
+          if (aborts || made === undefined || made === stopping) ctx.endSubagent(scope.parent, 'cancelled');
         }
       }
       ctx.toYield.length = 0;

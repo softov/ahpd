@@ -238,8 +238,9 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   stopAnswers: Set<string> | undefined;
   /**
-   * The CLI that died or ended its stream without a result, or that a CLI
-   * meant to replace it did not start beside, while the next send
+   * The CLI that died, ended its stream without a result or was closed by a
+   * stop that aborts the query, or that a CLI meant to replace it did not
+   * start beside, while the next send
    * has not yet started one that resumes the conversation, as the reference
    * marks its pipeline for a rebind. Its reader ends without failing the session.
    * Nothing while the CLI answering is the one reading.
