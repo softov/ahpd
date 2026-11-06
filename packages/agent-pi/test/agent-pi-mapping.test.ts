@@ -186,6 +186,22 @@ it('closes a failed call with the error a client shows', () => {
   expect(((done?.result as Bag).error as Bag).message).toBe('no such file');
 });
 
+/*
+ * A call an update or an end names before any start is announced first, so
+ * every action that follows names a call each client holds, as the ACP
+ * mapping announces one.
+ */
+it('announces a call an update or an end names before any start, ahead of what names it', () => {
+  const updated = mapEvent(turn(), {
+    type: 'tool_execution_update', toolCallId: 'c8', toolName: 'read', args: {}, partialResult: 'so far',
+  } as never);
+  expect(updated.map((action) => action.type)).toEqual(['chat/toolCallStart', 'chat/toolCallContentChanged']);
+  const ended = mapEvent(turn(), {
+    type: 'tool_execution_end', toolCallId: 'c9', toolName: 'read', result: 'text', isError: false,
+  });
+  expect(ended.map((action) => action.type)).toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+});
+
 it('lands a shell delta on the call that opened the row, and drops an orphan', () => {
   const one = turn();
   mapEvent(one, { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: {} });

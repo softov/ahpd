@@ -88,15 +88,19 @@ export function resultText(result: unknown): string {
 }
 
 /**
- * The call an event names, opening the row the first time it is seen.
+ * The call an event names, with the start that announces it the first time
+ * it is seen.
  *
  * Opened here rather than only where the model starts writing the call,
  * because an update or an end for a call whose start was missed is still a
  * call a client should see, and dropping it would leave a turn with a result
- * nothing accounts for.
+ * nothing accounts for. It is announced with `chat/toolCallStart` before the
+ * actions that name it, as the ACP mapping announces one, so every action
+ * names a call each client holds.
  */
-function callOf(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
-  return turn.calls.get(toolCallId) ?? openCall(turn, toolCallId, toolName);
+function callOf(turn: PiTurn, toolCallId: string, toolName: string): { call: PiCall; opened: Bag[] } {
+  const opened = startCall(turn, toolCallId, toolName);
+  return { call: turn.calls.get(toolCallId) as PiCall, opened };
 }
 
 /**
@@ -435,10 +439,10 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
 
     /** Output while it is still running, which is what a long command gives. */
     case 'tool_execution_update': {
-      const call = callOf(turn, event.toolCallId, event.toolName);
+      const { call, opened } = callOf(turn, event.toolCallId, event.toolName);
       const text = resultText(event.partialResult);
-      if (text === '') return [];
-      return [{
+      if (text === '') return opened;
+      return [...opened, {
         type: 'chat/toolCallContentChanged',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,
@@ -449,7 +453,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
     /** The row closed, which is the only action carrying a result. */
     case 'tool_execution_end': {
       const when = at ?? Date.now();
-      const call = callOf(turn, event.toolCallId, event.toolName);
+      const { call, opened } = callOf(turn, event.toolCallId, event.toolName);
       const success = !event.isError;
       const text = resultText(event.result);
       const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
@@ -492,7 +496,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       }
       // The whole bag on both, because an action's `_meta` replaces the call's.
       const meta = held._meta === undefined ? {} : { _meta: bag(held._meta) };
-      return [...(unreadied ? [{
+      return [...opened, ...(unreadied ? [{
         type: 'chat/toolCallReady',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,
