@@ -111,13 +111,12 @@ it('keeps its own task tools when the host offers no task_add', async () => {
   expect(options.disallowedTools).toBeUndefined();
 });
 
-it('keeps the deny list of a person, and adds the task tools to it', async () => {
+it('takes the task tools from the model, and leaves a person\'s denials to the permission check', async () => {
   const options = await queried({
     tools: [taskAdd()],
     settings: { permissions: { deny: ['Bash', 'TodoWrite'] } },
   });
-  // A name a person already denied is not written twice.
-  expect(options.disallowedTools).toEqual(['Bash', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet']);
+  expect(options.disallowedTools).toEqual(['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet']);
 });
 
 it('turns Claude\'s own task tools on when it keeps them', async () => {

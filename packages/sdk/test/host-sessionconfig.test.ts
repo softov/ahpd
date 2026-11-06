@@ -171,7 +171,7 @@ describe('choosing a model', () => {
     expect(existsSync(path)).toBe(false);
   });
 
-  it('hands the allow and deny lists to the harness when the session starts', async () => {
+  it('hands the allow list to the harness when the session starts, and leaves the deny list to the permission check', async () => {
     const client = open();
     await client.handle(hello(['0.9.0']));
     await client.handle({
@@ -184,12 +184,12 @@ describe('choosing a model', () => {
     // The CLI its first send starts.
     await sendTurn(client, 'ahp-session:/listed');
     await settle();
-    // The SDK takes both natively, which is what makes advertising the key
-    // the smallest thing that works - and it is the half that only applies to
-    // a session being built.
+    // The SDK takes the allow list natively, the half that applies to a
+    // session being built; a denied tool stays the model's, refused when the
+    // CLI asks about it, as VS Code's Claude leaves a person's denials.
     const options = sessionQueries().at(-1)?.options;
     expect(options?.allowedTools).toEqual(['Read', 'Grep']);
-    expect(options?.disallowedTools).toEqual(['Bash']);
+    expect(options?.disallowedTools).toBeUndefined();
   });
 
   it('answers a tool from the list instead of asking, once one is set', async () => {

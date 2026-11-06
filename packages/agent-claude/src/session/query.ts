@@ -133,17 +133,12 @@ export function createQuery(ctx: SessionContext): Query {
   const fromPreset = (): Bag => queryOptionsOf(ctx.values);
 
   /**
-   * Whatever the host holds the list, the query is built the same way.
-   *
-   * A person's own deny list, and `TodoWrite`, `TaskCreate`, `TaskUpdate`,
-   * `TaskList` and `TaskGet` too when the host holds the list. A host that does
-   * not leaves the harness's own tools where they are.
+   * The tools taken from the model: `TodoWrite`, `TaskCreate`, `TaskUpdate`,
+   * `TaskList` and `TaskGet` when the host holds the task list, and none
+   * otherwise. A person's denials are the permission check's, which refuses a
+   * denied call when the CLI asks about it, as VS Code's Claude leaves them.
    */
-  const denyOption = (): Bag => {
-    const deny = [...ctx.allowed.deny];
-    if (hostHoldsTasks(ctx.values, ctx.offering)) for (const name of OWN_TASK_TOOLS) if (!deny.includes(name)) deny.push(name);
-    return deny.length > 0 ? { disallowedTools: deny } : {};
-  };
+  const denyOption = (): Bag => (hostHoldsTasks(ctx.values, ctx.offering) ? { disallowedTools: [...OWN_TASK_TOOLS] } : {});
 
   const stopped: Query['stopped'] = { backgroundTasks: [], sessionCrons: [] };
   const keepStopped: HookCallback = async (input) => {
