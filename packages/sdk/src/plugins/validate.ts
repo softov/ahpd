@@ -182,6 +182,7 @@ export const checkAgent = (value: unknown, by: string): CheckedSchema[] => {
  */
 const TOOL_OPTIONAL: Record<string, Kind> = {
   instruction: 'string',
+  isEnabledForSession: 'function',
   forSession: 'function',
   deferLoading: 'boolean',
 };

@@ -998,6 +998,22 @@ export interface Diagnostics {
 export type TitleStrategy = 'activeAgent' | 'utility' | 'deferred';
 
 /**
+ * What a session brings to a tool asking about it.
+ *
+ * `config` is the session's config as it was kept, and `bindings` is the
+ * aliases it may name a connector by - the plugin readers' maps with the
+ * session's own key over them. Both are read live, so a binding that moved
+ * reaches the next list the host builds.
+ */
+export interface ToolSession {
+  titleStrategy: TitleStrategy;
+  /** The session's config, or nothing where it has none. */
+  config?: Record<string, unknown> | undefined;
+  /** The connectors this session may use, by alias. */
+  bindings?: Record<string, string> | undefined;
+}
+
+/**
  * What every host tool carries, whichever place it runs from.
  */
 interface HostToolCommon {
@@ -1057,27 +1073,25 @@ interface HostToolCommon {
    */
   instruction?: string;
   /**
-   * The shape one session's title strategy asks for, and what that session
-   * brings to it.
-   *
-   * `undefined` leaves the tool as it is, `{ offered: false }` takes it out
-   * of the list for that session, and `definition` is merged over the tool's
-   * own. It is how a strategy that does not rename chats withholds the tool
-   * rather than offering one it would refuse, and how a tool offered only to
-   * a session that binds a connector withholds itself from the rest.
-   *
-   * `config` is the session's config as it was kept, and `bindings` is the
-   * aliases it may name a connector by - the plugin readers' maps with the
-   * session's own key over them. Both are read live, so a binding that moved
-   * reaches the next list the host builds.
+   * Whether one session supports this tool, as VS Code's
+   * `isEnabledForSession`: a tool that answers false is neither offered to
+   * that session nor bound for it, and one that says nothing is offered to
+   * every session. Asked beside the host's own switches - `advancedPermission`,
+   * `optIn` and the session tools' keys - each time a session's list is built,
+   * so a session that came to support the tool is offered it at its next one.
+   * It is how a strategy that does not rename chats withholds the tool rather
+   * than offering one it would refuse, and how a tool offered only to a
+   * session that binds a connector withholds itself from the rest.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L95
    */
-  forSession?: (session: {
-    titleStrategy: TitleStrategy;
-    /** The session's config, or nothing where it has none. */
-    config?: Record<string, unknown> | undefined;
-    /** The connectors this session may use, by alias. */
-    bindings?: Record<string, string> | undefined;
-  }) => { offered: boolean; definition?: Partial<ToolDefinition> } | undefined;
+  isEnabledForSession?: (session: ToolSession) => boolean;
+  /**
+   * The shape one session asks for, as VS Code's `getDefinitionForSession`
+   * tailors a tool's wording to a session: `undefined` leaves the tool as it
+   * is, and `definition` is merged over the tool's own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L93
+   */
+  forSession?: (session: ToolSession) => { definition?: Partial<ToolDefinition> } | undefined;
   /**
    * A host-side hint that the harness may hide this tool behind tool search.
    *

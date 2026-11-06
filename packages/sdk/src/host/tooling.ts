@@ -25,7 +25,7 @@ import type { Bag } from '../types/common.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { Owner } from '../types/usage.js';
 import type { ClientPlugins, SyncedPlugin } from '../types/clientplugins.js';
-import type { HostTool, SessionlessToolCall, ToolCall, ToolCaller, TitleStrategy } from '../types/host.js';
+import type { HostTool, SessionlessToolCall, ToolCall, ToolCaller, TitleStrategy, ToolSession } from '../types/host.js';
 import type { Agent, BoundTool, McpServer } from '../types/agent.js';
 import type { Session, TurnOptions } from '../types/session.js';
 import type { ChatSummary, ToolDefinition } from '@microsoft/agent-host-protocol';
@@ -575,17 +575,23 @@ export function createTooling(ctx: HostContext): Tooling {
       onProblem: (message) => log(message),
     });
   ctx.contributing = permitted([...ctx.contributed, ...ctx.actionTools]);
+  /** What one session brings to a tool asking about it. */
+  const toolSession = (uri: string): ToolSession => ({
+    titleStrategy: strategyOf(uri),
+    config: kept.config(idOf(uri)),
+    bindings: sessionBindings(uri),
+  });
   /**
-   * One tool's definition for a session, after the strategy's shaping, or
-   * nothing where the strategy withholds the tool.
+   * One tool's definition for a session, shaped for it, or nothing where the
+   * session does not support the tool: VS Code's host offers a tool to a
+   * session its `isEnabledForSession` allows, and tailors it with
+   * `getDefinitionForSession`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L213-L216
    */
   const shapedDefinition = (one: HostTool, uri: string): ToolDefinition | undefined => {
-    const asked = one.forSession?.({
-      titleStrategy: strategyOf(uri),
-      config: kept.config(idOf(uri)),
-      bindings: sessionBindings(uri),
-    });
-    if (asked?.offered === false) return undefined;
+    const session = toolSession(uri);
+    if (one.isEnabledForSession?.(session) === false) return undefined;
+    const asked = one.forSession?.(session);
     return asked?.definition === undefined ? one.definition : { ...one.definition, ...asked.definition };
   };
   /**
@@ -2214,8 +2220,9 @@ export function createTooling(ctx: HostContext): Tooling {
       if (one.grant !== undefined && !callerMay(caller, one.grant)) return [];
       // No session means no strategy of its own: the deferred one this host
       // gives every session is the one a person is offered.
-      const asked = one.forSession?.({ titleStrategy: strategyOf('') });
-      if (asked?.offered === false) return [];
+      const session: ToolSession = { titleStrategy: strategyOf('') };
+      if (one.isEnabledForSession?.(session) === false) return [];
+      const asked = one.forSession?.(session);
       const definition = asked?.definition === undefined ? one.definition : { ...one.definition, ...asked.definition };
       const person = callerPerson(caller);
       return [{
@@ -2464,11 +2471,7 @@ export function createTooling(ctx: HostContext): Tooling {
     return [
       ...ctx.contributing.flatMap((one) => {
         if (one.optIn === true && !named.includes(one.definition.name)) return [];
-        if (one.forSession?.({
-          titleStrategy: strategyOf(uri),
-          config: kept.config(idOf(uri)),
-          bindings: sessionBindings(uri),
-        })?.offered === false) return [];
+        if (one.isEnabledForSession?.(toolSession(uri)) === false) return [];
         return one.instruction === undefined ? [] : [one.instruction];
       }),
       ...rulesTold(uri),

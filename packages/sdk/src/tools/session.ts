@@ -628,12 +628,11 @@ export const sessionTools = (): HostTool[] => [
      * strategy offers it without `automatic`, since the host is the one naming
      * fresh chats.
      */
+    isEnabledForSession: ({ titleStrategy }) => titleStrategy !== 'utility',
     forSession: ({ titleStrategy }) => {
-      if (titleStrategy === 'utility') return { offered: false };
       if (titleStrategy !== 'deferred') return undefined;
       const { automatic: _automatic, ...properties } = RENAME_CHAT_PROPERTIES;
       return {
-        offered: true,
         definition: {
           description: DEFERRED_RENAME_CHAT_DESCRIPTION,
           inputSchema: { type: 'object', properties, required: ['title'] },

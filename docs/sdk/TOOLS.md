@@ -115,11 +115,13 @@ Both are daemon keys and apply while the daemon runs: a root config push to eith
 
 ## The wording a session is given
 
-Three things shape a tool per session, and none of them changes whether a tool that does not ask to be withheld is offered.
+A tool says whether a session supports it, and three things shape it per session.
+
+`isEnabledForSession` is the first, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L95) asks each tool: a tool that answers `false` for a session is neither offered to it nor bound for it, and one that says nothing is offered to every session. It is asked beside the host's own switches, `advancedPermission`, `optIn` and the session tools' keys. `rename_chat` answers `false` under the `utility` title strategy, which names chats itself, and a connector's action tool answers `false` for a session that binds no connector of its adapter.
 
 Every tool may carry an `instruction`, which a backend that can add to its system prompt adds while the tool is offered. A description says what a tool does; an instruction says when a tool nothing asks for is worth calling. The artifact tools carry the reference host's.
 
-`forSession` is the shape a session's title strategy asks for. Every session runs under `deferred`: this host names a chat after its first message, and `rename_chat` is offered without its `automatic` property, because the case that property covers is exactly the one this host handles. The type carries two more shapes a tool answers for, `activeAgent`, the agent naming its own chats, and `utility`, under which a tool is withheld from the list entirely.
+`forSession` is the wording a session asks for, merged over the tool's own definition, as VS Code's `getDefinitionForSession` tailors a tool to a session. Every session runs under the `deferred` title strategy: this host names a chat after its first message, and `rename_chat` is offered without its `automatic` property, because the case that property covers is exactly the one this host handles. The type carries two more strategies a tool answers for, `activeAgent`, the agent naming its own chats, and `utility`.
 
 `deferLoading` is a host-side hint and never on the wire: it says the harness may hide this tool behind tool search. The artifact tools set it the way the reference does - `add_artifact_or_reference`, which the instruction names, is never deferred, and removing and listing one are, because the model reaches them through the discovery that instruction points at. A tool that says nothing leaves the harness's own default in force.
 

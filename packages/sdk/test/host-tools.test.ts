@@ -3484,6 +3484,34 @@ describe('what a session brings to a tool', () => {
     });
   });
 
+  /*
+   * A tool a session does not support is neither offered to it nor bound for
+   * it, as VS Code's host asks each tool's isEnabledForSession beside its own
+   * switches.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L213-L216
+   */
+  it('offers a tool only to the sessions it says it supports', async () => {
+    const tool: HostTool = {
+      definition: { name: 'only_bound', description: 'only', inputSchema: { type: 'object', properties: {} } },
+      isEnabledForSession: ({ bindings }) => bindings?.work !== undefined,
+      run: () => 'ran',
+    };
+    const host = createHost({ path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), tools: [tool] });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const offered = async (uri: string, config: Record<string, unknown>): Promise<string[]> => {
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', config } });
+      await settle();
+      const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { serverTools?: { name: string }[] } };
+      }).snapshot.state;
+      return (state.serverTools ?? []).map((one) => one.name);
+    };
+    expect(await offered('ahp-session:/bound', { connectors: { work: 'connectors://webhook/a' } })).toContain('only_bound');
+    expect(await offered('ahp-session:/unbound', {})).not.toContain('only_bound');
+    await host.close();
+  });
+
   it('reads a plugin again, so a new map reaches the next tool list', async () => {
     let map: Record<string, string> = { work: 'connectors://webhook/a' };
     const { host, seen, tool } = await askedAt({ bindings: [{ by: 'alpha', read: () => map }] });

@@ -262,6 +262,11 @@ describe('the set itself', () => {
     expect(schema('rename_chat').required).toEqual(['title']);
   });
 
+  /*
+   * As VS Code's session tools answer it: whether a session supports the tool,
+   * and the wording it is offered in there.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L95
+   */
   it('shapes rename_chat by the title strategy the session runs under', () => {
     const rename = sessionTools().find((one) => one.definition.name === 'rename_chat');
     expect(rename?.forSession).toBeDefined();
@@ -269,11 +274,12 @@ describe('the set itself', () => {
     // the tool through the discovery the artifact instruction points at.
     expect(rename?.deferLoading).toBe(true);
     // A utility strategy names chats itself, so the tool is not offered.
-    expect(rename?.forSession?.({ titleStrategy: 'utility' })).toEqual({ offered: false });
+    expect(rename?.isEnabledForSession?.({ titleStrategy: 'utility' })).toBe(false);
+    expect(rename?.isEnabledForSession?.({ titleStrategy: 'deferred' })).toBe(true);
     // An active agent names its own chats with the tool as it stands.
+    expect(rename?.isEnabledForSession?.({ titleStrategy: 'activeAgent' })).toBe(true);
     expect(rename?.forSession?.({ titleStrategy: 'activeAgent' })).toBeUndefined();
     const deferred = rename?.forSession?.({ titleStrategy: 'deferred' });
-    expect(deferred?.offered).toBe(true);
     const definition = deferred?.definition as {
       description?: string; inputSchema?: { properties?: Record<string, unknown>; required?: string[] };
     };
