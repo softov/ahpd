@@ -352,9 +352,12 @@ export function echo(options: EchoOptions): Agent {
       confirm: () => false,
       answer: () => false,
 
-      // Nothing here has a runtime switch and there are no MCP servers, so
-      // all three refuse. False is a real answer: a control that reported
-      // success and changed nothing would be worse than one that says no.
+      // Nothing here has a runtime switch and there are no MCP servers, so all
+      // three answer false, and the host says no in the session's own state as
+      // VS Code's does: a toggle stands as the client's decision, a listed
+      // server it could not start is in error, and the rest are logged
+      // (src/vs/platform/agentHost/node/agentSideEffects.ts L416-L428,
+      // L2026-L2065 at 6b68d3fe).
       setCustomizationEnabled: async () => false,
       startMcpServer: async () => false,
       stopMcpServer: async () => false,
