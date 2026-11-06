@@ -747,10 +747,10 @@ export function createQuery(ctx: SessionContext): Query {
     if (name === ctx.appliedAgent) return undefined;
     const was = ctx.query;
     if (was !== undefined) {
+      // A CLI that will not close fails the send in the error's own words, as
+      // VS Code shows a failed send.
       try { was.close(); }
-      catch (error: unknown) {
-        return `The harness would not stop for agent ${name ?? 'default'}: ${error instanceof Error ? error.message : String(error)}`;
-      }
+      catch (error: unknown) { return reason(error); }
     }
     ctx.appliedAgent = name;
     if (was === undefined) return undefined;
@@ -1220,10 +1220,10 @@ export function createQuery(ctx: SessionContext): Query {
     const was = ctx.query;
     if (was !== undefined && startedFrom(now, login) === ctx.appliedValues) return undefined;
     if (was !== undefined) {
+      // A CLI that will not close fails the send in the error's own words, as
+      // VS Code shows a failed send.
       try { was.close(); }
-      catch (error: unknown) {
-        return `The harness would not stop for the record, its login or the shell init script: ${error instanceof Error ? error.message : String(error)}`;
-      }
+      catch (error: unknown) { return reason(error); }
     }
     ctx.values = now;
     ctx.login = login;

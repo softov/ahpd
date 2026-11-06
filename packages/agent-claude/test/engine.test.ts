@@ -32,9 +32,12 @@ const sdk = vi.hoisted(() => {
   return {
     options: [] as Record<string, unknown>[],
     streams,
+    /** What a CLI's close throws, while it is set. */
+    stuck: undefined as string | undefined,
     reset() {
       streams.length = 0;
       sdk.options = [];
+      sdk.stuck = undefined;
     },
     open(): Stream {
       const one: Stream = { held: [], wake: undefined, closed: false };
@@ -87,7 +90,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
       reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [],
       streamInput: async () => {},
-      close: () => sdk.close(stream),
+      close: () => {
+        if (sdk.stuck !== undefined) throw new Error(sdk.stuck);
+        sdk.close(stream);
+      },
     };
   },
 }));
@@ -218,4 +224,30 @@ it('applies an edit at the next turn, restarting the CLI on the conversation it 
   // conversation the first one was answering.
   expect(sdk.options.map((one) => one['thinking'])).toEqual([{ type: 'disabled' }, { type: 'adaptive' }]);
   expect(sdk.options[1]?.['resume']).toBe('s1');
+});
+
+/*
+ * A CLI that will not close fails the send that would replace it in the
+ * error's own words, as VS Code shows a failed send.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2565
+ */
+it('fails the send in the error\'s own words when the CLI an edit would replace will not close', async () => {
+  const engine = await engineOf();
+  let held: Bag = { thinking: 'disabled' };
+  sdk.reset();
+  const said: Bag[] = [];
+  const agent = engine.open(viewOf('claude-stuck', () => held));
+  const session = startedNow(agent.create({ ...startOf('stuck'), emit: (_channel, action) => { said.push(action as Bag); } }));
+  await settle();
+  session.sendMessage('t1', 'first');
+  await settle();
+  sdk.push(ended('s1'));
+  await settle();
+
+  held = { thinking: 'adaptive' };
+  sdk.stuck = 'the CLI would not let go';
+  session.sendMessage('t2', 'second');
+  await settle();
+  const failed = said.find((one) => one.type === 'chat/error' && one.turnId === 't2');
+  expect(((failed?.part as Bag | undefined)?.error as Bag | undefined)?.message).toBe('the CLI would not let go');
 });
