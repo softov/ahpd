@@ -45,16 +45,23 @@ const canvasHost = () => {
   };
 };
 
-/** Open a session and subscribe a client to its chat, answering the chat's URI. */
-const canvasSession = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<string> => {
+/** Open a session and subscribe a client to its chat, answering the chat's URI and where its snapshot was taken. */
+const canvasSession = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<{ chat: string; fromSeq: number }> => {
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
   const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } }) as {
     snapshot: { state: { defaultChat: string } };
   };
   const chat = opened.snapshot.state.defaultChat;
-  await client.handle({ method: 'subscribe', params: { channel: chat } });
-  return chat;
+  const read = await client.handle({ method: 'subscribe', params: { channel: chat } }) as { snapshot: { fromSeq: number } };
+  return { chat, fromSeq: read.snapshot.fromSeq };
 };
+
+/**
+ * Where a client's cursor stands, as its `reconnect` says it: the highest
+ * `serverSeq` among the actions it was sent and the snapshots it was given.
+ */
+const cursorOf = (p: ReturnType<typeof peer>, ...fromSeqs: number[]): number =>
+  Math.max(0, ...actions(p).map((one) => one.serverSeq), ...fromSeqs);
 
 describe('the handshake', () => {
   it('answers the highest version offered that it speaks, in whatever order they came', async () => {
@@ -91,7 +98,7 @@ describe('the handshake', () => {
     const one = host.accept(latest);
     await one.handle(hello(['1.0.0'], { initialSubscriptions: ['ahp-root://'] }));
     // One client makes the session and reads where its chat is.
-    const chat = await canvasSession(older);
+    const { chat } = await canvasSession(older);
     for (const client of [ten, one]) await client.handle({ method: 'subscribe', params: { channel: chat } });
     await settle();
     canvas(chat, 'ahp-canvas:/x/y');
@@ -108,9 +115,9 @@ describe('the handshake', () => {
     const first = peer();
     const a = host.accept(first);
     await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
-    const chat = await canvasSession(a);
+    const { chat, fromSeq } = await canvasSession(a);
     await settle();
-    const upTo = actions(first, chat).at(-1)?.serverSeq ?? 0;
+    const upTo = cursorOf(first, fromSeq);
 
     // The socket goes, and the canvas opens while it is away.
     a.close();
@@ -390,10 +397,9 @@ describe('a client that dropped, coming back', () => {
     const a = host.accept(first);
     await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
-    await a.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/live') } });
+    const read = await a.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/live') } }) as { snapshot: { fromSeq: number } };
 
-    const seen = actions(first, chatUriFor('ahp-session:/live'));
-    const upTo = seen.at(-1)?.serverSeq ?? 0;
+    const upTo = cursorOf(first, read.snapshot.fromSeq);
 
     // The socket goes. The host forgets this client's subscriptions with it,
     // which is why the client has to say what they were.
@@ -454,9 +460,9 @@ describe('a client that dropped, coming back', () => {
     const first = peer();
     const a = host.accept(first);
     await a.handle(hello(['0.9.0']));
-    await a.handle({ method: 'subscribe', params: { channel: chat } });
+    const read = await a.handle({ method: 'subscribe', params: { channel: chat } }) as { snapshot: { fromSeq: number } };
     await settle();
-    const upTo = actions(first).at(-1)?.serverSeq ?? 0;
+    const upTo = cursorOf(first, read.snapshot.fromSeq);
     a.close();
 
     const p = peer();
@@ -478,14 +484,16 @@ describe('a client that dropped, coming back', () => {
 
   it('names the channels it cannot resume rather than failing the whole thing', async () => {
     const host = serving('/home/softov');
-    const client = host.accept(peer());
-    await client.handle(hello(['0.9.0']));
+    const p = peer();
+    const client = host.accept(p);
+    const said = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as { serverSeq: number };
+    await settle();
     const result = await client.handle({
       method: 'reconnect',
       params: {
         channel: 'ahp-root://',
         clientId: 'probe',
-        lastSeenServerSeq: 0,
+        lastSeenServerSeq: cursorOf(p, said.serverSeq),
         subscriptions: ['ahp-root://', 'ahp-session:/vanished'],
       },
     }) as { type: string; missing: string[] };
@@ -638,10 +646,11 @@ describe('a client that dropped, coming back', () => {
       return result.type;
     };
 
-    // The last thousand are held, so a client a thousand behind them is
-    // replayed to, and one envelope further back is a hole.
-    expect(await answer(upTo - 1000)).toBe('replay');
-    expect(await answer(upTo - 1001)).toBe('snapshot');
+    // The last thousand are held, so a client that saw the oldest of them is
+    // replayed to, and one that did not is answered with state, as VS Code's
+    // host decides.
+    expect(await answer(upTo - 999)).toBe('replay');
+    expect(await answer(upTo - 1000)).toBe('snapshot');
   });
 });
 
@@ -957,7 +966,8 @@ describe('a client this host has not met', () => {
       // A third client arrives 400 s after the first went and 200 s after the second.
       await host.accept(peer()).handle({ method: 'initialize', params: { clientId: 'third', protocolVersions: ['0.9.0'] } });
       await expect(resume('early')).rejects.toMatchObject({ code: -32008, message: 'Reconnect client not found: early' });
-      await expect(resume('late')).resolves.toMatchObject({ type: 'replay' });
+      // Resumed: answered, with state since it saw none of what was held.
+      await expect(resume('late')).resolves.toMatchObject({ type: 'snapshot' });
     }
     finally {
       vi.useRealTimers();
@@ -976,18 +986,38 @@ describe('a client this host has not met', () => {
     expect(result.type).toBe('replay');
   });
 
-  it('sends state, not a difference, to one that claims to be ahead', async () => {
+  it('replays nothing to one that claims to be ahead, as VS Code\'s host', async () => {
     const host = serving('/home/softov');
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     const back = host.accept(peer());
     const result = await back.handle({
       method: 'reconnect',
-      // Counted against a previous run of this daemon. Whatever it saw, it was
-      // not this stream, so there is no difference to send it.
+      // Past every action this host has buffered, so nothing is after it.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1385-L1391
       params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 419, subscriptions: ['ahp-root://'] },
-    }) as { type: string; snapshots: { resource: string }[] };
+    }) as { type: string; actions: unknown[] };
+    expect(result).toMatchObject({ type: 'replay', actions: [] });
+  });
+
+  it('answers with state a client that has not seen the oldest action it holds, as VS Code\'s host', async () => {
+    const host = serving('/home/softov');
+    const first = peer();
+    const client = host.accept(first);
+    const said = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as { serverSeq: number };
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } });
+    await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-session:/live', action: { type: 'session/isReadChanged', isRead: true } } });
+    await settle();
+    // The host's first actions came after its handshake: the client's cursor
+    // is one short of the oldest held, every action after it is held, and
+    // still the answer is state.
+    expect(said.serverSeq).toBe(0);
+    expect(actions(first).length).toBeGreaterThan(0);
+    const result = await host.accept(peer()).handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: said.serverSeq, subscriptions: ['ahp-root://'] },
+    }) as { type: string };
     expect(result.type).toBe('snapshot');
-    expect(result.snapshots.map((one) => one.resource)).toEqual(['ahp-root://']);
   });
 });

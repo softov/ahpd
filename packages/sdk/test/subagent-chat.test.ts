@@ -216,6 +216,16 @@ const asking = (client: { handle(r: { method: string; params: unknown }): Promis
   async (method: string, params: Record<string, unknown> = {}): Promise<unknown> => await client.handle({ method, params });
 
 /**
+ * Where a client's cursor stands now, past an action it saw: a draft set on
+ * the lead chat, so the oldest action this host holds is behind the cursor.
+ */
+const cursorOf = async (ask: ReturnType<typeof asking>, lead: string): Promise<number> => {
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/draftChanged', draft: { text: '' } } });
+  await settle();
+  return ((await ask('subscribe', { channel: 'ahp-root://' })) as { snapshot: { fromSeq: number } }).snapshot.fromSeq;
+};
+
+/**
  * A host running the fake, with one turn sent and its worker opened.
  *
  * The worker's channel is subscribed once its row is on the wire, so its own
@@ -1015,14 +1025,15 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
 it('says nothing of its own when a worker chat\'s turn starts, and the chat reads unread', async () => {
   const { host, ask, uri, lead } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const before = await cursorOf(ask, lead);
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
   expect(await readOn(ask, worker)).toBe(false);
   // What the worker's channel has said since it opened, as a client coming
-  // back to it is replayed.
+  // back to it from before the turn is replayed.
   const answer = await host.accept(peer()).handle({
     method: 'reconnect',
-    params: { channel: 'ahp-root://', clientId: 'busy', lastSeenServerSeq: 0, subscriptions: [worker] },
+    params: { channel: 'ahp-root://', clientId: 'busy', lastSeenServerSeq: before, subscriptions: [worker] },
   }) as { type: string; actions?: { channel: string; action: { type: string } }[] };
   expect(answer.type).toBe('replay');
   const said = (answer.actions ?? []).filter((one) => one.channel === worker).map((one) => one.action.type);
@@ -1035,13 +1046,14 @@ it('says nothing of its own when a worker chat\'s turn starts, and the chat read
 it('says a worker chat unread when its turn ends, though nobody read it', async () => {
   const { host, ask, uri, lead } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const before = await cursorOf(ask, lead);
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
   finishWorker();
   await settle();
   const answer = await host.accept(peer()).handle({
     method: 'reconnect',
-    params: { channel: 'ahp-root://', clientId: 'busy', lastSeenServerSeq: 0, subscriptions: [worker] },
+    params: { channel: 'ahp-root://', clientId: 'busy', lastSeenServerSeq: before, subscriptions: [worker] },
   }) as { type: string; actions?: { channel: string; action: { type: string; isRead?: boolean } }[] };
   const said = (answer.actions ?? []).filter((one) => one.channel === worker).map((one) => one.action);
   const ended = said.findIndex((one) => one.type === 'chat/turnComplete' || one.type === 'chat/turnCancelled' || one.type === 'chat/error');
@@ -1058,13 +1070,14 @@ it('ends a failed worker\'s turn with errorType subagentFailed and the failure\'
   for (const [why, message] of [['the model refused', 'the model refused'], [undefined, 'Subagent failed.']] as const) {
     const { host, ask, uri, lead } = await busyHost();
     const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+    const before = await cursorOf(ask, lead);
     await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
     await settle();
     failWorker(why);
     await settle();
     const answer = await host.accept(peer()).handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'busy', lastSeenServerSeq: 0, subscriptions: [worker] },
+      params: { channel: 'ahp-root://', clientId: 'busy', lastSeenServerSeq: before, subscriptions: [worker] },
     }) as { actions?: { channel: string; action: { type: string; part?: unknown } }[] };
     const errored = (answer.actions ?? []).find((one) => one.channel === worker && one.action.type === 'chat/error');
     expect(errored?.action.part).toEqual({ kind: 'error', error: { errorType: 'subagentFailed', message } });

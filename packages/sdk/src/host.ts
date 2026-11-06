@@ -424,6 +424,17 @@ export function createHost(options: HostOptions): Host {
   const known = new Set<string>();
   /** When each client with no connection open went, by client id. */
   const lastSeen = new Map<string, number>();
+  /** The state channels each client was subscribed to with no baseline from this process, by client id. */
+  const baselineDebt = new Map<string, Set<string>>();
+  /*
+   * A client's debt on one channel settled, as VS Code's host clears it: by a
+   * baseline given, a subscribe, an unsubscribe, or a channel reported missing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1256-L1262
+   */
+  const clearBaselineDebt = (clientId: string, channel: string): void => {
+    const owed = baselineDebt.get(clientId);
+    if (owed?.delete(channel) && owed.size === 0) baselineDebt.delete(clientId);
+  };
   /**
    * The person who first signed in under each client id, by client id: the
    * only one a `reconnect` under that id is answered for.
@@ -1427,7 +1438,7 @@ export function createHost(options: HostOptions): Host {
    * and the helpers declared above it.
    */
   const ctx = {
-    options, dir, known, lastSeen, waitsOver, locales, clientNames, clientVersions, localeOf: (clientId: string) => locales.get(clientId),
+    options, dir, known, lastSeen, baselineDebt, clearBaselineDebt, waitsOver, locales, clientNames, clientVersions, localeOf: (clientId: string) => locales.get(clientId),
     catalogsOf: (key: string, provider: string): readonly (Catalogs | undefined)[] => [
       options.sessionConfig !== undefined && Object.hasOwn(options.sessionConfig, key)
         ? options.catalogs?.sessionConfig?.[key]
@@ -2173,6 +2184,9 @@ export function createHost(options: HostOptions): Host {
           connection.watching.delete(channel);
           // A subscribe of it still being answered loses its place with it.
           conn.subscriptions.delete(channel);
+          // A channel it has let go of owes it nothing; a later subscribe
+          // is answered with its own baseline.
+          ctx.clearBaselineDebt(connection.clientId, meantBy(channel));
           // A changeset nobody watches any more is a directory with no reason
           // for a git watch, so the last unsubscribe is what closes it.
           const at = changesetAt(channel);

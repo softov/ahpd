@@ -3,7 +3,7 @@ import { RUN_HISTORY_LIMIT } from '../automations/automations.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../resources/fileuri.js';
 import { bag, str } from '../utils/values.js';
-import { spaceOf } from './channels.js';
+import { baseOf, spaceOf } from './channels.js';
 import { BANG } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -136,6 +136,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       if (at >= cutoff) continue;
       ctx.lastSeen.delete(id);
       known.delete(id);
+      ctx.baselineDebt.delete(id);
       clientNames.delete(id);
       clientVersions.delete(id);
       locales.delete(id);
@@ -400,7 +401,26 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           const held = conn.admit('subscribe', { channel });
           if (held !== undefined) await held;
           if (!visible(connection, meantBy(channel))) continue;
-          const snapshot = await snapshotOf(meantBy(channel), connection);
+          /*
+           * A session's, a chat's or a terminal's state this process does not
+           * hold is subscribed with no snapshot, and owes this client a
+           * baseline, which a reconnect naming it is answered with; a held
+           * one, the root, and a session's annotations and changesets are
+           * answered as `subscribe` answers them, as VS Code's host answers
+           * an initial subscription.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1204-L1241
+           */
+          const asked = meantBy(channel);
+          const space = spaceOf(asked);
+          if ((space === 'session' || space === 'chat' || space === 'terminal') && baseOf(asked) === asked
+            && ctx.stateOf(asked) === undefined && !sessions.has(asked) && !ctx.byChat.has(asked) && !ctx.terminals.has(asked)) {
+            if (asked !== channel) connection.aliases.set(asked, channel);
+            connection.watching.add(channel);
+            const owed = ctx.baselineDebt.get(connection.clientId) ?? new Set<string>();
+            ctx.baselineDebt.set(connection.clientId, owed.add(asked));
+            continue;
+          }
+          const snapshot = await snapshotOf(asked, connection);
           // A stateless channel is watched, with no snapshot in the answer.
           if (snapshot === undefined) {
             connection.watching.add(channel);
@@ -409,6 +429,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           const meant = answeredAs(connection, channel, snapshot);
           snapshots.push(snapshot);
           connection.watching.add(channel);
+          ctx.clearBaselineDebt(connection.clientId, meant);
           openedBy(meant, connection.clientId);
           // Recent in the residency, as a subscribe makes it.
           // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634
@@ -647,6 +668,15 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * same word twice.
        */
       flushDeltas();
+      /*
+       * Whether a channel it comes back for still owes it a baseline, read
+       * before any is restored: the cursor proves the client saw every action,
+       * and nothing about whether such a channel ever had state from this
+       * process to apply them to, as VS Code's host decides it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1385-L1391
+       */
+      const owed = ctx.baselineDebt.get(clientId);
+      const owes = owed !== undefined && wanted.some((channel) => owed.has(meantBy(channel)));
       const missing: string[] = [];
       /** Each channel read back, by the name this host dispatches under, with the name the client used. */
       const resumed = new Map<string, string>();
@@ -668,8 +698,9 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         catch {
           // A session whose agent has gone, or one this client may no
           // longer see. Named, so the client drops it rather than waiting
-          // on a channel that will never speak again.
+          // on a channel that will never speak again, and owed nothing.
           missing.push(channel);
+          ctx.clearBaselineDebt(clientId, meantBy(channel));
         }
       }
       /*
@@ -696,18 +727,19 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         if (!connection.watching.has(channel)) leaves(channel, clientId);
       }
 
-      const oldest = replayable[0]?.serverSeq;
-      // Nothing buffered means nothing has happened since, which is a
-      // replay of nothing rather than a reason to re-snapshot. A client
-      // ahead of this host is the other way round and cannot be replayed to
-      // at all - whatever it counted, it was not this stream - so it is
-      // sent state rather than a difference. A channel whose state this host
-      // let go of and opened again while the client was away is replayed
-      // onto what the client holds, as the reference host replays onto a
-      // session it evicted and restored.
-      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L692-L704
-      const replayable_ = since <= ctx.serverSeq && (oldest === undefined || since >= oldest - 1);
-      if (replayable_) {
+      /*
+       * Replayed when it has seen the oldest action still buffered, or every
+       * action when none is, and no channel it named owes it a baseline, as
+       * VS Code's host decides; a client ahead of this host is replayed the
+       * nothing after its cursor. A channel whose state this host let go of
+       * and opened again while the client was away is replayed onto what the
+       * client holds, as the reference host replays onto a session it
+       * evicted and restored.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1385-L1391
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L692-L704
+       */
+      const oldest = replayable[0]?.serverSeq ?? ctx.serverSeq;
+      if (since >= oldest && !owes) {
         log(`${clientId} came back at ${since}, replaying`);
         return {
           type: 'replay',
@@ -720,12 +752,12 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           missing,
         };
       }
-      log(`${clientId} came back at ${since}, too far behind ${oldest} - snapshotting`);
+      log(`${clientId} came back at ${since}, ${owes ? 'owed a baseline' : `behind ${oldest}`} - snapshotting`);
       const snapshots = [];
       for (const channel of resumed.values()) {
         const snapshot = await snapshotOf(meantBy(channel), connection);
         if (snapshot === undefined) continue;
-        answeredAs(connection, channel, snapshot);
+        ctx.clearBaselineDebt(clientId, answeredAs(connection, channel, snapshot));
         snapshots.push(snapshot);
       }
       return { type: 'snapshot', snapshots };

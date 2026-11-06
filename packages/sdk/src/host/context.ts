@@ -126,6 +126,16 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   known: Set<string>;
   /** When each client with no connection open went, by client id: what its record's retention counts from. */
   lastSeen: Map<string, number>;
+  /**
+   * The state channels each client holds a subscription to and was never
+   * given a baseline for by this process, by client id, as VS Code's host
+   * owes them: a channel subscribed at `initialize` with no state held here
+   * owes one, and a `reconnect` that names one is answered with snapshots.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L692-L704
+   */
+  baselineDebt: Map<string, Set<string>>;
+  /** A baseline given to a client for a channel, or a channel it let go of: its debt there is settled. */
+  clearBaselineDebt(clientId: string, channel: string): void;
   /** Every wait one client's closed connections began is over, because it is back. */
   waitsOver(clientId: string): void;
   /**

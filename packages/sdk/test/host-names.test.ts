@@ -631,13 +631,15 @@ describe('a session asked for by the name its creator used', () => {
   });
 
   it('answers it on a reconnect, in the creator\'s spelling', async () => {
-    const { host } = await created();
+    const { host, client } = await created();
+    await client.handle({ method: 'dispatchAction', params: { channel: given, action: { type: 'session/isReadChanged', isRead: true } } });
+    await settle();
     const again = host.accept(peer());
-    // Ahead of anything this host issued, so it is answered with state
+    // Behind the oldest action this host holds, so it is answered with state
     // rather than a replay.
     const result = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 1_000_000, subscriptions: [given] },
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given] },
     }) as { type: string; snapshots: { resource: string; state: { defaultChat: string } }[] };
     expect(result.type).toBe('snapshot');
     expect(result.snapshots.map((one) => one.resource)).toEqual([given]);
@@ -689,12 +691,12 @@ describe('a session asked for by the name its creator used', () => {
 
   it('replays what it missed on a reconnect in the creator\'s spelling', async () => {
     const { host, client } = await created();
-    await client.handle({ method: 'subscribe', params: { channel: given } });
+    const read = await client.handle({ method: 'subscribe', params: { channel: given } }) as { snapshot: { fromSeq: number } };
     await client.handle({ method: 'createChat', params: { channel: given, chat: 'ahp-chat:/second' } });
     const again = host.accept(peer());
     const result = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given] },
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [given] },
     }) as { type: string; actions: { channel: string }[] };
     expect(result.type).toBe('replay');
     expect(result.actions.length).toBeGreaterThan(0);
@@ -704,7 +706,7 @@ describe('a session asked for by the name its creator used', () => {
   it('replays a chat and a pending approval on a reconnect in the creator\'s spelling, and leaves text alone', async () => {
     const { host, client } = await created();
     await client.handle({ method: 'subscribe', params: { channel: given } });
-    await client.handle({ method: 'subscribe', params: { channel: chatOfSession(given) } });
+    const read = await client.handle({ method: 'subscribe', params: { channel: chatOfSession(given) } }) as { snapshot: { fromSeq: number } };
     // Text that names the session is somebody's words, not a URI to respell.
     const text = `${held}/changeset/session is what changed`;
     client.handle({
@@ -718,7 +720,7 @@ describe('a session asked for by the name its creator used', () => {
     const again = host.accept(peer());
     const result = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given, chatOfSession(given)] },
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [given, chatOfSession(given)] },
     }) as { type: string; actions: { channel: string; action: Record<string, any> }[] };
     expect(result.type).toBe('replay');
     // The chat's actions under the creator's name for the chat.
@@ -814,6 +816,7 @@ describe('an older VS Code window', () => {
     const { host } = await both();
     const window = host.accept(peer());
     const result = await window.handle(hello(['1.0.0'], { clientId: 'window', ...older, initialSubscriptions: ['ahp-root://', AHP, NAMED] })) as {
+      serverSeq: number;
       snapshots: { resource: string }[];
     };
     expect(result.snapshots.map((one) => one.resource)).toEqual(['ahp-root://', NAMED]);
@@ -821,7 +824,7 @@ describe('an older VS Code window', () => {
     const again = host.accept(peer());
     const back = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: 0, subscriptions: [AHP, NAMED] },
+      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: result.serverSeq, subscriptions: [AHP, NAMED] },
     }) as { type: string; missing: string[] };
     expect(back.type).toBe('replay');
     expect(back.missing).toEqual([AHP]);
@@ -829,7 +832,7 @@ describe('an older VS Code window', () => {
     const declared = host.accept(peer());
     const whole = await declared.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: 0, subscriptions: [AHP, NAMED], _meta: current._meta },
+      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: result.serverSeq, subscriptions: [AHP, NAMED], _meta: current._meta },
     }) as { missing: string[] };
     expect(whole.missing).toEqual([]);
   });

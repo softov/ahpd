@@ -198,18 +198,21 @@ it('resumes a watch on reconnect by the channel the client holds', async () => {
         return { close: () => { closed += 1; } };
       },
     };
-    const { host, client } = await connected(store);
+    const { host, client, peer: was } = await connected(store);
     const made = await client.handle({
       method: 'createResourceWatch', params: { channel: 'ahp-root://', uri: `file://${root}` },
     }) as { channel: string };
     await client.handle({ method: 'subscribe', params: { channel: made.channel } });
+    // Where the client's cursor stands as it goes.
+    const read = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as { snapshot: { fromSeq: number } };
+    const cursor = Math.max(read.snapshot.fromSeq, ...was.notes.filter((n) => n.method === 'action').map((n) => (n.params as { serverSeq: number }).serverSeq));
     client.close();
     await vi.advanceTimersByTimeAsync(10_000);
 
     const p = peer();
     const back = host.accept(p);
     const answer = await back.handle({
-      method: 'reconnect', params: { clientId: 'w', subscriptions: [made.channel], lastSeenServerSeq: 0 },
+      method: 'reconnect', params: { clientId: 'w', subscriptions: [made.channel], lastSeenServerSeq: cursor },
     });
     expect(answer).toMatchObject({ type: 'replay', missing: [] });
     await vi.advanceTimersByTimeAsync(30_000);

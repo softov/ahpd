@@ -234,8 +234,8 @@ describe('the catalogue under its old spelling', () => {
 
   it('is resumed under it on reconnect, and replayed', async () => {
     const { host, client } = await connected();
-    await client.handle({ method: 'subscribe', params: { channel: OLD } });
-    // Dropped and back, having seen nothing since it connected. The one
+    const read = await client.handle({ method: 'subscribe', params: { channel: OLD } }) as { snapshot: { fromSeq: number } };
+    // Dropped and back, having seen nothing since it subscribed. The one
     // action in the gap is the catalogue's, dispatched under the name this
     // host holds it by - which is what the replay is keyed on.
     await write(client, DEFINITION);
@@ -244,7 +244,7 @@ describe('the catalogue under its old spelling', () => {
     const again = host.accept(back);
     const answer = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'a', lastSeenServerSeq: 0, subscriptions: [OLD] },
+      params: { channel: 'ahp-root://', clientId: 'a', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [OLD] },
     }) as { type: string; actions?: { channel: string }[]; missing?: string[] };
     expect(answer.type).toBe('replay');
     expect(answer.missing).toEqual([]);

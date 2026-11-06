@@ -338,19 +338,26 @@ it('replays root/agentsChanged to a root connection with its own required', asyn
     users: directory('good-token', REQUIRED),
     agents: [slowAgent(gate, { models: [], commands: [], customizations: [] })],
   });
+  // An action before the client arrives, so the oldest one held is behind
+  // where its cursor will stand.
+  const earlier = host.accept(peer(), undefined, true);
+  await hello(earlier, 'earlier');
+  await earlier.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config: { autoArchiveMergedSessionsAfterDays: 1 } } } });
   const firstWire = peer();
   const first = host.accept(firstWire);
-  await hello(first, 'first');
+  const said = await hello(first, 'first') as { snapshots: { fromSeq: number }[] };
+  expect(said.snapshots[0]?.fromSeq).toBeGreaterThan(0);
   release();
   await until(() => changedIn(firstWire).length > 0);
 
-  // Back from sequence 0, so the held envelope is replayed rather than a fresh
-  // snapshot taken - and it is rewritten for the connection it reaches.
+  // Back from where its root snapshot was taken, so the held envelope is
+  // replayed rather than a fresh snapshot taken - and it is rewritten for the
+  // connection it reaches.
   const backWire = peer();
   const back = host.accept(backWire, undefined, true);
   const answer = await back.handle({
     method: 'reconnect',
-    params: { clientId: 'first', subscriptions: [ROOT], lastSeenServerSeq: 0 },
+    params: { clientId: 'first', subscriptions: [ROOT], lastSeenServerSeq: said.snapshots[0]?.fromSeq ?? 0 },
   }) as { type: string; actions: { action: { type: string; agents: Agentish[] } }[] };
 
   expect(answer.type).toBe('replay');

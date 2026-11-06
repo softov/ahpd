@@ -196,7 +196,11 @@ it('resumes a client id for a person signed in only when it is theirs, and only 
   const admin = await withRole(made, 'a');
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
   const guest = await withRole(made, 'g');
-  const resume = { clientId: 'a', subscriptions: [ROOT, 'ahp-session:/one'], lastSeenServerSeq: 0 };
+  // From where the client's cursor stands past an action this host holds, so
+  // each answer is a replay that names what it cannot have.
+  await admin.send('ahp-session:/one', { type: 'session/titleChanged', title: 'One' });
+  const read = await admin.client.handle({ method: 'subscribe', params: { channel: ROOT } }) as { snapshot: { fromSeq: number } };
+  const resume = { clientId: 'a', subscriptions: [ROOT, 'ahp-session:/one'], lastSeenServerSeq: read.snapshot.fromSeq };
 
   // Nobody signed in resumes nothing it may not read; somebody else signed in is told the id is not theirs.
   expect(await call(made.accept(peer()), 'reconnect', resume)).toMatchObject({ result: { missing: ['ahp-session:/one'] } });
@@ -294,12 +298,12 @@ it('resumes another person\'s client id with nothing it may not read, and no cla
   await admin.send('ahp-session:/one', { type: 'session/titleChanged', title: 'Private' });
   // The person's own publisher, which goes away.
   const first = made.accept(answering('first'));
-  await hello(first, 'pub'); await signIn(first, 'a');
+  const said = await hello(first, 'pub') as { snapshots: { fromSeq: number }[] }; await signIn(first, 'a');
   first.close();
 
   const stranger = answering('stranger');
   const back = made.accept(stranger);
-  const resumed = await call(back, 'reconnect', { clientId: 'pub', subscriptions: [ROOT, 'ahp-session:/one'], lastSeenServerSeq: 0 }) as { result: { type: string; missing: string[]; actions: Bag[] } };
+  const resumed = await call(back, 'reconnect', { clientId: 'pub', subscriptions: [ROOT, 'ahp-session:/one'], lastSeenServerSeq: said.snapshots[0]?.fromSeq ?? 0 }) as { result: { type: string; missing: string[]; actions: Bag[] } };
   expect(resumed.result).toMatchObject({ type: 'replay', missing: ['ahp-session:/one'] });
   expect(resumed.result.actions.filter((one) => one.channel !== ROOT)).toEqual([]);
   // A read of what it serves waits for somebody who holds the id, and nobody else may sign in on it.

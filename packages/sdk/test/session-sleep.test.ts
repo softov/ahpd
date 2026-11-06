@@ -401,6 +401,48 @@ it('replays to a client back from a drop onto what it holds, its session let go 
   expect(answer).toMatchObject({ type: 'replay', missing: [] });
 });
 
+it('subscribes a client at initialize to a session whose state it does not hold with no snapshot, owing it the baseline its reconnect is answered with', async () => {
+  /*
+   * A state channel with nothing held for it is subscribed at initialize
+   * with no snapshot and owes its client a baseline: the client's cursor says
+   * it saw every action, and nothing about the state it applied them to, so
+   * a reconnect naming the channel is answered with snapshots, and one after
+   * the baseline is given is replayed, as VS Code's host owes it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1204-L1241
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1385-L1391
+   */
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  await one.leave();
+  await open('two');
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  const fresh = host.accept(peer());
+  const said = await fresh.handle({
+    method: 'initialize',
+    params: { clientId: 'fresh', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://', one.channel] },
+  }) as { serverSeq: number; snapshots: { resource: string; fromSeq: number }[] };
+  expect(said.snapshots.map((one_) => one_.resource)).toEqual(['ahp-root://']);
+  fresh.close();
+
+  const back = host.accept(peer());
+  const owed = await back.handle({
+    method: 'reconnect',
+    params: { clientId: 'fresh', lastSeenServerSeq: said.serverSeq, subscriptions: ['ahp-root://', one.channel] },
+  }) as { type: string; snapshots: { resource: string; fromSeq: number }[] };
+  expect(owed.type).toBe('snapshot');
+  expect(owed.snapshots.map((one_) => one_.resource)).toEqual(['ahp-root://', one.channel]);
+  back.close();
+
+  const again = await host.accept(peer()).handle({
+    method: 'reconnect',
+    params: { clientId: 'fresh', lastSeenServerSeq: Math.max(...owed.snapshots.map((one_) => one_.fromSeq)), subscriptions: ['ahp-root://', one.channel] },
+  });
+  expect(again).toMatchObject({ type: 'replay', missing: [] });
+});
+
 /*
  * The replay onto a released session holds: a client that held the chat from
  * before the release, replayed what landed after the chat was read back from

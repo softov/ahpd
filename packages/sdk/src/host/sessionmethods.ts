@@ -498,6 +498,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // other spelling recorded, a session's chats the ones it may see.
       const meant = answeredAs(connection, channel, snapshot);
       connection.watching.add(channel);
+      // Given a baseline, so it owes this client none.
+      ctx.clearBaselineDebt(connection.clientId, meant);
       // A client is now in this session, which is the moment a plugin that
       // reaches whoever is working in one hears about. Said after the
       // snapshot, so a subscription that was refused for the session it named
