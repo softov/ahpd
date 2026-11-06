@@ -803,6 +803,16 @@ export function createHost(options: HostOptions): Host {
     audience?: PublishOptions,
     refused?: { reason: string; by: Peer },
   ): void => {
+    /*
+     * A chat's action on a channel that holds no chat is not said, as VS
+     * Code's host refuses to emit one: no client could reduce it there.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2942-L2945
+     */
+    const kind = states.get(channel)?.kind ?? (sessions.has(channel) ? 'session' : undefined);
+    if (refused === undefined && kind !== undefined && kind !== 'chat' && String(action.type ?? '').startsWith('chat/')) {
+      log(`${channel}: ${String(action.type)} is a chat's action and ${channel} holds no chat, so it is not said`);
+      return;
+    }
     ctx.serverSeq += 1;
     const rejectionReason = refused?.reason;
     const envelope = {

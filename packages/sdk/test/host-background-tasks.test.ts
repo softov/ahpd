@@ -200,4 +200,17 @@ describe('a task a backend reports', () => {
 
     expect(workActions(p).map((one) => [one.action, one.origin])).toEqual([[{ type: 'chat/backgroundWorkSet', work }, undefined]]);
   });
+
+  /*
+   * A chat's action said on the session's channel, which holds no chat, is
+   * not said, as VS Code's host refuses to emit one there.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2942-L2945
+   */
+  it('says nothing of a chat\'s action a backend put on its session\'s channel, as VS Code\'s host', async () => {
+    const { p, uri, given } = await opened();
+    const work = { kind: 'shell', id: 'astray', label: 'x', startedAt: task().startedAt, command: 'x' };
+    given().emit('session', { type: 'chat/backgroundWorkSet', work } as never);
+    await settle();
+    expect(workActions(p).filter((one) => one.channel === uri)).toEqual([]);
+  });
 });

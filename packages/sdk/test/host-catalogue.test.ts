@@ -1357,10 +1357,10 @@ describe("a row lists the session's chats", () => {
 
 describe('one conversation, one row', () => {
   it('hides the transcript a running session is writing', async () => {
-    const { client } = await running();
+    const { client, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     // The client named the channel `live`; the agent names its own transcript
