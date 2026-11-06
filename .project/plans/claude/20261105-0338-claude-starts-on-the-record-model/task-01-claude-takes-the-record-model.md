@@ -1,6 +1,6 @@
 ---
 title: Claude takes the record's model
-status: todo
+status: implemented
 depends: []
 layer: agent-claude
 refs:
@@ -34,5 +34,5 @@ A session of a Claude record that names `model` starts on that model, when the a
 
 ## Resume
 
-- **Done so far:** nothing.
-- **Found:** nothing yet.
+- **Done so far:** every step. `record.model` reaches `ClaudeOptions.model` from `open`, and a session whose settings name no model starts on it when the agent offers it. `defaults` is still the mode alone.
+- **Found:** `model` is also declared on `ClaudeSessionOptions` in `packages/agent-claude/src/session/context.ts`, which the *Files* list does not name. That is the type a session's options are read through. The not-offered case passes without the change as well: a skipped record model and no record model both leave the CLI's default. The offered case fails without it.

@@ -150,6 +150,16 @@ export function createSession(options: ClaudeSessionOptions): Session {
   const stored = options.settings?.model;
   if (typeof stored === 'string' && stored !== 'default'
     && (options.seedModels ?? []).some((model) => model.id === stored)) ctx.chosen = stored;
+  /*
+   * The record's model, for a session that stores none.
+   *
+   * A record that names a model starts its sessions on it, as acp does. It is
+   * read here rather than put into `defaults`, which is VS Code's Claude's and
+   * stays the mode alone. An id this variant does not offer is skipped as a
+   * stored one is, leaving the session on the CLI's default.
+   */
+  else if (stored === undefined && typeof options.model === 'string' && options.model !== 'default'
+    && (options.seedModels ?? []).some((model) => model.id === options.model)) ctx.chosen = options.model;
   if (ctx.settings.shellInitScripts !== undefined) ctx.setShellInit(ctx.settings.shellInitScripts);
 
   /*

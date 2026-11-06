@@ -140,6 +140,9 @@ const kindSchema = (): Record<string, unknown> => ({
   additionalProperties: false,
   properties: {
     ...Object.fromEntries(Object.entries(optionsSchema.properties).filter(([key]) => !NOT_A_RECORD.has(key))),
+    // The record's answer over the plugin's, so the form says what a record is
+    // setting rather than repeating the plugin-wide sentence.
+    hostTools: { type: 'boolean', description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting." },
     // A record's key is kept in the vault, so a record's form says `secret`.
     // The plugin's own option stays `writeOnly`: it is the daemon's key, which
     // the plugin reads and no record carries.
@@ -159,6 +162,7 @@ const RECORD_FIELDS = [
   'apiKey',
   'resource',
   'autoCompactTokens',
+  'hostTools',
 ] as const;
 
 /** A non-blank string, or nothing for a blank or missing one. */

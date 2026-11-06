@@ -1,6 +1,6 @@
 ---
 title: The docs say how a ui is made
-status: todo
+status: dropped
 depends: [task-02-the-rows-carry-a-uis-data.md]
 layer: "docs"
 refs:

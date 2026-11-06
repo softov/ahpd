@@ -1,15 +1,111 @@
-import { expect, it } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { expect, it, vi } from 'vitest';
+import { loadPlugins } from '../../server/src/plugins.js';
+import { echo } from '../../../examples/echo/agent.js';
 import { AGENT_SECRETS, resolved } from '../../sdk/src/channels/owners.js';
 import { modelsProblem, offeredModels, ownModels, sourcesProblem } from '../src/models.js';
 import type { ModelEntry, ModelSource } from '../src/models.js';
+import type { AgentView, Bag, Engine, Start } from '@ahpd/sdk';
 
 /*
  * The models a Claude harness offers when its operator names them: written by
  * id in `models`, or fetched from an endpoint's model list in `modelSources`
- * and filtered, in place of the CLI's list or added to it.
+ * and filtered, in place of the CLI's list or added to it. And the model a
+ * session starts on: the record's own, when its settings name none.
  */
 
 const CLI = [{ id: 'default', name: 'Default' }, { id: 'opus', name: 'Opus' }];
+
+/** What the host's probe learned this variant offers, handed to a session as `seedModels`. */
+const OFFERED = [{ id: 'opus', name: 'Opus' }, { id: 'sonnet', name: 'Sonnet' }];
+
+/*
+ * The CLI, replaced so a session can be started without one: each query is
+ * recorded with the options it was built from, and its stream stays open with
+ * nothing in it.
+ */
+const sdk = vi.hoisted(() => ({ built: [] as (string | undefined)[] }));
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
+  query: (given: { options: { model?: string } }) => {
+    sdk.built.push(given.options.model);
+    return {
+      async *[Symbol.asyncIterator]() { /* a CLI that stays up and says nothing */ await new Promise(() => {}); },
+      interrupt: async () => {},
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      applyFlagSettings: async () => {},
+      toggleMcpServer: async () => {},
+      reconnectMcpServer: async () => {},
+      setMcpServers: async () => {},
+      initializationResult: async () => ({}),
+      mcpServerStatus: async () => [],
+      reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: [] }),
+      supportedModels: async () => [],
+      streamInput: async () => {},
+      close: () => {},
+    };
+  },
+}));
+
+const REPO = join(import.meta.dirname, '../../..');
+const SOURCE = './packages/agent-claude/src/index.ts';
+
+const settle = async (times = 8): Promise<void> => {
+  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+};
+
+/** The `claude` engine one load registered. */
+const engineOf = async (): Promise<Engine> => {
+  const { problems, options: served } = await loadPlugins([{ name: SOURCE, options: {} }], {
+    base: { path: '/tmp/ahpd-record-model', agents: [echo({ path: '/tmp/ahpd-record-model' })] },
+    configDir: REPO,
+    cwd: REPO,
+    log: () => {},
+  });
+  expect(problems).toEqual([]);
+  const engine = served.engines?.['claude'];
+  if (engine === undefined) throw new Error('no claude engine was registered');
+  return engine;
+};
+
+/**
+ * One session of a record that names `model`, and what it starts on.
+ *
+ * `offered` is what the host's probe learned this variant offers, handed to a
+ * new session as `seedModels`. The settings a session stored go over it.
+ */
+const opened = async (model: string | undefined, settings: Bag = {}, offered = OFFERED) => {
+  sdk.built = [];
+  const view: AgentView = {
+    id: 'model',
+    engine: 'claude',
+    owner: 'host',
+    name: 'Model',
+    description: undefined,
+    icon: undefined,
+    model,
+    config: {},
+  };
+  const start: Start = {
+    uri: 'ahp-session:/record-model',
+    chatUri: 'ahp-chat:/record-model',
+    settings,
+    clientToolTimeoutMs: 60_000,
+    schema: () => ({ type: 'object', properties: {} }),
+    emit: () => {},
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-record-model-')),
+    seedModels: offered,
+  };
+  const session = await (await engineOf()).open(view).create(start);
+  await settle();
+  const state = session.sessionState();
+  return { model: (state._meta as Bag | undefined)?.['ahpd.model'], built: sdk.built.at(0) };
+};
 
 /** An endpoint answering an OpenAI-shaped model list, and the requests it saw. */
 const endpoint = (data: unknown[], status = 200) => {
@@ -121,3 +217,24 @@ it('reads back a stored record whose models were split into the two lists', () =
   expect(modelsProblem(models)).toBeUndefined();
   expect(sourcesProblem(sources)).toBeUndefined();
 });
+
+it('starts a session on the model its record names, when the agent offers it', async () => {
+  const { model, built } = await opened('opus');
+  expect(model).toBe('opus');
+  // The half a client cannot see: the CLI was given it at startup.
+  expect(built).toBe('opus');
+});
+
+it('leaves a session on the CLI\'s default for a record model the agent does not offer', async () => {
+  const { model, built } = await opened('fable-9');
+  expect(model).toBeUndefined();
+  // Not even asked of the CLI: an id this variant cannot serve is not handed over.
+  expect(built).toBeUndefined();
+});
+
+it('keeps the model a session stored over the record\'s', async () => {
+  const { model, built } = await opened('opus', { model: 'sonnet' });
+  expect(model).toBe('sonnet');
+  expect(built).toBe('sonnet');
+});
+

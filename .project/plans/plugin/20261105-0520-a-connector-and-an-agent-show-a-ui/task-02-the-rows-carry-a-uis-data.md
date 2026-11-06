@@ -1,6 +1,6 @@
 ---
 title: The rows carry a ui's data
-status: todo
+status: dropped
 depends: [task-01-a-ui-capability-with-bindings.md]
 layer: "sdk"
 refs:

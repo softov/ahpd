@@ -21,6 +21,9 @@
     },
     "handshakeTimeoutMs": {
       "description": "Tiempo máximo, en milisegundos, para esperar el handshake de la CLI de Claude antes de considerar que el inicio falló. Por defecto, 120000 (2 minutos). Auméntalo en computadoras más lentas."
+    },
+    "hostTools": {
+      "description": "Ofrece las herramientas del host a cada sesión. Activado por defecto. Cada agente puede cambiarlo."
     }
   },
   "session": {

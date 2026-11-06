@@ -1,6 +1,6 @@
 ---
 title: Claude shows plan usage
-status: todo
+status: dropped
 depends: [task-02-the-rows-carry-a-uis-data.md]
 layer: "agent-claude"
 refs:

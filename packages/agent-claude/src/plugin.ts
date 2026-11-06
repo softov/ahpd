@@ -60,11 +60,15 @@ export const title = 'Agent Claude';
  *
  * These are the plugin's own options rather than any one agent's, and a record
  * takes them as they are: what a record may override is what the engine's schema
- * declares, and none of these is in it.
+ * declares, and `hostTools` is the only one of these in it.
+ *
+ * `hostTools` is read apart rather than into `shared`, because its value is the
+ * one that goes under a record's rather than to every agent as it is.
  */
 const defaultsOf = (host: PluginHost, values: Record<string, unknown>) => {
   const said = values as Partial<ClaudeOptions>;
   const paths = said.paths ?? host.paths;
+  const hostTools = typeof values['hostTools'] === 'boolean' ? values['hostTools'] : undefined;
   const shared = {
     log: (line: string) => host.log(line),
     // One listing for all of them, and one load's worth of it: every record
@@ -77,7 +81,7 @@ const defaultsOf = (host: PluginHost, values: Record<string, unknown>) => {
     ...(said.computerCliFallback === undefined ? {} : { computerCliFallback: said.computerCliFallback }),
     ...(said.handshakeTimeoutMs === undefined ? {} : { handshakeTimeoutMs: said.handshakeTimeoutMs }),
   };
-  return { paths, shared };
+  return { paths, shared, hostTools };
 };
 
 /**
@@ -110,7 +114,7 @@ const sourcesOf = (value: unknown): ModelSource[] => (Array.isArray(value) ? val
 /** The plugin's own options, as every agent of one load is built with them. */
 type Shared = ReturnType<typeof defaultsOf>['shared'];
 
-const engineOf = (paths: string[], shared: Shared, logins: OpenLogins): Engine => ({
+const engineOf = (paths: string[], shared: Shared, hostTools: boolean | undefined, logins: OpenLogins): Engine => ({
   name: 'claude',
   title: 'Claude Code',
   description: 'Claude Code, with one record per agent: its own directories, models and options.',
@@ -129,10 +133,15 @@ const engineOf = (paths: string[], shared: Shared, logins: OpenLogins): Engine =
     paths,
     provider: record.id,
     displayName: record.name,
+    ...(record.model === undefined ? {} : { model: record.model }),
     ...(Array.isArray(record.config['models']) ? { models: modelsOf(record.config['models']) } : {}),
     ...(Array.isArray(record.config['modelSources']) ? { modelSources: sourcesOf(record.config['modelSources']) } : {}),
     ...(typeof record.config['keepCliModels'] === 'boolean' ? { keepCliModels: record.config['keepCliModels'] } : {}),
-    presetOf: () => ({ ...record.config }),
+    // The plugin's answer under the record's: a record that names one wins.
+    presetOf: () => ({
+      ...(hostTools === undefined ? {} : { hostTools }),
+      ...record.config,
+    }),
     logins: { open: logins, owner: () => record.owner },
   }),
 });
@@ -197,9 +206,9 @@ const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall' 
  * adapter, kept open for the load by the one `OpenLogins` both are built over.
  */
 export const apply: Plugin['apply'] = (host, options) => {
-  const { paths, shared } = defaultsOf(host, options);
+  const { paths, shared, hostTools } = defaultsOf(host, options);
   const logins = new OpenLogins();
   Object.assign(logins, throughHost(host));
   host.registerAdapter(loginAdapter(logins));
-  host.registerEngine(engineOf(paths, shared, logins));
+  host.registerEngine(engineOf(paths, shared, hostTools, logins));
 };

@@ -54,14 +54,14 @@ host -> start.tools -> session wires them in; acp: hostTools ?? plugin hostTools
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Claude has a host tools switch](task-01-claude-has-a-host-tools-switch.md) | todo | - |
-| [02 - cofold has a host tools switch](task-02-cofold-has-a-host-tools-switch.md) | todo | - |
-| [03 - pi has a host tools switch](task-03-pi-has-a-host-tools-switch.md) | todo | - |
+| [01 - Claude has a host tools switch](task-01-claude-has-a-host-tools-switch.md) | implemented | - |
+| [02 - cofold has a host tools switch](task-02-cofold-has-a-host-tools-switch.md) | implemented | - |
+| [03 - pi has a host tools switch](task-03-pi-has-a-host-tools-switch.md) | implemented | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, Claude's switch; task 02, cofold's switch; task 03, pi's switch.
+- **Next action:** none; the plan's tasks are implemented.
 - **Open questions:** none.
 - **Watch out for:** the copy PR edits each plugin's `package.json` and `i18n` files. Build on main after it merges.
 

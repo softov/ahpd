@@ -1,6 +1,6 @@
 ---
 title: A ui capability with bindings
-status: todo
+status: dropped
 depends: []
 layer: "sdk"
 refs:

@@ -129,6 +129,12 @@ export interface PiOptions {
    */
   sessionDir?: string;
   /**
+   * Whether a session is offered the host's own tools, over the plugin-wide
+   * setting. On by default. Off drops each tool with no owner and keeps each
+   * client's, which a client still provides.
+   */
+  hostTools?: boolean;
+  /**
    * Variables the record names, by name, as pi's runtime takes them.
    *
    * A record's key is here, read back from the vault by the channel. The

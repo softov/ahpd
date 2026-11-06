@@ -133,6 +133,10 @@
           "type": "integer",
           "minimum": 1,
           "description": "History size, in estimated tokens, at which a session compacts. Defaults to 80% of the model's context, or of 32000 when the context is unknown, and never goes above that."
+        },
+        "hostTools": {
+          "type": "boolean",
+          "description": "Offer the host's tools to each session. On by default. Each agent can override it."
         }
       }
     }

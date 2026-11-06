@@ -9,7 +9,8 @@ import { createHost } from '../../sdk/src/host.js';
 import { describePlugin, loadPlugins } from '../../server/src/plugins.js';
 import { sdkVersion } from '../../sdk/src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
-import type { Engine, AgentView, Bag } from '@ahpd/sdk';
+import { startedNow } from '../../sdk/test/support/started.js';
+import type { Engine, AgentView, Bag, BoundTool, Start } from '@ahpd/sdk';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { HostTool } from '../../sdk/src/types/host.js';
 import type { PluginSpec } from '../../sdk/src/types/plugin.js';
@@ -474,4 +475,62 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
   await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
   expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.queuedMessageId === 'q2')).toBe(true);
   expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+});
+
+/*
+ * The host tools switch, resolved by a load.
+ *
+ * `hostTools` is a plugin option and a record field, and a record's value wins.
+ * cofold holds the host's tools and each client's in one list, so a case reads
+ * the names the model was offered: `mine` is the host's, and `review` is a
+ * client's, which stays either way.
+ */
+
+/** The host's own tool and a client's, as a session here is handed both. */
+const MINE: BoundTool = {
+  definition: { name: 'mine', description: 'The host\'s own.', inputSchema: { type: 'object' } },
+  run: () => 'ran it',
+};
+const REVIEW: BoundTool = {
+  definition: { name: 'review', description: 'A client\'s.', inputSchema: { type: 'object' } },
+  owner: 'a-client',
+};
+
+/** The names the model was offered in one session of a record, under one load's options. */
+const offeredTo = async (plugin: Record<string, unknown>, held: () => Bag): Promise<string[]> => {
+  const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
+  const { problems, options } = await load([{ name: SOURCE, options: { ...plugin, adapter: model, memory: true } }]);
+  expect(problems).toEqual([PASSED_ADAPTER]);
+  const agent = engineOf(options).open(viewOf('cofold-host-tools', held));
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/host-tools',
+    chatUri: 'ahp-chat:/host-tools',
+    settings: agent.defaults(),
+    emit: () => {},
+    tools: [MINE, REVIEW],
+  } as unknown as Start));
+  session.sendMessage('t1', 'hello');
+  await until(() => (model.requests[0]?.tools ?? []).length > 0);
+  await session.close();
+  return (model.requests[0]?.tools ?? []).map((one) => one.name);
+};
+
+it('offers the host\'s tools and a client\'s by default', async () => {
+  const names = await offeredTo({}, () => ({}));
+
+  expect(names).toEqual(expect.arrayContaining(['mine', 'review']));
+});
+
+it('drops the host\'s tools when the plugin turns host tools off, and keeps a client\'s', async () => {
+  const names = await offeredTo({ hostTools: false }, () => ({}));
+
+  expect(names).not.toContain('mine');
+  expect(names).toContain('review');
+});
+
+it('lets a record turn host tools off over a plugin that turns them on', async () => {
+  const names = await offeredTo({ hostTools: true }, () => ({ hostTools: false }));
+
+  expect(names).not.toContain('mine');
+  expect(names).toContain('review');
 });

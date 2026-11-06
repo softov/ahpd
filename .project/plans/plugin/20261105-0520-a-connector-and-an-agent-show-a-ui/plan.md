@@ -1,7 +1,7 @@
 ---
 title: A connector and an agent show a ui
 domain: plugin
-status: planned
+status: dropped
 priority: medium
 created: 2026-11-05
 revalidated: 2026-11-05
@@ -29,6 +29,8 @@ refs:
   - plans/plugin/53-a-client-sees-plugins-and-connectors/plan.md - the capability types, with `ui` reserved
   - npm://@softov/scena@0.5.18 - `A2uiCreateSurface`: `{ root, components, dataModel }`, with `{ path }` bindings and `{ path, componentId }` lists
 ---
+
+Dropped on 2026-11-06: it made `ui`, a second structure beside the plugin view. [plugin/20261106-0438-a-connector-and-an-agent-show-a-view](../20261106-0438-a-connector-and-an-agent-show-a-view/plan.md) replaces it.
 
 ## Goal
 
@@ -95,11 +97,11 @@ plugin registers adapter or engine with a ui capability (schema) -> checkAdapter
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a ui capability with bindings](task-01-a-ui-capability-with-bindings.md) | todo | - |
-| [02 - the rows carry a ui's data](task-02-the-rows-carry-a-uis-data.md) | todo | 01 |
-| [03 - claude shows plan usage](task-03-claude-shows-plan-usage.md) | todo | 02 |
-| [04 - devtunnel shows its account](task-04-devtunnel-shows-its-account.md) | todo | 02 |
-| [05 - the docs say how a ui is made](task-05-the-docs-say-how-a-ui-is-made.md) | todo | 02 |
+| [01 - a ui capability with bindings](task-01-a-ui-capability-with-bindings.md) | dropped | - |
+| [02 - the rows carry a ui's data](task-02-the-rows-carry-a-uis-data.md) | dropped | 01 |
+| [03 - claude shows plan usage](task-03-claude-shows-plan-usage.md) | dropped | 02 |
+| [04 - devtunnel shows its account](task-04-devtunnel-shows-its-account.md) | dropped | 02 |
+| [05 - the docs say how a ui is made](task-05-the-docs-say-how-a-ui-is-made.md) | dropped | 02 |
 
 ## Risks and tradeoffs
 
