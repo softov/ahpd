@@ -162,19 +162,16 @@ const unstarted = (command: string, cwd: string | undefined, error: NodeJS.Errno
  * an `account` names the email and the plan of the sign-in it is, and the other
  * three are sign-ins that are not an account of the operator's - a key, a
  * gateway, and a provider's own identity, which is what Bedrock and an agent's
- * own name are. None of those is a sign-out, so each is `unavailable` rather
- * than `signedOut`, and none of them names an email.
- *
- * A kind this bridge does not know is left unanswered rather than read as one
- * of the others: each state is a claim about who is billed, and a guess at one
- * is worse than saying nothing.
+ * own name are. None of those is a sign-out, so each is `unavailable`, and
+ * none of them names an email; nor does a kind this bridge does not know, as
+ * VS Code's Codex reads any account that is not a ChatGPT sign-in.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAccountState.ts#L22-L31
  */
 const accountOf = (status: unknown, at: number): Account | undefined => {
   if (!isRecord(status)) return undefined;
   const kind = str(status.kind);
   if (kind === 'none') return { status: 'signedOut', observedAt: at };
-  if (kind === 'api_key' || kind === 'gateway' || kind === 'external') return { status: 'unavailable', observedAt: at };
-  if (kind !== 'account') return undefined;
+  if (kind !== 'account') return { status: 'unavailable', observedAt: at };
   // The nested object is left out entirely by a server that names neither, so
   // an account with no email is a sign-in this host can only say it has.
   const held = isRecord(status.account) ? status.account : {};

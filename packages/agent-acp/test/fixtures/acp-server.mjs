@@ -225,6 +225,7 @@ const AUTH_STATUSES = {
   gateway: { kind: 'gateway', label: 'Custom model gateway', detail: 'an internal gateway' },
   none: { kind: 'none', label: 'Not logged in' },
   external: { kind: 'external', label: 'AWS Bedrock' },
+  workspace_sso: { kind: 'workspace_sso', label: 'A sign-in of a kind no bridge knows yet' },
 };
 
 /** The kind this server was started to report, or nothing when it reports none. */

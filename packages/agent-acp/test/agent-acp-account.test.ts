@@ -78,15 +78,19 @@ it('takes the account a server reports, with its email and its plan', async () =
 });
 
 /*
- * The other three kinds, which are the states a sign-in that is not an account
- * has. An API key and a gateway are credentials this host does not hold, and
- * Bedrock or an agent's own identity is a sign-in it cannot speak for; none of
- * those is a sign-out, which is the server saying it has no sign-in at all.
+ * The other kinds, which are the states a sign-in that is not an account has.
+ * An API key and a gateway are credentials this host does not hold, Bedrock or
+ * an agent's own identity is a sign-in it cannot speak for, and a kind this
+ * bridge does not know is read as VS Code's Codex reads any account that is
+ * not a ChatGPT sign-in; none of those is a sign-out, which is the server
+ * saying it has no sign-in at all.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAccountState.ts#L22-L31
  */
 const ELSEWHERE: [kind: string, state: Account['status']][] = [
   ['api_key', 'unavailable'],
   ['gateway', 'unavailable'],
   ['external', 'unavailable'],
+  ['workspace_sso', 'unavailable'],
   ['none', 'signedOut'],
 ];
 
