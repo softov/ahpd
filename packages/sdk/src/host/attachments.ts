@@ -75,28 +75,30 @@ const EXTENSIONS: Record<string, string> = {
  * A settled message is applied by handing it back to the host as this
  * connection's own dispatch, and the second pass over it is not a second
  * message: the attachment this host wrote is named by a tagged `resource`
- * that `needsWriting` says no to, and the one it left as sent would be looked
+ * that `needsAsyncRewrite` says no to, and the one it left as sent would be looked
  * for on disk all over again.
  */
 const handled = new WeakSet<object>();
 
 /**
- * Whether a message has an attachment still to be written or tagged.
+ * Whether a message has an attachment still to be written or tagged, as VS
+ * Code's host asks whether an action needs an async rewrite.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13695-L13701
  *
  * Asked before a dispatch is applied, and the answer is what decides whether
  * the action is applied in the tick it arrived in or waits for a file. Every
  * message with no attachments answers no, which is the ordinary case and the
  * one that keeps the actions of a turn in the order they were written in.
  */
-export function needsWriting(message: unknown, store: SessionStore, id: string): boolean {
+export function needsAsyncRewrite(message: unknown, store: SessionStore, id: string): boolean {
   if (store.attachmentsDir?.(id) === undefined) return false;
   const one = (typeof message === 'object' && message !== null ? message : {}) as Bag;
   if (handled.has(one) || !Array.isArray(one.attachments)) return false;
-  return (one.attachments as unknown[]).some(wouldWrite);
+  return (one.attachments as unknown[]).some(isRewritableAttachment);
 }
 
-/** Whether one attachment is one this host would write a file for. */
-function wouldWrite(value: unknown): boolean {
+/** Whether one attachment is one this host would write a file for: rewritable, in VS Code's word. */
+function isRewritableAttachment(value: unknown): boolean {
   const one = (typeof value === 'object' && value !== null ? value : {}) as Bag;
   if (one.type === 'embeddedResource') return true;
   if (one.type !== 'resource') return false;

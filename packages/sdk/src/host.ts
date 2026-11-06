@@ -316,11 +316,12 @@ export function createHost(options: HostOptions): Host {
   /** Live sessions, by their own uri. */
   const sessions = new Map<string, Held>();
   /**
-   * The live sessions started by resuming one the backend recorded, whose
-   * workers from before this process are read back beside the live ones. A
-   * session started fresh has none, and its backend's record is not read.
+   * The live sessions restored from one the backend recorded, whose workers
+   * from before this process are read back beside the live ones, as VS Code
+   * registers a restored session's subagent chats. A session started fresh
+   * has none, and its backend's record is not read.
    */
-  const resumedSessions = new Set<string>();
+  const restoredSessions = new Set<string>();
   /** Every chat, back to the session holding it, and the road its turns are said on. */
   const byChat = new Claiming<{ uri: string; chat: Session; say(action: Record<string, unknown>): void }>(claims, 'chat', (_, held) => held.uri);
   /**
@@ -451,7 +452,7 @@ export function createHost(options: HostOptions): Host {
   const about = (provider: string): Learned => {
     const held = learned.get(provider);
     if (held) return held;
-    const made: Learned = { models: [], commands: [], seeds: [] };
+    const made: Learned = { models: [], commands: [], customizations: [] };
     learned.set(provider, made);
     return made;
   };
@@ -475,7 +476,7 @@ export function createHost(options: HostOptions): Host {
    * What each held envelope's text weighs in bytes, in step with `replayable`.
    *
    * Beside the buffer rather than on the envelope, because a held entry is
-   * what a client is sent: `seenBy` hands most of them back exactly as they
+   * what a client is sent: `projectActionForClient` hands most of them back exactly as they
    * are, and a size on one would be a field no client declared.
    */
   const weights: number[] = [];
@@ -617,11 +618,11 @@ export function createHost(options: HostOptions): Host {
    *
    * An older VS Code window is told nothing about a session it may not see,
    * and of one it may see only the chats it may see, as the reference host
-   * filters each notification for it. Every other notification, and every
-   * other connection, gets it as it is.
-   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4412-L4443
+   * projects each notification for a client. Every other notification, and
+   * every other connection, gets it as it is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4425
    */
-  const noticeFor = (connection: Connection, method: string, params: unknown): unknown => {
+  const projectNotificationForClient = (connection: Connection, method: string, params: unknown): unknown => {
     if (connection.legacySessionUris !== true && connection.legacyChatUris !== true) return params;
     const notice = bag(params);
     if (method === 'root/sessionAdded') {
@@ -649,13 +650,13 @@ export function createHost(options: HostOptions): Host {
    * Under the host's own channel, whatever spelling a client subscribed by, as
    * VS Code's host sends every envelope; its client matches the root's and the
    * automations catalogue's spellings at relevance. A root notification about
-   * a session goes through `noticeFor`.
+   * a session goes through `projectNotificationForClient`.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L1458-L1482
    */
   const broadcast = (channel: string, method: string, params: unknown, per?: (connection: Connection) => unknown): void => {
     for (const connection of connections) {
       if (!connection.watching.has(channel)) continue;
-      const said = per === undefined ? noticeFor(connection, method, params) : per(connection);
+      const said = per === undefined ? projectNotificationForClient(connection, method, params) : per(connection);
       // Nothing for this connection: a plugin's action it may not see.
       if (said === undefined) continue;
       connection.peer.notify(method, said);
@@ -700,10 +701,11 @@ export function createHost(options: HostOptions): Host {
    * connection no handshake named has no version and is sent everything.
    *
    * This is the one place an envelope is rewritten for a connection, which is
-   * why the live broadcast and both replay paths call it: a rewrite anywhere
-   * else would be a second opinion about the same delivery.
+   * why the live broadcast and both replay paths call it: one opinion about
+   * every delivery, as VS Code's host projects an action for a client.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4375
    */
-  const seenBy = <E extends { channel: string; action: Record<string, unknown>; origin?: Origin | undefined; audience?: PublishOptions }>(
+  const projectActionForClient = <E extends { channel: string; action: Record<string, unknown>; origin?: Origin | undefined; audience?: PublishOptions }>(
     connection: Connection,
     given: E,
   ): E | undefined => {
@@ -878,7 +880,7 @@ export function createHost(options: HostOptions): Host {
       replayable.shift();
       weight -= weights.shift() ?? 0;
     }
-    broadcast(channel, 'action', envelope, (connection) => (connection.peer === refused?.by ? undefined : seenBy(connection, envelope)));
+    broadcast(channel, 'action', envelope, (connection) => (connection.peer === refused?.by ? undefined : projectActionForClient(connection, envelope)));
   };
   /**
    * The window a streamed delta waits in, which `dispatch` sends through.
@@ -1329,7 +1331,9 @@ export function createHost(options: HostOptions): Host {
   const sessionOfChannel = (channel: string): string => (spaceOf(channel) === 'chat' ? sessionFor(channel) : channel);
 
   /**
-   * Take a client out of a session, if nothing else is holding it there.
+   * Release a client from a session, if nothing else is holding it there, as
+   * VS Code's host releases an active client.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1690
    *
    * The protocol names three ways this happens - unsubscribe, disconnect
    * without reconnecting, reconnect without resubscribing - and they are the
@@ -1341,7 +1345,7 @@ export function createHost(options: HostOptions): Host {
    * them from it. `channel` is the session or one of its chats.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1895-L1913
    */
-  const leaves = (channel: string, clientId: string): void => {
+  const releaseActiveClientForSession = (channel: string, clientId: string): void => {
     const uri = sessionOfChannel(channel);
     const held = presence.get(idOf(uri));
     if (!held?.has(clientId)) return;
@@ -1392,7 +1396,7 @@ export function createHost(options: HostOptions): Host {
    *
    * Nothing is kept for a client that holds no place there, which is every
    * session a connection watched without ever announcing itself in it -
-   * `leaves` would take nothing out, so there is nothing to wait for.
+   * `releaseActiveClientForSession` would take nothing out, so there is nothing to wait for.
    *
    * A later close starts the wait again rather than leaving the first one
    * running: what is being measured is how long this client has been gone, and
@@ -1407,7 +1411,7 @@ export function createHost(options: HostOptions): Host {
     waits.set(uri, setTimeout(() => {
       waits.delete(uri);
       if (waits.size === 0 && graces.get(clientId) === waits) graces.delete(clientId);
-      leaves(uri, clientId);
+      releaseActiveClientForSession(uri, clientId);
     }, CLIENT_DISCONNECT_GRACE_MS));
   };
 
@@ -1451,13 +1455,13 @@ export function createHost(options: HostOptions): Host {
         : options.catalogs?.agents?.[provider],
       HOST_CATALOGS,
     ],
-    replayable, leaves, attachWatch, seenBy, claims, agents, first: options.agents[0], connections, clientsChanged, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
+    replayable, releaseActiveClientForSession, attachWatch, projectActionForClient, claims, agents, first: options.agents[0], connections, clientsChanged, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
     madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, relaunches: new Map(), chatRelaunches: new Map(), resumedTurns: new Map(), cancelledTurns: new Map(), learned, starting,
     logs, detached, refuse,
     serverSeq: 0,
     closed: false, shutdown: () => host.close(), refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Set<string>(), described, links,
-    watches, marksOf, resumedSessions, activeClientsOf,
+    watches, marksOf, restoredSessions, activeClientsOf,
     restartNeeded: false,
     markRestart: () => {
       if (ctx.restartNeeded) return;
@@ -1662,7 +1666,7 @@ export function createHost(options: HostOptions): Host {
     void agent.probe().then((offered) => {
       const held = about(agent.provider);
       held.commands = offered.commands;
-      held.seeds = offered.customizations;
+      held.customizations = offered.customizations;
       /*
        * An empty model list is kept out, and says nothing about the rest.
        *
@@ -1680,7 +1684,7 @@ export function createHost(options: HostOptions): Host {
        * anywhere else and nothing has to tell the two apart.
        */
       if (offered.account !== undefined) publishAccountInfo(agent.provider, offered.account);
-      log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s), ${held.seeds.length} customization(s)`);
+      log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s), ${held.customizations.length} customization(s)`);
       ctx.publishAgentInfos();
       watchProbe(agent);
     }).catch(() => { }).finally(() => {
@@ -1769,7 +1773,7 @@ export function createHost(options: HostOptions): Host {
    *
    * A change to the directory is a change to who may use what: a person who
    * joined a team, or left one, may use a different set of agents from that
-   * moment. The agent list is sent again, and `seenBy` filters it for each
+   * moment. The agent list is sent again, and `projectActionForClient` filters it for each
    * connection, so a membership change reaches the callers it alters.
    *
    * Whether a plugin listens for it is what a live fold can change, so the
@@ -2210,7 +2214,7 @@ export function createHost(options: HostOptions): Host {
           releaseRelayed(channel);
           // And unsubscribing from a session is one of the three ways the
           // protocol says a client stops being active in it.
-          leaves(channel, connection.clientId);
+          releaseActiveClientForSession(channel, connection.clientId);
           leftChannel(connection.clientId, channel);
           // A session nobody watches is one the residency may let go.
           // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11752

@@ -317,8 +317,8 @@ export function createRoot(ctx: HostContext): Root {
      * "what does this harness offer" that could disagree is worse than one
      * answer that arrives a moment after boot.
      */
-    ...(ctx.about(agent.provider).seeds.length > 0
-      ? { customizations: ctx.about(agent.provider).seeds }
+    ...(ctx.about(agent.provider).customizations.length > 0
+      ? { customizations: ctx.about(agent.provider).customizations }
       : {}),
     capabilities: {
       /*

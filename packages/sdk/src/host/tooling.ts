@@ -1110,7 +1110,7 @@ export function createTooling(ctx: HostContext): Tooling {
     // whose it is. A session no row claims belongs to no backend here, and
     // reports nothing.
     const provider = kept.provider(idOf(name)) ?? held?.agent.provider;
-    return provider === undefined ? [] : about(provider).seeds as Bag[];
+    return provider === undefined ? [] : about(provider).customizations as Bag[];
   };
 
   /** Copy one client's plugins, answering one state per plugin and never throwing. */

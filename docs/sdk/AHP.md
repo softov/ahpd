@@ -326,7 +326,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 The two canvas actions are registered at `0.10.0`, and this host sends them to
 a connection that agreed on `0.10.0` or later and to no older one. That holds
 for the live broadcast and for a replay alike, because both go through the one
-filter `seenBy` applies - [versioning](https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/versioning.md).
+filter `projectActionForClient` applies - [versioning](https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/versioning.md).
 The chat's list is in `ChatState.canvases` on every version, so a client at
 `0.9.0` reading the snapshot sees the key and no change about it.
 

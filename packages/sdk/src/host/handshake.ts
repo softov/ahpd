@@ -94,8 +94,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
   const { connection } = conn;
   const {
     advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, projectSnapshot, browsable, channelAwaiting,
-    clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, authenticationResource, log, LOGS, METRICS, metaChanged,
-    metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
+    clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, releaseActiveClientForSession,locales, authenticationResource, log, LOGS, METRICS, metaChanged,
+    metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, projectActionForClient, sessions,
     snapshotOf, TRACES, visible, watchedAs,
   } = ctx;
 
@@ -722,7 +722,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
 
       // Whatever it did not ask back for, it has left.
       for (const channel of before) {
-        if (!connection.watching.has(channel)) leaves(channel, clientId);
+        if (!connection.watching.has(channel)) releaseActiveClientForSession(channel, clientId);
       }
 
       /*
@@ -744,7 +744,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           // Each under the held name, the automations catalogue among them.
           actions: replayable.flatMap((held) => {
             if (held.serverSeq <= since || !resumed.has(held.channel)) return [];
-            const envelope = seenBy(connection, held);
+            const envelope = projectActionForClient(connection, held);
             return envelope === undefined ? [] : [envelope];
           }),
           missing,

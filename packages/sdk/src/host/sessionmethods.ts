@@ -11,7 +11,7 @@ import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { preambleOf, withPreamble } from './preamble.js';
 import { readAggregate, sessionFlag, settledMessage, startsRead } from './chatactions.js';
-import { needsWriting } from './attachments.js';
+import { needsAsyncRewrite } from './attachments.js';
 import { fileCompletions } from './filecompletions.js';
 import { SEEDS } from './sessionconfig.js';
 import { gapLine, schemaGaps } from '../plugins/schemagaps.js';
@@ -65,7 +65,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     isolating, keepChat, recordSessionProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
     movable, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
     ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
-    seenBy, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
+    projectActionForClient, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
     snapshotOf, spawn, subagentSummary, subagents, markSummaryDirty, unheld, visible, unavailableProvider, wake,
   } = ctx;
 
@@ -380,7 +380,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     };
     let settled: Bag;
     try {
-      settled = needsWriting(message, kept, idOf(uri)) ? await settledMessage(ctx, connection, message, uri) : message;
+      settled = needsAsyncRewrite(message, kept, idOf(uri)) ? await settledMessage(ctx, connection, message, uri) : message;
     }
     catch (error) {
       start(message);
@@ -520,7 +520,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const at = typeof snapshot.fromSeq === 'number' ? snapshot.fromSeq : 0;
       for (const held of replayable) {
         if (held.channel === meant && held.serverSeq > at) {
-          const envelope = seenBy(connection, held);
+          const envelope = projectActionForClient(connection, held);
           if (envelope !== undefined) connection.peer.notify('action', envelope);
         }
       }
@@ -795,7 +795,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const skillsOf = (provider: string): Set<string> => {
         const out = new Set<string>();
-        for (const entry of about(provider).seeds) {
+        for (const entry of about(provider).customizations) {
           const children = Array.isArray(entry.children) ? entry.children as Bag[] : [];
           for (const leaf of children.length > 0 ? children : [entry]) {
             if (leaf.type === 'skill' && typeof leaf.name === 'string') out.add(leaf.name);

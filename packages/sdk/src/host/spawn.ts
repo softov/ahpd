@@ -178,7 +178,7 @@ function heldResources(store: ResourceStore): ResourceStore {
 export function createSpawn(ctx: HostContext): Spawn {
   const {
     options, sessions, byChat, subagents, owners, kept, names, births, about,
-    dispatch, log, described, links, resumedSessions,
+    dispatch, log, described, links, restoredSessions,
     sessionHolding, dirOf, operationsMoved, refreshWatched, refreshFacts,
     fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, enteredIn, inMachine, bringBackOf,
     contributedDefaults, runningSchema, chatSummary, subagentSummary, markSummaryDirty, refreshSessionChangesSummary, setAgentModels,
@@ -824,7 +824,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       })
       : agent;
     if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
-    if (resuming?.resume !== undefined) resumedSessions.add(uri);
+    if (resuming?.resume !== undefined) restoredSessions.add(uri);
     /*
      * What this session's turns cost, kept against each turn until it ends.
      *
@@ -1151,7 +1151,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       // `[]` until its own agent replied was empty for the first several
       // seconds - and a client that asks once and caches never found out
       // otherwise.
-      seedCustomizations: about(agent.provider).seeds,
+      seedCustomizations: about(agent.provider).customizations,
       /*
        * What the boot probe learned the models are, for the same reason and
        * read from the same place: a session opened with a stored model needs to

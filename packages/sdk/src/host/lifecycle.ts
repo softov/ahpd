@@ -230,7 +230,7 @@ export const ARCHIVE_COMMIT_MESSAGE = 'Saving uncommitted changes before archivi
 export function createLifecycle(ctx: HostContext): Lifecycle {
   const {
     options, sessions, byChat, subagents, owners, kept, decided, offered, worktrees, worktreeOf, origins,
-    madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside,
+    madeFrom, restoredSessions, githubFacts, principals, presence, marks, lives, beside,
     dispatch, broadcast, flushDeltas, log, fire, sessionEvents, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
     sessionMachines, enteredIn, inMachine, takeOut, placedIn, followOf,
@@ -310,7 +310,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * lets a deleted session's chat entries go with no action of their own.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2379-L2386
      */
-    resumedSessions.delete(uri);
+    restoredSessions.delete(uri);
     for (const [chatUri, one] of [...subagents]) {
       if (one.session !== uri) continue;
       subagents.delete(chatUri);

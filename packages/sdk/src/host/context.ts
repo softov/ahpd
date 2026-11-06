@@ -262,15 +262,15 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * audience leaves this connection out.
    *
    * The one place an envelope is rewritten for a connection, which is why the
-   * live broadcast and both replay paths call it: a rewrite anywhere else
-   * would be a second opinion about the same delivery.
+   * live broadcast and both replay paths call it, as VS Code's host projects
+   * an action for a client.
    */
-  seenBy: <E extends { channel: string; action: Record<string, unknown>; origin?: Origin | undefined; audience?: PublishOptions }>(
+  projectActionForClient: <E extends { channel: string; action: Record<string, unknown>; origin?: Origin | undefined; audience?: PublishOptions }>(
     connection: Connection,
     envelope: E,
   ) => E | undefined;
-  /** A person left a channel no connection of theirs is watching. */
-  leaves: (asked: string, clientId: string) => void;
+  /** A client released from a session no connection of theirs is watching. */
+  releaseActiveClientForSession: (asked: string, clientId: string) => void;
   /** The sequence number every snapshot and action is taken at. */
   serverSeq: number;
   /**
@@ -290,8 +290,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   attachWatch(channel: string, principal?: Principal): Promise<Bag | undefined>;
   /** The marks a session carries, as a snapshot of its annotations channel reports them. */
   marksOf: (id: string) => AnnotationsState;
-  /** The live sessions started by resuming a recorded one, whose workers are read back. */
-  resumedSessions: Set<string>;
+  /** The live sessions restored from a recorded one, whose workers are read back. */
+  restoredSessions: Set<string>;
   /** Who is in a session, as its state reports them. */
   activeClientsOf: (uri: string) => Bag[];
   /** Whether the advanced tools are offered, a daemon key that takes hold while the daemon runs. */

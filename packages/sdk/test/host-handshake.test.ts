@@ -19,7 +19,7 @@ beforeEach(resetSdk);
  *
  * A canvas action is the host's own and no client may dispatch one, so the
  * `emit` the host hands a backend is captured here: what it says reaches the
- * same `dispatch` a client's action would, and the version gate in `seenBy`
+ * same `dispatch` a client's action would, and the version gate in `projectActionForClient`
  * sees it.
  */
 const canvasHost = () => {

@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { readMultiRoot } from '../sessions/remotesession.js';
-import { filesOf, needsWriting, snapshot } from './attachments.js';
+import { filesOf, needsAsyncRewrite, snapshot } from './attachments.js';
 import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN, withSenderOn } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
@@ -491,7 +491,7 @@ export function chatAction(
   if ((type === 'chat/turnStarted' || type === 'chat/pendingMessageSet')) {
     const uri = sessionFor(channel);
     const message = messageOf(action);
-    if (needsWriting(message, kept, idOf(uri))) {
+    if (needsAsyncRewrite(message, kept, idOf(uri))) {
       return settledMessage(ctx, connection, message, uri).then((settled) => conn.applyNow({ ...params, action: { ...action, message: settled } }, origin));
     }
   }

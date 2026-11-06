@@ -105,13 +105,15 @@ export interface Learned {
   /** What a slash offers when no session of this backend is running. */
   commands: { name: string; description?: string; argumentHint?: string }[];
   /**
-   * Skills, commands, subagents and MCP servers, as the probe found them.
+   * Skills, commands, subagents and MCP servers, as the probe found them: the
+   * agent's customizations, as the protocol names them on an agent's info.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/state.ts#L90
    *
    * What every new session reports until its own backend answers. That takes
-   * several seconds, and a client asks once - so a session that started
-   * empty stayed empty for anyone who looked before the reply landed.
+   * several seconds, and a client asks once, so a session reports these from
+   * its start to anyone who looks before the reply lands.
    */
-  seeds: Bag[];
+  customizations: Bag[];
   /**
    * The account this backend's harness is signed in as.
    *

@@ -130,8 +130,8 @@ export interface Catalogue {
 export function createCatalogue(ctx: HostContext): Catalogue {
   const {
     options, agents, sessions, subagents, owners, kept, names, wheres, births, moves, listedMeta,
-    madeFrom, origins, leadOf, about, browsable, recordedChats, chatBackends, sessionHolding,
-    resumedSessions, restoredSubagents,
+    madeFrom, origins, leadOf, about, browsable, recordedChats, chatBackings, sessionHolding,
+    restoredSessions, restoredSubagents,
   } = ctx;
 
   /**
@@ -327,7 +327,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const held = sessions.get(uri);
     const lead = held && leadOf(held);
     if (!held || !lead) return;
-    const read = held.agent.subagents === undefined || !resumedSessions.has(uri)
+    const read = held.agent.subagents === undefined || !restoredSessions.has(uri)
       ? []
       : await restoredSubagents(idOf(uri), held.agent, lead.allTurns() as unknown as WireTurn<Turn>[]);
     ctx.dispatch(uri, {
@@ -954,7 +954,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    *
    * A partial `root/configChanged`, which merges: one key changes and the rest
    * of the config is left alone. The filter that decides which connections may
-   * see it is per connection, in `seenBy`.
+   * see it is per connection, in `projectActionForClient`.
    */
   const publishAccountInfo = (provider: string, account: Account): void => {
     about(provider).account = account;
@@ -1065,7 +1065,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * never saw, so reading the store here is also what keeps that map current.
      */
     for (const id of offered.keys()) recordedChats(id);
-    for (const own of chatBackends()) claimed.add(own);
+    for (const own of chatBackings()) claimed.add(own);
     for (const id of [...offered.keys()]) {
       if (claimed.has(id)) offered.delete(id);
     }
@@ -1138,7 +1138,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     // Read as the offered ids are, so a chat recorded under one of these ids
     // claims its backend id before that id is looked up as a session.
     for (const [id] of unread) recordedChats(id);
-    for (const own of chatBackends()) claimed.add(own);
+    for (const own of chatBackings()) claimed.add(own);
     const strays = unread.filter(([id]) => !claimed.has(id));
     const looked = await Promise.all(strays.map(async ([id, folder]) => {
       const recorded = kept.provider(id);

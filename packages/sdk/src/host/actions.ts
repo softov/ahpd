@@ -416,7 +416,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          *
          * One envelope and one `serverSeq` for everybody, because the
          * sequence and the replay buffer are one per host. What each
-         * connection reads in it is `seenBy`'s: the daemon's keys go out as
+         * connection reads in it is `projectActionForClient`'s: the daemon's keys go out as
          * the port answered them rather than as this client sent them, so a
          * value the port holds back is not carried to the second admin by
          * the echo.

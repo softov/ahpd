@@ -41,7 +41,7 @@ export interface Snapshots {
 export function createSnapshots(ctx: HostContext): Snapshots {
   const {
     options, sessions, subagents, byChat, owners, decided, wheres, moves, terminals,
-    kept, marksOf, resumedSessions, activeClientsOf,
+    kept, marksOf, restoredSessions, activeClientsOf,
     about, leadOf,
     LOGS, TRACES, METRICS,
     nameOf, sessionOfChat, sessionChannel, sessionFor,
@@ -186,7 +186,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * restored transcript did before the session went live.
      */
     const restored = owner !== undefined && owner.defaultChat === chatUri && owner.agent.subagents !== undefined
-      && resumedSessions.has(session)
+      && restoredSessions.has(session)
       ? (ctx.subHistory.get(idOf(session)) ?? [])
         .filter((one) => one.parentToolCallId === undefined || String(one.parentToolCallId) === '')
       : [];
@@ -492,7 +492,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
        * goes before the seed so no action dispatched while it is out falls
        * between the state and `fromSeq`.
        */
-      if (ctx.stateOf(channel) === undefined && held.agent.subagents !== undefined && resumedSessions.has(channel)) {
+      if (ctx.stateOf(channel) === undefined && held.agent.subagents !== undefined && restoredSessions.has(channel)) {
         const lead = leadOf(held);
         if (lead !== undefined) await restoredSubagents(idOf(channel), held.agent, lead.allTurns() as unknown as WireTurn<Turn>[]);
       }
@@ -719,7 +719,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     // A chat that is none of the above is not one this record answers for.
     if (chat) throw new RpcError(-32001, `No chat at ${channel}`);
     const listedAt = moves.get(nameOf(id)) ?? stamp;
-    const offered = ctx.laidCustomizations(nameOf(id), about(owner.provider).seeds);
+    const offered = ctx.laidCustomizations(nameOf(id), about(owner.provider).customizations);
     const running = {
       schema: sessionSchema(owner),
       values: { ...owner.defaults(), ...contributedDefaults(), ...storedConfig(owner, id) },
