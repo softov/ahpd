@@ -944,7 +944,7 @@ export function createHost(options: HostOptions): Host {
        * end, said or not, so the tool returns that to the model rather than
        * waiting on a person a stopped turn no longer has.
        */
-      asks.cancelTurn(channel, String(action.turnId ?? ''));
+      asks.clearTurn(channel, String(action.turnId ?? ''));
       // And a resumed turn is over, its time with it.
       ctx.resumedTurns.delete(`${channel}\n${String(action.turnId ?? '')}`);
     }

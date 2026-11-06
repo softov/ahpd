@@ -8,7 +8,7 @@ import type { AskedAnswers, AskedQuestion } from '../types/host.js';
  * answer to it has to be kept somewhere that both the tool and
  * `chat/inputCompleted` reach. That is this: `ask` holds the wait and puts the
  * request on the chat, `settle` ends the wait with what the person did, and
- * `cancelTurn` ends the ones a turn no longer has. The map is per host and
+ * `clearTurn` ends the ones a turn no longer has. The map is per host and
  * lives as long as it does.
  */
 
@@ -48,7 +48,7 @@ export interface Asking {
   /** Whether a request by this id is still waiting. */
   holds(id: string): boolean;
   /** Settle every request waiting in `chat` on `turn` as cancelled. */
-  cancelTurn(chat: string, turn: string): void;
+  clearTurn(chat: string, turn: string): void;
 }
 
 /** What `createAsking` says a request with. */
@@ -173,7 +173,7 @@ export function createAsking(options: AskingOptions): Asking {
     return true;
   };
 
-  const cancelTurn = (chat: string, turn: string): void => {
+  const clearTurn = (chat: string, turn: string): void => {
     for (const [id, one] of held) {
       if (one.chat !== chat || one.turn !== turn) continue;
       held.delete(id);
@@ -181,5 +181,5 @@ export function createAsking(options: AskingOptions): Asking {
     }
   };
 
-  return { ask, settle, holds: (id) => held.has(id), cancelTurn };
+  return { ask, settle, holds: (id) => held.has(id), clearTurn };
 }
