@@ -95,7 +95,7 @@ export interface BotKept {
   body: BotBody;
   /** Which colour it is drawn in. */
   color: BotColor;
-  /** The template a chat with it would open with, by name. Absent is the plugin's default. */
+  /** The template its `AGENTS.md` is made from, by name. Absent is the plugin's default. */
   template?: string;
   /** The agent provider a session of it runs on, AHP's `provider`, where a bot chooses one. */
   provider?: string;

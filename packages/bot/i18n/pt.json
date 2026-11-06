@@ -7,9 +7,6 @@
     "root": {
       "description": "A pasta onde fica o espaço de trabalho de cada bot, como <root>/<slug>."
     },
-    "lastChats": {
-      "description": "Quantos chats um template lista em {{chats}}."
-    },
     "mainTurnPostMessageAbsent": {
       "description": "O que um turno principal faz quando o turno da sessão de fundo termina sem post_message: post (o padrão), notice, silence ou postNotice."
     }

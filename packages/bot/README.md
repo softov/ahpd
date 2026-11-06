@@ -24,13 +24,12 @@ Update, remove and one-run flags such as `--plugin` are in [Plugins](https://git
 In the configuration file, with every option set:
 
 ```json
-{ "plugins": [{ "name": "@ahpd/bot", "options": { "root": "/srv/bots", "lastChats": 20, "mainTurnPostMessageAbsent": "postNotice" } }] }
+{ "plugins": [{ "name": "@ahpd/bot", "options": { "root": "/srv/bots", "mainTurnPostMessageAbsent": "postNotice" } }] }
 ```
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>` |
-| `lastChats` | `10` | How many chats a template lists for `{{chats}}` |
 | `mainTurnPostMessageAbsent` | `post` | What a main turn does when the back session's turn ends without `post_message`: `post`, `notice`, `silence` or `postNotice` |
 
 The plugin's own entry needs `session:read` and `session:write`: a message is sent to a back session as a client's chat action, and the session's state is read the same way. The write group also holds `session:trust`, which the trusted start of a back session asks for.
@@ -130,7 +129,7 @@ A chat is opened by a read. `resourceRead bot://<slug>` answers the record with 
 
 A chat works in the bot's `workspace` and is titled with the bot's `name`. Starting one asks the reader's own `session:create`, by the host's own road, and a refusal there is the read's refusal.
 
-A bot may name a `template`, the text a chat with it would open with and the text its `AGENTS.md` is made from, and a bot that names none gets the default one the plugin ships. A make or an edit that names a template that does not exist is refused `-32602`. Nothing fills a chat template yet: a chat runs no model, so there is no first turn for one to open.
+A bot may name a `template`, the text its `AGENTS.md` is made from, and a bot that names none gets the default one the plugin ships. A make or an edit that names a template that does not exist is refused `-32602`.
 
 ### The tombstone
 

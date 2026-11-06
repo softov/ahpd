@@ -9,7 +9,6 @@ import { named, rowId, userOf, whose } from './names.js';
 import {
   BOT_BODIES, BOT_COLORS, checkRecord, DEFAULT_SESSION, isSlug, TURN_WORD,
 } from './record.js';
-import { DEFAULT_TEMPLATE, templateOf } from './template.js';
 import type { Yaml } from './agents.js';
 import type { BackSessions } from './names.js';
 import type { BotCatalogue } from './catalogue.js';
@@ -291,7 +290,7 @@ const manifest = (hostName: string) => ({
       description: 'Which colour it is drawn in: a name, or `#rrggbb`.',
     },
     instructions: { type: 'string', description: 'What it was asked to be, in its own words.' },
-    template: { type: 'string', description: 'The template a chat with it would open with, by name. Absent is the default.' },
+    template: { type: 'string', description: 'The template its AGENTS.md is made from, by name. Absent is the default.' },
     provider: { type: 'string', description: 'The agent provider a session of it runs on.' },
     model: { type: 'string', description: 'The model it asks for.' },
     preset: { type: 'string', description: 'The session preset it starts from.' },
@@ -815,12 +814,13 @@ export function botProvider(options: BotOptions): BotProvider {
       if (provider !== undefined && options.mayUse !== undefined && !options.mayUse(whose, provider)) {
         throw new RpcError(-32009, `${provider} is not an agent ${whose} may use`);
       }
-      // A make reads its template. An edit reads it only where the body names
-      // one, so a bot whose template was removed can still be edited; a template
-      // that is named and missing is refused either way.
-      const reads = existing === undefined || (said as Bag)['template'] !== undefined;
-      const template = reads ? await templateOf(draft, options.templates) : DEFAULT_TEMPLATE;
-      if (template === undefined) throw new RpcError(-32602, `The template ${draft.template as string} does not exist.`);
+      // A template the body names is read, and one that is missing is refused.
+      // A body that names none reads none, so a bot whose template was removed
+      // can still be edited.
+      const named = (said as Bag)['template'] === undefined ? undefined : draft.template;
+      if (named !== undefined && await options.templates.text(named) === undefined) {
+        throw new RpcError(-32602, `The template ${named} does not exist.`);
+      }
       const now = new Date().toISOString();
       const record: BotRecord = {
         id: slug,

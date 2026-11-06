@@ -15,7 +15,7 @@ A bot is not a backend of its own. It names whichever agent the host already has
 | `body` | Which body it is drawn with. Any word: the fifteen below are the suggestions |
 | `color` | Which colour it is drawn in: one of the eleven below, or a hex colour `#rrggbb` |
 | `instructions` | What it was asked to be, in its own words |
-| `template` | The template a chat with it would open with, and the text its `AGENTS.md` is made from, by name. Absent is the default template - [The template](#the-template) |
+| `template` | The template its `AGENTS.md` is made from, by name. Absent is the default template - [The template](#the-template) |
 | `provider` | The agent provider a session of it runs on, AHP's `provider`, where a bot chooses one |
 | `model` | The model it asks for |
 | `preset` | The session preset it starts from. Where one is set it wins over `provider` and `model` |
@@ -202,28 +202,15 @@ A back session's system prompt says only what no file can: that a person is wait
 
 ## The template
 
-A bot may name a `template`, which is what a chat with it would open with and the text its `AGENTS.md` is made from - [The persona](#the-persona). A bot that names none gets the default one the plugin ships:
-
-```text
-You are {{name}}. {{description}}
-
-{{instructions}}
-
-## Your last chats
-
-{{chats}}
-```
+A bot may name a `template`, the text its `AGENTS.md` is made from - [The persona](#the-persona). A bot that names none, or names one since removed, gets the default, which is a file: `<configDir>/templates/bots/AGENTS.md`, written at load where it is absent and edited by hand. A bot's `AGENTS.md` is that text with its words filled:
 
 | Word | What it becomes |
 | --- | --- |
 | `{{name}}` | The bot's `name` |
 | `{{description}}` | The bot's `description`, or nothing |
 | `{{instructions}}` | The bot's `instructions`, or nothing |
-| `{{chats}}` | One line `- <title>` per chat the bot is in, newest first, at most `lastChats` of them. `None.` when there are none |
 
 A word that is not in this table is left as it was written.
-
-The default `AGENTS.md` template is a second text, and it is a file rather than a record: `<configDir>/templates/bots/AGENTS.md`, written at load where it is absent and edited by hand. A bot's `AGENTS.md` is the text its `template` names, or that file, filled with `{{name}}`, `{{description}}` and `{{instructions}}` - [The persona](#the-persona). A word outside those three, `{{chats}}` among them, is left as it was written, because the file is the bot's rules rather than the opening of a conversation.
 
 A named template is a record in the `templates` collection, so the daemon keeps each one as a file: `<configDir>/templates/<name>.md`. Its frontmatter holds `title`, and its body is the text:
 
@@ -236,8 +223,6 @@ You are {{name}}. {{instructions}}
 ```
 
 A bot names it as `template: short`. A make or an edit that names a template that does not exist is refused `-32602`, with a sentence that names it. An edit that does not name `template` passes even when the bot's template was deleted, and the bot keeps the name.
-
-Nothing fills a chat template yet. A chat runs no model, so there is no first turn for one to open, and what a template reaches is decided with the work a bot does.
 
 ## Who may do what
 
@@ -323,7 +308,6 @@ An edit that asks for a provider, leaving everything else as it was:
 | Option | Default | What it does |
 | --- | --- | --- |
 | `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>`. A root that is the configuration folder or under it is refused at load, with a problem line, and the default is used |
-| `lastChats` | `10` | How many chats `{{chats}}` lists |
 | `mainTurnPostMessageAbsent` | `post` | What a main turn does when the back session's turn ends without `post_message`: `post`, `notice`, `silence` or `postNotice` |
 
 ```json

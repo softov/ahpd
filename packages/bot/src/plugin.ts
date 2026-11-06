@@ -11,7 +11,7 @@ import { postMessage } from './post.js';
 import { botProvider } from './provider.js';
 import { isSlug } from './record.js';
 import { botStore } from './store.js';
-import { agentsTextOf, LAST_CHATS } from './template.js';
+import { agentsTextOf } from './template.js';
 import { botWake, isMainTurnAbsence } from './wake.js';
 import type { Yaml } from './agents.js';
 import type { BotRecord } from './record.js';
@@ -66,7 +66,6 @@ export const title = 'Bot';
 /** What an option falls back to. */
 export const defaults = {
   root: '~/.bots',
-  lastChats: LAST_CHATS,
   mainTurnPostMessageAbsent: 'post',
 } as const;
 
@@ -395,8 +394,6 @@ export const apply: Plugin['apply'] = (host, options) => {
   catch (error) {
     host.problem(`${name}: the default AGENTS.md template was not written: ${reason(error)}`);
   }
-  const asked_ = options.lastChats;
-  const lastChats = typeof asked_ === 'number' && Number.isInteger(asked_) && asked_ >= 1 ? asked_ : defaults.lastChats;
   /*
    * What a main turn does when a back session's turn ends without a post.
    *
@@ -418,7 +415,6 @@ export const apply: Plugin['apply'] = (host, options) => {
       const text = (await kept.get(name))?.['text'];
       return typeof text === 'string' ? text : undefined;
     },
-    lastChats,
   };
   /*
    * The `AGENTS.md` a bot with no file is given: the template record it names,

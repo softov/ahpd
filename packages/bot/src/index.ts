@@ -8,9 +8,8 @@ export {
 } from './record.js';
 export type { BotBody, BotColor, BotDraft, BotRecord } from './record.js';
 export {
-  agentsFilled, agentsTemplatePath, agentsTextOf, chatLines, DEFAULT_AGENTS_TEMPLATE, DEFAULT_TEMPLATE,
-  defaultAgentsTemplate, firstTurn, LAST_CHATS, TEMPLATE_WORDS, templateOf,
+  agentsFilled, agentsTemplatePath, agentsTextOf, DEFAULT_AGENTS_TEMPLATE, defaultAgentsTemplate,
 } from './template.js';
-export type { BotTemplates, TemplateChat } from './template.js';
+export type { BotTemplates } from './template.js';
 export { botStore } from './store.js';
 export type { BotStore } from './store.js';

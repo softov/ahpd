@@ -108,7 +108,7 @@ async function made() {
     chats: (bot) => rowsOf(chatRows, bot),
     backSessions: backSessions((bot) => rowsOf(sessionRows, bot)),
     hostName: 'test',
-    templates: { text: async () => undefined, lastChats: 10 },
+    templates: { text: async () => undefined },
     yaml,
     agents,
   });
