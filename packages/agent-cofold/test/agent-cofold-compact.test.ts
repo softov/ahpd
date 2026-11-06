@@ -8,7 +8,7 @@ import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import type { Bag, Emit, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
-import { cofoldSession, compactionNotice, harnessConfig, storeOf, turnsOf } from '../src/index.js';
+import { cofoldSession, compactionNotification, harnessConfig, storeOf, turnsOf } from '../src/index.js';
 import type { CofoldOptions, Held } from '../src/agent.js';
 import type { SessionContext } from '../src/context.js';
 import { AUTO_COMPACT_AT, DEFAULT_CONTEXT_TOKENS, createTurnAgent } from '../src/turnagent.js';
@@ -266,7 +266,7 @@ it('says a compaction as one notice rather than as the model\'s answer', async (
   // As the protocol declares a notice: its kind and what it says, and no id.
   expect(Object.keys(notices[0] ?? {}).sort()).toEqual(['content', 'kind']);
   expect(notices[0]?.content).toBe(
-    compactionNotice({ before: Number(compacted?.estimatedTokens), after: Number(compacted?.afterTokens) }),
+    compactionNotification({ before: Number(compacted?.estimatedTokens), after: Number(compacted?.afterTokens) }),
   );
 
   /*
@@ -318,10 +318,10 @@ it('runs /compact as a command, and reads it back as the turn drew it', async ()
 });
 
 it('words the notice the way the Claude backend does', () => {
-  expect(compactionNotice({ before: 9000, after: 2000 })).toBe('Context compacted automatically: 9000 tokens to 2000.');
-  expect(compactionNotice()).toBe('Context compacted automatically.');
-  expect(compactionNotice({ before: 9000, after: 2000 }, { asked: true })).toBe('Context compacted: 9000 tokens to 2000.');
-  expect(compactionNotice(undefined, { asked: true })).toBe('Context compacted.');
+  expect(compactionNotification({ before: 9000, after: 2000 })).toBe('Context compacted automatically: 9000 tokens to 2000.');
+  expect(compactionNotification()).toBe('Context compacted automatically.');
+  expect(compactionNotification({ before: 9000, after: 2000 }, { asked: true })).toBe('Context compacted: 9000 tokens to 2000.');
+  expect(compactionNotification(undefined, { asked: true })).toBe('Context compacted.');
 });
 
 it('runs no summary step for a session that stays under the point', async () => {

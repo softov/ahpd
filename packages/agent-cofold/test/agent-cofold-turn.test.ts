@@ -8,6 +8,7 @@ import { createFileStore } from '@cofold/store-file';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { idOf } from '@ahpd/sdk';
+import type { Bag } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
@@ -1000,10 +1001,13 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
     begin(client, chatUriFor('ahp-session:/none'), 't1', 'hi');
     const failure = () => actions(p, chatUriFor('ahp-session:/none')).find((e) => e.action.type === 'chat/error');
     await until(() => failure() !== undefined);
-    const part = failure()?.action.part as { error?: { message?: string }; resumable?: unknown };
+    const part = failure()?.action.part as { error?: { errorType?: string; message?: string }; resumable?: unknown };
     const message = String(part?.error?.message);
     expect(message).toContain('add "model"');
     expect(message).toContain(join(home, 'cofold', 'config.json'));
+    // Typed by the stage it failed at, as VS Code's host types a send whose
+    // model nothing resolves.
+    expect(part?.error?.errorType).toBe('modelSelectionFailed');
     // A turn that never ran is not a turn a resume can put back: there is
     // nothing the session could cut to and run again.
     expect(part).not.toHaveProperty('resumable');
@@ -1091,8 +1095,11 @@ it('marks a failed run resumable, on the stream and on the turn', async () => {
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/error'));
 
+  // Typed by the runtime's own code for the failure, as VS Code's Copilot agent
+  // carries its SDK's error type: cofold's `internal` for a model that threw.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSdkChatError.ts#L54-L64
   const said = actions(p, chatUri).find((e) => e.action.type === 'chat/error');
-  expect(said?.action.part).toMatchObject({ kind: 'error', resumable: true });
+  expect(said?.action.part).toMatchObject({ kind: 'error', resumable: true, error: { errorType: 'internal', message: 'the model gave up' } });
 
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { turns: { state: string; responseParts: { kind?: string; resumable?: boolean }[] }[] } };
@@ -1100,6 +1107,44 @@ it('marks a failed run resumable, on the stream and on the turn', async () => {
   const turn = opened.snapshot.state.turns.at(-1);
   expect(turn?.state).toBe('error');
   expect(turn?.responseParts.at(-1)).toMatchObject({ kind: 'error', resumable: true });
+});
+
+/*
+ * A turn whose record cannot be used fails as a send that never reached the
+ * runtime, typed `sendFailed` and with no resume, as VS Code's host fails a
+ * deferred turn it cannot send; a resume whose record cannot be used fails the
+ * same way and stays resumable, as VS Code's host ends a failed resume.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1854-L1872
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2349
+ */
+it('fails a turn whose record cannot be used as a failed send, and a resume of one resumable', async () => {
+  let broken = false;
+  const extra = {
+    recordOf: () => {
+      if (broken) throw new Error('the vault would not read a key back');
+      return {};
+    },
+  };
+  const { client, peer: p, chatUri } = await talking(failingModel(1), [], extra);
+  const errors = () => actions(p, chatUri).filter((e) => e.action.type === 'chat/error').map((e) => e.action.part as Bag);
+
+  // A run that failed on its own, which a resume can put back.
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => errors().length === 1);
+  broken = true;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+  });
+  await until(() => errors().length === 2);
+  expect(errors()[1]).toMatchObject({ resumable: true, error: { errorType: 'sendFailed' } });
+  expect(String((errors()[1]?.error as Bag).message)).toContain('the record cannot be used');
+
+  // A new turn on the same record: a send that never reached the runtime.
+  begin(client, chatUri, 't2', 'again');
+  await until(() => errors().length === 3);
+  expect(errors()[2]).toMatchObject({ error: { errorType: 'sendFailed' } });
+  expect(errors()[2]).not.toHaveProperty('resumable');
 });
 
 /** A model whose first call streams a word, waits for `fail`, and throws; later calls answer. */

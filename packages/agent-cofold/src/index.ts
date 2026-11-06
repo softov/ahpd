@@ -31,7 +31,7 @@ export { splitModel } from '@cofold/model-openai-compat';
 export type { ProviderConfig } from '@cofold/model-openai-compat';
 export type { HarnessConfig } from './config.js';
 export { cofoldSession, sessionIdOf } from './session.js';
-export { compactionNotice, mapTurn } from './mapping.js';
+export { compactionNotification, mapTurn } from './mapping.js';
 export type { MappedEvent, OpenRequest, TurnMapping, TurnMappingOptions } from './mapping.js';
 export { cofoldTool, cofoldTools } from './tools.js';
 export type { ClientToolCall, ClientToolRelay } from './tools.js';

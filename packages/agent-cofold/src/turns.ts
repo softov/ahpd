@@ -4,7 +4,7 @@ import { bag, partsOf, reason, str, titleFrom } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, TurnOptions } from '@ahpd/sdk';
 import { modelReferenceOf } from './agent.js';
 import { mapTurn } from './mapping.js';
-import type { TurnMapping } from './mapping.js';
+import type { SendFailure, TurnMapping } from './mapping.js';
 import { ruleName } from './tools.js';
 import { AGENT_ID } from './turnagent.js';
 import type { SessionContext } from './context.js';
@@ -106,6 +106,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
     parts: Bag[],
     began: number,
     reference: string | undefined,
+    resumed = false,
   ): TurnMapping => mapTurn({
     turnId,
     chatUri: start.chatUri,
@@ -131,6 +132,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       const before = turns.at(-1);
       return before === undefined || ctx.points.has(String(before.id));
     },
+    resumed,
     ...(reference !== undefined ? { model: reference } : {}),
   });
 
@@ -246,7 +248,9 @@ export const createTurns = (ctx: SessionContext): Turns => {
       agent = ctx.agentOf(values, instructions);
     }
     catch (error) {
-      void ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
+      // An agent that cannot be built is a model nothing resolves: no model
+      // configured, a provider the file lacks, no endpoint.
+      void ctx.apply(mapping, turnId, turnFailure(turnId, 'modelSelectionFailed', error));
       return;
     }
     // Before the run, so a correction sent the moment the turn appears is read
@@ -274,7 +278,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
         });
       }
       catch (error) {
-        void ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
+        void ctx.apply(mapping, turnId, turnFailure(turnId, 'sendFailed', error));
         return;
       }
       ctx.handle = live;
@@ -303,7 +307,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
         launch(parts);
       }
       catch (error) {
-        await ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
+        await ctx.apply(mapping, turnId, turnFailure(turnId, 'sendFailed', error));
       }
     })();
   };
@@ -341,8 +345,13 @@ export const createTurns = (ctx: SessionContext): Turns => {
     );
   };
 
-  /** The `run.finished` a turn that never ran ends with. */
-  const refusal = (turnId: string, code: string, why: unknown) => ({
+  /**
+   * The `run.finished` a turn that never ran ends with: VS Code's turn
+   * failure, typed by the stage its send failed at, with the failure's own
+   * words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2553-L2574
+   */
+  const turnFailure = (turnId: string, code: SendFailure, why: unknown) => ({
     seq: 0,
     runId: `${turnId}:refused`,
     sessionId,
@@ -403,7 +412,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
   ): void => {
     const opened = openTurn(turnId, text, model, from, attachments);
     if (opened === undefined) return;
-    void ctx.apply(opened.mapping, turnId, refusal(turnId, 'record_refused', why));
+    void ctx.apply(opened.mapping, turnId, turnFailure(turnId, 'sendFailed', why));
   };
 
   /**
@@ -448,7 +457,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       ctx.resumedFrom = resumedFrom;
       ctx.cancelRequested = false;
       ctx.error = undefined;
-      const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id));
+      const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id), true);
       ctx.activeMapping = mapping;
       void ctx.resumePaused(turnId, mapping);
       return true;
@@ -491,7 +500,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       : { id, ...(named.config === undefined ? {} : { config: named.config as NonNullable<Chosen['config']> }) };
     const { values, reference } = valuesFor(chosen);
     const began = Date.now();
-    const mapping = mappingOn(turnId, kept, began, reference);
+    const mapping = mappingOn(turnId, kept, began, reference, true);
     ctx.activeMapping = mapping;
     /*
      * A record that can no longer be used cannot run the turn either, and the
@@ -499,7 +508,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
      * spinner nothing can settle.
      */
     if (broken !== undefined) {
-      void ctx.apply(mapping, turnId, refusal(turnId, 'resume_failed', new Error(broken)));
+      void ctx.apply(mapping, turnId, turnFailure(turnId, 'sendFailed', new Error(broken)));
       return true;
     }
     void (async (): Promise<void> => {
@@ -512,7 +521,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       catch (error) {
         // The store would not truncate the conversation, so there is nothing
         // to run on, and the resumed turn ends with the reason.
-        await ctx.apply(mapping, turnId, refusal(turnId, 'resume_failed', error));
+        await ctx.apply(mapping, turnId, turnFailure(turnId, 'sendFailed', error));
         return;
       }
       const text = str(message.text) ?? '';

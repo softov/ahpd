@@ -105,6 +105,15 @@ export interface TurnMappingOptions {
    * back is not one this process can put on the store.
    */
   canCut?(): boolean;
+  /**
+   * Whether this turn is a failed one run again.
+   *
+   * A resume whose send fails can be asked for again, as VS Code's host ends
+   * a failed resume resumable, where a new turn's failed send never reached
+   * the runtime and cannot.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1854-L1872
+   */
+  resumed?: boolean;
 }
 
 /** One turn's event translation. */
@@ -158,7 +167,7 @@ const usageOf = (usage: Usage, model: string | undefined, cost?: number): Bag =>
  * `/compact`: the person asked for it, so the sentence does not call it
  * automatic.
  */
-export const compactionNotice = (
+export const compactionNotification = (
   tokens?: { before: number; after: number },
   { asked = false }: { asked?: boolean } = {},
 ): string => {
@@ -169,15 +178,28 @@ export const compactionNotice = (
 };
 
 /**
- * The part that ends a turn which failed, in the shape `chat/error` carries.
+ * The stages a turn's send fails at before the runtime runs it, by the error
+ * types VS Code's host gives them: a model nothing resolves, and every other
+ * failure to send.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2574
+ */
+export const SEND_FAILURES = ['modelSelectionFailed', 'sendFailed'] as const;
+
+/** A stage a turn's send fails at. */
+export type SendFailure = typeof SEND_FAILURES[number];
+
+/**
+ * The part that ends a turn which failed, in the shape `chat/error` carries:
+ * the spec's error part.
  *
  * `resumable` says a client may ask for the turn again. It is set only for a
  * failure the session can put back: a model call, cut back to the turn before,
  * or a conversation's first turn, which is started over.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1133-L1146
  */
-const failurePart = (message: string, resumable = false): Bag => ({
+const errorPart = (errorType: string, message: string, resumable = false): Bag => ({
   kind: 'error',
-  error: { errorType: 'turnFailed', message },
+  error: { errorType, message },
   ...(resumable ? { resumable: true } : {}),
 });
 
@@ -493,7 +515,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           compactions += 1;
           const part: Bag = {
             kind: 'systemNotification',
-            content: compactionNotice(
+            content: compactionNotification(
               { before: event.estimatedTokens, after: event.afterTokens },
               { asked: commanded },
             ),
@@ -800,12 +822,19 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
              * client draws; reporting it as complete would leave the failure
              * in the snapshot and nowhere on the stream.
              *
-             * A failure the turn never ran on - an agent that could not be
-             * built, a prompt with nothing to run on - is not one a resume can
-             * put back, and neither is one with no point to cut to.
+             * Its type is the stage a send failed at, for a turn the runtime
+             * never ran, as VS Code's host types a failed send, and the
+             * runtime's own code for a run that failed, as VS Code's Copilot
+             * agent carries its SDK's error type.
+             * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSdkChatError.ts#L54-L64
+             *
+             * A new turn's failed send - an agent that could not be built, a
+             * prompt with nothing to run on - is not one a resume can put
+             * back, and neither is a failure with no point to cut to.
              */
-            const resumable = outcome.error.code !== 'start_failed' && options.canCut?.() === true;
-            actions.push({ type: 'chat/error', turnId, duration, part: failurePart(outcome.error.message, resumable) });
+            const sent = (SEND_FAILURES as readonly string[]).includes(outcome.error.code);
+            const resumable = (!sent || options.resumed === true) && options.canCut?.() === true;
+            actions.push({ type: 'chat/error', turnId, duration, part: errorPart(outcome.error.code, outcome.error.message, resumable) });
             return only(actions);
           }
           /*

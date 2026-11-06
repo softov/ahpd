@@ -22,7 +22,7 @@ import { textOf } from '@cofold/agents';
 import type { Message, RunEvent, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
 import { bag, str, withToolCallDuration } from '@ahpd/sdk';
-import { compactionNotice } from './mapping.js';
+import { compactionNotification } from './mapping.js';
 import { describe, pastTenseOf, toolMetaOf } from './tools.js';
 
 /**
@@ -387,7 +387,7 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
       live.end = message.id;
       if (message.source === 'notice' && live.compacted) continue;
       const summary = message.source === 'summary';
-      const said = summary ? compactionNotice(compacted.get(message.id), { asked: live.commanded }) : textOf(message);
+      const said = summary ? compactionNotification(compacted.get(message.id), { asked: live.commanded }) : textOf(message);
       if (summary) live.compacted = true;
       if (said !== '') live.parts.push({ kind: 'systemNotification', content: said });
       continue;
