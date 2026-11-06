@@ -1011,6 +1011,49 @@ it('takes a second turn handed while a resumed session opens, and runs it after 
   expect((await reader.runs.list({ sessionId: 'one' })).length).toBe(3);
 });
 
+/*
+ * A host that only lets a session go leaves its run paused on a person where it
+ * is, detached with its request open in the store for a later resume, as
+ * cofold's `detach` is for a host that stops caring about a pause; a session
+ * being deleted cancels it.
+ */
+it('leaves a paused run waiting on a stopping close, and cancels it on a delete', async () => {
+  const { root, sweep } = place();
+  const asks: Partial<Policy> = {
+    decide: ({ tool }) => (tool.name === 'lookup' ? { behavior: 'ask' } : { behavior: 'allow' }),
+  };
+  const tool = lookup([]);
+  const asking = (): ModelAdapter => createFakeModel({
+    script: [{ toolCalls: [{ name: 'lookup', input: { query: 'x' }, callId: 'call-1' }] }],
+    stream: true,
+  });
+  const reader = createFileStore({ root });
+  /** The run's status once it leaves `awaiting`, or `awaiting` when it has not within the window. */
+  const moved = async (sessionId: string): Promise<string | undefined> => {
+    const limit = Date.now() + 500;
+    for (;;) {
+      const status = (await reader.runs.list({ sessionId }))[0]?.status;
+      if (status !== 'awaiting' || Date.now() > limit) return status;
+      await new Promise((r) => { setTimeout(r, 5); });
+    }
+  };
+  const paused = async (id: string) => {
+    const opened = open(backend(root, asking(), asks), id, sweep, { tools: [tool] });
+    opened.session.sendMessage('t1', 'hi');
+    await until(() => opened.view.said('session', 'session/inputNeededSet') !== undefined);
+    await pausedRun(root, id);
+    return opened;
+  };
+
+  const kept = await paused('kept');
+  await kept.session.close('stopping');
+  expect(await moved('kept')).toBe('awaiting');
+
+  const gone = await paused('gone');
+  await gone.session.close('dispose');
+  expect(await moved('gone')).toBe('cancelled');
+});
+
 it('runs a new message in place of resuming a paused run, the run let go first', async () => {
   const { root, sweep } = place();
   const asks: Partial<Policy> = {

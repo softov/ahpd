@@ -502,8 +502,20 @@ export function cofoldSession(
 
     settings: () => ({ ...values }),
 
-    close: () => {
+    /*
+     * A host that only lets the session go leaves a run paused on a person
+     * where it is: detached, its request open in the store for a later resume,
+     * which is what cofold's `detach` is for, a host that stops caring about a
+     * pause. A session being deleted, and a run still working, are cancelled.
+     * `RunHandle.detach` in npm://@cofold/agents@0.4.0: "What a host that stops
+     * caring about a pause calls, so the run is not held here."
+     */
+    close: (reason = 'dispose') => {
       ctx.disposed = true;
+      if (reason === 'stopping' && ctx.handle?.status() === 'awaiting') {
+        ctx.handle.detach();
+        return;
+      }
       ctx.abort('the session closed');
     },
   };
