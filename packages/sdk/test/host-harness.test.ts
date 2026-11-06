@@ -115,6 +115,37 @@ describe('what the harness offers', () => {
     await host.close();
   });
 
+  /*
+   * A probe that finds what the root already lists says nothing, as VS Code
+   * publishes its agents only when the list differs from the last one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L602-L606
+   */
+  it('says nothing when a probe finds the agent list as it was', async () => {
+    let changed: (() => void) | undefined;
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...base,
+        probe: async () => ({ models: [{ id: 'a', name: 'A' }], commands: [], customizations: [] }),
+        probeChanged: (onChange) => { changed = onChange; return () => {}; },
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await settle(8);
+    const said = () => p.notes.filter((n) => n.method === 'action'
+      && (n.params as { action: { type: string } }).action.type === 'root/agentsChanged').length;
+    const before = said();
+    changed?.();
+    await settle(8);
+    changed?.();
+    await settle(8);
+    expect(said()).toBe(before);
+    await host.close();
+  });
+
   it('gives each model its own thinking control, from what that model supports', async () => {
     sdk.init = {
       models: [

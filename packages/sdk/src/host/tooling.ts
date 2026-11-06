@@ -194,6 +194,8 @@ export interface Tooling {
   shapedDefinition(one: HostTool, uri: string): ToolDefinition | undefined;
   /** The definitions alone for one session, which is the half that goes on the wire. */
   toolDefinitions(uri: string): ToolDefinition[];
+  /** Say a session's server tools where its list moved. */
+  serverToolsMoved(uri: string): void;
   /** The tools the clients in a session provide, as tools to offer the model. */
   clientTools(uri: string): BoundTool[];
   /**
@@ -595,6 +597,16 @@ export function createTooling(ctx: HostContext): Tooling {
     const shaped = shapedDefinition(one, uri);
     return shaped === undefined ? [] : [shaped];
   });
+  /*
+   * A session's server tools, said whole and only where the list moved, as
+   * VS Code's host compares a session's tools with the ones its state holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L232-L247
+   */
+  const serverToolsMoved = (uri: string): void => {
+    const tools = toolDefinitions(uri);
+    if (isDeepStrictEqual(tools, ctx.stateOf(uri)?.serverTools ?? [])) return;
+    dispatch(uri, { type: 'session/serverToolsChanged', tools });
+  };
   /**
    * The tools the clients in a session provide, as tools to offer the model.
    *
@@ -2480,7 +2492,7 @@ export function createTooling(ctx: HostContext): Tooling {
   });
 
   return {
-    permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions,
+    permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions, serverToolsMoved,
     clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, folderOf, withEntries, tellOff, forgetTold, keepDecision, publishSessionCustomizations,
     retool, pluginsSettled, chatMeant, renameChat, renameSession, snapshotDefaultChatTitle, toolContext, sessionlessContext,
     pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,

@@ -476,7 +476,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           ctx.advancedTools = asked;
           ctx.contributing = permitted(ctx.contributed);
           for (const uri of sessions.keys()) {
-            dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
+            ctx.serverToolsMoved(uri);
             retool(uri);
           }
         }
@@ -507,7 +507,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           ctx.sessionTools = offering;
           ctx.sessionToolsProviders = narrowing;
           for (const uri of sessions.keys()) {
-            dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
+            ctx.serverToolsMoved(uri);
             retool(uri);
           }
         }

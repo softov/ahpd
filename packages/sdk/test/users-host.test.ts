@@ -316,7 +316,8 @@ it('sends each connection its own required in a live root/agentsChanged', async 
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const { host } = served({
     users: directory('good-token', REQUIRED),
-    agents: [slowAgent(gate, { models: [], commands: [], customizations: [] })],
+    // A model the probe answers with, so its answer moves the agent list.
+    agents: [slowAgent(gate, { models: [{ id: 'later', name: 'Later' }], commands: [], customizations: [] })],
   });
   const rootWire = peer();
   const personalWire = peer();
@@ -336,7 +337,8 @@ it('replays root/agentsChanged to a root connection with its own required', asyn
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const { host } = served({
     users: directory('good-token', REQUIRED),
-    agents: [slowAgent(gate, { models: [], commands: [], customizations: [] })],
+    // A model the probe answers with, so its answer moves the agent list.
+    agents: [slowAgent(gate, { models: [{ id: 'later', name: 'Later' }], commands: [], customizations: [] })],
   });
   // An action before the client arrives, so the oldest one held is behind
   // where its cursor will stand.

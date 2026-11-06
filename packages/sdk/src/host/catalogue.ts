@@ -90,6 +90,8 @@ export interface Catalogue {
   activeCount(): number;
   activeSessionsMoved(): void;
   learnModels(uri: string): void;
+  /** Say the root's agent list where it moved. */
+  agentsMoved(): void;
   /**
    * Record one backend's account and tell the root channel, which publishes it
    * as a root config value under `accountKey`.
@@ -894,6 +896,17 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     ctx.dispatch(ROOT, { type: 'root/agentsChanged', agents });
   };
 
+  /*
+   * The root's agent list, said only where it moved, as VS Code's host says
+   * its agents only when they differ from the ones it said last.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L602-L606
+   */
+  const agentsMoved = (): void => {
+    const agents = ctx.descriptors();
+    if (isDeepStrictEqual(agents, ctx.stateOf(ROOT)?.agents)) return;
+    ctx.dispatch(ROOT, { type: 'root/agentsChanged', agents });
+  };
+
   /**
    * Record the account one backend's harness is signed in as, and say so.
    *
@@ -1673,7 +1686,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
     chatCatalogOf, chatMoved, syncSessionInputNeeded, inputNeededOf, factsMoved, activeCount,
     activityOf, sessionComing, sessionAdded, provisional: (uri: string) => coming.has(uri), materialized, failSessionCreationIfStillCreating,
-    summaryMoved, flushPendingSessionSummaries, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
+    summaryMoved, flushPendingSessionSummaries, summaryKept, forgetSent, activeSessionsMoved, learnModels, agentsMoved, learnAccount,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };
 }

@@ -562,6 +562,22 @@ describe('tools the host contributes', () => {
     expect(said[0]?.action?.tools).toEqual([]);
   });
 
+  /*
+   * A set that leaves a session's list as it was says nothing to it, as VS
+   * Code's host compares a session's tools with the ones its state holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L232-L247
+   */
+  it('says nothing to a session whose tools a replacement leaves as they were, as VS Code\'s host', async () => {
+    const { host, client, peer: p, uri } = await withTools();
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    host.setTools([]);
+    host.setTools([]);
+    const said = p.notes
+      .map((one) => one.params as { channel?: string; action?: { type?: string } })
+      .filter((one) => one.action?.type === 'session/serverToolsChanged');
+    expect(said).toHaveLength(1);
+  });
+
   it('reads a client\'s resource from that client, about the URI as it knows it', async () => {
     const served = createHost({
       path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
@@ -782,43 +798,49 @@ describe('the session tools, which an install may switch off', () => {
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
     expect(await offered(client, uri)).toContain('list_sessions');
 
-    /** One push, and the sessions told of it, kept apart from the last. */
-    const push = async (config: Record<string, unknown>): Promise<{ name: string }[]> => {
+    /**
+     * One push, and what the session was told of it, kept apart from the last:
+     * the set where it moved, and nothing where it did not, as VS Code's host
+     * says a session's tools only where they changed.
+     */
+    const push = async (config: Record<string, unknown>): Promise<string[] | undefined> => {
       p.notes.length = 0;
       await client.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config } } });
       await settle();
       const told = actions(p, uri).filter((one) => one.action.type === 'session/serverToolsChanged');
-      expect(told).toHaveLength(1);
-      return (told[0]?.action.tools ?? []) as { name: string }[];
+      expect(told.length).toBeLessThanOrEqual(1);
+      return (told[0]?.action.tools as { name: string }[] | undefined)?.map((one) => one.name);
     };
 
     // Off, told whole - the action carries the new set rather than the
     // difference - and the session's own state follows it.
-    expect((await push({ sessionTools: false })).map((one) => one.name)).toEqual(HOST_OWN);
+    expect(await push({ sessionTools: false })).toEqual(HOST_OWN);
     expect(await offered(client, uri)).toEqual(HOST_OWN);
 
     // On again, by taking the key away: a null is how a client says so, and
     // the daemon then holds no value at all, which is the `true` default.
-    expect((await push({ sessionTools: null })).map((one) => one.name)).toContain('list_sessions');
+    expect(await push({ sessionTools: null })).toContain('list_sessions');
     expect(await offered(client, uri)).toContain('list_sessions');
 
     // The second key narrows rather than switches, and this session runs the
-    // provider it names, so it keeps them.
-    expect((await push({ sessionToolsProviders: ['claude'] })).map((one) => one.name)).toContain('list_sessions');
+    // provider it names, so it keeps them and is told nothing.
+    expect(await push({ sessionToolsProviders: ['claude'] })).toBeUndefined();
+    expect(await offered(client, uri)).toContain('list_sessions');
     // One it does not name loses them, on the wire and on the session's state.
-    expect((await push({ sessionToolsProviders: ['echo'] })).map((one) => one.name)).toEqual(HOST_OWN);
+    expect(await push({ sessionToolsProviders: ['echo'] })).toEqual(HOST_OWN);
     expect(await offered(client, uri)).toEqual(HOST_OWN);
 
-    // The switch beats the list: the list names this session's provider and
-    // the session is offered none all the same.
-    expect((await push({ sessionTools: false })).map((one) => one.name)).toEqual(HOST_OWN);
+    // The switch beats the list: with it off the session is offered none
+    // whatever the list names, which it already was.
+    expect(await push({ sessionTools: false })).toBeUndefined();
     expect(await offered(client, uri)).toEqual(HOST_OWN);
 
     // Back to every provider takes both keys cleared, and neither on its own
     // is the default: the list alone leaves the switch off, and the switch
     // alone leaves a list that does not name this session's provider.
-    expect((await push({ sessionToolsProviders: null })).map((one) => one.name)).toEqual(HOST_OWN);
-    expect((await push({ sessionTools: null })).map((one) => one.name)).toContain('list_sessions');
+    expect(await push({ sessionToolsProviders: null })).toBeUndefined();
+    expect(await offered(client, uri)).toEqual(HOST_OWN);
+    expect(await push({ sessionTools: null })).toContain('list_sessions');
     expect(await offered(client, uri)).toContain('list_sessions');
   });
 
@@ -3085,7 +3107,8 @@ describe('a customization switched for one session', () => {
 
     const open = async (name: string, made = true) => {
       const uri = `ahp-session:/${name}`;
-      const client = host.accept(peer());
+      const p = peer();
+      const client = host.accept(p);
       await client.handle(hello(['0.9.0']));
       if (made) await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
       /** What this session reports now, which is what a client's snapshot carries. */
@@ -3097,6 +3120,7 @@ describe('a customization switched for one session', () => {
       };
       return {
         uri,
+        peer: p,
         /** The one plugin, as this session reports it right now. */
         plugin: async (): Promise<Record<string, unknown> | undefined> =>
           (await reported()).find((one) => one.id === PLUGIN.id),
@@ -3134,6 +3158,23 @@ describe('a customization switched for one session', () => {
     one.report();
     await settle();
     expect((await one.plugin())?.enablement).toBeUndefined();
+  });
+
+  /*
+   * A backend reporting the list the session already holds says nothing, as
+   * VS Code's host says a session's customizations only where they moved.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L639-L646
+   */
+  it('says nothing for a list the session already holds, as VS Code\'s host', async () => {
+    const { open } = await switchable();
+    const one = await open('one');
+    await one.plugin();
+    one.report();
+    await settle();
+    one.report();
+    await settle();
+    const lists = actions(one.peer, one.uri).filter((e) => e.action.type === 'session/customizationsChanged');
+    expect(lists.length).toBeLessThanOrEqual(1);
   });
 
   it('keeps the decision on the session that made it, and reports it off', async () => {

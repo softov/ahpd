@@ -18,6 +18,7 @@
  */
 
 import { resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ACTION_INTRODUCED_IN, chatReducer, isActionKnownToVersion, rootReducer, sessionReducer } from '@microsoft/agent-host-protocol';
 import type {
   AnnotationsState, ChatAction, ChatState, RootAction, RootState, SessionAction, SessionInputRequestKind, SessionState, StateAction,
@@ -979,6 +980,10 @@ export function createHost(options: HostOptions): Host {
       ctx.tellOff(channel, reported);
       const halves = laid(channel, reported);
       if (halves.length > 0) action.customizations = halves;
+      // Said only where the list moved, as VS Code's host says a session's
+      // customizations.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L639-L646
+      if (isDeepStrictEqual(action.customizations ?? [], ctx.stateOf(channel)?.customizations ?? [])) return;
     }
     /*
      * A session's `_meta` has several producers - its backend, the facts of
@@ -1675,7 +1680,7 @@ export function createHost(options: HostOptions): Host {
        */
       if (offered.account !== undefined) learnAccount(agent.provider, offered.account);
       log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s), ${held.seeds.length} customization(s)`);
-      dispatch(ROOT, { type: 'root/agentsChanged', agents: descriptors() });
+      ctx.agentsMoved();
       watchProbe(agent);
     }).catch(() => { }).finally(() => {
       const again = probing.get(agent.provider) === true;
@@ -1774,6 +1779,8 @@ export function createHost(options: HostOptions): Host {
   const openUsersWatch = (): { close(): void } | undefined => watchingUsers()
     ? options.users?.watch?.(() => {
       if (listeningForUsers()) void fire({ type: 'users_changed' });
+      // Said whatever the list holds: what each connection is shown of it
+      // follows its person's grants, which the directory has just moved.
       dispatch(ROOT, { type: 'root/agentsChanged', agents: descriptors() });
     })
     : undefined;
@@ -1867,8 +1874,7 @@ export function createHost(options: HostOptions): Host {
       // The adapters' action tools are not part of what a client sets, so they
       // stay offered whatever the new set says.
       ctx.contributing = permitted([...ctx.contributed, ...ctx.actionTools]);
-      for (const uri of sessions.keys())
-        dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
+      for (const uri of sessions.keys()) ctx.serverToolsMoved(uri);
     },
     /*
      * Built per caller and not kept: the principal cuts the list and is the
@@ -1932,11 +1938,11 @@ export function createHost(options: HostOptions): Host {
        * tool the fold added or removed is in place for the next turn.
        */
       for (const uri of sessions.keys()) {
-        dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
+        ctx.serverToolsMoved(uri);
         retool(uri);
       }
       // One event, so a client reading the root lists the agents it holds now.
-      dispatch(ROOT, { type: 'root/agentsChanged', agents: descriptors() });
+      ctx.agentsMoved();
       return undefined;
     },
     endSessionsOf: async (agent) => {
