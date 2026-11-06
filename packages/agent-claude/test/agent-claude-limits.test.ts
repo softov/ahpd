@@ -11,9 +11,10 @@ import { limitsOf, noteAccount, noteLimit, quotaSnapshotsOf, refreshLimits } fro
  * A login says its plan limits.
  *
  * The CLI names one window in each `rate_limit_event`, and the usage request
- * answers every window at once. Both are kept by the login's token, ride the
- * turn's usage as `quotaSnapshots`, and go to the host through `OpenLogins`. A
- * login whose account has no plan reports an empty map rather than nothing.
+ * answers every window at once. Both are kept by the login's token and ride the
+ * turn's usage as `quotaSnapshots`; the login's ui draws them through
+ * `OpenLogins`. A login whose account has no plan reports an empty map rather
+ * than nothing.
  */
 
 const sdk = vi.hoisted(() => {
@@ -278,11 +279,13 @@ it('keeps the limits of a session on the CLI\'s own sign-in, and tells no connec
   expect(fake.noted).toEqual([]);
 });
 
-it('carries a login\'s windows on a turn, and notes the answer to the host', async () => {
+it('carries a login\'s windows on a turn, and draws them on the login', async () => {
   const logins = new OpenLogins();
-  logins.opened({ id: 'work', adapter: 'claude-login', owner: 'host', config: { token: 'token-work' } });
-  const noted: Noted[] = [];
-  logins.onLimits = (id, said) => { noted.push({ id, ...said }); };
+  const shown: Bag[] = [];
+  logins.opened(
+    { id: 'work', adapter: 'claude-login', owner: 'host', config: { token: 'token-work' } },
+    { show: (data) => { shown.push(data as Bag); }, clear: () => {} },
+  );
   sdk.reset();
   sdk.usageAsked = 0;
 
@@ -296,16 +299,14 @@ it('carries a login\'s windows on a turn, and notes the answer to the host', asy
     logins: { open: logins, owner: () => 'host' },
   });
   // The handshake asked the account's own answer, which filled every window,
-  // and the host heard it through the login, as it hears a call.
-  await until(() => noted.length >= 1);
+  // and the login drew it, as it draws a call.
+  await until(() => shown.length >= 1);
   expect(sdk.usageAsked).toBe(1);
-  expect(noted[0]).toMatchObject({
-    id: 'work',
-    quotaSnapshots: {
-      session: { remainingPercentage: 60, resetDate: '2026-11-04T12:00:00.000Z' },
-      weekly: { remainingPercentage: 90 },
-    },
-  });
+  // The two windows the account answered, beside the ones its plan names.
+  expect((shown[0]?.['windows'] as Bag[]).slice(0, 2)).toEqual([
+    { name: 'Session', left: 60, reset: '2026-11-04T12:00:00.000Z' },
+    { name: 'Weekly', left: 90, reset: '2026-11-10T12:00:00.000Z' },
+  ]);
 
   session.sendMessage('one', 'how much is left');
   await settle();
@@ -321,9 +322,9 @@ it('carries a login\'s windows on a turn, and notes the answer to the host', asy
     session: { remainingPercentage: 70, resetDate: new Date(1_800_000_000_000).toISOString() },
     weekly: { remainingPercentage: 90, resetDate: '2026-11-10T12:00:00.000Z' },
   });
-  // The event moved the session window, so the host heard it. The minute had
-  // not passed, so the turn's end asked nothing.
-  await until(() => noted.length >= 2);
-  expect(noted[1]?.quotaSnapshots?.session?.remainingPercentage).toBe(70);
+  // The event moved the session window, so the login drew it again. The minute
+  // had not passed, so the turn's end asked nothing.
+  await until(() => shown.length >= 2);
+  expect((shown[1]?.['windows'] as Bag[])[0]?.['left']).toBe(70);
   expect(sdk.usageAsked).toBe(1);
 });

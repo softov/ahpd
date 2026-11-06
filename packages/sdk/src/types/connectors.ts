@@ -266,22 +266,6 @@ export interface ConnectorHealth {
   lastCall?: CallOutcome;
   /** The last call that failed. */
   lastFailure?: CallOutcome;
-  /**
-   * The plan limits a login last reported, by quota type, in memory only.
-   *
-   * The shape is VS Code's `UsageInfoMeta.quotaSnapshots`, so a client draws
-   * it as it draws the ones Copilot reports. An empty map is a login whose
-   * account has no plan limits, and an absent one is a login nobody has asked
-   * yet: the two are not the same answer.
-   */
-  quotaSnapshots?: QuotaSnapshots;
-  /**
-   * The plan a login's account is on, as it last reported it, in memory only.
-   *
-   * Only the plan type and the provider: no email, organization or other part
-   * of the account leaves the host.
-   */
-  account?: ConnectorAccount;
 }
 
 /** The plan an account is on, as its provider names it. */

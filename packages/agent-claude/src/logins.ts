@@ -13,13 +13,14 @@
  * thing kept between turns.
  */
 
-import type { Bag, CallOutcome, Connector, ConnectorAccount, ConnectorOwner, QuotaSnapshots } from '@ahpd/sdk';
+import type { AgentView, Bag, CallOutcome, Connector, ConnectorAccount, ConnectorOwner, QuotaSnapshots, UiHandle } from '@ahpd/sdk';
 import { sameOwnerOrHost } from '@ahpd/sdk';
+import { agentDataOf, loginDataOf } from './ui.js';
 
 /** One call of a login as its connector's health keeps it; the host stamps the time. */
 export type CallNote = Omit<CallOutcome, 'at'>;
 
-/** What a login's account said of its plan, as its connector's health keeps it. */
+/** What a login's account said of its plan, as its connector's ui draws it. */
 export interface PlanNote {
   /** The windows of its plan limits, or an empty map for an account with none. */
   quotaSnapshots?: QuotaSnapshots;
@@ -34,6 +35,13 @@ export const LOGIN_ADAPTER = 'claude-login';
 export interface OpenLogin {
   owner: ConnectorOwner;
   token: string;
+}
+
+/** One open agent: the ui it draws, and the record it draws from. */
+interface OpenAgent {
+  ui: UiHandle;
+  /** The view the engine was handed, which the channel fills again on each edit. */
+  record: AgentView;
 }
 
 /**
@@ -132,15 +140,27 @@ export class Rests {
 }
 
 /**
- * The open logins of one load of this plugin, by connector id.
+ * The open logins of one load of this plugin, by connector id, and the open
+ * agents that draw them.
  *
  * A login is a connector of the adapter `claude-login`: one Claude account's
  * token, kept in the host's vault and handed to the adapter's `open` with the
  * secret read back. The adapter keeps it here until the connector closes, so a
  * put that replaces the token, and a remove, reach a session at its next turn.
+ * The uis of the login and of each agent are handed to their `open` too, and
+ * an answer an account gives is drawn on every ui that shows it.
  */
 export class OpenLogins {
   private readonly open = new Map<string, OpenLogin>();
+
+  /** The ui each open login draws, by connector id. Absent for a connector with no ui. */
+  private readonly uis = new Map<string, UiHandle>();
+
+  /** The last plan answer of each open login, by connector id, as its ui and its agents draw it. */
+  private readonly saids = new Map<string, PlanNote>();
+
+  /** The ui and the record of each open agent, by agent id. */
+  private readonly agents = new Map<string, OpenAgent>();
 
   /**
    * The rests of the open logins, by connector id.
@@ -157,23 +177,62 @@ export class OpenLogins {
   /** What a call of a login calls, with its id and how the call went. */
   onCall: ((id: string, outcome: CallNote) => void) | undefined;
 
-  /** What a login's plan limits call, with its id and what its account reported. */
-  onLimits: ((id: string, said: PlanNote) => void) | undefined;
-
   constructor(now: () => number = Date.now) {
     this.rests = new Rests(now);
   }
 
   /**
-   * Keep one connector's token, as the adapter's `open` is handed it, and
-   * answer the connector's stop, which forgets it.
+   * Keep one connector's token and ui, as the adapter's `open` is handed them,
+   * and answer the connector's stop, which forgets both.
    */
-  opened(connector: Connector): () => void {
+  opened(connector: Connector, ui?: UiHandle): () => void {
     const token = connector.config['token'];
     if (typeof token !== 'string' || token === '') throw new Error(`${connector.id} holds no token`);
     this.rests.clear(connector.id);
     this.open.set(connector.id, { owner: connector.owner, token });
-    return () => { this.open.delete(connector.id); };
+    this.saids.delete(connector.id);
+    if (ui === undefined) this.uis.delete(connector.id);
+    else this.uis.set(connector.id, ui);
+    return () => {
+      this.open.delete(connector.id);
+      this.uis.delete(connector.id);
+      this.saids.delete(connector.id);
+    };
+  }
+
+  /**
+   * Keep one agent's ui and record, as the engine's `open` is handed them, and
+   * send what the record draws now.
+   *
+   * The record is the view the channel fills again on each edit, so the logins
+   * a send reads are the ones the record names at that moment rather than the
+   * ones it named when it opened.
+   */
+  agentOpened(record: AgentView, ui: UiHandle | undefined): void {
+    if (ui === undefined) return;
+    this.agents.set(record.id, { ui, record });
+    this.showAgent(record.id);
+  }
+
+  /** Send one open agent the data its record draws now. */
+  private showAgent(id: string): void {
+    const agent = this.agents.get(id);
+    if (agent === undefined) return;
+    agent.ui.show(agentDataOf(this.agentLogins(agent.record)));
+  }
+
+  /** The logins one agent record names now, each with what its account last said. */
+  private agentLogins(record: AgentView): { id: string; said?: PlanNote }[] {
+    const values = record.config['logins'];
+    const out: { id: string; said?: PlanNote }[] = [];
+    for (const one of Array.isArray(values) ? values : []) {
+      const id = typeof one === 'string' ? one : '';
+      if (id === '' || this.usable(id, record.owner) === undefined) continue;
+      if (out.some((login) => login.id === id)) continue;
+      const said = this.saids.get(id);
+      out.push({ id, ...(said === undefined ? {} : { said }) });
+    }
+    return out;
   }
 
   /** The login an open connector holds, or nothing for an id that is not open. */
@@ -222,14 +281,20 @@ export class OpenLogins {
   }
 
   /**
-   * Say the plan limits and the plan an open login's account reported, which
-   * the plugin has the host keep in the connector's health beside the last call.
+   * Say what an open login's account reported of its plan, which the login's
+   * connector draws, and so does each open agent that names the login.
    *
    * A note of a token the login no longer holds says nothing, as a call of it
    * does: the limits belong to the account that token signs in to.
    */
   noted(id: string, token: string, said: PlanNote): void {
-    if (this.open.get(id)?.token === token) this.onLimits?.(id, said);
+    if (this.open.get(id)?.token !== token) return;
+    this.saids.set(id, said);
+    this.uis.get(id)?.show(loginDataOf(said));
+    for (const [agentId, agent] of this.agents) {
+      if (!this.agentLogins(agent.record).some((login) => login.id === id)) continue;
+      this.showAgent(agentId);
+    }
   }
 }
 

@@ -10,6 +10,7 @@
 import { probe, PROBE_TIMEOUT_MS } from '@ahpd/sdk';
 import type { Adapter, Connector } from '@ahpd/sdk';
 import { LOGIN_ADAPTER, type OpenLogins } from './logins.js';
+import { LOGIN_UI } from './ui.js';
 
 /*
  * Claude Code's own sign-in for a long-lived token, as the CLI 2.1.301 that
@@ -90,9 +91,15 @@ export function loginAdapter(logins: OpenLogins, options: LoginAdapterOptions = 
       },
       required: ['token'],
     },
-    capabilities: [],
+    capabilities: [{
+      type: 'ui',
+      name: 'plan',
+      title: 'Plan usage',
+      description: 'The plan of the account this login signs in to, and what is left of each window.',
+      ui: LOGIN_UI,
+    }],
     icons: [{ src: './icon.svg' }],
-    open: (connector) => logins.opened(connector),
+    open: (connector, ui) => logins.opened(connector, ui),
     /*
      * A count of one prompt's tokens with the token: a model request that
      * costs nothing, since a `setup-token` token makes model requests and

@@ -26,6 +26,7 @@ import type { ClaudeOptions } from './claude.js';
 import { sharedCatalogue as oneListing } from './catalog.js';
 import { OpenLogins } from './logins.js';
 import { kindSchema } from './options.js';
+import { AGENT_UI } from './ui.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
 export const name = 'agent-claude';
@@ -124,17 +125,27 @@ const engineOf = (paths: string[], shared: Shared, logins: OpenLogins): Engine =
   }],
   hostOnly: ['extraArgs'],
   keyVariables: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
-  open: (record) => claude({
-    ...shared,
-    paths,
-    provider: record.id,
-    displayName: record.name,
-    ...(Array.isArray(record.config['models']) ? { models: modelsOf(record.config['models']) } : {}),
-    ...(Array.isArray(record.config['modelSources']) ? { modelSources: sourcesOf(record.config['modelSources']) } : {}),
-    ...(typeof record.config['keepCliModels'] === 'boolean' ? { keepCliModels: record.config['keepCliModels'] } : {}),
-    presetOf: () => ({ ...record.config }),
-    logins: { open: logins, owner: () => record.owner },
-  }),
+  capabilities: [{
+    type: 'ui',
+    name: 'plan',
+    title: 'Plan usage',
+    description: 'The plan of each login this agent names, and what is left of each window.',
+    ui: AGENT_UI,
+  }],
+  open: (record, ui) => {
+    logins.agentOpened(record, ui);
+    return claude({
+      ...shared,
+      paths,
+      provider: record.id,
+      displayName: record.name,
+      ...(Array.isArray(record.config['models']) ? { models: modelsOf(record.config['models']) } : {}),
+      ...(Array.isArray(record.config['modelSources']) ? { modelSources: sourcesOf(record.config['modelSources']) } : {}),
+      ...(typeof record.config['keepCliModels'] === 'boolean' ? { keepCliModels: record.config['keepCliModels'] } : {}),
+      presetOf: () => ({ ...record.config }),
+      logins: { open: logins, owner: () => record.owner },
+    });
+  },
 });
 
 /** The client name this plugin's own connection to its host gives. */
@@ -160,7 +171,7 @@ const CLIENT = 'agent-claude';
  * `packages/sdk/src/channels/owners.ts` holds. A command the host refuses is
  * one line in the log.
  */
-const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall' | 'onLimits'> => {
+const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall'> => {
   let opened: Promise<PluginPeer> | undefined;
   const connection = (): Promise<PluginPeer> => {
     opened ??= (async () => {
@@ -180,11 +191,6 @@ const throughHost = (host: PluginHost): Pick<OpenLogins, 'onFailure' | 'onCall' 
       void connection()
         .then((conn) => conn.request('x-ahpd/connectors/note', { id, ...outcome }))
         .catch((error: unknown) => { host.log(`${name}: the host did not note a call of login ${id}: ${reason(error)}`); });
-    },
-    onLimits: (id, said) => {
-      void connection()
-        .then((conn) => conn.request('x-ahpd/connectors/note', { id, ...said }))
-        .catch((error: unknown) => { host.log(`${name}: the host did not note the plan limits of login ${id}: ${reason(error)}`); });
     },
   };
 };
