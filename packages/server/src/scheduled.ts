@@ -36,7 +36,7 @@ import { readRecordFile, recordFile } from './records.js';
 /** How this store is built, and what a test replaces. */
 export interface ScheduledOptions {
   /**
-   * Where definitions are kept: one `<id>.md` per automation.
+   * Where definitions are kept: one `.md` file per automation, named after its resource.
    *
    * Named by the caller rather than defaulted to somewhere under a home
    * directory. The daemon passes the folder beside its configuration.
@@ -71,6 +71,17 @@ export interface ScheduledOptions {
    * record rather than a client's claim.
    */
   store?: AutomationsOptions;
+}
+
+/** The store `scheduledAutomations` makes: the port, and whether automations can run on it. */
+export interface ScheduledStore extends AutomationStore {
+  /**
+   * False while the state file is there and cannot be read: nothing is loaded,
+   * armed, watched or written, and every write is refused with
+   * `AUTOMATIONS_UNAVAILABLE`, until the file is recovered and the store is
+   * opened again.
+   */
+  readonly available: boolean;
 }
 
 /**
@@ -120,8 +131,23 @@ interface Held {
   createdAt: string;
 }
 
-/** The scheme every automation's resource carries, and the id is what comes after it. */
+/**
+ * The scheme every automation's resource carries, which is all the protocol
+ * asks of the resource a client chooses beside that it names no other
+ * automation.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-automation/actions.ts#L62-L67
+ */
+const SCHEME = 'ahp-automation:';
+
+/** What the resource of an automation with a plain id starts with: the id is what comes after it. */
 const PREFIX = 'ahp-automation:/';
+
+/**
+ * What every write is told while the run state cannot be read, VS Code's
+ * sentence.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L809-L814
+ */
+export const AUTOMATIONS_UNAVAILABLE = 'Automation storage is unavailable and must be recovered before automations can run.';
 
 /** The field the body of a file is read from and written to. */
 const BODY = 'message.text';
@@ -151,25 +177,43 @@ interface Schedule {
  */
 
 /**
- * What an automation's id may be, told to whoever writes one that is not.
- *
- * A rule of its own rather than the record store's slug: that one starts with a
- * letter, and one client names an automation with a UUID, which starts with a
- * digit. Nothing else is asked of it here, because the id is only a file name.
+ * Whether this is a plain id: lowercase letters, digits and dashes, one to
+ * sixty-four of them, starting with a letter or a digit, so a UUID is one.
  */
-const AUTOMATION_ID = 'lowercase letters, digits and dashes, one to sixty-four of them, starting with a letter or a digit';
-
-/** Whether this is an automation's id: a file name nothing can climb out of. */
 const isAutomationId = (id: string): boolean => /^[a-z0-9][a-z0-9-]{0,63}$/.test(id);
 
-/** The id a resource names, or nothing when it is not one this store can keep as a file. */
-const idOf = (resource: string): string | undefined => {
-  const id = resource.startsWith(PREFIX) ? resource.slice(PREFIX.length) : undefined;
-  return id !== undefined && isAutomationId(id) ? id : undefined;
+/**
+ * The name of the file a resource is kept in, without its `.md`, or nothing
+ * for a resource of another scheme.
+ *
+ * `ahp-automation:/<id>` with a plain id is that id, the name a person reads,
+ * edits and copies. Every other resource the protocol allows is its whole URI
+ * as unpadded url-safe base64, the way VS Code puts a URI into one path
+ * segment: a name nothing can climb out of, and one that starts `YWhw`, in
+ * upper case, where a plain id cannot.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/canvasUri.ts#L12-L18
+ */
+const stemOf = (resource: string): string | undefined => {
+  if (!resource.startsWith(SCHEME)) return undefined;
+  const id = resource.slice(PREFIX.length);
+  return resource.startsWith(PREFIX) && isAutomationId(id) ? id : Buffer.from(resource, 'utf8').toString('base64url');
 };
 
-/** The file one automation is kept in. */
-const fileIn = (dir: string, id: string): string => join(dir, `${id}.md`);
+/**
+ * The resource the name of a file holds, or nothing when it holds none.
+ *
+ * Read back only where the name is the one `stemOf` writes for what it decodes
+ * to, so no other spelling of the same bytes is a second file for one
+ * automation.
+ */
+const resourceIn = (stem: string): string | undefined => {
+  if (isAutomationId(stem)) return `${PREFIX}${stem}`;
+  const resource = Buffer.from(stem, 'base64url').toString('utf8');
+  return stemOf(resource) === stem ? resource : undefined;
+};
+
+/** The file one automation is kept in, by the name `stemOf` gives it. */
+const fileIn = (dir: string, stem: string): string => join(dir, `${stem}.md`);
 
 /** The text of a file, or nothing when it is not there. */
 const textAt = (file: string): string | undefined => {
@@ -190,11 +234,14 @@ const wrote = (file: string, text: string): void => {
   renameSync(temporary, file);
 };
 
-/** The ids of the `.md` files in a folder, which are the automations it holds. */
-const idsIn = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
+/** The `.md` files in a folder that hold an automation: each name without its `.md`, and the resource it holds. */
+const filesIn = (dir: string): { stem: string; resource: string }[] => readdirSync(dir, { withFileTypes: true })
   .filter((one) => one.isFile() && one.name.endsWith('.md'))
-  .map((one) => one.name.slice(0, -'.md'.length))
-  .filter((id) => isAutomationId(id));
+  .flatMap((one) => {
+    const stem = one.name.slice(0, -'.md'.length);
+    const resource = resourceIn(stem);
+    return resource === undefined ? [] : [{ stem, resource }];
+  });
 
 /** What an automation's file holds beside its definition. */
 export interface AutomationFileStamps {
@@ -286,7 +333,7 @@ const textOf = (held: Held): string => automationFile(held.definition, held);
  * that are not there. What is worth keeping across a restart is what somebody
  * wrote down, which is the definition and when it next fires.
  */
-export function scheduledAutomations(options: ScheduledOptions): AutomationStore {
+export function scheduledAutomations(options: ScheduledOptions): ScheduledStore {
   // The plugin types only: a reference is checked in `create`/`update` below,
   // where a client's save is told apart from a file this store restored.
   const inner = memoryAutomations(options.store?.pluginTypes === undefined
@@ -313,7 +360,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
   /** Written timestamps, kept here so they survive a reload rather than becoming the load time. */
   const stamps = new Map<string, { createdAt: string; modifiedAt: string }>();
   /**
-   * What this store last computed for each automation's file, by id.
+   * What this store last computed for each automation's file, by the file's name.
    *
    * A save writes a file only when this changes, so an automation nobody
    * touched is not rewritten - and a write that does happen is this store's,
@@ -321,7 +368,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
    */
   const said = new Map<string, string>();
   /**
-   * The text each file held when this store last read or wrote it, by id.
+   * The text each file held when this store last read or wrote it, by the file's name.
    *
    * What the watch compares against: an event for a file holding this is an
    * event this store caused, and reading it again would be reading back what
@@ -334,19 +381,12 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
   /** Closed: the clock is let go of, and nothing is fired or written again. */
   let closed = false;
 
-  /** The id a resource names, refused: what a client naming one is told. */
-  const idFor = (resource: string): string => {
-    const id = idOf(resource);
-    if (id !== undefined) return id;
-    throw new Error(`${resource || 'That'} is not an automation this host can keep: its id after ${PREFIX} is ${AUTOMATION_ID}`);
-  };
-
   /** The file one automation is kept in. */
-  const fileOf = (id: string): string => fileIn(dir, id);
+  const fileOf = (stem: string): string => fileIn(dir, stem);
 
   /** One file read as an automation, or nothing when it is reported instead. */
-  const heldIn = (id: string, text: string): Held | undefined => {
-    const file = fileOf(id);
+  const heldIn = (stem: string, text: string): Held | undefined => {
+    const file = fileOf(stem);
     let read: ReturnType<typeof readAutomationFile>;
     try {
       read = readAutomationFile(text);
@@ -439,9 +479,9 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     const held: RunState = { version: 1, automations: [] };
     const live = new Set<string>();
     for (const one of inner.list()) {
-      const id = idOf(one.resource);
-      if (id === undefined) continue;
-      live.add(id);
+      const stem = stemOf(one.resource);
+      if (stem === undefined) continue;
+      live.add(stem);
       // The inner store answers the entry a client reads, which carries the
       // owner in `_meta` rather than under its own name.
       const owner = ownerOf(one._meta?.['ahpd.owner']);
@@ -451,15 +491,15 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
         ...(owner === undefined ? {} : { owner }),
         createdAt: stamp.createdAt,
       });
-      if (said.get(id) !== text) {
+      if (said.get(stem) !== text) {
         try {
           mkdirSync(dir, { recursive: true, mode: 0o700 });
-          wrote(fileOf(id), text);
-          said.set(id, text);
-          known.set(id, text);
+          wrote(fileOf(stem), text);
+          said.set(stem, text);
+          known.set(stem, text);
         }
         catch (error) {
-          told(`Could not write ${fileOf(id)}: ${reason(error)}`);
+          told(`Could not write ${fileOf(stem)}: ${reason(error)}`);
         }
       }
       const at = nextRunAt.get(one.resource);
@@ -476,11 +516,11 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     }
     // The file of one that is gone goes with it, and so does its state row -
     // which is this list, and the row was simply not added to it.
-    for (const id of [...said.keys()]) {
-      if (live.has(id)) continue;
-      said.delete(id);
-      known.delete(id);
-      rmSync(fileOf(id), { force: true });
+    for (const stem of [...said.keys()]) {
+      if (live.has(stem)) continue;
+      said.delete(stem);
+      known.delete(stem);
+      rmSync(fileOf(stem), { force: true });
     }
     try {
       // Owner-only, as the daemon's own records are: this names whose work an
@@ -631,22 +671,32 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     }
   };
 
-  /** The run state of every automation, by resource, or nothing when it is reported instead. */
-  const stateOf = (): Map<string, StateRow> => {
+  /**
+   * The run state of every automation, by resource, or nothing while the file
+   * cannot be used.
+   *
+   * No file is a daemon's first start: a store with no run state in it, and
+   * nothing to say. A file that is there and cannot be read, or that holds what
+   * this version does not understand, is the only record of what each
+   * allowance has paid for and what each automation is waiting on. So it is
+   * said, and automations stay unavailable until it is recovered, as VS Code's
+   * do over storage that does not load: nothing runs on state that could not
+   * be read, and nothing is written over the file.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L764-L778
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStorageService.ts#L123-L143
+   */
+  const stateOf = (): Map<string, StateRow> | undefined => {
     const out = new Map<string, StateRow>();
     const read = readJson(state);
-    // Nothing to read is nothing to catch up on, and nothing is said about it:
-    // a daemon's first start, and a file that could not be opened, are both a
-    // store with no run state in it.
-    if (!read.ok && read.kind !== 'not-json') return out;
+    if (!read.ok && read.kind === 'missing') return out;
     if (!read.ok) {
-      told(`Could not read ${state}: ${reason(read.error)}`);
-      return out;
+      told(`Could not read ${state}: ${reason(read.error)}. Automation state and execution remain unavailable.`);
+      return undefined;
     }
-    const held = read.value as Partial<RunState>;
+    const held = bag(read.value) as Partial<RunState>;
     if (held.version !== 1 || !Array.isArray(held.automations)) {
-      told(`${state} is not something this version understands, and was left alone`);
-      return out;
+      told(`${state} is not something this version understands, and was left alone. Automation execution remains unavailable until it is recovered.`);
+      return undefined;
     }
     for (const one of held.automations) {
       if (typeof one?.resource === 'string') out.set(one.resource, one);
@@ -661,27 +711,25 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
    * which is what a copy of another automation's file is - it has used none of
    * an allowance, and nothing is waiting for it.
    */
-  const load = (): { resource: string; nextRunAt?: string }[] => {
-    const rows = stateOf();
+  const load = (rows: Map<string, StateRow>): { resource: string; nextRunAt?: string }[] => {
     const back: { resource: string; nextRunAt?: string }[] = [];
     // No folder is a daemon that has never been given an automation, which is
     // no automations rather than a problem.
     if (!existsSync(dir)) return back;
-    let ids: string[];
+    let files: { stem: string; resource: string }[];
     try {
-      ids = idsIn(dir);
+      files = filesIn(dir);
     }
     catch (error) {
       told(`Could not read ${dir}: ${reason(error)}`);
       return back;
     }
-    for (const id of ids) {
-      const file = fileOf(id);
+    for (const { stem, resource } of files) {
+      const file = fileOf(stem);
       const text = textAt(file);
       if (text === undefined) continue;
-      const held = heldIn(id, text);
+      const held = heldIn(stem, text);
       if (held === undefined) continue;
-      const resource = `${PREFIX}${id}`;
       const row = rows.get(resource);
       // What an allowance has paid for survives with the definition, because
       // the protocol says it is not reconstructed from the runs.
@@ -707,8 +755,8 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
         createdAt: held.createdAt,
         modifiedAt: typeof row?.modifiedAt === 'string' ? row.modifiedAt : now().toISOString(),
       });
-      said.set(id, textOf(held));
-      known.set(id, text);
+      said.set(stem, textOf(held));
+      known.set(stem, text);
       back.push({
         resource,
         ...(typeof row?.nextRunAt === 'string' ? { nextRunAt: row.nextRunAt } : {}),
@@ -717,9 +765,11 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     return back;
   };
 
+  const rows = stateOf();
+  const available = rows !== undefined;
   // What was on the clock when this daemon last wrote itself down. Read before
   // `rearm`, which replaces it with what is on the clock now.
-  const wasWaiting = load();
+  const wasWaiting = rows === undefined ? [] : load(rows);
   rearm();
 
   /*
@@ -751,21 +801,20 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
    * the change: the clock is armed again and every listener hears about it on
    * the same path a client's own write takes.
    */
-  const reread = (id: string): void => {
-    const resource = `${PREFIX}${id}`;
-    const file = fileOf(id);
+  const reread = (stem: string, resource: string): void => {
+    const file = fileOf(stem);
     const text = textAt(file);
     if (text === undefined) {
-      known.delete(id);
+      known.delete(stem);
       inner.remove(resource);
       return;
     }
     // What this store last wrote or read. An event for a file holding it is an
     // event this store caused, and reading it again would be reading back what
     // it just wrote.
-    if (known.get(id) === text) return;
-    known.set(id, text);
-    const held = heldIn(id, text);
+    if (known.get(stem) === text) return;
+    known.set(stem, text);
+    const held = heldIn(stem, text);
     if (held === undefined) return;
     const before = inner.get(resource);
     /*
@@ -819,37 +868,48 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
    * between them is reading a file nobody has finished writing.
    *
    * The folder is made first, because a daemon that has never been given an
-   * automation still has to notice the first one somebody drops in.
+   * automation still has to notice the first one somebody drops in. A store
+   * whose state file could not be read watches nothing, because an edit read
+   * then would be an automation loaded, run and written over that file.
    */
   const pending = new Map<string, ReturnType<typeof setTimeout>>();
   let watching: FSWatcher | undefined;
-  try {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    watching = watchPath(dir, (_event, changed) => {
-      // A temporary file, another name, or no name at all is not an automation.
-      if (changed === null || changed === undefined) return;
-      const named = String(changed);
-      if (!named.endsWith('.md')) return;
-      const id = named.slice(0, -'.md'.length);
-      if (!isAutomationId(id)) return;
-      clearTimeout(pending.get(id));
-      const timer = setTimeout(() => {
-        pending.delete(id);
-        reread(id);
-      }, WINDOW);
-      // A watch should not be what keeps a daemon up.
-      timer.unref();
-      pending.set(id, timer);
-    });
-    watching.on('error', (error) => { told(`${dir} is no longer watched: ${reason(error)}`); });
-    watching.unref();
+  if (available) {
+    try {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      watching = watchPath(dir, (_event, changed) => {
+        // A temporary file, another name, or no name at all is not an automation.
+        if (changed === null || changed === undefined) return;
+        const named = String(changed);
+        if (!named.endsWith('.md')) return;
+        const stem = named.slice(0, -'.md'.length);
+        const resource = resourceIn(stem);
+        if (resource === undefined) return;
+        clearTimeout(pending.get(stem));
+        const timer = setTimeout(() => {
+          pending.delete(stem);
+          reread(stem, resource);
+        }, WINDOW);
+        // A watch should not be what keeps a daemon up.
+        timer.unref();
+        pending.set(stem, timer);
+      });
+      watching.on('error', (error) => { told(`${dir} is no longer watched: ${reason(error)}`); });
+      watching.unref();
+    }
+    catch (error) {
+      told(`${dir} cannot be watched, so an edit there is read at the next start: ${reason(error)}`);
+    }
   }
-  catch (error) {
-    told(`${dir} cannot be watched, so an edit there is read at the next start: ${reason(error)}`);
-  }
+
+  /** VS Code's refusal of every write while the run state could not be read. */
+  const usable = (): void => {
+    if (!available) throw new Error(AUTOMATIONS_UNAVAILABLE);
+  };
 
   return {
     ...inner,
+    available,
     list: () => inner.list().map(dressed),
     get: (resource) => {
       const found = inner.get(resource);
@@ -870,10 +930,19 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     triggers: (options) => inner.triggers(options),
 
     create: (resource, definition, owner, runCount, customizations) => {
-      // Refused before the store underneath is asked, because every automation
-      // here is a file and a resource with no usable id is one nothing could
-      // name that file after.
-      idFor(resource);
+      usable();
+      // VS Code's refusal of a resource in another scheme, before the store
+      // underneath is asked: every automation here is a file named after its
+      // resource.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1513-L1517
+      const stem = stemOf(resource);
+      if (stem === undefined) throw new Error(`Automation resource must use the ahp-automation scheme: ${resource}`);
+      // A file already at that name is one this write would replace: another
+      // automation's, on a file system that folds case, or a file a person
+      // wrote that this host could not load.
+      if (inner.get(resource) === undefined && existsSync(fileOf(stem))) {
+        throw new Error(`Automation file already exists: ${fileOf(stem)}`);
+      }
       checkReferences(definition, owner, types(), options.store?.connectors, options.store?.agents, options.store?.hasUsers);
       const made = inner.create(resource, definition, owner, runCount, customizations);
       stamps.set(resource, { createdAt: made.createdAt, modifiedAt: made.modifiedAt });
@@ -884,6 +953,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     },
 
     update: (resource, changes, customizations) => {
+      usable();
       // A patch never moves the owner, so a trigger or a session template it
       // writes is judged against the automation's own owner rather than the
       // editor's.
@@ -904,12 +974,18 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     },
 
     remove: (resource) => {
+      usable();
       const gone = inner.remove(resource);
       if (!gone) return false;
       stamps.delete(resource);
       nextRunAt.delete(resource);
       save();
       return true;
+    },
+
+    run: async (resource, origin, start) => {
+      usable();
+      return inner.run(resource, origin, start);
     },
 
     /** Subscribed through, so the clock is caught up before anybody reads back. */
@@ -938,7 +1014,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
 export interface AutomationMigrationOptions {
   /** The one file a daemon before this layout left behind, `<configDir>/automations.json`. */
   file: string;
-  /** The folder the conversion writes one `<id>.md` per automation into. */
+  /** The folder the conversion writes one `.md` file per automation into. */
   dir: string;
   /** The one file the run state of all of them goes in. */
   state: string;
@@ -987,7 +1063,7 @@ export function migrateAutomations(options: AutomationMigrationOptions): void {
   // that started, wrote nothing and stopped leaves one - so it is the files
   // that answer this rather than the folder.
   try {
-    if (idsIn(options.dir).length > 0) return;
+    if (filesIn(options.dir).length > 0) return;
   }
   catch {
     // No folder at all, which is a daemon that has never kept an automation.
@@ -1008,18 +1084,18 @@ export function migrateAutomations(options: AutomationMigrationOptions): void {
   try {
     mkdirSync(options.dir, { recursive: true, mode: 0o700 });
     for (const row of whole.automations) {
-      const id = typeof row?.resource === 'string' ? idOf(row.resource) : undefined;
+      const stem = typeof row?.resource === 'string' ? stemOf(row.resource) : undefined;
       // A row nothing could name a file after is left behind with a word about
-      // it: the file is the automation here, so one whose resource is not an id
-      // is one this version has nowhere to keep.
-      if (id === undefined) {
+      // it: the file is the automation here, so one whose resource is not an
+      // automation's is one this version has nowhere to keep.
+      if (stem === undefined) {
         said(`${options.file}: ${String(row?.resource ?? 'a row')} is not an automation this version can keep, and was left behind`);
         continue;
       }
       const definition = bag(row.definition);
       const owner = typeof row.owner === 'string' ? row.owner : undefined;
       const createdAt = typeof row.createdAt === 'string' ? row.createdAt : new Date().toISOString();
-      wrote(fileIn(options.dir, id), textOf({
+      wrote(fileIn(options.dir, stem), textOf({
         definition,
         ...(owner === undefined ? {} : { owner }),
         createdAt,

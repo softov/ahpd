@@ -91,6 +91,7 @@ import { shellIntegrationOf } from '../shellintegration.js';
 import { screen } from '../screen.js';
 import { realManager } from '../service.js';
 import { migrateAutomations, scheduledAutomations } from '../scheduled.js';
+import type { ScheduledStore } from '../scheduled.js';
 import { fileEnablement } from '../enablement.js';
 import { filesOf, lineFor, writerFor } from '../wire.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npmRegistry, stale, updateLine } from '../update.js';
@@ -193,7 +194,7 @@ export function daemonSessions(told: (message: string) => void): SessionStore {
  * daemon's business because where its files live is, and the store this version
  * opens only knows the folder and the state file.
  */
-export function daemonAutomations(told: (message: string) => void, store?: AutomationsOptions): AutomationStore {
+export function daemonAutomations(told: (message: string) => void, store?: AutomationsOptions): ScheduledStore {
   migrateAutomations({ file: automationsPath(), dir: automationsDir(), state: automationStatePath(), onProblem: told });
   return scheduledAutomations({
     dir: automationsDir(), state: automationStatePath(), onProblem: told,
@@ -492,6 +493,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   // The store the host was built over, once it is: a plugin may have replaced
   // the daemon's own, and before the host exists a request finds none.
   let kept: AutomationStore | undefined;
+  // Where automations are kept and whether their schedules fire, as `status`
+  // and the announcement say it, once the store has read its state file.
+  let automationMode = memory ? 'in memory, schedules do not fire' : `in ${automationsDir()}, schedules fire`;
   /*
    * The policies saying who may use which agent, model and computer.
    *
@@ -547,7 +551,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       paths: options.paths,
       ...(options.startFolder === undefined ? {} : { startFolder: options.startFolder }),
       startedAt,
-      automations: memory ? 'in memory, schedules do not fire' : `in ${automationsDir()}, schedules fire`,
+      automations: automationMode,
       // The manager that started this process, so a served `ahpd status` says
       // what a local one says about the same daemon.
       ...(service === undefined ? {} : { service }),
@@ -937,7 +941,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // what a connector holds; the whole URI is accepted too, because that is
     // what a person copying one out of the catalogue has.
     automations: (id) => {
-      const entry = automationsStore?.get(id.startsWith('ahp-automation:/') ? id : `ahp-automation:/${id}`);
+      const entry = automationsStore?.get(id.startsWith('ahp-automation:') ? id : `ahp-automation:/${id}`);
       if (entry === undefined) return undefined;
       return { owner: ownerOf(entry._meta?.['ahpd.owner']) };
     },
@@ -1148,20 +1152,30 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * channel has listed, both through getters: the store is built before the
    * plugins are loaded and before the connectors are opened, and what a save
    * is held to is what is known when the save arrives.
+   *
+   * A daemon store whose state file did not load is handed to nothing that runs
+   * automations: the host is given none and so advertises none, as VS Code
+   * advertises no automation capabilities over storage that did not load, and
+   * `ahpd automation` and `ahpd status` say why.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L246-L258
    */
-  const automations = memory
-    ? memoryAutomations({
-      pluginTypes: () => pluginTypes,
-      connectors: () => connectorLists.refs(),
-      agents: () => agentLists.owners(),
-      hasUsers: () => users !== undefined,
-    })
+  const filed = memory
+    ? undefined
     : daemonAutomations((message) => process.stderr.write(`${message}\n`), {
       pluginTypes: () => pluginTypes,
       connectors: () => connectorLists.refs(),
       agents: () => agentLists.owners(),
       hasUsers: () => users !== undefined,
     });
+  const automations = filed === undefined
+    ? memoryAutomations({
+      pluginTypes: () => pluginTypes,
+      connectors: () => connectorLists.refs(),
+      agents: () => agentLists.owners(),
+      hasUsers: () => users !== undefined,
+    })
+    : filed.available ? filed : undefined;
+  if (filed?.available === false) automationMode = `unavailable until ${automationStatePath()} is recovered`;
   automationsStore = automations;
 
   const base: HostOptions = {
@@ -1442,9 +1456,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * `--automations memory` is the same store without either half: nothing is
      * written and nothing fires. Both are an `AutomationStore`, so the host is
      * not told which it was given - a host embedded in something that already
-     * schedules passes a third of its own.
+     * schedules passes a third of its own. None at all while the daemon's
+     * store could not read its state file.
      */
-    automations: automations,
+    ...(automations === undefined ? {} : { automations }),
     /*
      * Whether a customization is on, for every session or for one folder.
      *
@@ -1762,7 +1777,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   if (folded.usage !== undefined) metered = folded.usage;
   if (folded.vault !== undefined) held = folded.vault;
-  kept = folded.automations;
+  // The daemon's own store that could not read its state file, when no plugin
+  // brought one: the host has none, and `ahpd automation` says why.
+  kept = folded.automations ?? filed;
   /*
    * The presets written now that the engines and the vault are known.
    *
@@ -2106,7 +2123,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     + `pid ${String(process.pid)}\n`
     // Its own line rather than the end of the one above, which `daemon.ts`
     // reads the session directories off with a regular expression.
-    + `automations ${memory ? 'in memory, schedules do not fire' : `in ${automationsDir()}, schedules fire`}\n`
+    + `automations ${automationMode}\n`
     // Its own line for the same reason: a client that only needs the names reads
     // one line, and `daemon.ts` keeps matching the two above unchanged.
     + `plugins ${loaded.length === 0 ? 'none' : loaded.map((one) => one.name).join(', ')}\n`

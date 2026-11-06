@@ -399,6 +399,45 @@ describe('ahpd automation list', () => {
     expect(said.text).toBe('No automations yet.\n');
   });
 
+  it('refuses at a terminal in VS Code\'s words while the state file cannot be read, after what is wrong with it', async () => {
+    const store = scheduledAutomations({ dir: automationsDir(), state: automationStatePath(), timer: () => ({ cancel: () => {} }) });
+    fill(store);
+    store.close?.();
+    writeFileSync(automationStatePath(), '{ not json');
+    const said = run();
+    await expect(said).rejects.toThrow(`Could not read ${automationStatePath()}`);
+    await expect(said).rejects.toThrow('Automation storage is unavailable and must be recovered before automations can run.');
+  });
+
+  it('refuses over /api as a conflict while the daemon\'s store cannot read its state file', async () => {
+    const store = scheduledAutomations({ dir: automationsDir(), state: automationStatePath(), timer: () => ({ cancel: () => {} }) });
+    fill(store);
+    store.close?.();
+    writeFileSync(automationStatePath(), '{ not json');
+    const unavailable = scheduledAutomations({ dir: automationsDir(), state: automationStatePath(), timer: () => ({ cancel: () => {} }) });
+    const facts: ServedFacts = {
+      options: optionsFrom({}),
+      configFile: join(home, 'config.json'),
+      running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9361, paths: [], startedAt: '' }),
+      turning: () => [],
+      automations: () => unavailable,
+      restart: () => {},
+    };
+    const handler = apiHandler({
+      registry: servedRegistry(facts),
+      token: 'root-secret',
+      program: { name: 'ahpd', version: '0.0.0' },
+      origins: () => apiOrigins('127.0.0.1', undefined, 9361),
+    });
+    const answer = await handler(new Request(`http://${AUTHORITY}/api/automation/list`, {
+      headers: { host: AUTHORITY, authorization: 'Bearer root-secret' },
+    }));
+    unavailable.close?.();
+    expect(answer.status).toBe(409);
+    expect((await answer.json() as { message: string }).message)
+      .toBe('Automation storage is unavailable and must be recovered before automations can run.');
+  });
+
   it('answers the same rows over /api', async () => {
     const store = memoryAutomations();
     fill(store);
