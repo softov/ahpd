@@ -116,6 +116,36 @@ describe('what the harness offers', () => {
   });
 
   /*
+   * A backend whose handshake is reported inside `create`, before the host
+   * holds the session it answers, as one does that opens its server before it
+   * answers: the models it answered are learned once the session is held, as
+   * VS Code's host seeds a session's offers before its first state is served.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
+   */
+  it('learns the models a handshake reported before the host held its session', async () => {
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...base,
+        create: (start) => {
+          start.onHandshake?.();
+          return { ...base.create(start), models: () => [{ id: 'early', name: 'Early' }] };
+        },
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/e', provider: 'echo' } });
+    const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { models: { id: string; name: string }[] }[] } };
+    }).snapshot.state;
+    expect(root.agents[0]?.models.map((one) => `${one.id}:${one.name}`)).toEqual(['early:Early']);
+    await host.close();
+  });
+
+  /*
    * A probe that finds what the root already lists says nothing, as VS Code
    * publishes its agents only when the list differs from the last one.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L602-L606

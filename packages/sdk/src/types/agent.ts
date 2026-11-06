@@ -571,7 +571,11 @@ export interface Start {
    * passes none.
    */
   onAccount?(account: Account): void;
-  /** Called once the backend has reported what it can do. */
+  /**
+   * Called once the backend has reported what it can do, during `create` or
+   * after it: the host learns the session's models from it once it holds the
+   * session `create` answered.
+   */
   onHandshake?(): void;
   /**
    * Tokens for this backend's protected resources, by resource identifier.

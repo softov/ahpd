@@ -1053,6 +1053,12 @@ export function createSpawn(ctx: HostContext): Spawn {
     let booking = false;
     /** The client whose relayed action the action on this road answers, while it is said. */
     let answering: Origin | undefined;
+    /**
+     * Whether the backend has reported what it can do, which a backend that
+     * opens its server before it answers does inside `create`, before this
+     * host holds the session: its models are then learned once it is held.
+     */
+    let reported = false;
     const wired: Start = {
       uri,
       chatUri,
@@ -1671,7 +1677,10 @@ export function createSpawn(ctx: HostContext): Spawn {
         const sender = senderOf(turnId) ?? kept.sender(idOf(uri), turnId);
         if (sender !== undefined) kept.setSender(idOf(uri), transcriptId, sender);
       },
-      onHandshake: () => { setAgentModels(uri); },
+      onHandshake: () => {
+        reported = true;
+        setAgentModels(uri);
+      },
       /*
        * The account the running CLI is signed in as, which is the only way this
        * host learns one for a backend that spawns nothing at boot. It is kept
@@ -1833,6 +1842,13 @@ export function createSpawn(ctx: HostContext): Spawn {
      * the catalogue, a resume and a charge read.
      */
     if (!foreign) owners.set(uri, agent);
+    /*
+     * The models of a backend that reported them before it was held, learned
+     * now that the session they are read from is, as VS Code's host seeds a
+     * session's offers before its first state is served.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
+     */
+    if (reported) setAgentModels(uri);
     /*
      * The machine this session is now running in, told to the plugin that owns
      * it.
