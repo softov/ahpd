@@ -297,9 +297,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     /*
      * And the worker chats the session opened.
      *
-     * Not `held.chats`, because a worker has no `Session`; but they are chats
-     * of this session all the same, and one left behind is a channel in the
-     * catalogue that nothing will ever answer on again.
+     * Kept apart from `held.chats`, because a worker has no `Session`; but
+     * they are chats of this session all the same, and their records go with
+     * it. The session's removal stands for them on the wire, as VS Code's host
+     * lets a deleted session's chat entries go with no action of their own.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2379-L2386
      */
     resumedSessions.delete(uri);
     for (const [chatUri, one] of [...subagents]) {
@@ -309,7 +311,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       ctx.links.forgetChat(chatUri);
       ctx.links.forget(one.parentChat, one.toolCallId);
       ctx.sessionEvents.forget(chatUri);
-      dispatch(uri, { type: 'session/chatRemoved', chat: chatUri });
     }
     /*
      * And the shells the session was holding.

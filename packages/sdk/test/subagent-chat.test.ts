@@ -345,12 +345,16 @@ it('names the worker chat that spawned a nested one as its parent', async () => 
   expect((innerRow?.summary as Bag).origin).toEqual({ kind: 'tool', chat: worker, toolCallId: 'toolu_inner' });
 });
 
-it('removes the worker chats when the session is disposed', async () => {
+/*
+ * A disposed session's removal stands for its worker chats, as VS Code's host
+ * lets a deleted session's chat entries go with no action of their own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2379-L2386
+ */
+it('lets the session\'s removal stand for its worker chats, as VS Code\'s host', async () => {
   const { ask, uri } = await running();
   await ask('disposeSession', { channel: uri });
   await settle();
-  const removed = on(uri).filter((one) => one.type === 'session/chatRemoved');
-  expect(removed.length).toBe(2);
+  expect(on(uri).filter((one) => one.type === 'session/chatRemoved')).toEqual([]);
 });
 
 it('puts the worker channel\'s own actions on the wire', async () => {
