@@ -16,6 +16,7 @@ import { fileResources, uriOf } from '../src/resources/resources.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
+import { BASELINE_TURN } from '../src/types/changes.js';
 import type { ChangesetSource } from '../src/types/changes.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -1274,4 +1275,58 @@ it('sends no row for a tool call whose edit changes nothing', async () => {
   await waitFor(() => reads.finished > finishedBefore);
   await settle(10);
   expect(rowsMoved(p, SESSION).length).toBe(before);
+});
+
+/*
+ * A turn's checkpoint is written when the turn ended well or failed for good.
+ * A cancelled turn's edits stay in the session's changes with no checkpoint of
+ * their own, its counts read all the same, and a turn that broke with an error
+ * the client may resume is left as it is, as VS Code's host captures them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/checkpointAndChangeset/checkpointAndChangesetContribution.ts#L30-L54
+ */
+it('writes no checkpoint for a cancelled turn or one that broke resumably, as VS Code\'s host', async () => {
+  const dir = repository();
+  const { held, agent } = endable(dir);
+  const base = gitChanges();
+  const written: string[] = [];
+  const reads = { started: 0, finished: 0 };
+  const changes: ChangesetSource = {
+    ...base,
+    // Written down by name alone, so what follows a turn's checkpoint follows
+    // it at once.
+    checkpoint: async (_at, _session, turn) => { written.push(turn); },
+    sessionSummary: async (at, session, running) => {
+      reads.started += 1;
+      try {
+        return await base.sessionSummary?.(at, session, running) ?? { files: 0, additions: 0, deletions: 0 };
+      }
+      finally {
+        reads.finished += 1;
+      }
+    },
+  };
+  await open(dir, changes, agent, dir);
+  await waitFor(() => reads.finished >= 1 && reads.finished === reads.started);
+  await settle(10);
+
+  // A cancelled turn's counts are read, with no checkpoint written for it.
+  const before = reads.started;
+  held.emit?.('chat', { type: 'chat/turnCancelled', turnId: 't1', duration: 1 });
+  await waitFor(() => reads.started > before && reads.finished === reads.started);
+  await settle(10);
+  const quiet = reads.started;
+
+  // A turn that broke resumably is left as it is: nothing is read or written.
+  held.emit?.('chat', {
+    type: 'chat/error',
+    turnId: 't2',
+    duration: 1,
+    part: { kind: 'error', error: { errorType: 'turnFailed', message: '429 rate limited' }, resumable: true },
+  });
+  await settle(20);
+  expect(reads.started).toBe(quiet);
+
+  held.emit?.('chat', { type: 'chat/turnComplete', turnId: 't3', duration: 1 });
+  await waitFor(() => written.includes('t3') && reads.started > quiet);
+  expect(written.filter((one) => one !== BASELINE_TURN)).toEqual(['t3']);
 });

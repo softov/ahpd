@@ -1493,9 +1493,11 @@ export function createSpawn(ctx: HostContext): Spawn {
         /*
          * And a turn that ended is when the branch is worth asking about
          * again: the agent may have changed it, or somebody may have in a
-         * terminal. A turn that failed is one of those, and the files it wrote
-         * before it died are as much the session's work as a finished turn's -
-         * a tree left uncommitted by a failure is a tree nobody can see.
+         * terminal. A turn that failed for good is one of those, and the files
+         * it wrote before it died are as much the session's work as a finished
+         * turn's. A turn that broke with an error the client may resume is
+         * left as it is until it ends again, as VS Code's host leaves one.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/checkpointAndChangeset/checkpointAndChangesetContribution.ts#L30-L54
          *
          * The machine's own commits first, where the session is in one: a
          * machine that commits in a git directory of its own leaves the host's
@@ -1505,17 +1507,20 @@ export function createSpawn(ctx: HostContext): Spawn {
          * A session in no machine has nothing to fetch, and its facts are read
          * without waiting for an answer nobody was asked for.
          */
-        if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
+        const resumable = action.type === 'chat/error' && ((action.part ?? {}) as Bag).resumable === true;
+        if ((action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') && !resumable) {
           const dir = dirOf(uri);
           if (dir !== undefined) {
             /*
              * The tree first, since what a session changed is a difference
              * between two of them: the counts read next are read against the
              * turn just written down, and the facts after those are read
-             * against the same tree - so a row that moved because of the turn
-             * says so once rather than once per answer.
+             * against the same tree, so a row that moved because of the turn
+             * says so once. A cancelled turn's
+             * edits stay in the session's changes with no checkpoint of their
+             * own, as VS Code's host keeps them, so the counts are read at once.
              */
-            void checkpointOf(dir, uri, turn)
+            void (action.type === 'chat/turnCancelled' ? Promise.resolve() : checkpointOf(dir, uri, turn))
               .then(() => summaryKept(uri))
               .then(() => {
                 if (enteredIn.get(uri) === undefined) refreshFacts(dir);
