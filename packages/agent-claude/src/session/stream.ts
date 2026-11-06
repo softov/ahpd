@@ -149,7 +149,7 @@ export function createStream(ctx: SessionContext): Stream {
     // The worker has not been named yet: held whole, and delivered once the
     // chat is open and the turn its frames belong to exists.
     if (scope.waiting !== undefined) {
-      scope.waiting.push(() => { streamed(event, parent); });
+      if (scope.failed !== true) scope.waiting.push(() => { streamed(event, parent); });
       return;
     }
 
@@ -339,7 +339,7 @@ export function createStream(ctx: SessionContext): Stream {
   const assistant = (message: Bag, parent = ''): void => {
     const scope = ctx.scopeFor(parent);
     if (scope.waiting !== undefined) {
-      scope.waiting.push(() => { assistant(message, parent); });
+      if (scope.failed !== true) scope.waiting.push(() => { assistant(message, parent); });
       return;
     }
     const turn = ctx.openTurn(scope);
@@ -558,7 +558,7 @@ export function createStream(ctx: SessionContext): Stream {
   const results = (message: Bag, parent = '', structured?: unknown): void => {
     const scope = ctx.scopeFor(parent);
     if (scope.waiting !== undefined) {
-      scope.waiting.push(() => { results(message, parent, structured); });
+      if (scope.failed !== true) scope.waiting.push(() => { results(message, parent, structured); });
       return;
     }
     for (const raw of list(message.content)) {

@@ -227,6 +227,32 @@ it('keeps a background worker running until its task notification', async () => 
   expect(actions.some((one) => one.type === 'chat/toolCallStart' && one.toolName === 'Bash')).toBe(true);
 });
 
+/*
+ * The hold is bounded as VS Code's host bounds it: a worker whose spawning
+ * call has not come within 30 s is failed, its held frames dropped, and the
+ * call that comes later announces no chat for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L144-L175
+ */
+it('drops a worker whose spawning call never came within the hold\'s 30 s', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const lines = fixture('claude-subagent.jsonl');
+    const { asked } = await replay('none', [
+      lines[0] as Record<string, unknown>,
+      lines[4] as Record<string, unknown>,
+    ]);
+    expect(asked).toEqual([]);
+    vi.advanceTimersByTime(30_000);
+
+    sdk.push(...[lines[1], lines[2], lines[3], ...lines.slice(5)] as Record<string, unknown>[]);
+    await settle();
+    expect(asked).toEqual([]);
+  }
+  finally {
+    vi.useRealTimers();
+  }
+});
+
 it('waits for the spawning call when the worker speaks first', async () => {
   /*
    * The capture's own order is the `tool_use` before the worker's first frame,

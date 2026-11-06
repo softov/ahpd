@@ -6,6 +6,9 @@ import { pollTaskOutput } from './taskoutput.js';
 import type { TaskOutputPoll, TaskOutputReader } from './taskoutput.js';
 import { titleOf } from '../input.js';
 
+/** How long a worker's frames are held for its spawn, VS Code's host's `SUBAGENT_START_TIMEOUT`. */
+const SUBAGENT_START_TIMEOUT_MS = 30_000;
+
 export type { Scope } from './context.js';
 
 /**
@@ -234,8 +237,11 @@ export function createWorkers(ctx: SessionContext): Workers {
      * and until then every frame is held whole rather than applied here, as
      * VS Code's host holds a subagent's signals for a chat not yet announced:
      * a turn built before the host minted the chat is the wrong turn, with the
-     * wrong id. A worker no spawn is ever recorded for is never announced.
+     * wrong id. The hold is bounded as VS Code's host bounds it: a spawn that
+     * has not come within 30 s fails the worker, its held frames dropped and
+     * what it says after dropped too, so it is never announced.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L60-L66
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L144-L175
      */
     if (info === undefined) {
       const held: Scope = {
@@ -247,6 +253,11 @@ export function createWorkers(ctx: SessionContext): Workers {
         streaming: undefined,
         waiting: [],
       };
+      setTimeout(() => {
+        if (held.chat !== undefined || held.waiting === undefined) return;
+        held.waiting.length = 0;
+        held.failed = true;
+      }, SUBAGENT_START_TIMEOUT_MS).unref?.();
       scopes.set(parent, held);
       return held;
     }
@@ -321,7 +332,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     // and what it held is delivered to it.
     const open = ctx.options.subagent;
     const held = scopes.get(id);
-    if (open === undefined || held?.waiting === undefined) return;
+    if (open === undefined || held?.waiting === undefined || held.failed === true) return;
     const frames = held.waiting;
     held.waiting = undefined;
     const opened = openWorker(id, spawning.get(id), open);

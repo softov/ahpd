@@ -490,4 +490,9 @@ export interface Scope {
    * whole when the chat opens, so it is applied as if it had arrived then.
    */
   waiting?: (() => void)[] | undefined;
+  /**
+   * Whether the worker's spawn never came within the hold's bound: its held
+   * frames were dropped, and what it says after is dropped too.
+   */
+  failed?: boolean;
 }
