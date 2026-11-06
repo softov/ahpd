@@ -275,9 +275,24 @@ export function moveData(configDir: string, yaml: Yaml, problem: (line: string) 
 
 /** Dispatches actions on the plugin's connection, and hears whether the host took each one. */
 export interface Dispatcher {
-  /** Dispatch one action, and give the host's refusal reason, or `undefined` when the host took it. */
+  /**
+   * Dispatch one action, and give the host's refusal reason, or `undefined`
+   * when the host took it; rejects with `UNCONFIRMED` when neither arrives in
+   * `ACKNOWLEDGEMENT_MS`.
+   */
   dispatch(channel: string, action: Record<string, unknown>): Promise<string | undefined>;
 }
+
+/** How long a dispatch waits for the host's answer, VS Code's ten seconds for a message sent into another session. */
+export const ACKNOWLEDGEMENT_MS = 10_000;
+
+/**
+ * What a dispatch the host did not answer in time rejects with, VS Code's
+ * words: the action may still be taken, so it is not sent again.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L208-L213
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L285-L287
+ */
+export const UNCONFIRMED = 'Remote message delivery was not confirmed. It may already be queued; do not retry automatically. Timed out waiting for remote message acknowledgement.';
 
 /**
  * The dispatcher over the plugin's connection, which sets its one `onMessage`
@@ -287,12 +302,13 @@ export interface Dispatcher {
  * applied with an `action` frame naming that `clientId` and that `clientSeq` -
  * with a `rejectionReason` when it refused it, and without one when it took it.
  * The host echoes a taken action only to the subscribers of its channel, so a
- * caller subscribes first. A dispatch is settled by that answer alone: the
- * host answers every action it is sent, and a client holds what it sent until
- * the answer comes, however long the host takes to decide.
+ * caller holds the channel while it waits. A dispatch is settled by that
+ * answer, or given up as unconfirmed after `ACKNOWLEDGEMENT_MS`, as VS Code's
+ * router gives up on a message it sent into another session; an answer after
+ * that settles nothing.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L19-L32
  */
-export function dispatcher(conn: PluginPeer, clientId: string): Dispatcher {
+export function dispatcher(conn: PluginPeer, clientId: string, waitMs: number = ACKNOWLEDGEMENT_MS): Dispatcher {
   let seq = 0;
   const waiting = new Map<number, (refused: string | undefined) => void>();
   conn.onMessage((message) => {
@@ -309,13 +325,23 @@ export function dispatcher(conn: PluginPeer, clientId: string): Dispatcher {
     dispatch: (channel, action) => {
       seq += 1;
       const clientSeq = seq;
-      return new Promise((resolve) => {
-        waiting.set(clientSeq, resolve);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          waiting.delete(clientSeq);
+          reject(new Error(UNCONFIRMED));
+        }, waitMs);
+        // A wait should not be what keeps a daemon up.
+        timer.unref?.();
+        waiting.set(clientSeq, (refused) => {
+          clearTimeout(timer);
+          resolve(refused);
+        });
         conn.notify('dispatchAction', { channel, clientSeq, action });
       });
     },
   };
 }
+
 
 /** The plugin's connection to the host, and the dispatcher over it. */
 interface Opened {

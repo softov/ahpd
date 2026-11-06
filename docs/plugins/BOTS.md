@@ -194,7 +194,7 @@ A back session may also end its turn without posting. What the main turn does th
 
 A value outside those four is reported and `post` is used.
 
-A message the wake cannot hand to a back session ends the main turn failed, with `chat/error` and the reason, as VS Code ends a turn whose send failed: a chat no read of a bot opened, a name a message fills into one no session can have, a back session the host would not start, and a send the host refused. A back session's turn that failed fails the main turn the same way, typed `sendFailed`.
+A message the wake cannot hand to a back session ends the main turn failed, with `chat/error` and the reason, as VS Code ends a turn whose send failed: a chat no read of a bot opened, a name a message fills into one no session can have, a back session the host would not start, a send the host refused, and a send the host did not answer in ten seconds, which ends the turn with VS Code's words for a message it sent into another session and did not hear back about: `Remote message delivery was not confirmed. It may already be queued; do not retry automatically.` It is not sent again. A back session's turn that failed fails the main turn the same way, typed `sendFailed`.
 
 ### The bot's rules
 
