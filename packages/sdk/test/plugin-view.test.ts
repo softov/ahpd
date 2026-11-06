@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createCanvases } from '../src/host/canvases.js';
 import { pluginHost } from '../src/plugins/plugins.js';
-import { checkView, literalOf, MAX_COMPONENTS } from '../src/plugins/view.js';
+import { checkUi, checkView, literalOf, MAX_COMPONENTS } from '../src/plugins/view.js';
 import { sdkVersion } from '../src/version.js';
 import { isWebUrl } from '../src/weburl.js';
 import type { HostRecordingOptions } from '../src/plugins/plugins.js';
-import type { LoaderContext, PluginView } from '../src/types/plugin.js';
+import type { LoaderContext, PluginView, UiSchema } from '../src/types/plugin.js';
 
 /*
  * A view a plugin gives, and the check that keeps a client able to draw it.
@@ -188,6 +188,81 @@ describe('a view a client cannot draw', () => {
 describe('the check as a function', () => {
   it('passes a good view that names a method it was handed', () => {
     expect(() => { checkView(GOOD, 'main', 'board', { 'x-view/go': { by: 'board', name: 'x-view/go', method: { grant: 'demo:read', handle: () => ({}) } } }); }).not.toThrow();
+  });
+});
+
+/*
+ * A ui capability's schema, which is a view whose props bind to the data the
+ * record sends. The rules are the view's, so these cases are the ones where a
+ * schema differs: a prop may be `{ path }`, and a list may repeat a component.
+ */
+const WHERE = 'the ui schema of adapter probe capability plan';
+
+/** The message a schema refused with, or a failure saying it was not refused. */
+const refusedUi = (schema: unknown): string => refused(() => { checkUi(schema, 'board', WHERE); });
+
+describe('a ui schema a client can draw', () => {
+  it('passes with a prop bound to a path of the data', () => {
+    const schema: UiSchema = {
+      root: 'plan',
+      components: {
+        plan: { id: 'plan', component: 'Text', text: { path: '/plan/summary' } },
+        open: { id: 'open', component: 'Link', label: 'Plan', href: 'https://example.test/plan' },
+      },
+    };
+    expect(() => { checkUi(schema, 'board', WHERE); }).not.toThrow();
+  });
+
+  it('passes a list that repeats a known component over a path', () => {
+    const schema: UiSchema = {
+      root: 'logins',
+      components: {
+        logins: { id: 'logins', component: 'List', children: { path: '/logins', componentId: 'login' } },
+        login: { id: 'login', component: 'Text', text: { path: '/name' } },
+      },
+    };
+    expect(() => { checkUi(schema, 'board', WHERE); }).not.toThrow();
+  });
+
+  it('refuses an unknown componentId', () => {
+    const schema = {
+      root: 'logins',
+      components: { logins: { id: 'logins', component: 'List', children: { path: '/logins', componentId: 'nope' } } },
+    };
+    expect(refusedUi(schema))
+      .toBe(`plugin board: ${WHERE} needs the children binding of the component logins to name a component, and nope is not one`);
+  });
+
+  it('refuses a path binding with another member, or no path at all', () => {
+    const extra = { root: 'a', components: { a: { id: 'a', component: 'Text', text: { path: '/x', fallback: 'y' } } } };
+    expect(refusedUi(extra)).toBe(`plugin board: ${WHERE} needs a prop to be a literal or { path }, one path of the data`);
+    const noPath = { root: 'a', components: { a: { id: 'a', component: 'Text', text: { path: 5 } } } };
+    expect(refusedUi(noPath)).toBe(`plugin board: ${WHERE} needs a prop to be a literal or { path }, one path of the data`);
+  });
+
+  it('refuses an action, because a Button that runs one comes later', () => {
+    const schema = {
+      root: 'a',
+      components: { a: { id: 'a', component: 'Button', label: 'x', action: { event: { name: 'x-view/go' } } } },
+    };
+    expect(refusedUi(schema))
+      .toBe(`plugin board: ${WHERE} needs the component a to carry no action, and a Button that runs one comes in a later plan`);
+  });
+
+  it('refuses a component kind a client is not promised', () => {
+    const schema = { root: 'a', components: { a: { id: 'a', component: 'Image', src: 'x' } } };
+    expect(refusedUi(schema)).toContain('to be one of Text, Link, Button, Card, Row, Column, List, Divider, Icon');
+  });
+
+  it('refuses a cycle, over the component a list repeats too', () => {
+    const schema = {
+      root: 'a',
+      components: {
+        a: { id: 'a', component: 'List', children: { path: '/items', componentId: 'b' } },
+        b: { id: 'b', component: 'Text', text: 'x', child: 'a' },
+      },
+    };
+    expect(refusedUi(schema)).toBe(`plugin board: ${WHERE} needs the components below root to be a tree without a cycle`);
   });
 });
 

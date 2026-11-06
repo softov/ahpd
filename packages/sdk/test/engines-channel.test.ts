@@ -45,6 +45,18 @@ const CLAUDE: ServedEngine = {
   ],
   hostOnly: ['mode'],
   keyVariables: ['ANTHROPIC_API_KEY'],
+  capabilities: [
+    {
+      type: 'ui',
+      name: 'usage',
+      title: 'Plan usage',
+      description: 'What the account\'s plan has left.',
+      ui: {
+        root: 'usage',
+        components: { usage: { id: 'usage', component: 'Text', text: { path: '/usage/summary' } } },
+      },
+    },
+  ],
   open: unopened,
 };
 
@@ -138,6 +150,7 @@ it('lists every engine by name with agent:list, before any record exists', async
     templates: CLAUDE.templates,
     hostOnly: ['mode'],
     keyVariables: ['ANTHROPIC_API_KEY'],
+    capabilities: CLAUDE.capabilities,
   });
   await close();
 });
@@ -161,6 +174,7 @@ it('sends an engine its templates and icons, and leaves the lists out where it h
   expect(rows['pi']).not.toHaveProperty('templates');
   expect(rows['pi']).not.toHaveProperty('hostOnly');
   expect(rows['pi']).not.toHaveProperty('keyVariables');
+  expect(rows['pi']).not.toHaveProperty('capabilities');
   await close();
 });
 

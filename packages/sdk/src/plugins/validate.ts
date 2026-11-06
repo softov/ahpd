@@ -24,6 +24,7 @@ import { SUBJECTS, grantProblem, isGrant, isOperationWord } from '../access/user
 import { isSecret, secretFields } from '../channels/owners.js';
 import { RECORD_SLUG, isRecordSlug } from '../resources/records.js';
 import { schemaGaps, type SchemaGap } from './schemagaps.js';
+import { checkUi } from './view.js';
 
 /**
  * The one message shape every check reports through.
@@ -787,6 +788,65 @@ const checkSignInAccount = (value: unknown, schema: Record<string, unknown>, by:
 };
 
 /**
+ * Check the capabilities an adapter or an engine declares.
+ *
+ * A capability is read for its shape, its `input` and its `path`: a client
+ * lists them, and an `action` runs through the adapter's `run`, which an
+ * adapter may leave out when it has none. Each capability's `input` is a form
+ * of its own, so it is walked under a name that says which capability it is.
+ *
+ * A `ui` capability carries the component tree it draws, in its `ui`, and no
+ * other type may: a tree on an `action` is a screen a client draws for nothing
+ * the capability promises. The tree is checked as a view is, with bindings.
+ *
+ * `place` names the adapter or engine, as `adapter webhook`, and `owner` names
+ * what the capabilities are of, as `a connector of this adapter`.
+ */
+const checkCapabilities = (
+  capabilities: unknown,
+  by: string,
+  method: 'registerAdapter' | 'registerEngine',
+  owner: string,
+  place: string,
+  checked: CheckedSchema[],
+): void => {
+  if (!Array.isArray(capabilities)) {
+    throw new Error(miss(by, method, 'capabilities', `a list of the capabilities ${owner} has`));
+  }
+  for (const held of capabilities) {
+    const capability = asObject(held, by, method, 'a capability');
+    for (const member of ['type', 'name', 'title', 'description']) stringy(capability, member, by, method);
+    if (capability.input !== undefined && !right(capability.input, 'object')) {
+      throw new Error(miss(by, method, 'input', 'an object, the JSON Schema a client draws the form from, or nothing'));
+    }
+    if (capability.input !== undefined) {
+      checked.push({ where: `${place} capability ${capability.name as string} input`, gaps: schemaGaps(capability.input) });
+    }
+    /*
+     * A path is where a client sends a call, so only a `receive` capability
+     * may carry one, and it is an absolute path on the daemon's HTTP root.
+     * Any other type with a path is a client pointed at a URL nothing answers.
+     */
+    if (capability.path !== undefined) {
+      if (capability.type !== 'receive') {
+        throw new Error(miss(by, method, 'path', `a path only on a receive capability, and ${String(capability.name)} is a ${String(capability.type)}`));
+      }
+      if (typeof capability.path !== 'string' || !capability.path.startsWith('/')) {
+        throw new Error(miss(by, method, 'path', 'a path that starts with /, such as /plugins/webhook/{id}'));
+      }
+    }
+    // A ui schema belongs to the capability that draws it, and no other type
+    // has a screen of its own to draw one for.
+    if (capability.type !== 'ui' && capability.ui !== undefined) {
+      throw new Error(miss(by, method, 'ui', `a ui schema only on a ui capability, and ${String(capability.name)} is a ${String(capability.type)}`));
+    }
+    if (capability.type === 'ui' && capability.ui !== undefined) {
+      checkUi(capability.ui, by, `the ui schema of ${place} capability ${capability.name as string}`);
+    }
+  }
+};
+
+/**
  * Check one `registerAdapter` value against `Adapter`, and answer its name and
  * its schemas' gaps.
  *
@@ -810,32 +870,7 @@ export const checkAdapter = (value: unknown, by: string): { name: string; checke
   }
   checkSignIn(object.signIn, object.schema as Record<string, unknown>, by);
   const checked: CheckedSchema[] = [{ where: `adapter ${name}`, gaps: schemaProblems(object.schema, true) }];
-  if (!Array.isArray(object.capabilities)) {
-    throw new Error(miss(by, 'registerAdapter', 'capabilities', 'a list of the capabilities a connector of this adapter has'));
-  }
-  for (const held of object.capabilities) {
-    const capability = asObject(held, by, 'registerAdapter', 'a capability');
-    for (const member of ['type', 'name', 'title', 'description']) stringy(capability, member, by, 'registerAdapter');
-    if (capability.input !== undefined && !right(capability.input, 'object')) {
-      throw new Error(miss(by, 'registerAdapter', 'input', 'an object, the JSON Schema a client draws the form from, or nothing'));
-    }
-    if (capability.input !== undefined) {
-      checked.push({ where: `adapter ${name} capability ${capability.name as string} input`, gaps: schemaGaps(capability.input) });
-    }
-    /*
-     * A path is where a client sends a call, so only a `receive` capability
-     * may carry one, and it is an absolute path on the daemon's HTTP root.
-     * Any other type with a path is a client pointed at a URL nothing answers.
-     */
-    if (capability.path !== undefined) {
-      if (capability.type !== 'receive') {
-        throw new Error(miss(by, 'registerAdapter', 'path', `a path only on a receive capability, and ${String(capability.name)} is a ${String(capability.type)}`));
-      }
-      if (typeof capability.path !== 'string' || !capability.path.startsWith('/')) {
-        throw new Error(miss(by, 'registerAdapter', 'path', 'a path that starts with /, such as /plugins/webhook/{id}'));
-      }
-    }
-  }
+  checkCapabilities(object.capabilities, by, 'registerAdapter', 'a connector of this adapter', `adapter ${name}`, checked);
   if (typeof object.open !== 'function') {
     throw new Error(miss(by, 'registerAdapter', 'open', 'a function answering how to close the connector, or nothing'));
   }
@@ -869,6 +904,15 @@ export const checkEngine = (value: unknown, by: string): { name: string; checked
   if (!right(object.schema, 'object')) {
     throw new Error(miss(by, 'registerEngine', 'schema', 'an object, the JSON Schema a client draws the form from'));
   }
+  const checked: CheckedSchema[] = [{ where: `engine ${name}`, gaps: schemaProblems(object.schema) }];
+  /*
+   * The capabilities are optional, because most engines have none of their own
+   * yet. A list that is there is checked as an adapter's is, and only its `ui`
+   * is read today.
+   */
+  if (object.capabilities !== undefined) {
+    checkCapabilities(object.capabilities, by, 'registerEngine', 'an agent of this engine', `engine ${name}`, checked);
+  }
   const names = (member: 'hostOnly' | 'keyVariables'): void => {
     const held = object[member];
     if (held === undefined) return;
@@ -900,7 +944,7 @@ export const checkEngine = (value: unknown, by: string): { name: string; checked
   if (typeof object.open !== 'function') {
     throw new Error(miss(by, 'registerEngine', 'open', 'a function building the backend for one record'));
   }
-  return { name, checked: [{ where: `engine ${name}`, gaps: schemaProblems(object.schema) }] };
+  return { name, checked };
 };
 
 /**

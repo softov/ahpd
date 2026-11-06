@@ -866,6 +866,53 @@ export interface PluginView {
 }
 
 /**
+ * One component of a ui schema, in the shape the renderer reads.
+ *
+ * It is a view's component, with two bindings a view does not have. A prop is
+ * either a literal, as a view's is, or `{ path }`, the A2UI way to read the
+ * value at `path` from the data the record sends. `children` is either the list
+ * a view carries or `{ path, componentId }`: the component named by
+ * `componentId` is drawn once for each item of the list at `path`.
+ *
+ * No component carries an `action`. A Button that runs one waits for a later
+ * plan, so a schema with one is refused.
+ */
+export interface UiComponent {
+  /** The name a parent uses, and the key this component is held under. */
+  id: string;
+  /** The kind this component is drawn as. */
+  component: string;
+  /** The one component below this one. */
+  child?: string;
+  /**
+   * The components below this one, in the order they are drawn, or the one a
+   * list repeats for each item at a path.
+   */
+  children?: string[] | { path: string; componentId: string };
+  /** The component's own properties, each a literal or a `{ path }` binding. */
+  [prop: string]: unknown;
+}
+
+/**
+ * The component tree a `ui` capability draws.
+ *
+ * It is a `PluginView` bound to a data model: `root` names the component drawn
+ * first, `components` holds each one by its `id`, and each prop is a literal or
+ * `{ path }`, read from the data the record sends. A list may repeat one
+ * component over the items at a path with `{ path, componentId }`.
+ *
+ * The host checks a schema by the rules a view is checked by: the same kinds,
+ * the same 200 components and 64 KiB of JSON, every reference naming a
+ * component, and a tree with one parent each and no cycle.
+ */
+export interface UiSchema {
+  /** The `id` of the component drawn first. */
+  root: string;
+  /** Every component of the schema, by its own `id`. */
+  components: Record<string, UiComponent>;
+}
+
+/**
  * What one install answered: the version it left, or why npm could not install
  * the package.
  *

@@ -14,7 +14,7 @@
 
 import type { Icon } from '@microsoft/agent-host-protocol';
 import type { Agent } from './agent.js';
-import type { ConnectorOwner } from './connectors.js';
+import type { Capability, ConnectorOwner } from './connectors.js';
 
 /**
  * Whose agent it is: the same three owners a connector takes.
@@ -111,6 +111,14 @@ export interface Engine {
   description: string;
   /** The JSON Schema a client draws a record's own fields from. */
   schema: Record<string, unknown>;
+  /**
+   * What an agent of this engine does, as a client lists it.
+   *
+   * The same type an adapter's capabilities are. The host reads only `ui` on an
+   * engine now: a `ui` capability carries the component tree an agent of this
+   * engine draws from the data it sends.
+   */
+  capabilities?: Capability[];
   /** What a client draws beside the engine's title. */
   icons?: Icon[];
   /** What a new record of this engine starts from. */

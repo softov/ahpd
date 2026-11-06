@@ -1,6 +1,6 @@
 ---
 title: A ui capability with bindings
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -63,3 +63,10 @@ The host checks the schema at registration, and sends it with the adapter row an
 
 ## Resume
 
+Done. `UiSchema` and `UiComponent` are in `types/plugin.ts`, and `Capability.ui` and `Engine.capabilities` carry them. `checkUi` shares `treeOf`, `walkTree` and `belowOf` with `checkView`, so the kinds, the limits, the references and the tree are one implementation. `checkCapabilities` in `validate.ts` is shared by `checkAdapter` and `checkEngine`, and an engine row sends its capabilities when it has them. `checkUi` and `UiSchema` are exported from the sdk's `index.ts`. The sdk tests hold the new cases: the schema check, the registration of an adapter and an engine, and the engine row.
+
+Verified: `pnpm exec tsc -p tsconfig.json --noEmit` printed nothing, `pnpm boundary` reported every package with none undeclared, and `pnpm exec vitest run packages/sdk/` passed 226 files with 4280 tests and 4 skipped. `pnpm -s schema` ran first, because the wire cases read `tools/ahp.strict.schema.json`.
+
+Found: the `checkView` Link rule stays literal, so `checkUi` exempts a bound `href`. An engine's capabilities are sent only when the list is not empty, because the list is optional there.
+
+Left: nothing.

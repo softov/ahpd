@@ -32,6 +32,36 @@ const base = (): HostOptions => ({ path: '/tmp/validate', agents: [echo({ path: 
 
 const agent = (provider: string): Agent => ({ ...echo({ path: '/tmp/validate' }), provider });
 
+/** A ui capability whose tree draws one Text bound to a path of the record's data. */
+const uiCapability = (parts: Record<string, unknown> = {}): Record<string, unknown> => ({
+  type: 'ui',
+  name: 'plan',
+  title: 'Plan',
+  description: 'The plan usage of the account.',
+  ui: { root: 'plan', components: { plan: { id: 'plan', component: 'Text', text: { path: '/plan/summary' } } } },
+  ...parts,
+});
+
+/** An adapter that declares the capabilities it is handed. */
+const adapterWith = (capabilities: unknown[]): Record<string, unknown> => ({
+  name: 'probe',
+  title: 'Probe',
+  description: 'An account that shows its plan.',
+  schema: { type: 'object', properties: {} },
+  capabilities,
+  open: () => {},
+});
+
+/** An engine that declares the capabilities it is handed. */
+const engineWith = (capabilities: unknown[]): Record<string, unknown> => ({
+  name: 'claude',
+  title: 'Claude',
+  description: 'An agent on Claude Code.',
+  schema: { type: 'object', properties: {} },
+  capabilities,
+  open: () => agent('claude'),
+});
+
 const tool = (name: string): HostTool => ({
   definition: { name, description: `${name} tool`, inputSchema: { type: 'object', properties: {} } },
   run: () => name,
@@ -401,6 +431,33 @@ describe('pluginHost', () => {
     };
 
     expect(() => host.registerAdapter(adapter as never)).toThrow(/alpha.*registerAdapter.*does not mark secret/);
+  });
+
+  it('registers an adapter and an engine whose ui capability carries a good schema', () => {
+    const one = pluginHost('alpha', context());
+    one.host.registerAdapter(adapterWith([uiCapability()]) as never);
+    expect(one.contribution.adapters?.['probe']?.capabilities).toEqual([uiCapability()]);
+
+    const other = pluginHost('alpha', context());
+    other.host.registerEngine(engineWith([uiCapability()]) as never);
+    expect(other.contribution.engines?.['claude']?.capabilities).toEqual([uiCapability()]);
+  });
+
+  it('refuses a bad ui schema, naming the adapter or the engine and the capability', () => {
+    const bad = uiCapability({ ui: { root: 'nope', components: {} } });
+    const one = pluginHost('alpha', context());
+    expect(() => one.host.registerAdapter(adapterWith([bad]) as never))
+      .toThrow(/alpha.*adapter probe capability plan.*root to name a component/);
+
+    const other = pluginHost('alpha', context());
+    expect(() => other.host.registerEngine(engineWith([bad]) as never))
+      .toThrow(/alpha.*engine claude capability plan.*root to name a component/);
+  });
+
+  it('refuses a ui schema on a capability that is not a ui', () => {
+    const { host } = pluginHost('alpha', context());
+    expect(() => host.registerAdapter(adapterWith([uiCapability({ type: 'action' })]) as never))
+      .toThrow(/alpha.*registerAdapter.*ui.*a ui schema only on a ui capability/);
   });
 
   it('refuses a tunnel kind with no invoke, naming the plugin, the method and the member', () => {

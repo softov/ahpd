@@ -64,8 +64,10 @@ export interface EnginesChannel {
  * The templates are sent whole, so the name, the description, the icon, the
  * model and the config a record starts from each reach a client. A list an engine
  * does not have carries no key rather than an empty one a client would have to
- * test. An engine with no icons is drawn with its plugin's. A field that names a
- * connector carries its choices when the host's connectors are known.
+ * test. The capabilities are sent whole, as an adapter's are, so a `ui`
+ * capability's component tree reaches a client beside its name. An engine with
+ * no icons is drawn with its plugin's. A field that names a connector carries
+ * its choices when the host's connectors are known.
  */
 const rowOf = (
   engine: ServedEngine,
@@ -79,6 +81,7 @@ const rowOf = (
     description: engine.description,
     schema: connectors === undefined ? engine.schema : withConnectorChoices(engine.schema, connectors, true),
     plugin: engine.by,
+    ...(engine.capabilities === undefined || engine.capabilities.length === 0 ? {} : { capabilities: engine.capabilities }),
     ...(icons === undefined || icons.length === 0 ? {} : { icons }),
     ...(engine.templates === undefined || engine.templates.length === 0 ? {} : { templates: engine.templates }),
     ...(engine.hostOnly === undefined || engine.hostOnly.length === 0 ? {} : { hostOnly: engine.hostOnly }),
