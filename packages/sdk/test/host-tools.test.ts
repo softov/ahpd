@@ -383,7 +383,7 @@ describe('tools the host contributes', () => {
       expect(await call('get_session_context', { session: 'ahp-session:/served', detail: 'everything' })).toContain('detail must be');
     });
 
-    it('moves the session once the turn that asked is over, and tells the agent where it is', async () => {
+    it('moves the session once the turn that asked is over, and continues the task there in VS Code\'s words', async () => {
       const { client, peer: p, uri, chatUri } = await (async () => {
         const host = createHost({
           path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
@@ -432,7 +432,9 @@ describe('tools the host contributes', () => {
           'vscode.chat.workspaceContinuation': true,
         },
       });
-      expect(String((notice?.action.message as { text: string }).text)).toContain(resolve('/tmp'));
+      // In VS Code's words.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1081-L1092
+      expect((notice?.action.message as { text: string }).text).toBe('Continue in the requested workspace.');
     });
 
     /*

@@ -1070,12 +1070,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       throw error;
     }
     const lead = byChat.get(chatUriFor(uri));
-    const now = sessions.get(uri)?.workingDirectory ?? move.directory;
     if (lead === undefined) return;
+    /*
+     * The continuation in VS Code's words and under its label, the session's
+     * whole workspace moved.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1081-L1092
+     */
     void startTurn(
       lead.chat,
       crypto.randomUUID(),
-      `The workspace is now ${now}${move.isolation ? ', an isolated worktree' : ''}. Continue the task you were working on there.`,
+      'Continue in the requested workspace.',
       undefined,
       {
         origin: { kind: 'systemNotification' },
