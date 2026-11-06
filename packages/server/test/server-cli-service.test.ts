@@ -69,7 +69,7 @@ describe.skipIf(!posix)('service install', () => {
     // The case's configuration home is its own, and the manager starts the
     // daemon with none of the install's environment, so the unit names it.
     expect(unit).toContain(`Environment=XDG_CONFIG_HOME=${home}\n`);
-    expect(unit).toContain('Restart=on-failure');
+    expect(unit).toContain('Restart=always');
     expect(unit).toContain(`WorkingDirectory=${homedir()}`);
     // And what the manager was asked, in order.
     expect(systemctlAsked()).toEqual(installCalls());

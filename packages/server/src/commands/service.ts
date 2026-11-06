@@ -3,7 +3,7 @@
  *
  * `install` writes the one file the manager reads - a systemd user unit on
  * Linux, a LaunchAgent on macOS - and hands it over, so the daemon starts at
- * login and is started again after a crash. It is the same foreground daemon as
+ * login and is started again whenever it ends. It is the same foreground daemon as
  * `ahpd` with no command, with the configuration file of this install named in
  * full: the unit sets `AHPD_SERVICE`, which is what makes that daemon record
  * itself as one a manager holds, so `ahpd stop` and `ahpd restart` go through

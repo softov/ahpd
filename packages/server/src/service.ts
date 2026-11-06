@@ -5,9 +5,9 @@
  * on macOS, which is `commands/service.ts`. What is here is the other half: the
  * manager is what starts the daemon and what keeps it running, so a daemon it
  * holds is stopped and restarted through the manager rather than by a signal.
- * A kill is a crash to `Restart=on-failure` and to a `KeepAlive` that restarts
- * on an unsuccessful exit, and the manager would start the daemon again instead
- * of leaving it stopped.
+ * The unit's `Restart=always` and the agent's `KeepAlive` start the daemon
+ * again whenever it ends, so a daemon killed by a signal would be started again
+ * instead of left stopped.
  *
  * Every call is one command run by its name, so a machine without the manager
  * answers with that command's own words, and a case puts a stand-in on the
@@ -264,16 +264,20 @@ Environment=XDG_CONFIG_HOME=${unitWord(facts.configHome)}
  * `Type=simple` is the daemon as a terminal runs it, in the foreground: the same
  * process `ahpd` with no command is. `AHPD_SERVICE` is what makes that daemon
  * record itself as one a manager holds, so `ahpd stop` and `ahpd restart` ask
- * systemd rather than sending a signal. `Restart=on-failure` starts it again
- * after a crash and leaves a managed restart alone, which ends cleanly because
- * the manager is what starts the next daemon. `WorkingDirectory` is the home of
- * this user: a daemon with no `paths` serves the folder it started in, and the
- * user manager would have picked that home by itself, which is a default of
- * one manager this file does not lean on. An install from a configuration
- * home of its own sets `XDG_CONFIG_HOME` too, so its daemon keeps to that folder.
+ * systemd rather than sending a signal. The start and restart lines are VS
+ * Code's CLI's for the service it installs (cli/src/tunnels/service_linux.rs
+ * L192-L219 at 6b68d3fe): after the network, started again ten seconds after it
+ * ends however it ends, and never given up on; a stop goes through systemd,
+ * which starts nothing after it. `WorkingDirectory` is the home of this user: a
+ * daemon with no `paths` serves the folder it started in, and the user manager
+ * would have picked that home by itself, which is a default of one manager this
+ * file does not lean on. An install from a configuration home of its own sets
+ * `XDG_CONFIG_HOME` too, so its daemon keeps to that folder.
  */
 export const unitOf = (facts: ServiceFacts): string => `[Unit]
 Description=ahpd, the agent host
+After=network.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -288,9 +292,10 @@ Environment=AHPD_SERVICE=systemd
 # The PATH of the shell that ran the install, so the agents this host starts
 # find their own runtimes.
 Environment=PATH=${unitWord(facts.path)}
-${unitHome(facts)}# Started again after a crash, and not after a managed restart, which ends
-# cleanly: the manager is what starts the next daemon.
-Restart=on-failure
+${unitHome(facts)}# Started again ten seconds after it ends, as VS Code's CLI keeps its service
+# running; a stop through systemd starts nothing after it.
+Restart=always
+RestartSec=10
 # The whole group, so nothing the daemon left running outlives the unit.
 KillMode=control-group
 
@@ -319,10 +324,11 @@ const plistHome = (facts: ServiceFacts): string => (facts.configHome === undefin
 /**
  * The LaunchAgent `service install` writes.
  *
- * `RunAtLoad` is what starts it at login, which is the whole of what an agent
- * of a login is for. `KeepAlive` with `SuccessfulExit` false starts it again
- * after a crash and leaves a managed restart alone, which ends cleanly because
- * the manager is what starts the next daemon. `AHPD_SERVICE` is what makes the
+ * `KeepAlive` and `LimitLoadToSessionType` are VS Code's CLI's for the agent it
+ * installs (cli/src/tunnels/service_macos.rs L127-L165 at 6b68d3fe): loaded in
+ * the login's graphical session, started when it loads and again whenever it
+ * ends; `ahpd stop` takes the agent out of the login, which starts nothing
+ * after it. `AHPD_SERVICE` is what makes the
  * daemon record itself as one a manager holds, so `ahpd stop` and `ahpd
  * restart` ask launchd rather than sending a signal. `WorkingDirectory` is the
  * home of this user, because launchd starts a job in the root folder and a
@@ -335,6 +341,8 @@ export const plistOf = (facts: ServiceFacts): string => `<?xml version="1.0" enc
 <dict>
 	<key>Label</key>
 	<string>${serviceLabel(facts.name)}</string>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
 	<!-- The same daemon a terminal starts, with the configuration file named in full. -->
 	<key>ProgramArguments</key>
 	<array>
@@ -347,15 +355,10 @@ export const plistOf = (facts: ServiceFacts): string => `<?xml version="1.0" enc
 	     with no paths serves the folder it started in. -->
 	<key>WorkingDirectory</key>
 	<string>${plistWord(facts.home)}</string>
-	<key>RunAtLoad</key>
-	<true/>
-	<!-- Started again after a crash, and not after a managed restart, which ends
-	     cleanly: the manager is what starts the next daemon. -->
+	<!-- Started when it loads and again whenever it ends, as VS Code's CLI keeps
+	     its agent running; ahpd stop takes it out of the login. -->
 	<key>KeepAlive</key>
-	<dict>
-		<key>SuccessfulExit</key>
-		<false/>
-	</dict>
+	<true/>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<!-- What makes the daemon record that a manager holds it. -->

@@ -804,8 +804,8 @@ const goneWithin = async (pid: number, steps: StopSteps): Promise<boolean> => {
  *
  * Nothing here is killed, and the kill the wait would otherwise fall back to is
  * not sent: the manager does its own, and a daemon this process SIGKILLed under
- * a unit with `Restart=on-failure` is one the unit starts again, so the stop
- * would read as a restart. A process still there when the manager has answered
+ * a unit with `Restart=always` is one the unit starts again, so the stop would
+ * read as a restart. A process still there when the manager has answered
  * is one the manager is still stopping, which is said rather than forced.
  */
 const stoppedUnderService = async (found: Running, service: Service, steps: StopSteps): Promise<StopOutcome> => {

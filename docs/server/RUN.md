@@ -90,7 +90,7 @@ The exit code is 1 when a check is `fail`, and 0 otherwise, so a script can ask 
 
 ## Service
 
-`ahpd service install` hands the daemon to the service manager of this machine, so it starts at login and is started again after a crash. On Linux that is a systemd user unit, and on macOS a LaunchAgent. Neither needs sudo: both files belong to this user.
+`ahpd service install` hands the daemon to the service manager of this machine, so it starts at login and is started again ten seconds after it ends, as VS Code's CLI keeps its own service running. On Linux that is a systemd user unit, and on macOS a LaunchAgent loaded in the graphical login. Neither needs sudo: both files belong to this user. `ahpd stop` and `ahpd restart` go through the manager, so a stop stays stopped.
 
 ```bash
 ahpd service install
@@ -108,7 +108,7 @@ What it writes is one file that runs the same daemon as `ahpd` with no command, 
 | Linux | `~/.config/systemd/user/ahpd.service` |
 | macOS | `~/Library/LaunchAgents/dev.ahpd.daemon.plist` |
 
-While the service holds the daemon, `ahpd stop` and `ahpd restart` go through the manager rather than sending a signal: to the file, a signal is a crash, and the manager would start the daemon again. The log is where the manager puts it: the journal on Linux, and `daemon.log` on macOS.
+While the service holds the daemon, `ahpd stop` and `ahpd restart` go through the manager rather than sending a signal: a daemon a signal ends is one the manager starts again. The log is where the manager puts it: the journal on Linux, and `daemon.log` on macOS.
 
 ```bash
 journalctl --user -u ahpd -f        # Linux

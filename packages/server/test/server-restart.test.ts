@@ -435,7 +435,9 @@ describe('lifecycle', () => {
    * the next one, so this process starts nothing. Its record goes before the
    * manager is asked - the daemon coming up serves the same configuration
    * folder and refuses to run beside a record naming a live daemon - and the
-   * exit is a clean one, which no `Restart=on-failure` unit starts again.
+   * exit is part of the restart the manager was asked for, which a unit's
+   * `Restart=` does not start again
+   * (https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Restart=).
    */
   it('hands a supervised restart to the manager, starts no successor, and exits 0', async () => {
     const said: string[] = [];
