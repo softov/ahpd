@@ -106,9 +106,6 @@ const modeOf = (values: Record<string, unknown>): PermissionMode => {
     : 'auto';
 };
 
-/** What the model reads when a tool the rule names is refused without a question. */
-const asksEveryTime = (name: string): string => `${name} asks every time and the mode is dontAsk`;
-
 /**
  * The cofold agent id.
  *
@@ -392,12 +389,14 @@ export const createTurnAgent = (
             return { decision: 'allow' };
           }
           /*
-           * A matched call asks in every mode. `dontAsk` is the one mode that
-           * answers a question by refusing it, so the refusal is made here
-           * rather than left to the policy, which allows a tool it sees no
-           * reason to ask about.
+           * A matched call asks in every mode, VS Code's managed approval.
+           * `dontAsk` is the one mode that answers a question by refusing it,
+           * so the refusal is made here, with the words the model reads, where
+           * the policy would allow a tool it sees no reason to ask about.
            */
-          if (modeOf(values) === 'dontAsk') return { decision: 'deny', reason: asksEveryTime(call.name) };
+          if (modeOf(values) === 'dontAsk') {
+            return { decision: 'deny', reason: `${call.name} asks every time and the mode is dontAsk` };
+          }
           /*
            * cofold answers an ask from the approval it remembered at
            * `approvals/<session>/<tool>`, and a hook's `approval` is skipped by

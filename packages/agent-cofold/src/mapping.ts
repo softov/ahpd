@@ -86,7 +86,9 @@ export interface TurnMappingOptions {
    */
   cancelled(): boolean;
   /**
-   * Whether the operator's rule makes this tool ask every time.
+   * Whether the operator's rule makes this tool ask every time: VS Code's
+   * managed approval, whose ask offers one-time choices alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1513-L1517
    *
    * Read when a call is put to a person, so a matched question offers no
    * "allow for this session". cofold keeps such a choice itself, per session
@@ -94,7 +96,7 @@ export interface TurnMappingOptions {
    * asking anybody. A replay passes none: the rules of now do not decide what
    * was asked then.
    */
-  asksEveryTime?(name: string): boolean;
+  managedApprovalRequired?(name: string): boolean;
   /**
    * Whether the turn can be run again, cut back to the turn before it.
    *
@@ -625,7 +627,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            */
           const choices: Bag[] = [
             { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
-            ...(options.asksEveryTime?.(event.name) === true
+            ...(options.managedApprovalRequired?.(event.name) === true
               ? []
               : [{ id: 'allow-session', label: `Allow ${displayName} for this session`, kind: 'approve', group: 1 }]),
             { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },

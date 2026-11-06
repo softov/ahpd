@@ -128,7 +128,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
     cancelled: () => ctx.cancelRequested,
     // The operator's rule, read when a call is put to a person: a matched
     // tool's question offers no session choice cofold would remember.
-    asksEveryTime: (name) => start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask',
+    managedApprovalRequired: (name) => start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask',
     // A failed turn can be put back when there is a point to cut to: the last
     // message of the turn before, or, for a conversation's first turn, no
     // session at all. A turn before it that nobody named a point for is one
