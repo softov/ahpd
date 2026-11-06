@@ -450,11 +450,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * anything is read for it, as the reference host refuses it.
        * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1270-L1273
        */
-      if (!visible(connection, meantBy(channel))) throw new RpcError(-32001, `Resource not available to this client: ${channel}`);
-      // What it means here, and what it was called there. The snapshot is
-      // taken of the channel and returned under the name the client used -
-      // a client that asked about one URI and was answered about another
-      // has been answered about something it is not watching.
+      // What it means here: the channel it watches whatever its spelling, as
+      // every envelope goes under the host's own channel.
+      const meant = meantBy(channel);
+      if (!visible(connection, meant)) throw new RpcError(-32001, `Resource not available to this client: ${channel}`);
       /*
        * The view, read here because the snapshot is what it shapes.
        *
@@ -475,32 +474,32 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2130-L2199
        */
       const placed = schemeOf(channel) !== 'ahp-otlp' && schemeOf(channel) !== 'ahp-resource-watch';
-      const watched = connection.watching.has(channel);
-      const place = (watched ? conn.subscriptions.get(channel) : undefined) ?? {};
-      if (placed) conn.subscriptions.set(channel, place);
-      const kept = (): boolean => !placed || conn.subscriptions.get(channel) === place;
+      const watched = connection.watching.has(meant);
+      const place = (watched ? conn.subscriptions.get(meant) : undefined) ?? {};
+      if (placed) conn.subscriptions.set(meant, place);
+      const kept = (): boolean => !placed || conn.subscriptions.get(meant) === place;
       const overtaken = (): RpcError => new RpcError(INTERNAL_ERROR, `Subscription cancelled: ${channel}`);
       let snapshot: Awaited<ReturnType<typeof snapshotOf>>;
       try {
-        snapshot = await snapshotOf(meantBy(channel), connection, view);
+        snapshot = await snapshotOf(meant, connection, view);
       }
       catch (error) {
         if (!kept()) throw overtaken();
-        if (placed && !watched) conn.subscriptions.delete(channel);
+        if (placed && !watched) conn.subscriptions.delete(meant);
         throw error;
       }
       if (!kept()) throw overtaken();
-      if (placed) conn.subscriptions.set(channel, {});
+      if (placed) conn.subscriptions.set(meant, {});
       // A stateless channel is watched from here on and answered with no
       // snapshot, and nothing of it is held to replay.
       if (snapshot === undefined) {
-        connection.watching.add(channel);
+        connection.watching.add(meant);
         return {};
       }
-      // Answered to this connection after the snapshot is taken: the root's
-      // other spelling recorded, a session's chats the ones it may see.
-      const meant = answeredAs(connection, channel, snapshot);
-      connection.watching.add(channel);
+      // Answered to this connection after the snapshot is taken: a session's
+      // chats the ones it may see.
+      answeredAs(connection, channel, snapshot);
+      connection.watching.add(meant);
       // Given a baseline, so it owes this client none.
       ctx.clearBaselineDebt(connection.clientId, meant);
       // A client is now in this session, which is the moment a plugin that
@@ -521,10 +520,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       for (const held of replayable) {
         if (held.channel === meant && held.serverSeq > at) {
           const envelope = seenBy(connection, held);
-          if (envelope === undefined) continue;
-          connection.peer.notify('action', meant === channel
-            ? envelope
-            : { ...envelope, channel });
+          if (envelope !== undefined) connection.peer.notify('action', envelope);
         }
       }
       return { snapshot };

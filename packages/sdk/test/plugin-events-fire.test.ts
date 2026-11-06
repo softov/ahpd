@@ -326,7 +326,7 @@ it('fires message, turn_start and turn_end once each, and nothing per delta', as
 
   const about = seen.filter((event) => event.type === 'message' || event.type === 'turn_start' || event.type === 'turn_end');
   expect(about.map((event) => event.type)).toEqual(['message', 'turn_start', 'turn_end']);
-  // The host's own session and chat URIs, not the client's aliases for them:
+  // The host's own session and chat URIs, whatever a client spells them as:
   // the event carries what the host calls the channel, which is the identity
   // it uses everywhere, and a session is held under its provider's name.
   expect(about[0]).toMatchObject({ session: 'ahp-session:/turn', chat: expect.stringMatching(/^ahp-chat:/), turn: 'turn-1', text: 'hello there' });

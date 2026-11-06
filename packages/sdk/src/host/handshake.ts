@@ -391,12 +391,12 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         // A handshake that fails because one requested channel is gone is
         // a client that cannot connect at all. Take what can be taken.
         try {
-          // Gated, resolved and answered the way `subscribe` is: the root
-          // under another spelling is told under that spelling, and a
-          // channel an older VS Code window may not see is left out, as the
-          // reference host leaves it out. Awaited only when the gate is
-          // waiting on a scheme, so a handshake does not spend a turn of the
-          // loop on a question it will not be asked.
+          // Gated, resolved and answered the way `subscribe` is: watched as
+          // the host's own channel whatever its spelling, and a channel an
+          // older VS Code window may not see is left out, as the reference
+          // host leaves it out. Awaited only when the gate is waiting on a
+          // scheme, so a handshake does not spend a turn of the loop on a
+          // question it will not be asked.
           // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1197-L1201
           const held = conn.admit('subscribe', { channel });
           if (held !== undefined) await held;
@@ -414,8 +414,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           const space = spaceOf(asked);
           if ((space === 'session' || space === 'chat' || space === 'terminal') && baseOf(asked) === asked
             && ctx.stateOf(asked) === undefined && !sessions.has(asked) && !ctx.byChat.has(asked) && !ctx.terminals.has(asked)) {
-            if (asked !== channel) connection.aliases.set(asked, channel);
-            connection.watching.add(channel);
+            connection.watching.add(asked);
             const owed = ctx.baselineDebt.get(connection.clientId) ?? new Set<string>();
             ctx.baselineDebt.set(connection.clientId, owed.add(asked));
             continue;
@@ -423,12 +422,12 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           const snapshot = await snapshotOf(asked, connection);
           // A stateless channel is watched, with no snapshot in the answer.
           if (snapshot === undefined) {
-            connection.watching.add(channel);
+            connection.watching.add(asked);
             continue;
           }
           const meant = answeredAs(connection, channel, snapshot);
           snapshots.push(snapshot);
-          connection.watching.add(channel);
+          connection.watching.add(meant);
           ctx.clearBaselineDebt(connection.clientId, meant);
           openedBy(meant, connection.clientId);
           // Recent in the residency, as a subscribe makes it.
@@ -710,9 +709,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * every restore has settled.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1577-L1583
        */
-      for (const [meant, channel] of resumed) {
-        if (meant !== channel) connection.aliases.set(meant, channel);
-        connection.watching.add(channel);
+      for (const meant of resumed.keys()) {
+        connection.watching.add(meant);
         openedBy(meant, connection.clientId);
         // Recent in the residency, as a subscribe makes it.
         // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L11633-L11634

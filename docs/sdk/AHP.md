@@ -71,8 +71,13 @@ and `dispatchAction`. The protocol names the channel `ahp-automations://`, and
 for two weeks the reference host spelt it with an authority so the URI survived
 a round trip through its own URI class; Insiders builds from that window still
 subscribe under it, and were refused here with `-32001` about a session nobody
-had named. Answered under whichever spelling the client used, the way the root
-is: the root and the automations catalogue are this host's own channels.
+had named. A subscribe to it is answered under the spelling the client used,
+and every action on it goes out under `ahp-automations://`, as VS Code's host
+answers and sends them, its client matching the catalogue's spellings and the
+root's at relevance
+([agentSubscription.ts#L1458-L1482](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L1458-L1482)).
+The root is answered as `ahp-root://` whatever spelling asked for it, as VS
+Code's host answers it.
 
 | command | ahpd | Notes |
 | --- | :---: | --- |
@@ -672,13 +677,18 @@ client, as VS Code's host keys a session by the URI a client sends
 
 The id inside a session's URI is what the store holds the session under, and
 every spelling of that id names the session: the name its row carries, another
-scheme this host serves, and `ahp-session:/<id>`. A client that names one of
-the others is answered under the name it used, which the host keeps as an alias
-for the connection, as VS Code's host answers a session under each identity it
-has and derives that session's chat from each of them
+scheme this host serves, and `ahp-session:/<id>`, as VS Code's host answers a
+session under each identity it has and derives that session's chat from each
+of them
 ([agentHostChatOwnershipService.ts#L264-L287](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287)),
 a chat's owner coming from the records that hold it rather than from its URI
 ([sessionState.ts#L894-L898](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/state/sessionState.ts#L894-L898)).
+A client that subscribes by one of the others watches the session: the
+subscribe is answered under the name it used, and every action goes out under
+the session's own name, as VS Code's host sends each envelope under its own
+channel and its client takes a session's and a chat's URIs as the host
+advertised them
+([agentSubscription.ts#L538-L543](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L538-L543)).
 A derived default chat URI of any of those spellings is the session's default
 chat, while the session's record agrees that its default chat is a derived one;
 a session that moved its default to a chat of its own owns no derived chat

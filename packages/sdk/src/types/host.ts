@@ -143,7 +143,7 @@ export interface ConnectedClient {
   locale?: string;
   /** The person this connection signed in as, when it did. */
   principal?: Principal;
-  /** Channel URIs this client subscribed to. */
+  /** The channels this client subscribed to, each by the host's own channel. */
   watching: string[];
   /** When the connection was accepted, as a wall-clock millisecond. */
   connectedAt: number;
@@ -1500,7 +1500,8 @@ export interface Connection {
    */
   locale?: string;
   /**
-   * Channel URIs this client subscribed to.
+   * The channels this client subscribed to, each by the host's own channel
+   * whatever spelling the client used.
    *
    * Per connection: two clients can watch one channel, and dropping one must
    * not stop the other's stream.
@@ -1565,14 +1566,6 @@ export interface Connection {
    * the credentials the daemon was started with.
    */
   tokens: Map<string, Credential>;
-  /**
-   * Host channels this client named in another spelling, by the channel they
-   * mean: `ahp-root:` for `ahp-root://`, and the automations catalogue with an
-   * authority. Its subscription is keyed by the string it sent, so every
-   * notification on such a channel is addressed back that way. A session and a
-   * chat have one URI each, and are never here.
-   */
-  aliases: Map<string, string>;
   /**
    * Whether this client is a VS Code window that cannot address an
    * `ahp-session:` session: it names itself `vscode-editor-window` or

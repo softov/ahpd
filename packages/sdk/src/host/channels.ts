@@ -325,8 +325,9 @@ export const parseResourceWatchChannelUri = (uri: string): WatchDescriptor | und
  * an authority added so the URI survived a round trip through its own URI
  * class - and Insiders builds from that window still subscribe under it,
  * and were refused `-32001` here about a session nobody had named. The
- * reference host now takes anything on the scheme, and so does this one:
- * a client is answered under the spelling it used, the way the root is.
+ * reference host takes anything on the scheme, and so does this one: a
+ * subscribe is answered under the spelling it used, and every action goes
+ * under the host's own channel, which VS Code's client matches by scheme.
  */
 export const isAutomations = (channel: string): boolean => channel.startsWith('ahp-automations:');
 

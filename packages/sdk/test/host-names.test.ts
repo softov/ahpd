@@ -51,14 +51,12 @@ describe('a chat asked for by the name a client computed', () => {
     });
     await settle();
 
-    // Driven through the alias, and heard back through it: a client watching
-    // one name and told about another has been told nothing.
+    // Driven through the name a client computes, which is the name this host
+    // mints the chat by, and heard back under it.
+    expect(alias).toBe(chatUri);
     expect(sdk.said).toEqual(['hi']);
-    const said = actions(p, alias).find((e) => e.action.type === 'chat/turnStarted');
+    const said = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
     expect(said?.origin).toEqual({ clientId: 'probe', clientSeq: 4 });
-    // And the canonical channel is what this host publishes, so a client that
-    // read `chats` is watching that one and is unaffected.
-    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
   });
 
   it('leaves a chat URI it did not mint alone', async () => {
@@ -390,11 +388,17 @@ describe('a session asked for by the name a client computed', () => {
     expect(marks.snapshot.state.annotations).toEqual([]);
   });
 
-  it('applies what is sent under the provider\'s scheme of its id to the session', async () => {
+  /*
+   * Said under the session's own channels, as VS Code's host sends each
+   * envelope under its own channel and its client takes a session's and a
+   * chat's URIs as the host advertised them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L538-L543
+   */
+  it('applies what is sent under the provider\'s scheme of its id to the session, and says it under the session\'s own channels', async () => {
     const p = peer();
     const client = await browsing(p);
     const other = 'claude:/row';
-    // Watched under the spelling the client used, which is where its echoes go.
+    // Subscribed under the spelling the client used, which names the session's own channels.
     for (const channel of [other, `${other}/annotations`, derived(other)]) {
       await client.handle({ method: 'subscribe', params: { channel } });
     }
@@ -410,16 +414,16 @@ describe('a session asked for by the name a client computed', () => {
       await settle(6);
     }
 
-    // Each is applied to the session, and said on the channel the client named.
+    // Each is applied to the session, and said on the session's own channel.
     expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
     const said = actions(p).filter((e) => e.channel !== 'ahp-root://').map((e) => [e.channel, e.action.type]);
     expect(said).toEqual([
-      [other, 'session/isReadChanged'],
+      [ROW, 'session/isReadChanged'],
       // The session's sole counted chat follows its read bit, and its row with it.
-      [derived(other), 'chat/isReadChanged'],
-      [other, 'session/chatUpdated'],
-      [`${other}/annotations`, 'annotations/set'],
-      [derived(other), 'chat/draftChanged'],
+      [derived(ROW), 'chat/isReadChanged'],
+      [ROW, 'session/chatUpdated'],
+      [`${ROW}/annotations`, 'annotations/set'],
+      [derived(ROW), 'chat/draftChanged'],
     ]);
     // Nothing is woken for a flag, a mark or a draft.
     expect(sessionQueries()).toHaveLength(0);

@@ -50,8 +50,8 @@ export function createRouting(ctx: HostContext): Routing {
    * kept for it before anything here listed it, or `ahp-session:/<id>` for an
    * id nothing has named. One name per session, which is the `resource` its
    * row and every notification about it carry; a client that names the
-   * session another way is answered under the name it used, through
-   * `meantBy` and the alias `answeredAs` keeps.
+   * session another way watches it through `meantBy`, and its subscribe is
+   * answered under the name it used, through `answeredAs`.
    */
   const nameOf = (id: string): string => names.get(id) ?? ctx.kept.uri?.(id) ?? uriFor(id);
 
@@ -130,8 +130,8 @@ export function createRouting(ctx: HostContext): Routing {
    * A session is one channel under every spelling of its id, and so is a chat
    * derived from one: the reference host answers a session under each identity
    * it has and derives that session's chat from each of them, so a spelling is
-   * a name for the channel rather than a second channel. The name the client
-   * used is remembered as an alias, so it is also what the client is told.
+   * a name for the channel rather than a second channel. A connection watches
+   * the channel this answers, and is sent every action under it.
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/state/sessionState.ts#L894-L898
    */
@@ -210,18 +210,18 @@ export function createRouting(ctx: HostContext): Routing {
    * A snapshot taken for a channel a client named, answered to that client.
    *
    * The channel the snapshot was taken of is the one this host dispatches
-   * under. A host channel the client named in another spelling is recorded
-   * as its alias on this connection and the snapshot is answered in that
-   * spelling. A session's chats are the ones this connection may see. What
-   * comes back is the held name, which is what a replay is keyed by.
+   * under, and the one the connection watches. The snapshot names the channel
+   * the client subscribed to, as VS Code's host answers the automations
+   * catalogue under the resource it was asked for, and the root as
+   * `ahp-root://` whatever spelling asked for it. A session's chats are the
+   * ones this connection may see. What comes back is the held name, which is
+   * what the connection watches and a replay is keyed by.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1079-L1097
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4403-L4409
    */
   const answeredAs = (connection: Connection, channel: string, snapshot: Record<string, unknown>): string => {
     const meant = meantBy(channel);
-    if (meant !== channel) {
-      connection.aliases.set(meant, channel);
-      snapshot.resource = channel;
-    }
+    if (meant !== ROOT) snapshot.resource = channel;
     const state = snapshot.state;
     if (connection.legacyChatUris === true && typeof state === 'object' && state !== null && Array.isArray((state as Bag).chats)) {
       const bag = state as Bag;

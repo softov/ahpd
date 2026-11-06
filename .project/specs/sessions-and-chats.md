@@ -273,8 +273,7 @@ WHEN a client creates a session on `<provider>:/<id>` and the request names that
 THEN the host holds it under that URI.
 
 WHEN a client creates a session on any other channel
-THEN the host holds it as `ahp-session:/<id>`
-AND the client's URI is an alias.
+THEN the host holds it under that URI, as VS Code's host holds a session under the URI a client sends.
 
 WHEN the host makes a session by itself
 THEN its name is `ahp-session:/<uuid>`.

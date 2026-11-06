@@ -420,14 +420,21 @@ describe('the host\'s channels, in the form VS Code prints them', () => {
     expect(vscode('ahp-automations://')).toBe('ahp-automations:');
   });
 
-  it('takes `ahp-root:` as the root channel wherever it takes `ahp-root://`', async () => {
+  /*
+   * Answered and said as `ahp-root://` whatever spelling asked, as VS Code's
+   * host answers the root and sends its actions, its client matching the
+   * root's spellings by scheme.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1079-L1086
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L1458-L1482
+   */
+  it('takes `ahp-root:` as the root channel wherever it takes `ahp-root://`, and answers and says it as `ahp-root://`', async () => {
     for (const root of ['ahp-root://', vscode('ahp-root://')]) {
       const { client, notes, hello } = await introduced(root);
-      expect(hello.snapshots.map((one) => one.resource)).toEqual([root]);
+      expect(hello.snapshots.map((one) => one.resource)).toEqual(['ahp-root://']);
       const opened = await client.handle({ method: 'subscribe', params: { channel: root } }) as {
         snapshot: { resource: string; state: Record<string, unknown> };
       };
-      expect(opened.snapshot.resource).toBe(root);
+      expect(opened.snapshot.resource).toBe('ahp-root://');
       expect(opened.snapshot.state.agents).toBeDefined();
       await expect(client.handle({ method: 'listSessions', params: { channel: root } })).resolves.toBeTruthy();
       await expect(client.handle({ method: 'listAutomationTriggerDefinitions', params: { channel: root } })).resolves.toBeTruthy();
@@ -439,7 +446,7 @@ describe('the host\'s channels, in the form VS Code prints them', () => {
       });
       const echoed = notes.filter((one) => one.method === 'action')
         .map((one) => one.params as { channel: string; action: { type: string } });
-      expect(echoed.some((one) => one.channel === root && one.action.type === 'root/configChanged')).toBe(true);
+      expect(echoed.some((one) => one.channel === 'ahp-root://' && one.action.type === 'root/configChanged')).toBe(true);
       await client.handle({ method: 'unsubscribe', params: { channel: root } });
     }
   });

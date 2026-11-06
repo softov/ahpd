@@ -1314,7 +1314,7 @@ Both are awaited like any other event, so a handler that takes three seconds to 
 
 There is no per-token event: a plugin that wants the live stream of a turn is a
 client. The `chat` on a turn event is the host's own chat URI, which is not
-always the alias a client addressed it by.
+always the spelling a client addressed it by.
 
 `session_start` names the client that created the session where a client did,
 and `session_opened` names each one that subscribed to it, or to one of its

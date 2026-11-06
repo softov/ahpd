@@ -646,23 +646,19 @@ export function createHost(options: HostOptions): Host {
   /**
    * One message, to everyone watching that channel.
    *
-   * Addressed to each connection the way that connection asked: a client
-   * watching a host channel under another spelling is sent the same payload
-   * under the name it used, because its subscription is keyed by that name and
-   * it would drop anything else. A root notification about a session goes
-   * through `noticeFor`.
+   * Under the host's own channel, whatever spelling a client subscribed by, as
+   * VS Code's host sends every envelope; its client matches the root's and the
+   * automations catalogue's spellings at relevance. A root notification about
+   * a session goes through `noticeFor`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L1458-L1482
    */
   const broadcast = (channel: string, method: string, params: unknown, per?: (connection: Connection) => unknown): void => {
     for (const connection of connections) {
-      const alias = connection.aliases.get(channel);
-      const aliased = alias !== undefined && connection.watching.has(alias);
-      if (!connection.watching.has(channel) && !aliased) continue;
+      if (!connection.watching.has(channel)) continue;
       const said = per === undefined ? noticeFor(connection, method, params) : per(connection);
       // Nothing for this connection: a plugin's action it may not see.
       if (said === undefined) continue;
-      if (connection.watching.has(channel)) connection.peer.notify(method, said);
-      // And under the older spelling, for a client still watching by that one.
-      if (aliased) connection.peer.notify(method, { ...(said as Record<string, unknown>), channel: alias });
+      connection.peer.notify(method, said);
     }
   };
   /**
@@ -1154,15 +1150,6 @@ export function createHost(options: HostOptions): Host {
     catch (error) { log(`plugin ${served.by}: left on ${served.scheme} failed: ${reason(error)}`); }
   };
   /**
-   * The name one connection watches a channel by, or the channel itself.
-   *
-   * A client that subscribed to a host channel under another spelling is sent
-   * everything under that name - its subscription is keyed by it and it would
-   * drop anything else - and every other client is sent the channel's name.
-   */
-  const watchedAs = (peer: Peer, channel: string): string =>
-    [...connections].find((one) => one.peer === peer)?.aliases.get(channel) ?? channel;
-  /**
    * A client's action, refused.
    *
    * The other half of the write-ahead loop. A client applies an action before
@@ -1189,10 +1176,9 @@ export function createHost(options: HostOptions): Host {
    * it has not authenticated.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2806-L2808
    *
-   * The client that sent it is told in every case, under the name it watches
-   * the channel by where it watches one, since an invalid action is echoed
-   * back to the client that sent it with its reason, whichever channels and
-   * versions it watches.
+   * The client that sent it is told in every case, under the host's own
+   * channel, since an invalid action is echoed back to the client that sent it
+   * with its reason, whichever channels and versions it watches.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L162
    *
    * A dispatch said already is answered, and what failed of it after is this
@@ -1210,7 +1196,7 @@ export function createHost(options: HostOptions): Host {
     if (origin !== undefined) said.add(origin);
     deltas.flush();
     emit(channel, action, origin, requestAudience(channel, action, origin), { reason, by: peer });
-    peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
+    peer.notify('action', { channel, action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
   };
   /**
    * Let a watch's watchers go once nobody has listened to them for VS Code's
@@ -2088,7 +2074,7 @@ export function createHost(options: HostOptions): Host {
     accept(peer: Peer, principal?: Principal, root?: boolean, opened?: Opened) {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),
-        tokens: new Map<string, Credential>(), aliases: new Map<string, string>(),
+        tokens: new Map<string, Credential>(),
         connectedAt: Date.now(),
         // Where the socket came from, when the listener that opened it said.
         ...(opened?.socket === undefined ? {} : { socket: opened.socket }),
@@ -2201,21 +2187,19 @@ export function createHost(options: HostOptions): Host {
       const notifications: Record<string, (params: Record<string, unknown>) => void> = {
         unsubscribe: (params) => {
           // This connection stops watching. Not the channel - doing that to
-          // shed one consumer kills the stream the others are reading.
-          const channel = String(params.channel ?? '');
+          // shed one consumer kills the stream the others are reading. Under
+          // whatever spelling, the channel it watches is the host's own.
+          const channel = meantBy(String(params.channel ?? ''));
           connection.watching.delete(channel);
           // A subscribe of it still being answered loses its place with it.
           conn.subscriptions.delete(channel);
           // A channel it has let go of owes it nothing; a later subscribe
           // is answered with its own baseline.
-          ctx.clearBaselineDebt(connection.clientId, meantBy(channel));
+          ctx.clearBaselineDebt(connection.clientId, channel);
           // A changeset nobody watches any more is a directory with no reason
           // for a git watch, so the last unsubscribe is what closes it.
           const at = changesetAt(channel);
           if (at !== undefined) stopUnwatched(at.dir);
-          for (const [meant, alias] of connection.aliases) {
-            if (alias === channel) connection.aliases.delete(meant);
-          }
           // Except for a resource watch, where the protocol says the opposite
           // in as many words: it has no dispose command, so the last
           // unsubscribe is what begins the watcher's release.

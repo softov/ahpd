@@ -206,22 +206,29 @@ it('answers a run on the automations channel, which is the one it declares', asy
 describe('the catalogue under its old spelling', () => {
   const OLD = 'ahp-automations://catalog';
 
-  it('is subscribed, and answered under the name the client used', async () => {
+  /*
+   * VS Code's host answers the catalogue's snapshot under the resource it was
+   * asked for and sends every action under its own channel, which its client
+   * matches by scheme.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1088-L1097
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L1458-L1482
+   */
+  it('is subscribed and answered under the name the client used, and its actions go under the host\'s own', async () => {
     const { client, peer: p } = await connected();
     const opened = await client.handle({ method: 'subscribe', params: { channel: OLD } }) as {
       snapshot: { resource: string; state: { entries: unknown[] } };
     };
     expect(opened.snapshot.resource).toBe(OLD);
     expect(opened.snapshot.state.entries).toEqual([]);
-    // Written under the old spelling too, and the action comes back under it:
-    // a client that asked about one URI is watching that URI, not another.
+    // Written under the old spelling too, and the action comes back under the
+    // catalogue's own channel.
     await client.handle({
       method: 'dispatchAction',
       params: { channel: OLD, action: { type: 'automation/createRequested', resource: ONE, definition: DEFINITION } },
     });
     await settle();
-    expect(actions(p, OLD).map((one) => one.type)).toContain('automation/set');
-    expect(actions(p, AUTOMATIONS)).toEqual([]);
+    expect(actions(p, AUTOMATIONS).map((one) => one.type)).toContain('automation/set');
+    expect(actions(p, OLD)).toEqual([]);
   });
 
   it('is what the two automation commands may name', async () => {
