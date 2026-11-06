@@ -1919,6 +1919,23 @@ it('answers a resource the agent linked or embedded as a content reference part'
 });
 
 /*
+ * A chunk whose `messageId` changes starts a new message, so it opens a part
+ * of its own rather than running on into the last one.
+ * https://agentclientprotocol.com/protocol/schema#contentchunk
+ */
+it('opens a new part for a chunk of a new message, and runs on within one', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  const said = (text: string, messageId: string): Bag[] =>
+    mapUpdate(turn, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text }, messageId } as unknown as SessionUpdate);
+  said('First ', 'm1');
+  said('message.', 'm1');
+  const next = said('Second.', 'm2');
+
+  expect(next[0]).toMatchObject({ type: 'chat/responsePart', part: { kind: 'markdown', id: 't1:1' } });
+  expect(turn.parts.map((one) => one.content)).toEqual(['First message.', 'Second.']);
+});
+
+/*
  * A call the person refused, which the server reports as failing: its error
  * is a denial, as VS Code's Codex agent completes a call its host declined.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L1225-L1229

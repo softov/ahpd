@@ -460,6 +460,8 @@ export interface AcpTurn {
   parts: Bag[];
   /** Tool calls this turn opened, by the server's own id. */
   calls: Map<string, AcpCall>;
+  /** The `messageId` the last chunk carried, which a chunk of another message opens a part after. */
+  messageId?: string;
   /** The session behind this turn, absent on one the transcript replays. */
   reach?: AcpReach;
   /**

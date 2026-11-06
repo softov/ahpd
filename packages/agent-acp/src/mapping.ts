@@ -62,13 +62,17 @@ export const callPartOf = (turn: { parts: Bag[] }, callId: string): Bag | undefi
  * when this chunk opens it.
  *
  * ACP chunks carry no block index, so a run is what the order says: the part
- * last opened in the turn takes the chunk when it is of the same kind, and a
- * chunk of the other kind or one after a tool call opens a new part. Its id is
- * the turn's and its position in the turn, which no later part changes.
+ * last opened in the turn takes the chunk when it is of the same kind and of
+ * the same message, and a chunk of the other kind, one after a tool call or
+ * one whose `messageId` says a new message has started opens a new part. Its
+ * id is the turn's and its position in the turn, which no later part changes.
+ * https://agentclientprotocol.com/protocol/schema#contentchunk
  */
-const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning'): { part: Bag; opened?: Bag } => {
+const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning', messageId: string | undefined): { part: Bag; opened?: Bag } => {
   const last = turn.parts.at(-1);
-  if (last !== undefined && last.kind === kind) return { part: last };
+  const sameMessage = messageId === undefined || turn.messageId === undefined || messageId === turn.messageId;
+  if (messageId !== undefined) turn.messageId = messageId;
+  if (last !== undefined && last.kind === kind && sameMessage) return { part: last };
   const part: Bag = { id: `${turn.turnId}:${turn.parts.length}`, kind, content: '' };
   turn.parts.push(part);
   return { part, opened: { type: 'chat/responsePart', turnId: turn.turnId, part: { ...part } } };
@@ -87,7 +91,7 @@ const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning'): { part: Bag; open
  * agent gave it.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
  */
-const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', content: ContentBlock): Bag[] => {
+const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', content: ContentBlock, messageId: string | undefined): Bag[] => {
   if (content.type === 'resource_link' || content.type === 'resource') {
     const named = content.type === 'resource_link' ? content : content.resource;
     const part: Bag = {
@@ -101,7 +105,7 @@ const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', content: ContentBl
   }
   const text = textOf(content);
   if (text === undefined || text === '') return [];
-  const { part, opened } = runOf(turn, kind);
+  const { part, opened } = runOf(turn, kind, messageId);
   part.content = `${String(part.content ?? '')}${text}`;
   const type = kind === 'markdown' ? 'chat/delta' : 'chat/reasoning';
   const streamed: Bag = { type, turnId: turn.turnId, partId: part.id, content: text };
@@ -485,10 +489,10 @@ export function mapUpdate(
      * `chat/responsePart`.
      */
     case 'agent_message_chunk':
-      return chunk(turn, 'markdown', update.content);
+      return chunk(turn, 'markdown', update.content, update.messageId ?? undefined);
 
     case 'agent_thought_chunk':
-      return chunk(turn, 'reasoning', update.content);
+      return chunk(turn, 'reasoning', update.content, update.messageId ?? undefined);
 
     /*
      * A new tool call. The start action creates the row, and the ready action
