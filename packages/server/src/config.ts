@@ -382,6 +382,13 @@ export interface Config {
    * 33554432 (32 MiB); zero sets no limit.
    */
   attachmentFetchLimitBytes?: number;
+  /**
+   * The most bytes the daemon keeps of one content a tool result or an
+   * agent's message carries inline, read back by a `session-db-resource` URI;
+   * larger content is left out. Unset is 8388608 (8 MiB), VS Code's bound;
+   * zero sets no limit.
+   */
+  toolResultResourceLimitBytes?: number;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**

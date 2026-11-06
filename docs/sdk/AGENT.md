@@ -120,6 +120,18 @@ backend that cannot say who is billed says, and what one that learns it later
 says - an ACP server reports its own when a session opens, with
 `Start.onAccount`, which takes the place of what this answered.
 
+**`Start.storeToolResultResource` keeps content a part would carry inline.** An
+image with no source, audio, or an embedded resource's text or blob that a
+tool result or your message carries is handed to the host with the call's id
+(for a part of your message, the part's own id), the content's place among the
+contents, a name and its type. The host keeps it in the session's folder and
+answers the `ContentRef` your part names it by: a `session-db-resource:` URI a
+client reads back through `resourceRead`, as VS Code's host keeps a tool
+result's embedded resources in its session's database. Nothing back is content
+kept nowhere - over the host's `toolResultResourceLimitBytes`, 8 MiB unless
+set, or in a session whose store keeps no folder - which you leave out, as VS
+Code leaves out a resource over its bound - [RESOURCES.md](RESOURCES.md#schemes).
+
 **`find(id)` is how a row the host is not holding is opened.** A link from
 another machine, or a session written to disk after the last listing, is asked
 by id rather than by listing everything again - the row it gives back has to be

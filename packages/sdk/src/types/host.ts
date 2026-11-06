@@ -882,6 +882,15 @@ export interface HostOptions {
    * (32 MiB); zero fetches any size, as VS Code's host does.
    */
   attachmentFetchLimitBytes?: number;
+  /**
+   * The most bytes this host keeps of one content a tool result or an agent's
+   * message carries inline, which a backend hands it through
+   * `Start.storeToolResultResource`: larger content is kept nowhere and left
+   * out, as VS Code keeps nothing over its bound. Unset is 8388608 (8 MiB),
+   * VS Code's `MAX_TOOL_RESULT_RESOURCE_BYTES`; zero sets no limit.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionDataService.ts#L21
+   */
+  toolResultResourceLimitBytes?: number;
   /** The clock sleep and wakes read. A test supplies its own so a timeout can be reached without waiting for it. */
   now?(): Date;
   /**

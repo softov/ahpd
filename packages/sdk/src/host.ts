@@ -77,6 +77,7 @@ import { createCatalogue } from './host/catalogue.js';
 import { createSpawn } from './host/spawn.js';
 import { createBackground } from './host/background.js';
 import { createCanvases } from './host/canvases.js';
+import { TOOL_RESULT_RESOURCE_LIMIT, toolResultResources } from './resources/toolresults.js';
 import { createLifecycle } from './host/lifecycle.js';
 import { createTooling } from './host/tooling.js';
 import { createAsking } from './host/asking.js';
@@ -1493,6 +1494,12 @@ export function createHost(options: HostOptions): Host {
   // goes out through `emit`, which folds into this stream on the way.
   ctx.sessionEvents = createSessionEvents(ctx);
   Object.assign(ctx, createTelemetry(ctx));
+  // The content a backend hands this host to keep, in each session's own
+  // folder, up to the bound this host was given.
+  ctx.toolResults = toolResultResources(
+    (session) => kept.attachmentsDir?.(idOf(session)),
+    () => options.toolResultResourceLimitBytes ?? TOOL_RESULT_RESOURCE_LIMIT,
+  );
   // Under its own name rather than spread flat, because `open`, `close` and
   // `update` are words other areas could reach for.
   ctx.canvases = createCanvases({

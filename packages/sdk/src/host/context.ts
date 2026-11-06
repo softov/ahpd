@@ -11,6 +11,7 @@ import type { Principal } from '../types/users.js';
 import type { StoredWorktree } from '../types/sessions.js';
 import type { DebugLogs } from '../sessions/debuglogs.js';
 import type { CallLinks } from '../automations/calllinks.js';
+import type { ToolResultResources } from '../resources/toolresults.js';
 import type { Claiming, Claimed, Held, HeldState, Learned, LiveSubagent, Origin } from './state.js';
 import type { Admission } from './admission.js';
 import type { Relay } from './relay.js';
@@ -77,6 +78,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   background: Background;
   /** The canvases each chat shows, and the plugin that opened each one. */
   canvases: Canvases;
+  /** The content backends hand this host to keep, and the provider a client reads it back through. */
+  toolResults: ToolResultResources;
   /** The options `createHost` was given. */
   options: HostOptions;
   /** The directory this host serves. */

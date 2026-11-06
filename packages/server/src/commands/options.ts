@@ -127,6 +127,8 @@ export interface Options {
   sessionResidencyLimit?: number;
   /** The largest file a client is asked for, in bytes, absent when the deployment said nothing. */
   attachmentFetchLimitBytes?: number;
+  /** The most bytes of one tool result's inline content kept, absent when the deployment said nothing. */
+  toolResultResourceLimitBytes?: number;
   /** Where automations are kept, and whether a clock fires them. */
   automations: 'file' | 'memory';
   /** What an automation that names no owner wakes on. */
@@ -688,6 +690,12 @@ export const serverFields = {
     description: 'The largest file a client is asked for when a message attaches one the daemon has no copy of; a larger one is left as it was sent. Default 33554432 (32 MiB); 0 sets no limit.',
     cli: { value: 'BYTES' },
   },
+  toolResultResourceLimitBytes: {
+    type: 'integer',
+    minimum: 0,
+    description: 'The most bytes the daemon keeps of one content a tool result or an agent\'s message carries inline, which a client reads back by a session-db-resource URI; larger content is left out. Default 8388608 (8 MiB), VS Code\'s bound; 0 sets no limit.',
+    cli: { value: 'BYTES' },
+  },
   automations: {
     type: 'string',
     enum: ['file', 'memory'],
@@ -1246,6 +1254,7 @@ const noCwd = input['noCwd'] === true;
   const sleepAfterMinutes = given('sleepAfterMinutes');
   const sessionResidencyLimit = given('sessionResidencyLimit');
   const attachmentFetchLimitBytes = given('attachmentFetchLimitBytes');
+  const toolResultResourceLimitBytes = given('toolResultResourceLimitBytes');
   const usageZone = given('usage')?.timezone;
   const serviceName = given('service')?.name;
   const httpApi = httpOf(file.httpApi, source('httpApi'));
@@ -1289,6 +1298,7 @@ const noCwd = input['noCwd'] === true;
     ...(sleepAfterMinutes === undefined ? {} : { sleepAfterMinutes }),
     ...(sessionResidencyLimit === undefined ? {} : { sessionResidencyLimit }),
     ...(attachmentFetchLimitBytes === undefined ? {} : { attachmentFetchLimitBytes }),
+    ...(toolResultResourceLimitBytes === undefined ? {} : { toolResultResourceLimitBytes }),
     automations: given('automations') ?? 'file',
     unownedAutomations: given('unownedAutomations') ?? 'every',
     sessions: given('sessions') ?? 'file',

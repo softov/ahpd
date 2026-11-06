@@ -5,6 +5,7 @@ import { Status } from '../sessions/catalog.js';
 import { need, served } from './common.js';
 import { buildResourceWatchChannelUri, schemeOf } from './channels.js';
 import { AGENT_CLIENT_SCHEME } from './clienturi.js';
+import { TOOL_RESULT_RESOURCE_SCHEME } from '../resources/toolresults.js';
 import type { WriteMode } from '../types/resources.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
@@ -54,14 +55,18 @@ const CONFLICT = -32011;
    *
    * `file:` is the store the host was given, the client scheme is the
    * connected clients' resources, as VS Code's host serves that scheme with a
-   * filesystem that asks the client, and anything else is a scheme a plugin
-   * registered under `resourceProviders`.
+   * filesystem that asks the client, `session-db-resource:` the content a
+   * backend handed this host to keep, as VS Code's host registers a provider
+   * for it, and anything else is a scheme a plugin registered under
+   * `resourceProviders`.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostServerMain.ts#L330
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1396
    */
   const storeFor = (uri: string) => {
     const scheme = schemeOf(uri);
     if (scheme === '' || scheme === 'file') return options.resources;
     if (scheme === AGENT_CLIENT_SCHEME) return clientResources;
+    if (scheme === TOOL_RESULT_RESOURCE_SCHEME) return ctx.toolResults.provider;
     const provider = options.resourceProviders?.[scheme];
     // A scheme nobody serves is not the file store's to read, and it is
     // not a permission answer either: the host has nothing for it, which

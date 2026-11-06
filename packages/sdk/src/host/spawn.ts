@@ -1655,6 +1655,12 @@ export function createSpawn(ctx: HostContext): Spawn {
         options.changes?.settle?.(uri, toolCallId);
       },
       /*
+       * Content a tool result or a part of the agent's message carries inline,
+       * kept in the session's folder and answered by the reference a part
+       * names it by.
+       */
+      storeToolResultResource: (resource) => ctx.toolResults.store(uri, resource),
+      /*
        * A turn the backend has written under an id of its own.
        *
        * What the host keeps against a turn is kept against the id the client

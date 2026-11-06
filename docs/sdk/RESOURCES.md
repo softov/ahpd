@@ -11,6 +11,7 @@ Terms, one line each:
 | the file store | `file:`, the filesystem of the machine the daemon runs on |
 | a provider | A store a plugin contributes for one scheme, beside `file:` |
 | a client's resource | One a connected client answers for, at `vscode-agent-client://<clientId>/<scheme>/<authority>/<path>` |
+| kept content | Bytes a tool result or an agent's message carried inline, kept in the session's folder and read back at `session-db-resource:/<name>?<identity>` |
 | the resource watch | A channel that names what it watches, `ahp-resource-watch://r/<descriptor>` |
 | a scheme's manifest | The JSON Schema a scheme publishes for the form a create is drawn from |
 
@@ -42,7 +43,9 @@ A refusal says what it is by code: `-32008` for a path that is not there, and fo
 
 ## Schemes
 
-`file:` is this host's own. Everything beside it is one of three things.
+`file:` is this host's own, and so is `session-db-resource:`, the content a backend handed the host to keep: bytes a tool result or a part of an agent's message carried inline, an image with no source, audio or an embedded resource, kept in the session's folder. Its URI is VS Code's: the path is a display name only, and the query is the identity, `{ sessionUri, toolCallId, ordinal }` as JSON, the call's id being a message part's own id for a part of a message. A read answers the bytes with their type, and one naming nothing kept is refused `-32008` `Tool result resource not found: toolCallId=<id>, ordinal=<n>`, as VS Code's provider refuses it. Nothing over `toolResultResourceLimitBytes` is kept - [HOST.md](HOST.md), and VS Code's [tool result resource provider](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/toolResultResourceProvider.ts).
+
+Everything beside them is one of three things.
 
 **A plugin's**, registered with `registerResourceProvider(scheme, provider)` - [PLUGINS.md](../plugins/PLUGINS.md#what-you-can-register). The plugin names the scheme, which is kept as written, and `file:` and anything on `ahp-` are refused because they are the host's own. Two plugins cannot serve one scheme. Every scheme beside `file:` comes in this way, the daemon's own included: `computer:` is the computer plugin's, `bot:` is the bot plugin's, `policy:` and `usage:` are providers the daemon registers, and `user:`, `team:`, `project:` and `role:` are the users store's - [COMPUTERS.md](../plugins/COMPUTERS.md), [BOTS.md](../plugins/BOTS.md), [POLICY.md](POLICY.md), [USAGE.md](USAGE.md), [USERS.md](USERS.md). That is the whole of how a scheme comes to be served, because a scheme is a contribution a plugin makes rather than a place the host keeps a list of.
 
