@@ -240,6 +240,9 @@ const idOfFile = (name: string): string | undefined => {
   catch { return undefined; }
 };
 
+/** The key of `_meta` the bot's mark is under, namespaced as VS Code's host namespaces the keys it puts there. */
+const MARK = 'ahpd.bot';
+
 /**
  * The bot's mark, as the `_meta` of a chat and of its session.
  *
@@ -247,12 +250,14 @@ const idOfFile = (name: string): string | undefined => {
  * this is: one person, one bot, nobody else in it.
  */
 const markOf = (bot: BotRecord): Bag => ({
-  bot: bot.id,
-  name: bot.name,
-  color: bot.color,
-  labels: bot.labels,
-  body: bot.body,
-  kind: 'direct',
+  [MARK]: {
+    id: bot.id,
+    name: bot.name,
+    color: bot.color,
+    labels: bot.labels,
+    body: bot.body,
+    kind: 'direct',
+  },
 });
 
 /** The `_meta` one log line or one chat state carries, where it carries one. */
@@ -404,9 +409,11 @@ const rowOf = (dir: string, id: string, store: BotStore): Listed | undefined => 
   catch { return undefined; }
   const log = logAt(path);
   if (log === undefined) return undefined;
-  const slug = typeof log.mark?.['bot'] === 'string' ? log.mark['bot'] : '';
+  const marked = log.mark?.[MARK];
+  const held = typeof marked === 'object' && marked !== null && !Array.isArray(marked) ? marked as Bag : {};
+  const slug = typeof held['id'] === 'string' ? held['id'] : '';
   const bot = store.get(slug);
-  const named = log.mark?.['name'];
+  const named = held['name'];
   const meta = bot === undefined ? log.mark : markOf(bot);
   return {
     id,

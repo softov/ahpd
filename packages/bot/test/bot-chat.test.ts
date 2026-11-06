@@ -255,7 +255,7 @@ it('keeps a chat in a log, and answers it again after a restart', async () => {
     responseParts: [],
     // The bot is on the line so that a listing knows which chat this is, and
     // not on the turn a client is served.
-    _meta: { bot: 'backer', name: 'Backer', kind: 'direct' },
+    _meta: { 'ahpd.bot': { id: 'backer', name: 'Backer', kind: 'direct' } },
   });
   // A turn that has not ended has no ending, which is the whole difference
   // between the line above and the one below.

@@ -366,9 +366,9 @@ it('advertises the catalogue on initialize', async () => {
 
 const STAMP = '2026-10-25T00:00:00.000Z';
 
-/** The mark `markOf` sends for a bot, as a log line carries it. */
+/** The mark `markOf` sends for a bot, as a log line carries it: under `ahpd.bot`, as VS Code namespaces its keys. */
 const mark = (slug: string, name: string, color: string): Bag => ({
-  bot: slug, name, color, labels: [], body: 'robot', kind: 'direct',
+  'ahpd.bot': { id: slug, name, color, labels: [], body: 'robot', kind: 'direct' },
 });
 
 /** One line in a chat's log, in the folder of the bot it is with. */
@@ -417,9 +417,20 @@ it("lists a chat as the bot is now, not as the log's mark has it", async () => {
 
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ id: 'one', title: 'Motion' });
-  expect(rows[0]?._meta).toMatchObject({
-    bot: 'motion', name: 'Motion', color: 'red', labels: [], body: 'robot', kind: 'direct',
+  expect(rows[0]?._meta).toEqual({
+    'ahpd.bot': { id: 'motion', name: 'Motion', color: 'red', labels: [], body: 'robot', kind: 'direct' },
   });
+});
+
+it('reads no bot off a mark written with its keys bare', async () => {
+  const configDir = folder();
+  logged(configDir, 'motion', 'one', { bot: 'motion', name: 'Motion', color: 'red', labels: [], body: 'robot', kind: 'direct' });
+  const { agent, store } = await backend(configDir, [kept({ name: 'Motion', color: 'red' })]);
+  await store.remove('motion');
+
+  const rows = await agent.list!();
+
+  expect(rows[0]).toMatchObject({ id: 'one', title: 'one' });
 });
 
 it('lists a chat of a deleted bot with the mark its log carries', async () => {
@@ -432,7 +443,7 @@ it('lists a chat of a deleted bot with the mark its log carries', async () => {
 
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ id: 'one', title: 'Last name' });
-  expect(rows[0]?._meta).toMatchObject({ bot: 'motion', name: 'Last name', color: 'blue' });
+  expect(rows[0]?._meta).toMatchObject({ 'ahpd.bot': { id: 'motion', name: 'Last name', color: 'blue' } });
 });
 
 it('finds a chat with the same mark its listing carries', async () => {
@@ -470,5 +481,5 @@ it('lists a chat that is not running as the bot it is with', async () => {
   const row = (answer.result.items as Bag[]).find((one) => one.resource === 'ahp-session:/one');
 
   expect(row).toBeDefined();
-  expect(row?._meta).toMatchObject({ bot: 'motion', name: 'Motion', color: 'red' });
+  expect(row?._meta).toMatchObject({ 'ahpd.bot': { id: 'motion', name: 'Motion', color: 'red' } });
 });

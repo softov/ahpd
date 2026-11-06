@@ -153,6 +153,8 @@ A chat is the reader's own session: it works in the bot's `workspace`, it is tit
 
 A chat's log is the whole of its state. Nothing about a chat is kept in memory past the process that made it, so a daemon that starts again lists, opens and replays the chats it has logs for.
 
+A chat's session, its chat and its row carry the bot in `_meta['ahpd.bot']`, namespaced as VS Code's host namespaces the keys it puts in `_meta`: `{ id, name, color, labels, body, kind: "direct" }`, the bot as it is now, or as the log's lines last had it for a bot since deleted. Each line of the log carries the same mark, so a listing says which bot a chat nothing runs is with.
+
 ### The name a message wakes
 
 The bot's `session` names the back session a message goes to. It is `work` unless the bot says otherwise, and it may hold `{turn}`: the turn id of the message takes that word's place, so a bot that names `{turn}` starts a back session for each message rather than continuing one. A name is up to 40 lowercase letters, digits and dashes, starting with a letter, and `{turn}` may stand anywhere in it; a make that names anything else is refused `-32602`.
