@@ -1383,3 +1383,20 @@ it('ends a resumed run cancelled when it is stopped', async () => {
   expect(types('chat').slice(-1)).toEqual(['chat/turnCancelled']);
   expect((session.chatState().turns as Bag[])[0]?.state).toBe('cancelled');
 });
+
+/*
+ * A chat's activity is a wait before its turn can run, as VS Code's host says
+ * one, and a resumed turn runs once the host hands it over.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+ */
+it('says no activity while a resumed turn runs again or is stopped', async () => {
+  const { session, pi, sent } = await failedTurn();
+  const before = sent.length;
+  pi.resumeWith(new Promise(() => {}));
+  expect(() => session.resumeTurn?.('t1')).not.toThrow();
+  await settled();
+  expect([session.activity(), session.chatState().activity, session.sessionState().activity]).toEqual([undefined, undefined, undefined]);
+  session.abort();
+  await settled();
+  expect(sent.slice(before).filter((one) => one.action.type === 'chat/activityChanged' || one.action.type === 'session/activityChanged')).toEqual([]);
+});

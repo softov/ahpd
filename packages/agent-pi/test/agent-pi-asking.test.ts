@@ -270,6 +270,49 @@ it('does not send a client tool to its client until the person approves it', asy
   await running;
 });
 
+/*
+ * A chat's activity is a wait before its turn can run, as VS Code's host says
+ * one: a turn thinking, asking a person, waiting on a client's tool or being
+ * stopped says none, its work shown in its own parts.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+ */
+it('says no activity while a turn thinks, asks, waits on a client or is stopped', async () => {
+  const bound: BoundTool = {
+    definition: { name: 'editor__open' },
+    owner: 'editor',
+    effects: { writes: true },
+  };
+  const { session, pi, sent } = opened({
+    tools: [bound],
+    settings: { permissionMode: 'default' },
+  } as Partial<Start>);
+  const said = () => [session.activity(), session.chatState().activity, session.sessionState().activity];
+  pi.hold();
+  pi.holdStops();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  pi.raise({ type: 'agent_start' });
+  const thinking = said();
+  const waiting = driveCall(pi, 'c1', 'editor__open', {});
+  await settled();
+  const asking = said();
+  session.confirm('c1', true);
+  await waiting;
+  const tool = pi.opens[0]?.tools?.find((one) => one.name === 'editor__open');
+  const running = tool!.execute('c1', {} as never, undefined, undefined, undefined as never).catch((error: unknown) => error);
+  await settled();
+  const onClient = said();
+  session.abort();
+  await running;
+  const stopping = said();
+  pi.raise({ type: 'agent_settled', aborted: true });
+  await settled();
+
+  const none = [undefined, undefined, undefined];
+  expect({ thinking, asking, onClient, stopping }).toEqual({ thinking: none, asking: none, onClient: none, stopping: none });
+  expect(sent.filter((one) => one.action.type === 'chat/activityChanged' || one.action.type === 'session/activityChanged')).toEqual([]);
+});
+
 it('keeps a declined call cancelled in the snapshot and for a client', async () => {
   const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();

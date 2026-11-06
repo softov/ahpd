@@ -349,8 +349,7 @@ export function readyRow(row: Bag, displayName: string, input: Bag, extra: Bag):
  *
  * Returns an empty array for an event that says nothing a client needs, which
  * is most of pi's union: the retry and summarization events are pi telling its
- * own terminal what it is doing, and the activity line carries that better
- * than a turn part would.
+ * own terminal what it is doing.
  *
  * `at` is when the event happened, as epoch milliseconds, and is given only by
  * a replay reading pi's own file: live, an event arrives as it happens and the
@@ -536,26 +535,10 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
     /*
      * Everything else: the retry and summarization events, the queue, the
      * compaction pair, the entries pi appended and the level it is thinking
-     * at. Each is either the session's business rather than the turn's -
-     * handled in `session.ts`, where the state it changes lives - or pi
-     * narrating to its own terminal, which the activity line carries.
+     * at. Each is either the session's business, handled in `session.ts`
+     * where the state it changes lives, or pi narrating to its own terminal.
      */
     default:
       return [];
-  }
-}
-
-/** What the session should say it is doing, for an event that changes it. */
-export function activityOf(event: AgentSessionEvent): string | undefined | false {
-  switch (event.type) {
-    case 'agent_start': return 'Thinking';
-    case 'tool_execution_start': return `Running ${event.toolName}`;
-    case 'tool_execution_end': return 'Thinking';
-    case 'compaction_start': return 'Compacting the conversation';
-    case 'auto_retry_start': return `Retrying, attempt ${event.attempt} of ${event.maxAttempts}`;
-    case 'agent_settled': return undefined;
-    // `false` is "this event says nothing about activity", which is not the
-    // same answer as `undefined`, which clears it.
-    default: return false;
   }
 }

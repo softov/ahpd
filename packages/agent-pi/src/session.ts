@@ -25,7 +25,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activityOf, bag, createClientCalls, ensureWorkspacelessScratchDir, idFor, mergeLogicalTurnUsage, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
+import { bag, createClientCalls, ensureWorkspacelessScratchDir, idFor, mergeLogicalTurnUsage, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type {
   Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects, TurnOptions,
 } from '@ahpd/sdk';
@@ -34,12 +34,11 @@ import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
 import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf as saidFor, addUsage, callPartOf, describe, mapEvent, readyRow, stampStart, untime } from './mapping.js';
+import { addUsage, callPartOf, describe, mapEvent, readyRow, stampStart, untime } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import type { ReplayPi } from './replay.js';
 import { toPiTool } from './tools.js';
-import type { RunByClient } from './tools.js';
 import type { PiOptions, PiTurn, WatchedSession, WatchedTurn } from './types.js';
 import { MESSAGE_ENTRY, modeOf, PERMISSION_MODES, permissionModeProperty, UNTITLED } from './types.js';
 
@@ -209,8 +208,6 @@ export function piSession(
   let kept = false;
   /** The turns a later one took the place of, which run on and end in no history. */
   const replaced = new Set<string>();
-  /** What it is doing, and the one handle that says it. */
-  const activity = activityOf(emit);
   let title = UNTITLED;
 
   /**
@@ -379,13 +376,6 @@ export function piSession(
         toolInput: JSON.stringify(input),
       },
     });
-  };
-
-  /** Hand a call to the client that provides the tool, and wait for its answer. */
-  const ranByClient: RunByClient = async (bound, toolCallId) => {
-    const owner = bound.owner ?? '';
-    activity.say(`Waiting on ${owner}: ${bound.definition.title ?? bound.definition.name}`);
-    return await calls.wait(toolCallId);
   };
 
   /**
@@ -654,7 +644,6 @@ export function piSession(
             : { open: () => { openClientCall(id, event.toolName, turnId, describe(displayName, input), input); } }),
         });
         emit('session', { type: 'session/inputNeededSet', request: entry });
-        activity.say(`Waiting on you: ${displayName}`);
       });
     }
     /*
@@ -757,7 +746,6 @@ export function piSession(
     namePrompt();
     // A call cut off before its end still owes the `after` it was announced with.
     for (const callId of [...editing.keys()]) settleEdit(callId);
-    activity.say(undefined);
     /*
      * A call the model was still writing when the turn ended is one pi never
      * runs, and a client's reducer skips it on the turn's end; the snapshot
@@ -855,9 +843,6 @@ export function piSession(
 
   /** Everything pi says while a turn runs, turned into what a client reads. */
   const heard = (event: AgentSessionEvent): void => {
-    const said = saidFor(event);
-    if (said !== false) activity.say(said);
-
     /*
      * The turn's message as the turn had it, kept just before pi writes the
      * turn's prompt: pi writes a message after its listeners hear it, so the
@@ -925,16 +910,6 @@ export function piSession(
         return;
       }
 
-      /*
-       * A run that pi will retry itself is not a turn that ended. `willRetry`
-       * is exactly that case, and closing the turn on it would draw a finished
-       * answer that is about to be replaced.
-       */
-      case 'agent_end': {
-        if (event.willRetry) activity.say('Retrying');
-        return;
-      }
-
       /** A file pi's `edit` or `write` is about to change, by the path pi resolves. */
       case 'tool_execution_start': {
         const path = bag(event.args).path;
@@ -980,7 +955,8 @@ export function piSession(
     // while the turn ran.
     const building = [...offering];
     built = building;
-    const tools = (await Promise.all(building.map((one) => toPiTool(one, ranByClient))))
+    // A client's call waits for the answer its client sends.
+    const tools = (await Promise.all(building.map((one) => toPiTool(one, (_bound, toolCallId) => calls.wait(toolCallId)))))
       .flatMap((tool) => (tool === undefined ? [] : [tool]));
     // An empty entry is not an instruction, and pi would put a blank paragraph
     // in the system prompt for one.
@@ -1239,7 +1215,6 @@ export function piSession(
       finish('error', unusable);
       return;
     }
-    activity.say('Thinking');
     // What the host has to say on this turn, asked now that the turn exists.
     const told = (turnOptions?.instructions?.() ?? []).filter((one) => one.trim() !== '');
     // Whether the turn ended, or a stop came, while it prepared: a stop ends it unsent.
@@ -1326,7 +1301,13 @@ export function piSession(
     allTurns: () => turns,
 
     status: (): number => statusOf(bits()),
-    activity: () => activity.current(),
+    /*
+     * Nothing: a chat's activity is a wait before its turn can run, as VS Code's
+     * host says one, and a turn here runs once the host hands it over, its
+     * thinking, its tools and its questions shown in its own parts.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+     */
+    activity: () => undefined,
     title: () => title,
     setTitle: (next) => {
       renamed = true;
@@ -1362,7 +1343,6 @@ export function piSession(
       chats: [{ resource: start.chatUri, title }],
       workingDirectories: [uriOf(where)],
       customizations: [...seeds],
-      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       // The requests still waiting - the questions and the calls a client has
       // to run - each as `session/inputNeededSet` sent it, so a client that
       // subscribes while one waits can answer it.
@@ -1388,7 +1368,6 @@ export function piSession(
       modifiedAt: modified,
       turns,
       ...(active !== undefined ? { activeTurn: active } : {}),
-      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
     }),
 
@@ -1510,7 +1489,6 @@ export function piSession(
         delete turn.state;
         delete turn.duration;
       }
-      activity.say('Thinking');
 
       void (async () => {
         try {
@@ -1538,7 +1516,6 @@ export function piSession(
       pendingTurns.length = 0;
       if (active === undefined || cancelled) return;
       cancelled = true;
-      activity.say('Stopping');
       handBack();
       // What a client was running for this turn is not coming back, so pi is
       // told the calls failed rather than left waiting on a stopped turn.
@@ -1566,7 +1543,6 @@ export function piSession(
       pending.delete(toolCallId);
       // The entry follows the chat's state: the host took it down when it said
       // the confirmation that moved the call.
-      const toolCall = bag(held.entry.toolCall);
       const part = mapping === undefined ? undefined : callPartOf(mapping, toolCallId);
       if (part !== undefined) {
         const row = bag(part.toolCall);
@@ -1580,8 +1556,6 @@ export function piSession(
         if (approved) stampStart(row, Date.now());
         else untime(row);
       }
-      if (approved) activity.say(`Running ${String(toolCall.displayName ?? '')}`);
-      else activity.say('Thinking');
       // An allowed call is one a client now has to run, so it is asked here.
       if (approved) held.open?.();
       held.settle(approved ? undefined : { block: true, reason: DECLINED });

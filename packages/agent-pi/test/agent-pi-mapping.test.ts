@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
-import { activityOf, mapEvent, resultText } from '../src/mapping.js';
+import { mapEvent, resultText } from '../src/mapping.js';
 import { answer, callIn, driveCall, opened, settled, streamed, turn } from './fake-pi.js';
 
 // Mapping -----------------------------------------------------------------
@@ -218,13 +218,6 @@ it('reads a tool result whatever shape it came in', () => {
   expect(resultText({ output: 'from output' })).toBe('from output');
   expect(resultText({ content: [{ text: 'a' }, { text: 'b' }] })).toBe('a\nb');
   expect(resultText(undefined)).toBe('');
-});
-
-it('tells "this event says nothing about activity" from "it is idle now"', () => {
-  expect(activityOf({ type: 'agent_settled', aborted: false })).toBeUndefined();
-  expect(activityOf({ type: 'summarization_retry_finished' })).toBe(false);
-  expect(activityOf({ type: 'tool_execution_start', toolCallId: 'c', toolName: 'bash', args: {} }))
-    .toBe('Running bash');
 });
 
 // When a call ran ----------------------------------------------------------
