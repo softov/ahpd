@@ -24,7 +24,7 @@
  * - text containing `write` asks it to write one and says it did;
  * - text containing `term` opens a terminal, waits for it, reads it, releases it;
  * - text containing `ask` asks for permission on a destructive call and reports
- *   which option came back;
+ *   which option came back, the call failing where the answer allowed nothing;
  * - text containing `elicitform` asks the client for a form on a call it is
  *   making, with one field of each shape the protocol names, and says what the
  *   answer carried back as `elicit=<action>|branch=…|force=…|retries=…|mode=…|tags=…`;
@@ -926,10 +926,12 @@ const promptScript = async (id, params) => {
       options: PERMISSION,
     });
     const chosen = answer?.outcome?.outcome === 'selected' ? String(answer.outcome.optionId) : 'cancelled';
+    // A call the client allowed runs, and one it refused never does, which the
+    // server reports as the call failing.
     notify({
       sessionUpdate: 'tool_call_update',
       toolCallId: 'call-perm',
-      status: 'completed',
+      status: chosen.startsWith('yes-') ? 'completed' : 'failed',
       content: [{ type: 'content', content: { type: 'text', text: `answer=${chosen}` } }],
     });
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `perm=${chosen}` } });

@@ -946,10 +946,14 @@ export function createHandlers(ctx: SessionContext): Handlers {
      * client's confirmation by now, so the entry follows the call into
      * `running`, as VS Code's host raises it from the chat's state.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L133
+     *
+     * A refused call is kept as declined, so the failure the server reports
+     * for it completes as a denial.
      */
-    const allowed = ctx.mapping?.calls.get(toolCallId);
-    if (approved && allowed !== undefined && ctx.mapping !== undefined) {
-      ctx.openCall(allowed, ctx.mapping.turnId);
+    const mapped = ctx.mapping?.calls.get(toolCallId);
+    if (mapped !== undefined && !approved) mapped.declined = true;
+    if (approved && mapped !== undefined && ctx.mapping !== undefined) {
+      ctx.openCall(mapped, ctx.mapping.turnId);
     }
     const chosen = picked?.id ?? (approved ? held.allow : held.reject);
     held.settle(chosen === undefined ? 'cancelled' : { optionId: chosen });

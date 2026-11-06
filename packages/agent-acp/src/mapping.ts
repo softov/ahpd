@@ -295,6 +295,13 @@ const opened = (turn: AcpTurn, call: AcpCall): Bag[] => [{
  * A server may announce a call and finish it in one update, so a `tool_call`
  * lands here as well as a `tool_call_update`: a row closed without ever being
  * opened is a completion for a call nobody drew.
+ *
+ * A call that failed says so in its past tense, in the sentence VS Code's
+ * agents give a failed call drawn by its name, and one a person refused fails
+ * as a denial, `denied` its error's code, as VS Code's Codex agent completes a
+ * call its host declined.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotToolDisplay.ts#L895-L898
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L1225-L1229
  */
 const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at?: number): Bag[] => {
   stampEnd(turn, call, at);
@@ -302,9 +309,11 @@ const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at
   const text = contentText(content);
   const result: Bag = {
     success,
-    pastTenseMessage: call.displayName,
+    pastTenseMessage: success ? call.displayName : `"${call.displayName}" failed`,
     ...(content.length === 0 ? {} : { content }),
-    ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
+    ...(success ? {} : {
+      error: { message: text === '' ? 'The tool failed' : text, ...(call.declined === true ? { code: 'denied' } : {}) },
+    }),
   };
   /*
    * Onto the held call and into the action, from one object, as the ready is.

@@ -377,6 +377,13 @@ export interface AcpCall {
    * would say the question is not there.
    */
   asked: boolean;
+  /**
+   * Whether a person refused it when asked, so the failure the server reports
+   * for it is a denial, as VS Code's Codex agent keeps the calls its host
+   * declined at the approval prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L86-L92
+   */
+  declined?: boolean;
   /** The arguments the server has given it, as the JSON a client reads. */
   input?: string;
   /**

@@ -1741,6 +1741,45 @@ it('stamps nothing for an update a session load replayed', () => {
   expect((turn.parts[0]?.toolCall as Bag)._meta).toBeUndefined();
 });
 
+/*
+ * A call that failed with nobody refusing it: its line is the sentence VS
+ * Code's agents give a failed call, and its error carries no code, which is a
+ * failure of the call's own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotToolDisplay.ts#L895-L898
+ */
+it('says a failed call failed in its past tense, and a success by its name', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  mapUpdate(turn, toolCall('c1', 'in_progress'));
+  mapUpdate(turn, toolCall('c2', 'in_progress'));
+  const failed = mapUpdate(turn, toolCallUpdate('c1', 'failed')).find((one) => one.type === 'chat/toolCallComplete');
+  const done = mapUpdate(turn, toolCallUpdate('c2', 'completed')).find((one) => one.type === 'chat/toolCallComplete');
+
+  expect(failed?.result).toEqual({ success: false, pastTenseMessage: '"Fetch" failed', error: { message: 'The tool failed' } });
+  expect(done?.result).toEqual({ success: true, pastTenseMessage: 'Fetch' });
+});
+
+/*
+ * A call the person refused, which the server reports as failing: its error
+ * is a denial, as VS Code's Codex agent completes a call its host declined.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L1225-L1229
+ */
+it('completes a call the person refused as a denial, in the words of a failure', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'refused');
+  session.sendMessage('t1', 'ask me first');
+  await until(() => watch.types().includes('session/inputNeededSet'));
+  expect(session.confirm?.('call-perm', false)).toBe(true);
+  await until(() => watch.endings().length > 0);
+
+  const complete = forCall(watch, 'call-perm').find((one) => one.type === 'chat/toolCallComplete');
+  expect(complete?.result).toEqual({
+    success: false,
+    pastTenseMessage: '"Remove a file" failed',
+    content: [{ type: 'text', text: 'answer=no-once' }],
+    error: { message: 'answer=no-once', code: 'denied' },
+  });
+});
+
 it('reports the folder a session is in as a URI a host reads back as that folder', () => {
   const { agent } = backend();
   /*
