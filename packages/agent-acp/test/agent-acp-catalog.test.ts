@@ -351,7 +351,7 @@ describe('the MCP servers a session is opened with', () => {
 
     expect(opened(log)).toEqual([{
       type: 'http',
-      name: 'ahp',
+      name: 'host',
       url: 'http://127.0.0.1:4242/ahp-mcp/one',
       headers: [{ name: 'authorization', value: 'Bearer t-kn' }],
     }]);
@@ -377,7 +377,7 @@ describe('the MCP servers a session is opened with', () => {
     // The host's tools are an HTTP server like any other, so the handshake that
     // refuses the others refuses this one, and says so the same way.
     expect(opened(log)).toEqual([]);
-    expect(said).toEqual(['ahp: this ACP server takes no MCP server over HTTP, so it was left out']);
+    expect(said).toEqual(['host: this ACP server takes no MCP server over HTTP, so it was left out']);
   });
 
   it('keeps one endpoint of the host\'s own across a server that died', async () => {
@@ -463,7 +463,7 @@ describe('the MCP servers a session is opened with', () => {
 
     expect(opened(log)).toEqual([{
       type: 'http',
-      name: 'ahp',
+      name: 'host',
       url: 'http://10.0.0.5:4242/ahp-mcp/one',
       headers: [{ name: 'authorization', value: 'Bearer t-kn' }],
     }]);

@@ -4,6 +4,7 @@ import { machineAsked, machinePathOf } from '@ahpd/sdk';
 import type { Spawn, Start, ToolsEndpoint } from '@ahpd/sdk';
 import { heardCapabilities, watchSession } from '../catalog.js';
 import { connectAcp } from '../connection.js';
+import { HOST_TOOLS } from '../mapping.js';
 import type { AcpConnection, AcpOptions } from '../types.js';
 import { messageOf } from './common.js';
 import type { SessionContext } from './context.js';
@@ -64,16 +65,6 @@ const spawnOf = (one: AcpOptions): string =>
  */
 const advertised = <T>(capability: T | null | undefined): boolean =>
   capability !== undefined && capability !== null;
-
-/**
- * One host server as `session/new` names it.
- *
- * ACP spells an HTTP server as a URL and a list of headers rather than as the
- * map of headers VS Code's key holds, so the token goes over as the one header
- * it is: `ahp` is the name the in-process server carries, and a server that
- * already has one by that name is being told about the same tools twice.
- */
-export const HOST_TOOLS = 'ahp';
 
 /**
  * The hosts that name this machine itself, wherever the address is read.
@@ -177,6 +168,8 @@ const serversFor = (
     say(`host tools: ${String(where)} cannot reach the daemon at ${addressOf(endpoint.url)}, so they were left out`);
     return taken;
   }
+  // ACP spells an HTTP server as a URL and a list of headers, so the token goes
+  // over as the one header it is.
   taken.push({
     type: 'http',
     name: HOST_TOOLS,

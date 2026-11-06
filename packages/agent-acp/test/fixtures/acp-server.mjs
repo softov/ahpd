@@ -391,7 +391,7 @@ let hostTools;
  * By the name the bridge gives it, because the list also holds whatever else
  * the deployment configured: what a script here reaches for is the host's.
  */
-const named = (servers) => (Array.isArray(servers) ? servers : []).find((one) => one?.name === 'ahp');
+const named = (servers) => (Array.isArray(servers) ? servers : []).find((one) => one?.name === 'host');
 
 /** How many requests this server has made on that MCP server. */
 let called = 0;
@@ -854,7 +854,7 @@ const promptScript = async (id, params) => {
         sessionUpdate: 'tool_call',
         toolCallId,
         title: tool,
-        name: `mcp__ahp__${tool}`,
+        name: `mcp__host__${tool}`,
         kind: 'other',
         status: 'in_progress',
         // `-` for a report that says no arguments, which an agent need not: a

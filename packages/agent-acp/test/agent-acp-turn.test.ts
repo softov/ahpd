@@ -154,8 +154,8 @@ const finished = (p: ReturnType<typeof peer>, chatUri: string, turns: number): b
 
 /*
  * A client's tool is a tool of the host's own MCP server, which this host calls
- * `ahp`, so an agent names a call to one the way that server spells it:
- * `mcp__ahp__<clientId>__<name>`, or the same with the prefix dropped.
+ * `host`, so an agent names a call to one the way that server spells it:
+ * `mcp__host__<clientId>__<name>`, or the same with the prefix dropped.
  */
 const OPEN_FILE = {
   name: 'openFile',
@@ -424,11 +424,11 @@ it('opens a call the agent reported for a client\'s tool with that client on the
   await providing(host, uri, chatUri, 'a');
 
   // Named the way the host's MCP server spells the tool.
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile');
   await until(() => finished(p, chatUri, 1));
   // And said about a client's tool in the title alone, which is all an agent
   // that names no `name` leaves behind for a call to be recognised by.
-  begin(client, chatUri, 't2', 'report a client tool by title ctitle=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't2', 'report a client tool by title ctitle=mcp__host__a__openFile');
   await until(() => finished(p, chatUri, 2));
 
   const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
@@ -460,7 +460,7 @@ it('gives each of two clients the call it owns', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
   await providing(host, uri, chatUri, 'b');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile client=mcp__ahp__b__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile client=mcp__host__b__openFile');
   await until(() => ended(p, chatUri));
 
   // Two clients in one session may both provide `openFile`, and the model is
@@ -477,11 +477,11 @@ it('reads a name that is not a client\'s tool before a title that is', async () 
   await providing(host, uri, chatUri, 'a');
   // The agent named the tool it called, and the name is no client's. The title
   // spells one, and a title is only read when the agent named none.
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__list_sessions ctitle=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__list_sessions ctitle=mcp__host__a__openFile');
   await until(() => ended(p, chatUri));
 
   const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
-  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__ahp__list_sessions']);
+  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__host__list_sessions']);
   expect(starts[0]?.action.contributor).toBeUndefined();
 });
 
@@ -491,18 +491,18 @@ it('gives no contributor to a tool of the host\'s or the agent\'s own', async ()
   // The host's own tool, as the agent sees it beside the clients', and a tool
   // the agent has itself. Neither is a client's, so neither is a client's to
   // run.
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__list_sessions client=count_lines');
+  begin(client, chatUri, 't1', 'report client=mcp__host__list_sessions client=count_lines');
   await until(() => ended(p, chatUri));
 
   const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
-  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__ahp__list_sessions', 'count_lines']);
+  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__host__list_sessions', 'count_lines']);
   expect(starts.map((e) => e.action.contributor)).toEqual([undefined, undefined]);
 });
 
 it('keeps the contributor through the chat reducer, and the snapshot agrees', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile');
   await until(() => ended(p, chatUri));
 
   // What a client draws from the actions alone, which is the fold a contributor
@@ -526,7 +526,7 @@ it('keeps the contributor through the chat reducer, and the snapshot agrees', as
 it('raises the session entry a client reads when its call starts running', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile');
   await until(() => ended(p, chatUri));
 
   // A client that runs its tools from the session rather than from the chat
@@ -551,7 +551,7 @@ it('raises the session entry a client reads when its call starts running', async
 it('names a client\'s call in its row by the name the client announced', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile');
   await until(() => ended(p, chatUri));
 
   // The tool the client has, as VS Code's agents strip their client tool
@@ -565,7 +565,7 @@ it('names a client\'s call in its row by the name the client announced', async (
 it('opens no entry for a call the agent has not started', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile cstatus=pending');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile cstatus=pending');
   await until(() => ended(p, chatUri));
 
   // The row is drawn and attributed, and nobody is asked to run it: `pending`
@@ -580,7 +580,7 @@ it('opens no entry for a call the agent has not started', async () => {
 it('opens no entry for a call the agent has finished as it announced it', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
-  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile cdone');
+  begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile cdone');
   await until(() => ended(p, chatUri));
 
   // The row is drawn, attributed and closed at once. Nothing is asking anybody
@@ -596,7 +596,7 @@ it('opens no entry for a call the agent has finished as it announced it', async 
 it('asks a client to run the call once the person allows it', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a', [DROP_BRANCH]);
-  begin(client, chatUri, 't1', 'hold ctool=mcp__ahp__a__drop_branch');
+  begin(client, chatUri, 't1', 'hold ctool=mcp__host__a__drop_branch');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
 
   // The question is the row's readiness while it stands, and nobody has been

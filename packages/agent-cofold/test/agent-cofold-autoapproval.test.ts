@@ -346,8 +346,8 @@ it('asks a tool the rule names even when a session approval was already remember
   rmSync(dir, { recursive: true, force: true });
 });
 
-it('names a host tool to the rule as ahp/<name>, as Claude and ACP do', () => {
+it('names a host tool to the rule as host/<name>, as Claude and ACP do', () => {
   const offered = [{ definition: { name: 'notify', inputSchema: { type: 'object' as const, properties: {} } } }];
-  expect(ruleName(offered, 'notify')).toBe('ahp/notify');
+  expect(ruleName(offered, 'notify')).toBe('host/notify');
   expect(ruleName(offered, 'shell_exec')).toBe('shell_exec');
 });

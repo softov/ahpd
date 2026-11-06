@@ -20,15 +20,25 @@ import type { Bag, HarnessPlanEntry, PlanUpdate } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
 
 /**
+ * The name of the MCP server that carries the host's tools to the agent.
+ *
+ * `host`, the name VS Code gives the MCP server carrying its host's tools, and
+ * the one the Claude agent's in-process server carries in this host, so an
+ * agent told of both is told of the same tools under one name.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+ */
+export const HOST_TOOLS = 'host';
+
+/**
  * The prefix every tool of the host's own MCP server is seen under.
  *
  * A client's tool rides that server with the host's own, because a server this
  * plugin points the agent at is the one way an ACP agent can be handed a host
  * tool at all. So an agent that names the tool it called spells it
- * `mcp__ahp__<clientId>__<name>`, and one that has its own idea of the name
- * says it in the title instead.
+ * `mcp__host__<clientId>__<name>`, after the server's name, and one that has
+ * its own idea of the name says it in the title instead.
  */
-export const HOST_SERVER = 'mcp__ahp__';
+export const HOST_SERVER = `mcp__${HOST_TOOLS}__`;
 
 /** The text of a content block, or nothing for a kind this bridge does not carry. */
 const textOf = (content: ContentBlock): string | undefined =>

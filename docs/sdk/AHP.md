@@ -199,7 +199,7 @@ The host keeps it in memory only, as VS Code's host keeps its root config.
 A daemon that restarts therefore holds no rule until a window pushes it again.
 A key names one tool exactly, or every tool of a server through `<server>/*`.
 A key is the backend's own tool name, matched with its case, so Claude's `Bash` and pi's `bash` are different keys.
-A tool this host offers is `ahp/<name>` in every backend.
+A tool this host offers is `host/<name>` in every backend, after the MCP server that carries the host's tools, which is named `host` as [VS Code](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21) names it.
 A matched call asks whenever its backend puts the call to a person, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1698) applies its rules to the confirmations a provider raises.
 Claude's backend puts it when the CLI asks about the call, which the CLI does in neither `auto` nor `bypassPermissions`.
 The operator's switch that takes those modes away, `autoApprovePolicyRestricted`, is declared here and changes nothing in this host.

@@ -379,7 +379,7 @@ it('keeps hostTools plugin-wide and lets a record set its own', async () => {
   const withDefault = await turnOf(on.kind, 'copilot', {}, extra);
   expect(withDefault.servers).toEqual([{
     type: 'http',
-    name: 'ahp',
+    name: 'host',
     url: endpoint.url,
     headers: [{ name: 'authorization', value: `Bearer ${endpoint.token}` }],
   }]);

@@ -277,8 +277,8 @@ it('refuses a named tool in don\'t-ask mode, without a question', async () => {
   expect(types(sent)).not.toContain('session/inputNeededSet');
 });
 
-it('names a host tool to the rule as ahp/<name>, as Claude and ACP do', async () => {
-  const { asked, check } = ruling(['ahp/notify']);
+it('names a host tool to the rule as host/<name>, as Claude and ACP do', async () => {
+  const { asked, check } = ruling(['host/notify']);
   const { session, pi, sent } = opened({
     tools: [{ definition: { name: 'notify', inputSchema: { type: 'object', properties: {} } }, run: () => 'sent' }],
     getAutoApproval: check,
@@ -290,7 +290,7 @@ it('names a host tool to the rule as ahp/<name>, as Claude and ACP do', async ()
 
   const waiting = driveCall(pi, 'c1', 'notify', {});
   await settled();
-  expect(asked).toEqual([{ kind: 'tool', line: 'ahp/notify', shell: undefined, tool: undefined }]);
+  expect(asked).toEqual([{ kind: 'tool', line: 'host/notify', shell: undefined, tool: undefined }]);
   expect(types(sent)).toContain('session/inputNeededSet');
   session.confirm('c1', true);
   expect(await waiting).toBeUndefined();

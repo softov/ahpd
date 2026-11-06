@@ -246,7 +246,7 @@ const OFFERED = [
 const call = (entry: Bag | undefined): Bag => (entry?.toolCall ?? {}) as Bag;
 
 it('asks before a matched host tool runs, on the call the agent reported, and runs it when a person approves', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
+  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'host/list_sessions': false } });
   begin(client, chatUri, 'mrep=c1=list_sessions={} mreq=list_sessions={}=-');
   await until(() => question(p, uri) !== undefined);
 
@@ -255,7 +255,7 @@ it('asks before a matched host tool runs, on the call the agent reported, and ru
   // The question is on the agent's own call, as VS Code's host asks.
   expect(entry.toolCall).toMatchObject({
     toolCallId: 'c1',
-    toolName: 'mcp__ahp__list_sessions',
+    toolName: 'mcp__host__list_sessions',
     status: 'pending-confirmation',
   });
   // One approval and one refusal: nothing on the card keeps an answer.
@@ -279,7 +279,7 @@ it('asks before a matched host tool runs, on the call the agent reported, and ru
 });
 
 it('refuses a matched host tool when a person denies it', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
+  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'host/list_sessions': false } });
   begin(client, chatUri, 'mrep=c1=list_sessions={} mreq=list_sessions={}=-');
   await until(() => question(p, uri) !== undefined);
 
@@ -293,7 +293,7 @@ it('refuses a matched host tool when a person denies it', async () => {
 });
 
 it('refuses a matched host tool the agent reported no call for, asking nobody', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/list_sessions': false } });
+  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'host/list_sessions': false } });
   begin(client, chatUri, 'mreq=list_sessions={}=-');
   await endedTurn(p, chatUri, 1);
 
@@ -306,7 +306,7 @@ it('refuses a matched host tool the agent reported no call for, asking nobody', 
 });
 
 it('runs a host tool the rule does not name without asking', async () => {
-  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'ahp/another_tool': false } });
+  const { client, peer: p, uri, chatUri, ran } = await talking({ rules: { 'host/another_tool': false } });
   begin(client, chatUri, 'mreq=list_sessions={}=-');
   await endedTurn(p, chatUri, 1);
 

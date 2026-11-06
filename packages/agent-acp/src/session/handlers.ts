@@ -26,11 +26,11 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { hostPathOf, str } from '@ahpd/sdk';
 import type { Bag, BackgroundTask, BoundTool, OpenTerminal, Session } from '@ahpd/sdk';
-import { callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
+import { HOST_TOOLS, callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
 import type { PermissionAnswer } from '../types.js';
 import { TOOL_USE_ID } from './clientcalls.js';
 import { bag } from './common.js';
-import { HOST_TOOLS, machineIdOf } from './opening.js';
+import { machineIdOf } from './opening.js';
 import type { HeldTerminal, SessionContext } from './context.js';
 
 /** Everything the server sends this session: its updates, its requests and the answers to them. */
