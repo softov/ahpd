@@ -635,14 +635,20 @@ host.registerAdapter({
   of connector refuses a field that belongs to another kind, rather than letting
   `open` discover it.
 - `capabilities` are listed for a client. The types are `receive`, `command`,
-  `action` and `models`, and `ui` is reserved for a later plan; a type this
-  version does not know is shown by its title. An `action` is the one type the
-  host runs, as a tool a session calls - [An action offered as a
-  tool](#an-action-offered-as-a-tool).
+  `action`, `models` and `ui`; a type this version does not know is shown by its
+  title. An `action` is the one type the host runs, as a tool a session calls -
+  [An action offered as a tool](#an-action-offered-as-a-tool). A `ui` carries a
+  schema a client draws the connector's page from - [The ui a connector or an
+  agent shows](#the-ui-a-connector-or-an-agent-shows).
+- A `ui` capability's `ui` is a `UiSchema`: `root` names the component drawn
+  first, and `components` holds each one by its `id`. It is checked when the
+  adapter registers, by the same rules a plugin view is checked by.
 - A `receive` capability may carry `path`: where its connectors receive, relative to the daemon's HTTP root, with `{id}` standing for the connector id, such as `/plugins/webhook/{id}`. A client puts the root before it to build a connector's URL. A `path` on any other type, or one that does not start with `/`, is refused when the adapter registers, and `x-ahpd-adapters` sends it with the capability.
-- `open(connector)` starts answering for one connector, which carries `id`,
+- `open(connector, ui)` starts answering for one connector, which carries `id`,
   `adapter`, `owner`, an optional `title`, and `config` with each secret read
-  back from the vault. The answer is the function that stops it, or nothing when
+  back from the vault. `ui` is the handle that sends what the connector draws,
+  and it is handed whether or not the adapter declares a `ui` capability. The
+  answer is the function that stops it, or nothing when
   there is nothing to stop. An `open` that throws leaves the connector stored
   and shown as `invalid`.
 - `run(connector, action, input, call?)` is optional, and runs one `action`
@@ -697,6 +703,66 @@ The `@ahpd/activepieces` plugin makes one adapter for each Activepieces piece it
 The schema can change between versions, and nothing migrates a stored
 connector: one whose config no longer fits shows as `invalid`, and one whose
 adapter no plugin registers shows as `unavailable`. Neither is opened.
+
+### The ui a connector or an agent shows
+
+A client draws a connector's page and an agent's page from what the plugin tells
+it. A plugin with something to show declares a `ui` capability on its adapter or
+on its engine, and the two work the same way: the capability carries a schema,
+and the plugin sends the data for each record with the handle its `open` is
+handed. An adapter's schema is drawn on each connector of it, and an engine's on
+each agent of it.
+
+```ts
+host.registerAdapter({
+  // ...the name, the title, the schema of the form, and the other members...
+  capabilities: [
+    {
+      type: 'ui',
+      name: 'account',
+      title: 'Account',
+      description: 'The account this connector signed in as, and when it last refreshed.',
+      ui: {
+        root: 'account',
+        components: {
+          account: { id: 'account', component: 'Column', children: ['name', 'refreshed'] },
+          name: { id: 'name', component: 'Text', text: { path: 'account' } },
+          refreshed: { id: 'refreshed', component: 'Text', text: { path: 'refreshed' } },
+        },
+      },
+    },
+  ],
+  open(connector, ui) {
+    // What the schema above draws, sent when the connector opens and again
+    // whenever it changes.
+    ui.show({ account: connector.config['account'] as string });
+    return () => { /* ... */ };
+  },
+});
+```
+
+- `ui` is a `UiSchema`: `root` names the component drawn first, and `components`
+  holds each one by its `id`. The kinds are `Text`, `Link`, `Button`, `Card`,
+  `Row`, `Column`, `List`, `Divider` and `Icon`, the same as a plugin view's.
+- A prop is a literal or a `{ path }` binding, one path of the data. A `List`
+  draws its `children` as a list of ids, or repeats one component over the items
+  at a path with `{ path, componentId }`; inside a repeated row every path reads
+  the row's own item.
+- A ui carries no `action`: a `Button` that runs one comes in a later plan, and
+  the check refuses one now.
+- The data is a JSON object the plugin chooses for each record, and only that
+  record. `ui.show(data)` replaces it and sends the changed row to subscribers,
+  and `ui.clear()` takes it away. Closing or removing the record, or unloading
+  the plugin, takes it away too, and a handle kept past that writes nothing.
+- A schema is at most 200 components, and its data at most 64 KiB of JSON, as a
+  plugin view's is. Data that is not a JSON object, or is over the limit, is
+  refused and the row keeps what it held.
+- A path the data does not hold draws nothing, and the check cannot see the
+  data. So a plugin sends a value for each path it can, and leaves a path out of
+  the data when it has nothing to show there.
+- On an engine, `capabilities` takes the same entries. A `ui` capability there is
+  drawn on each agent of the engine, and the handle `open(record, ui)` is handed
+  sends that agent's data.
 
 ### A tunnel kind of your own
 
@@ -819,7 +885,18 @@ host.registerEngine({
   templates: [{ name: 'Claude Code', config: {} }],
   hostOnly: ['extraArgs'],
   keyVariables: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
-  open(record) {
+  capabilities: [
+    {
+      type: 'ui',
+      name: 'plan',
+      title: 'Plan usage',
+      description: 'The plan of each login this agent names, and what is left of each window.',
+      ui: { root: 'logins', components: { /* ...as a connector's ui... */ } },
+    },
+  ],
+  open(record, ui) {
+    // Each agent draws the logins its own record names.
+    ui.show({ logins: loginsOf(record.config) });
     return claude({ provider: record.id, displayName: record.name });
   },
 });
@@ -862,12 +939,17 @@ host.registerEngine({
 - `keyVariables` names the `env` variables any owner may set, once the engine has
   a key a person would hold. Every other `env` variable is host-only, because a
   free environment can run a program, and `NODE_OPTIONS` is enough.
-- `open(record)` builds the backend for one record and answers an `Agent`. The
+- `open(record, ui)` builds the backend for one record and answers an `Agent`. The
   record is a live view rather than a copy: `id`, `engine`, `owner`, `name`,
   `description`, `icon`, `model` and `config` are read at each call, so an edit
   reaches a running session at its next turn. `config` is the engine's own values
   with each secret read back from the vault. The backend's `provider` must be
-  the record's id, because a client names the agent by its id alone.
+  the record's id, because a client names the agent by its id alone. `ui` is the
+  handle that sends what the agent draws, as an adapter's is.
+- `capabilities` works as an adapter's does, and `ui` is the one type the host
+  reads on an engine: the schema is drawn on each agent of it, and the handle
+  `open` is handed sends that agent's data - [The ui a connector or an agent
+  shows](#the-ui-a-connector-or-an-agent-shows).
 
 A record whose `config` no longer fits shows as `invalid`, and one whose engine no
 plugin registers shows as `unavailable`; neither is opened, and neither is
