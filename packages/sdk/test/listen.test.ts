@@ -49,6 +49,22 @@ it('turns away the wrong one too', async () => {
   expect(await knock(`ws://127.0.0.1:${running.port}/?tkn=open`)).toContain('401');
 });
 
+it('sends a refused handshake a bearer challenge: the realm alone with no token, invalid_token with one', async () => {
+  running = await listen({ port: 0, token: 'sesame' }, nothing);
+  /** The challenge a refused handshake was answered with. */
+  const challenged = (url: string): Promise<string | undefined> => new Promise((resolve) => {
+    const socket = new WebSocket(url);
+    socket.on('unexpected-response', (_request, response) => {
+      resolve(response.headers['www-authenticate']);
+      socket.terminate();
+    });
+    socket.on('open', () => { socket.close(); resolve('open'); });
+    socket.on('error', () => {});
+  });
+  expect(await challenged(`ws://127.0.0.1:${running.port}`)).toBe('Bearer realm="ahpd"');
+  expect(await challenged(`ws://127.0.0.1:${running.port}/?tkn=open`)).toBe('Bearer realm="ahpd", error="invalid_token"');
+});
+
 it('lets the right one through', async () => {
   running = await listen({ port: 0, token: 'sesame' }, nothing);
   expect(await knock(`ws://127.0.0.1:${running.port}/?tkn=sesame`)).toBe('open');

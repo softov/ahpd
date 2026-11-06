@@ -96,7 +96,7 @@ describe('the approval tools', () => {
     const { run } = await served({ requireApproval: true });
     await run('task_add', { title: 'Read it' });
     await expect(run('task_set', { task: 't1', status: 'doing' }))
-      .rejects.toThrow('task t1 is not approved, so it may not start');
+      .rejects.toThrow('Invalid task_set input: status doing needs task t1 approved first; ask somebody to approve it (see task_approve).');
     await run('task_approve', { task: 't1' });
     expect(await run('task_set', { task: 't1', status: 'doing' })).toBe('t1, doing, medium, Read it');
   });
@@ -119,12 +119,22 @@ describe('the review tool', () => {
     expect((await kept(records, 'tasks', 't1'))?.reviewed).not.toHaveProperty('verdict');
   });
 
+  /*
+   * In the words VS Code's server tools refuse their input with:
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L649-L671
+   */
   it('refuses an unknown verdict or task', async () => {
     const { run } = await served();
     await run('task_add', { title: 'Read it' });
     await expect(run('task_review', { task: 't1', verdict: 'maybe' }))
-      .rejects.toThrow('verdict is one of approved, changes');
-    await expect(run('task_review', { task: 't9', verdict: 'approved' })).rejects.toThrow('there is no task t9');
+      .rejects.toThrow('Invalid task_review input: verdict must be approved or changes.');
+    await expect(run('task_review', { task: 't9', verdict: 'approved' }))
+      .rejects.toThrow('Invalid task_review input: task must match the id of a known task (see task_list).');
+    await expect(run('task_review', {})).rejects.toThrow('Invalid task_review input: task is required.');
+    await expect(run('task_approve', { task: 't9' }))
+      .rejects.toThrow('Invalid task_approve input: task must match the id of a known task (see task_list).');
+    await expect(run('plan_approve', { plan: 'p9' }))
+      .rejects.toThrow('Invalid plan_approve input: plan must match the id of a known plan (see plan_list).');
   });
 });
 

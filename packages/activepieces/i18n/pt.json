@@ -6,6 +6,15 @@
   "options": {
     "pieces": {
       "description": "Pacotes do Activepieces a oferecer, como '@activepieces/piece-resend'. Adicione uma versão para fixá-la, como em '@activepieces/piece-postgres@0.5.1'. Por padrão, a versão mais recente."
+    },
+    "networkMode": {
+      "description": "O AP_NETWORK_MODE do Activepieces para o engine: STRICT recusa toda conexão de uma piece a um endereço privado, de loopback, link-local ou multicast; UNRESTRICTED não recusa nenhuma."
+    },
+    "ssrfAllowList": {
+      "description": "O AP_SSRF_ALLOW_LIST do Activepieces: endereços e faixas CIDR que uma piece pode alcançar sob STRICT, como 10.0.0.5 ou 10.0.0.0/8."
+    },
+    "sandboxPropagatedEnvVars": {
+      "description": "As variáveis do ambiente do daemon que o engine recebe, pelo nome, como AP_SANDBOX_PROPAGATED_ENV_VARS do Activepieces. Nenhuma por padrão."
     }
   }
 }

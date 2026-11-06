@@ -39,7 +39,7 @@ ahpd --host 0.0.0.0 --connection-token "$SECRET"
 ahpd --host 0.0.0.0 --without-connection-token              # deliberately open
 ```
 
-`--connection-token-file` writes a fresh secret, mode 0600, when the file is not there. Clients present the token as `?tkn=<secret>` on the WebSocket URL or as an `Authorization: Bearer <secret>` header. The query string is the one that always works, because a browser cannot set headers on a WebSocket handshake. A wrong token is refused with **401 at the handshake**, so it never reaches the host.
+`--connection-token-file` writes a fresh secret, mode 0600, when the file is not there. Clients present the token as `?tkn=<secret>` on the WebSocket URL or as an `Authorization: Bearer <secret>` header. The query string is the one that always works, because a browser cannot set headers on a WebSocket handshake. A wrong token is refused with **401 at the handshake**, so it never reaches the host. Every 401 the host answers carries a bearer challenge in `WWW-Authenticate`, as HTTP has a 401 carry one: `Bearer realm="ahpd"` when no token came, and `Bearer realm="ahpd", error="invalid_token"` when one came that the host does not take ([RFC 6750, section 3](https://www.rfc-editor.org/rfc/rfc6750#section-3)).
 
 ```bash
 ahpc --host ws://192.168.1.10:9187 --token "$SECRET"

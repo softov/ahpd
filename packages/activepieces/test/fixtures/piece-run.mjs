@@ -2,15 +2,23 @@
  * A piece whose actions a call makes.
  *
  * Each action reads a different part of the context, so a case can tell what
- * the child built: `echo` reads `auth` and `propsValue`, `remember` and `recall`
- * read the connector's `store`, `env` reads the child's environment, `read`
- * reads the file a `FILE` prop was turned into, `write` writes into the call's
- * folder, `fail` throws, and `slow` answers after the timeout a call gives up at.
+ * the engine built: `echo` reads `auth` and `propsValue`, `remember` and
+ * `recall` read the connector's `store`, `env` reads the engine's environment,
+ * `read` reads the file a `FILE` prop was turned into, `write` writes into the
+ * call's folder, `progress` says its steps with `output.update`, `context`
+ * answers the run and the step, `pause` and `wait` ask
+ * for a waitpoint, `fail` throws, `crash` ends the engine, and `slow` answers
+ * after the timeout a call gives up at.
  */
 export const runnable = {
   displayName: 'Runnable',
   description: 'A piece whose calls a test makes.',
-  auth: { type: 'SECRET_TEXT', displayName: 'API Key', required: true },
+  auth: {
+    type: 'SECRET_TEXT',
+    displayName: 'API Key',
+    required: true,
+    validate: async ({ auth }) => (auth.startsWith('sk-') ? { valid: true } : { valid: false, error: 'Invalid Api Key' }),
+  },
   _actions: {
     echo: {
       name: 'echo',
@@ -44,11 +52,63 @@ export const runnable = {
         text: { type: 'SHORT_TEXT', displayName: 'Text', required: true },
       },
       run: async (context) => ({
-        path: await context.files.write({
+        written: await context.files.write({
           fileName: context.propsValue.name,
           data: Buffer.from(context.propsValue.text, 'utf8'),
         }),
       }),
+    },
+    stream: {
+      name: 'stream',
+      displayName: 'Stream',
+      description: 'Writes a file from a stream of the text, as many times over as asked, and answers where it went.',
+      props: {
+        name: { type: 'SHORT_TEXT', displayName: 'Name', required: true },
+        text: { type: 'SHORT_TEXT', displayName: 'Text', required: true },
+        times: { type: 'NUMBER', displayName: 'Times', required: false },
+      },
+      run: async (context) => {
+        const { Readable } = await import('node:stream');
+        const chunks = Array.from({ length: context.propsValue.times ?? 1 }, () => Buffer.from(context.propsValue.text, 'utf8'));
+        return { written: await context.files.write({ fileName: context.propsValue.name, data: Readable.from(chunks) }) };
+      },
+    },
+    upload: {
+      name: 'upload',
+      displayName: 'Upload',
+      description: 'Uploads a file, and answers what upload answered.',
+      props: {
+        name: { type: 'SHORT_TEXT', displayName: 'Name', required: true },
+        text: { type: 'SHORT_TEXT', displayName: 'Text', required: true },
+      },
+      run: async (context) => await context.files.upload({ fileName: context.propsValue.name, data: Buffer.from(context.propsValue.text, 'utf8') }),
+    },
+    text: {
+      name: 'text',
+      displayName: 'Text file',
+      description: 'Writes a string as a file, which the framework does not take.',
+      props: {},
+      run: async (context) => await context.files.write({ fileName: 'a.txt', data: 'a string' }),
+    },
+    project: {
+      name: 'project',
+      displayName: 'Project',
+      description: 'Keeps the text in the project scope, and answers what each scope holds.',
+      props: { text: { type: 'SHORT_TEXT', displayName: 'Text', required: true } },
+      run: async (context) => {
+        await context.store.put('text', context.propsValue.text, 'PROJECT');
+        return { flow: await context.store.get('text'), project: await context.store.get('text', 'PROJECT') };
+      },
+    },
+    keep: {
+      name: 'keep',
+      displayName: 'Keep',
+      description: 'Keeps a value of the size asked under the key asked.',
+      props: {
+        key: { type: 'SHORT_TEXT', displayName: 'Key', required: true },
+        size: { type: 'NUMBER', displayName: 'Size', required: true },
+      },
+      run: async (context) => ({ kept: (await context.store.put(context.propsValue.key, 'x'.repeat(context.propsValue.size))).length }),
     },
     remember: {
       name: 'remember',
@@ -71,9 +131,41 @@ export const runnable = {
     env: {
       name: 'env',
       displayName: 'Env',
-      description: 'Answers the daemon token the child can read, if any.',
+      description: 'Answers the daemon token the engine can read, if any, and its home and path.',
       props: {},
-      run: async () => ({ token: process.env.AHPD_TOKEN ?? null }),
+      run: async () => ({ token: process.env.AHPD_TOKEN ?? null, home: process.env.HOME ?? null, path: process.env.PATH ?? null }),
+    },
+    progress: {
+      name: 'progress',
+      displayName: 'Progress',
+      description: 'Says two steps with output.update, then answers.',
+      props: {},
+      run: async (context) => {
+        await context.output.update({ data: { step: 1 } });
+        await context.output.update({ data: { step: 2 } });
+        return { done: true };
+      },
+    },
+    context: {
+      name: 'context',
+      displayName: 'Context',
+      description: 'Answers what the run and the step are.',
+      props: {},
+      run: async (context) => ({ canPause: context.run.canPause, step: context.step.name, agent: 'agent' in context }),
+    },
+    pause: {
+      name: 'pause',
+      displayName: 'Pause',
+      description: 'Asks for a waitpoint.',
+      props: {},
+      run: async (context) => await context.run.createWaitpoint({ type: 'WEBHOOK' }),
+    },
+    wait: {
+      name: 'wait',
+      displayName: 'Wait',
+      description: 'Waits on a waitpoint.',
+      props: {},
+      run: async (context) => { context.run.waitForWaitpoint('waitpoint-1'); return {}; },
     },
     fail: {
       name: 'fail',
@@ -81,6 +173,13 @@ export const runnable = {
       description: 'Throws an error.',
       props: {},
       run: async () => { throw new Error('the action failed'); },
+    },
+    crash: {
+      name: 'crash',
+      displayName: 'Crash',
+      description: 'Ends the process it runs in.',
+      props: {},
+      run: async () => { process.exit(3); },
     },
     slow: {
       name: 'slow',

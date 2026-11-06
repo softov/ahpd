@@ -1,6 +1,7 @@
 /** The protocol server: channels, subscriptions and requests. */
 
-import type { ToolDefinition } from '@microsoft/agent-host-protocol';
+import type { ToolDefinition, ToolResultContent } from '@microsoft/agent-host-protocol';
+import type { OnWire } from './wire.js';
 import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
 import type { ToolsServers } from '../tools/server.js';
 import type { HostHandlers } from './events.js';
@@ -1366,6 +1367,12 @@ export interface ToolCall {
   artifacts(): Bag[];
   /** Replace them, and tell every client watching the session. */
   setArtifacts(list: Bag[]): void;
+  /**
+   * Replace what this call has produced so far, which every client watching
+   * the chat is shown as the running call's partial content, the spec's
+   * `chat/toolCallContentChanged`. Given by a host that can say it.
+   */
+  setContent?(content: OnWire<ToolResultContent>[]): void;
   /** Every terminal this host has open. */
   terminals(): { uri: string; title: string; cwd: string; running: boolean }[];
   /**

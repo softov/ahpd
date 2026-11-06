@@ -30,11 +30,11 @@ export function shout(): Agent {
     displayName: 'Shout',
     schema: () => ({ properties: {} }),
     defaults: () => ({}),
-    create: (start) => converse(start),
+    create: (start) => createSession(start),
   };
 }
 
-function converse(start: Start): Session {
+function createSession(start: Start): Session {
   const turns: Bag[] = [];
   let active: Bag | undefined;
 

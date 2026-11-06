@@ -151,13 +151,38 @@ it('lists a machine, reads its status and its capabilities', async () => {
   expect(caps).toMatchObject({ runtime: 'docker', defaultImage: 'debian:bookworm-slim', max: 2 });
 });
 
+/*
+ * A resource's times are given where they are known and left out where they
+ * are not, as the spec gives `mtime` and `ctime`.
+ */
+it('gives a machine\'s times where its runtime says when it was made, and none where it does not', async () => {
+  const { runtime, held } = fake();
+  held.set('box', { name: 'box', image: 'debian:bookworm-slim', Created: '2026-09-22T00:00:00Z' });
+  held.set('bare', { name: 'bare', image: 'debian:bookworm-slim' });
+  const provider = computerProvider(runtime, options);
+
+  expect(await provider.resolve('computer://box')).toEqual({
+    uri: 'computer://box', type: 'directory', mtime: '2026-09-22T00:00:00.000Z', ctime: '2026-09-22T00:00:00.000Z',
+  });
+  expect(await provider.resolve('computer://bare')).toEqual({ uri: 'computer://bare', type: 'directory' });
+  expect(await provider.resolve('computer://bare/status')).not.toHaveProperty('mtime');
+  expect(await provider.resolve('computer://')).toEqual({ uri: 'computer://', type: 'directory' });
+});
+
 it('refuses a machine that is not there, and a directory read', async () => {
-  const { runtime } = fake();
+  const { runtime, held } = fake();
   const provider = computerProvider(runtime, options);
   await expect(provider.read('computer://nope/status')).rejects.toMatchObject({ code: -32008 });
   await expect(provider.resolve('computer://nope')).rejects.toMatchObject({ code: -32008 });
   await expect(provider.list('computer://nope')).rejects.toMatchObject({ code: -32008 });
   await expect(provider.read('computer://nope')).rejects.toMatchObject({ code: -32008 });
+  // A directory that is there fails as VS Code's file resources fail a read of one.
+  held.set('box', { name: 'box', image: 'debian:bookworm-slim' });
+  await expect(provider.read('computer://box')).rejects.toMatchObject({
+    code: -32603,
+    message: 'Failed to read content: computer://box: Unable to read file \'computer://box\' that is actually a directory',
+  });
+  await expect(provider.read('computer://')).rejects.toMatchObject({ code: -32603 });
 });
 
 it('refuses a URI of another scheme as a bad parameter, not as a denial', async () => {
@@ -179,7 +204,7 @@ it('makes a machine with the configured limits, uses it and releases it', async 
   expect(String(await by(tools, 'request_disposable_computer').run({ name: 'other', cpus: '4' }, at))).toContain('computer://other');
   expect(calls[1]).toBe('run other debian:bookworm-slim 4 2g ahpd.computer=1');
 
-  const ran = String(await by(tools, 'computer_exec').run({ id: 'box', command: 'echo hi' }, at));
+  const ran = String(await by(tools, 'run_in_computer').run({ id: 'box', command: 'echo hi' }, at));
   expect(ran).toContain('hello');
   expect(ran).toContain('exit 0');
   expect(calls).toContain('exec box sh -lc echo hi');
@@ -200,10 +225,10 @@ it('refuses past the maximum, a name already taken, and a machine it does not ha
   expect(String(await by(tools, 'request_disposable_computer').run({ name: 'two' }, at)))
     .toContain('most this host will have');
   expect(String(await by(tools, 'release_computer').run({ id: 'nope' }, at))).toContain('no computer called nope');
-  expect(String(await by(tools, 'computer_exec').run({ id: 'nope', command: 'true' }, at))).toContain('no computer called nope');
+  expect(String(await by(tools, 'run_in_computer').run({ id: 'nope', command: 'true' }, at))).toContain('no computer called nope');
   // A call with nothing named is a sentence, not a throw: the model reads it.
   expect(String(await by(tools, 'release_computer').run({}, at))).toContain('Which computer?');
-  expect(String(await by(tools, 'computer_exec').run({ id: 'one' }, at))).toContain('What command?');
+  expect(String(await by(tools, 'run_in_computer').run({ id: 'one' }, at))).toContain('What command?');
 });
 
 it('declares what each tool does, so a policy has something to ask on', () => {
@@ -211,7 +236,19 @@ it('declares what each tool does, so a policy has something to ask on', () => {
   const tools = computerTools(runtime, { ...options, label: 'l', prefix: 'p' });
   expect(by(tools, 'request_disposable_computer').effects).toEqual({ writes: true, network: true });
   expect(by(tools, 'release_computer').effects).toEqual({ destructive: true });
-  expect(by(tools, 'computer_exec').effects).toEqual({ writes: true, network: true, destructive: true });
+  expect(by(tools, 'run_in_computer').effects).toEqual({ writes: true, network: true, destructive: true });
+});
+
+it('titles and annotates each tool as VS Code\'s server tools are', () => {
+  const { runtime } = fake();
+  const tools = computerTools(runtime, { ...options, label: 'l', prefix: 'p' });
+  const shown = (name: string) => {
+    const { title, annotations } = by(tools, name).definition;
+    return { title, annotations };
+  };
+  expect(shown('request_disposable_computer')).toEqual({ title: 'Request Disposable Computer', annotations: { readOnlyHint: false } });
+  expect(shown('release_computer')).toEqual({ title: 'Release Computer', annotations: { readOnlyHint: false, destructiveHint: true } });
+  expect(shown('run_in_computer')).toEqual({ title: 'Run in Computer', annotations: { readOnlyHint: false, destructiveHint: true } });
 });
 
 /** A create body, as a client sends one. */
@@ -304,11 +341,11 @@ it('refuses an image that is a flag', async () => {
   // And the deployment's set, which this path also never saw: a tool builds a
   // machine straight from what it was asked for, with no manifest in between.
   const bound = computerTools(runtime, {
-    ...options, label: 'ahpd.computer=1', prefix: 'ahpd-computer', images: ['node:*'],
+    ...options, label: 'ahpd.computer=1', prefix: 'ahpd-computer', images: ['ghcr.io/acme'],
   });
   expect(String(await by(bound, 'request_disposable_computer').run({ name: 'three', image: 'ubuntu:24.04' }, at)))
     .toMatch(/does not run ubuntu:24.04/);
-  expect(String(await by(bound, 'request_disposable_computer').run({ name: 'four', image: 'node:20' }, at)))
+  expect(String(await by(bound, 'request_disposable_computer').run({ name: 'four', image: 'ghcr.io/acme/box:1' }, at)))
     .toContain('computer://four');
 });
 
@@ -326,14 +363,15 @@ it('makes a machine only from an image the deployment named', async () => {
     ...options,
     // Four machines are made below, and the shared options hold two.
     max: 4,
-    images: ['node:*', 'ghcr.io/acme/**'],
+    images: ['docker.io/library/node', 'ghcr.io/acme'],
     profiles: { plain: { image: 'alpine:3.20' } },
   };
   const provider = computerProvider(runtime, held);
   const refused = async (image: string): Promise<unknown> =>
     provider.write('computer://box', made({ image })).catch((error: unknown) => error);
 
-  // Any tag of a named repository, and any depth of a named namespace.
+  // Any tag of a named repository, and any depth of a named namespace: each
+  // entry a containers-policy.json image scope.
   await provider.write('computer://one', made({ image: 'node:18-alpine' }));
   await provider.write('computer://two', made({ image: 'ghcr.io/acme/team/box:1' }));
   expect(calls).toHaveLength(2);
@@ -341,7 +379,7 @@ it('makes a machine only from an image the deployment named', async () => {
   // The counterexample a string prefix would let through.
   expect(await refused('ghcr.io/acme-evil/backdoor:1')).toMatchObject({ code: -32602 });
   expect(String((await refused('ubuntu:24.04') as Error).message))
-    .toMatch(/does not run ubuntu:24.04; it runs node:\*, ghcr.io\/acme\/\*\*/);
+    .toMatch(/does not run ubuntu:24.04; it runs docker.io\/library\/node, ghcr.io\/acme/);
 
   // The host's own default and every profile's image are in the set without
   // the operator repeating them, because a profile names one to be made from.
@@ -349,11 +387,11 @@ it('makes a machine only from an image the deployment named', async () => {
   await provider.write('computer://four', made({ image: 'alpine:3.20' }));
   expect(calls).toHaveLength(4);
 
-  // A set of names is a set of choices; one with a wildcard in it is not, so
-  // the field stays a text box rather than offering `node:*` as an image.
-  const open = computerProvider(runtime, { ...held, images: ['node:22', 'alpine:3.20'] });
+  // A set of single images is a set of choices; a repository or a namespace
+  // is not, so the field stays a text box rather than offering one as an image.
+  const open = computerProvider(runtime, { ...held, images: ['docker.io/library/node:22', 'docker.io/library/alpine:3.20'] });
   const props = (open.describe().manifest as { properties: Record<string, { enum?: string[] }> }).properties;
-  expect(props.image?.enum).toEqual(['node:22', 'alpine:3.20', 'debian:bookworm-slim']);
+  expect(props.image?.enum).toEqual(['docker.io/library/node:22', 'docker.io/library/alpine:3.20', 'debian:bookworm-slim', 'alpine:3.20']);
   const loose = computerProvider(runtime, held);
   expect((loose.describe().manifest as { properties: Record<string, { enum?: string[] }> }).properties.image?.enum)
     .toBeUndefined();
@@ -436,14 +474,17 @@ it('takes the OCI runtime from the profile alone', async () => {
   expect(specs).toHaveLength(2);
 });
 
-it('refuses a create onto a name already taken, and past the maximum', async () => {
+it('refuses a create onto a name already taken, and makes one past the tool\'s maximum', async () => {
   const { runtime, held } = fake();
   const provider = computerProvider(runtime, { ...options, max: 1 });
   await provider.write('computer://box', made({}));
 
   await expect(provider.write('computer://box', made({}, { createOnly: true }))).rejects.toMatchObject({ code: -32010 });
   await expect(provider.write('computer://box', made({}))).rejects.toMatchObject({ code: -32010 });
-  await expect(provider.write('computer://other', made({}))).rejects.toMatchObject({ code: -32602, message: expect.stringContaining('holds 1 computers') });
+  // A client's write makes every machine it asks for, as VS Code's host makes
+  // every container a client asks for: `max` caps the agent's tool.
+  await provider.write('computer://other', made({}));
+  expect(held.has('other')).toBe(true);
 
   // A write to a leaf or to the root is not a create at all.
   await expect(provider.write('computer://box/status', made({}))).rejects.toMatchObject({ code: -32602 });

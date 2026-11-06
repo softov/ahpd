@@ -1,5 +1,5 @@
 import { RpcError } from '@ahpd/sdk';
-import { DEFAULT_PRIORITY, isPriority, isTaskStatus, TASK_STATUSES, taskLine } from './record.js';
+import { DEFAULT_PRIORITY, isPriority, isTaskStatus, PRIORITIES, TASK_STATUSES, taskLine } from './record.js';
 import { stampOf } from './stamp.js';
 import type { Stamp, TaskPriority, TaskRecord } from './record.js';
 import type { TaskStore } from './store.js';
@@ -25,26 +25,37 @@ import type { HostTool } from '@ahpd/sdk';
 /** The protocol's code for a body this host will not take. */
 const INVALID_PARAMS = -32602;
 
+/** The values one field may take, said as VS Code's server tools say them: "high, medium, or low". */
+const oneOf = new Intl.ListFormat('en', { type: 'disjunction' });
+
 /** What the task tools read besides the store. */
 export interface TaskToolsOptions {
   /** Whether a task needs an `approved` stamp before it may start. */
   requireApproval: boolean;
 }
 
+/**
+ * A tool's refusal of its input, in the words VS Code's server tools refuse
+ * theirs with: the tool, the field, and what it must be.
+ *
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L649-L671
+ */
+const invalidInput = (tool: string, message: string): RpcError => new RpcError(INVALID_PARAMS, `Invalid ${tool} input: ${message}`);
+
 /** A line of input, trimmed, where the input says one. */
-const textOf = (input: Record<string, unknown>, key: string): string | undefined => {
+const textOf = (tool: string, input: Record<string, unknown>, key: string): string | undefined => {
   const value = input[key];
   if (value === undefined) return undefined;
-  if (typeof value !== 'string' || value.trim() === '') throw new RpcError(INVALID_PARAMS, `${key} is one line of text`);
+  if (typeof value !== 'string' || value.trim() === '') throw invalidInput(tool, `${key} must be a non-empty string.`);
   return value.trim();
 };
 
 /** A list of text from the input, where the input says one. */
-const listOf = (input: Record<string, unknown>, key: string): string[] | undefined => {
+const listOf = (tool: string, input: Record<string, unknown>, key: string): string[] | undefined => {
   const value = input[key];
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.some((one) => typeof one !== 'string')) {
-    throw new RpcError(INVALID_PARAMS, `${key} is a list of text`);
+    throw invalidInput(tool, `${key} must be a string array.`);
   }
   return value;
 };
@@ -61,16 +72,16 @@ const names = (stamp: Stamp, person: string): boolean =>
 /** The three task tools, over one store and one approval setting. */
 export function taskTools(store: TaskStore, options: TaskToolsOptions): HostTool[] {
   /** The tasks an input names in `blockedBy`, each one that is there. */
-  const checkBlockers = async (ids: string[]): Promise<void> => {
+  const checkBlockers = async (tool: string, ids: string[]): Promise<void> => {
     for (const id of ids) {
-      if (await store.task(id) === undefined) throw new RpcError(INVALID_PARAMS, `there is no task ${id}`);
+      if (await store.task(id) === undefined) throw invalidInput(tool, 'blockedBy must match the ids of known tasks (see task_list).');
     }
   };
 
   /** The plan an input names, where it names one that is there. */
-  const checkPlan = async (id: string | undefined): Promise<void> => {
+  const checkPlan = async (tool: string, id: string | undefined): Promise<void> => {
     if (id !== undefined && await store.plan(id) === undefined) {
-      throw new RpcError(INVALID_PARAMS, `there is no plan ${id}`);
+      throw invalidInput(tool, 'plan must match the id of a known plan (see plan_list).');
     }
   };
 
@@ -108,24 +119,25 @@ export function taskTools(store: TaskStore, options: TaskToolsOptions): HostTool
         annotations: { title: 'Add Task', readOnlyHint: false, destructiveHint: false },
       },
       run: async (input, at) => {
-        const title = textOf(input, 'title');
-        if (title === undefined) throw new RpcError(INVALID_PARAMS, 'title is one line of text');
+        const tool = 'task_add';
+        const title = textOf(tool, input, 'title');
+        if (title === undefined) throw invalidInput(tool, 'title is required.');
         const askedPriority = input.priority;
         if (askedPriority !== undefined && !isPriority(askedPriority)) {
-          throw new RpcError(INVALID_PARAMS, `priority is one of high, medium, low, and ${JSON.stringify(askedPriority)} is not`);
+          throw invalidInput(tool, `priority must be ${oneOf.format(PRIORITIES)}.`);
         }
-        const plan = textOf(input, 'plan');
-        const blockedBy = listOf(input, 'blockedBy') ?? [];
-        await checkPlan(plan);
-        await checkBlockers(blockedBy);
-        const topic = textOf(input, 'topic');
-        const bot = textOf(input, 'bot');
-        const folder = textOf(input, 'folder');
-        const session = textOf(input, 'session') ?? at.session;
-        const active = textOf(input, 'active');
-        const note = textOf(input, 'note');
+        const plan = textOf(tool, input, 'plan');
+        const blockedBy = listOf(tool, input, 'blockedBy') ?? [];
+        await checkPlan(tool, plan);
+        await checkBlockers(tool, blockedBy);
+        const topic = textOf(tool, input, 'topic');
+        const bot = textOf(tool, input, 'bot');
+        const folder = textOf(tool, input, 'folder');
+        const session = textOf(tool, input, 'session') ?? at.session;
+        const active = textOf(tool, input, 'active');
+        const note = textOf(tool, input, 'note');
         if (input.body !== undefined && typeof input.body !== 'string') {
-          throw new RpcError(INVALID_PARAMS, 'body is the task, in Markdown');
+          throw invalidInput(tool, 'body must be a string.');
         }
         const priority: TaskPriority = askedPriority ?? DEFAULT_PRIORITY;
         const task: TaskRecord = {
@@ -133,10 +145,10 @@ export function taskTools(store: TaskStore, options: TaskToolsOptions): HostTool
           title,
           status: 'todo',
           priority,
-          labels: listOf(input, 'labels') ?? [],
+          labels: listOf(tool, input, 'labels') ?? [],
           session,
           blockedBy,
-          refs: listOf(input, 'refs') ?? [],
+          refs: listOf(tool, input, 'refs') ?? [],
           created: stampOf(at),
           ...(topic === undefined ? {} : { topic }),
           ...(plan === undefined ? {} : { plan }),
@@ -179,41 +191,42 @@ export function taskTools(store: TaskStore, options: TaskToolsOptions): HostTool
         annotations: { title: 'Set Task', readOnlyHint: false, destructiveHint: false },
       },
       run: async (input, at) => {
-        const id = textOf(input, 'task');
-        if (id === undefined) throw new RpcError(INVALID_PARAMS, 'task is a task id');
+        const tool = 'task_set';
+        const id = textOf(tool, input, 'task');
+        if (id === undefined) throw invalidInput(tool, 'task is required.');
         const task = await store.task(id);
-        if (task === undefined) throw new RpcError(INVALID_PARAMS, `there is no task ${id}`);
-        const title = textOf(input, 'title');
+        if (task === undefined) throw invalidInput(tool, 'task must match the id of a known task (see task_list).');
+        const title = textOf(tool, input, 'title');
         if (title !== undefined) task.title = title;
         const status = input.status;
         if (status !== undefined && !isTaskStatus(status)) {
-          throw new RpcError(INVALID_PARAMS, `status is one of ${TASK_STATUSES.join(', ')}, and ${JSON.stringify(status)} is not`);
+          throw invalidInput(tool, `status must be ${oneOf.format(TASK_STATUSES)}.`);
         }
         const priority = input.priority;
         if (priority !== undefined && !isPriority(priority)) {
-          throw new RpcError(INVALID_PARAMS, `priority is one of high, medium, low, and ${JSON.stringify(priority)} is not`);
+          throw invalidInput(tool, `priority must be ${oneOf.format(PRIORITIES)}.`);
         }
         if (priority !== undefined) task.priority = priority;
-        const plan = textOf(input, 'plan');
+        const plan = textOf(tool, input, 'plan');
         if (plan !== undefined) {
-          await checkPlan(plan);
+          await checkPlan(tool, plan);
           task.plan = plan;
         }
-        const blockedBy = listOf(input, 'blockedBy');
+        const blockedBy = listOf(tool, input, 'blockedBy');
         if (blockedBy !== undefined) {
-          await checkBlockers(blockedBy);
+          await checkBlockers(tool, blockedBy);
           task.blockedBy = blockedBy;
         }
-        const labels = listOf(input, 'labels');
+        const labels = listOf(tool, input, 'labels');
         if (labels !== undefined) task.labels = labels;
-        const refs = listOf(input, 'refs');
+        const refs = listOf(tool, input, 'refs');
         if (refs !== undefined) task.refs = refs;
         for (const field of ['topic', 'bot', 'folder', 'session', 'active', 'note'] as const) {
-          const value = textOf(input, field);
+          const value = textOf(tool, input, field);
           if (value !== undefined) task[field] = value;
         }
         if (input.body !== undefined) {
-          if (typeof input.body !== 'string') throw new RpcError(INVALID_PARAMS, 'body is the task, in Markdown');
+          if (typeof input.body !== 'string') throw invalidInput(tool, 'body must be a string.');
           task.body = input.body;
         }
         if (status !== undefined) {
@@ -225,7 +238,7 @@ export function taskTools(store: TaskStore, options: TaskToolsOptions): HostTool
            */
           if (status === 'doing') {
             if (options.requireApproval && task.approved === undefined) {
-              throw new RpcError(INVALID_PARAMS, `task ${task.id} is not approved, so it may not start; ask somebody to approve it with task_approve`);
+              throw invalidInput(tool, `status doing needs task ${task.id} approved first; ask somebody to approve it (see task_approve).`);
             }
             if (task.started === undefined) task.started = stampOf(at);
           }
@@ -260,23 +273,28 @@ export function taskTools(store: TaskStore, options: TaskToolsOptions): HostTool
         annotations: { title: 'List Tasks', readOnlyHint: true, destructiveHint: false },
       },
       run: async (input) => {
+        const tool = 'task_list';
         const status = input.status;
         if (status !== undefined && !isTaskStatus(status)) {
-          throw new RpcError(INVALID_PARAMS, `status is one of ${TASK_STATUSES.join(', ')}, and ${JSON.stringify(status)} is not`);
+          throw invalidInput(tool, `status must be ${oneOf.format(TASK_STATUSES)}.`);
         }
         const approved = input.approved;
         if (approved !== undefined && typeof approved !== 'boolean') {
-          throw new RpcError(INVALID_PARAMS, 'approved is true or false');
+          throw invalidInput(tool, 'approved must be a boolean.');
         }
         const wanted = input.ready;
         if (wanted !== undefined && typeof wanted !== 'boolean') {
-          throw new RpcError(INVALID_PARAMS, 'ready is true or false');
+          throw invalidInput(tool, 'ready must be a boolean.');
         }
-        const by = textOf(input, 'by');
-        const since = textOf(input, 'since');
+        const by = textOf(tool, input, 'by');
+        // A date read as VS Code's list_sessions reads createdAfter, and refused in its words.
+        const since = input.since;
+        if (since !== undefined && typeof since !== 'string') {
+          throw invalidInput(tool, 'since must be an ISO-8601 timestamp string.');
+        }
         const sinceAt = since === undefined ? undefined : Date.parse(since);
         if (since !== undefined && Number.isNaN(sinceAt)) {
-          throw new RpcError(INVALID_PARAMS, `since is a date, and ${JSON.stringify(since)} is not`);
+          throw invalidInput(tool, 'since must be a valid ISO-8601 timestamp (e.g. 2025-01-31T00:00:00Z).');
         }
         const all = await store.tasks();
         const byId = new Map(all.map((one) => [one.id, one]));

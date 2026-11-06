@@ -73,6 +73,8 @@ The door asks for `mcp:call`. It is in `member`, and `admin` holds it through ev
 | A session's own token | 401: a session has its own tools endpoint |
 | No token, or one this host does not know | 401 |
 
+Each 401 carries `WWW-Authenticate: Bearer realm="ahpd"`, with `error="invalid_token"` when a token came that the door does not take.
+
 OAuth is not served yet. A client that asks for it is told to use a bearer token.
 
 ## What it does not do

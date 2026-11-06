@@ -64,6 +64,10 @@
   "peerDependencies": {
     "@ahpd/sdk": ">=0.14 <1"
   },
+  "dependencies": {
+    "jsonc-parser": "3.3.1",
+    "yaml": "2.9.0"
+  },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*"
   },
@@ -88,7 +92,7 @@
         "x-ahpd/computers/restart",
         "x-ahpd/computers/remove"
       ],
-      "tools": ["request_disposable_computer", "release_computer", "computer_exec"],
+      "tools": ["request_disposable_computer", "release_computer", "run_in_computer"],
       "sessionConfigs": ["computer"],
       "ports": ["computers", "containers"],
       "closers": ["the up time of every running machine"]
@@ -105,7 +109,7 @@
           "properties": {
             "command": { "type": "string", "description": "The program that reaches a box. Defaults to 'ssh'." },
             "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments placed before ssh's own, for a wrapper or a jump host." },
-            "connectTimeout": { "type": "integer", "minimum": 1, "description": "Seconds to wait for a box before giving up. Defaults to 10." },
+            "connectTimeout": { "type": "integer", "minimum": 1, "description": "Seconds to wait for a box before giving up. Defaults to 30." },
             "pollSeconds": { "type": "integer", "minimum": 1, "description": "Seconds between checks of each box, so its up time is billed up to the last check. Without it, only a listing updates the meter." },
             "machines": {
               "type": "object",
@@ -159,7 +163,7 @@
         "image": { "type": "string", "description": "The image machines are created from when none is named. Defaults to 'debian:bookworm-slim'." },
         "cpus": { "type": "string", "description": "CPU limit for every machine, as Docker's --cpus takes it." },
         "memory": { "type": "string", "description": "Memory limit for every machine, as Docker's --memory takes it." },
-        "max": { "type": "integer", "minimum": 1, "description": "Most machines that may exist at once. Defaults to 3." },
+        "max": { "type": "integer", "minimum": 1, "description": "Most machines that may exist at once when the agent's tool asks for another. Defaults to 3." },
         "label": { "type": "string", "description": "The label every machine carries. Defaults to 'ahpd.computer=1'." },
         "prefix": { "type": "string", "description": "Prefix for every machine name. Defaults to 'ahpd-computer'." },
         "sessionSetting": { "type": "boolean", "description": "Show a session setting for the machine a session runs in. On by default." },
@@ -224,7 +228,7 @@
         },
         "bodyMounts": { "type": "boolean", "description": "Let a person name their own mounts when creating a machine. Off by default." },
         "imageMounts": { "type": "boolean", "description": "Let a part mount from its own image. Set to false to mount every part from a volume filled once from it." },
-        "images": { "type": "array", "items": { "type": "string" }, "description": "Image patterns machines may be created from. Without it, any image is allowed." },
+        "images": { "type": "array", "items": { "type": "string" }, "description": "Images machines may be created from, as containers-policy.json image scopes: docker.io/library/node:22 (one image), docker.io/library/node (a repository), ghcr.io/acme (a namespace), ghcr.io (a registry), *.example.com (its subdomains). Without it, any image is allowed." },
         "devcontainer": {
           "type": ["object", "boolean"],
           "properties": {

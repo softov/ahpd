@@ -369,7 +369,7 @@ it('runs a session in a machine on a box\'s Docker nested, reached through that 
   expect(spawn?.workingDirectory).not.toBe(at.dir);
 
   // And a command a tool runs there is given the value too.
-  const tool = (options.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (options.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await tool.run({ id: 'docker-far.box', command: 'env' }, { provider: 'vaulted' } as never);
   const far = held(farFile(at.local)) as Held & { commands?: { env: Record<string, string>; dockerEnv: string[] }[] };
   expect(far.commands?.at(-1)?.env[BOX_TOKEN]).toBe(SECRET);

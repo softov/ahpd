@@ -1099,7 +1099,7 @@ refused `-32601`.
 | `vscode/devContainers/relayClose` | A notification of that surface: the relay ended, and it was not this client that ended it. [CONTAINERS.md](../plugins/CONTAINERS.md) |
 | `vscode/devContainers/closeConnection` | A notification of that surface: the connection is gone, so forget it. [CONTAINERS.md](../plugins/CONTAINERS.md) |
 
-A plain HTTP request on the WebSocket port is not AHP either, and `listen` answers it 401 when the handshake would refuse its token and 426 when it would admit it, both with `Access-Control-Allow-Origin: *` ([Test a token](../server/REMOTE.md#test-a-token)).
+A plain HTTP request on the WebSocket port is not AHP either, and `listen` answers it 401 when the handshake would refuse its token and 426 when it would admit it, both with `Access-Control-Allow-Origin: *` ([Test a token](../server/REMOTE.md#test-a-token)). The 401, there and at a refused handshake, carries the bearer challenge `bearerChallenge` words ([AUTHENTICATION.md](AUTHENTICATION.md)).
 
 ### Authentication
 

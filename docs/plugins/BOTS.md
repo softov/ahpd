@@ -118,7 +118,7 @@ A slug is fixed when the bot is made and an edit cannot move it. A deleted slug 
 
 ## The folder
 
-A bot works in a folder of its own, `<root>/<slug>` unless the body named one, where `root` is the plugin's option and starts at `~/.bots`. No two bots share a folder and an edit never moves one: two bots in one tree would be two of them working over each other, so a body naming a folder another bot has is refused `-32602`. The folder is made when the bot is made, so a bot has one whether or not anybody has talked to it yet.
+A bot works in a folder of its own, `<root>/<slug>` unless the body named one, where `root` is the plugin's option and starts at `~/.bots`. No two bots share a folder and an edit never moves one: two bots in one tree would be two of them working over each other, so a body naming a folder another bot has is refused `-32602`. A folder a body names outside `root` is refused `-32009`, `Permission denied: <folder>`, as the protocol answers a path outside the allowed set. The folder is made when the bot is made, so a bot has one whether or not anybody has talked to it yet.
 
 Its `AGENTS.md` is in that folder, with `CLAUDE.md` beside it - [The persona](#the-persona). A delete removes the daemon's own data for the bot, `<configDir>/bots/<slug>/`, and leaves the work folder and its `AGENTS.md` where they are: what a bot worked on is the person's to keep.
 
@@ -191,6 +191,8 @@ A back session may also end its turn without posting. What the main turn does th
 | `postNotice` | Ends with the final text as the reply. A turn with no text ends with the notice |
 
 A value outside those four is reported and `post` is used.
+
+A message the wake cannot hand to a back session ends the main turn failed, with `chat/error` and the reason, as VS Code ends a turn whose send failed: a chat no read of a bot opened, a name a message fills into one no session can have, a back session the host would not start, and a send the host refused. A back session's turn that failed fails the main turn the same way, typed `sendFailed`.
 
 ### The bot's rules
 

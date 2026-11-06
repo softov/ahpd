@@ -650,7 +650,10 @@ host.registerAdapter({
   read back; `input` is what the model passed, without the `connector` argument
   when it named one. `call.files` is the folder where the calling session's
   attachments are kept, when its store keeps one; it is absent on a session
-  with no folder. It answers a promise of the result, which the host hands the
+  with no folder. `call.setContent(content)` replaces what the running call
+  has produced so far, which a client is shown as the call's partial content,
+  `chat/toolCallContentChanged`; it is there where the host can say it. A call
+  with neither is handed no `call`. It answers a promise of the result, which the host hands the
   model as the tool's answer. An adapter with no `run` offers no action tool,
   and a `run` that throws is what the model is told, under the alias it named.
 - `check(connector)` is optional, and says whether the connector works with a call that needs its key. `connector` is the row `open` got. It answers `{ result, message? }`: `ok` when the service accepted the key, `denied` when it refused the credentials, `unreachable` when the service did not answer, or `failed` for anything else. The host runs it after each open: a put waits for the answer, so a put says whether the key is right, and a start does not, so a slow service cannot hold it. A check that has not answered in 10 seconds counts as `unreachable`, and one that throws is `failed` with its message. An adapter with no `check` leaves its connectors with no check.
@@ -689,7 +692,7 @@ host.registerAdapter({
 
 `openrouter` is the one the host ships with a `signIn`. A person signs in on OpenRouter's page, pastes the code, and the host exchanges it for the key. Both URLs are OpenRouter's public ones, so a connector's `endpoint` moves neither the sign-in nor the exchange.
 
-The `@ahpd/activepieces` plugin makes one adapter for each Activepieces piece its `pieces` option names, and runs the actions of each in a child process - [activepieces.md](activepieces.md).
+The `@ahpd/activepieces` plugin makes one adapter for each Activepieces piece its `pieces` option names, and runs the actions of each in its engine, the process Activepieces runs piece code in - [activepieces.md](activepieces.md).
 
 The schema can change between versions, and nothing migrates a stored
 connector: one whose config no longer fits shows as `invalid`, and one whose
@@ -988,6 +991,7 @@ nothing behaves exactly as it did before the field existed.
 | `version` | The `@ahpd/sdk` version actually in use |
 | `hostName` | What this host is called, for the work nobody started as themselves |
 | `configDir` | The folder the daemon keeps its own configuration in, where a plugin that has to keep a record puts its file |
+| `i18n` | The catalogs the plugin ships in `ahpd.i18n`, by locale, where it looks up the words it sends a person itself; see [Text in the client's language](#text-in-the-client-s-language) |
 | `log(line)` | One line to the daemon's log |
 | `say(line)` | One line in what the daemon announces about itself |
 | `problem(line)` | One item of your own you dropped, said before the daemon says it started, and a `warning` alert on the plugin's row |
@@ -1035,11 +1039,14 @@ The plugin speaks the protocol with those three and the types `@ahpd/sdk` alread
 Call it from `listening` or later, which is when a host exists to accept a connection.
 Asked for during `apply`, it throws a sentence saying so rather than answering a connection to nothing.
 Every call answers a connection of its own, and the daemon closes each one when `stopping` is raised, so a plugin that wants a shorter life closes its own.
+The handshake offers every protocol version the plugin speaks, most preferred first, as the specification has a client offer them: `SUPPORTED_PROTOCOL_VERSIONS` from `@microsoft/agent-host-protocol` is that list.
 
 ```ts
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+
 host.on('listening', async () => {
   const conn = host.connect();
-  await conn.request('initialize', { clientId: 'bot', protocolVersions: ['0.9.0'] });
+  await conn.request('initialize', { clientId: 'bot', protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
   await conn.request('createSession', { channel: 'ahp-session:/bot', provider: 'claude' });
   const opened = await conn.request('subscribe', { channel: 'ahp-session:/bot' }) as {
     snapshot: { state: { defaultChat: string } };
@@ -1049,7 +1056,12 @@ host.on('listening', async () => {
   await conn.request('subscribe', { channel: chat });
   conn.notify('dispatchAction', {
     channel: chat,
-    action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'Say hello.' } },
+    action: {
+      type: 'chat/turnStarted',
+      turnId: 't1',
+      startedAt: new Date().toISOString(),
+      message: { text: 'Say hello.', origin: { kind: 'systemNotification' } },
+    },
   });
 });
 ```
@@ -1497,8 +1509,15 @@ The value names a folder in the package. Each `<locale>.json` in it is one catal
 | `meta` | The plugin's `title` and `description` on the plugins screen |
 | `options.<key>` | One property of the `optionsSchema` |
 | `session.<key>` | One key of the new session form that the plugin declares |
+| `messages.<key>` | One thing the plugin says to a person itself, such as a notification it sends, keyed as its code looks it up |
 
-Each key takes `title`, `description`, `enum.<value>` for the label of one value, and `items.title`. A key that sets `enumDynamic` keeps its labels, because its values are data.
+Each key of `options` and `session` takes `title`, `description`, `enum.<value>` for the label of one value, and `items.title`. A key that sets `enumDynamic` keeps its labels, because its values are data.
+
+A message is one string, keyed as VS Code keys a `localize` call. The plugin looks it up itself in `host.i18n`, with the sdk's `translated`, in the locale of the person it is for:
+
+```ts
+const body = translated(['messages', 'sessions.notification.needsInput'], 'Attention needed.', device.lang, host.i18n);
+```
 
 The host looks up each string on its own. It tries the catalogs of the plugin that declared the key, then the host's own catalogs. In each, it tries the tag as given and then its language alone, so `pt.json` answers `pt` and `pt-BR`. A string that no catalog has stays in English. English is never in a catalog: it is the text the manifest and the code hold.
 
@@ -1583,6 +1602,8 @@ Six commands change the file the daemon loads, one moves an installed package, a
 | `x-ahpd/plugins/enable` | `plugin:enable` | Turns the plugin on, keeping its entry and its options. Takes `id` |
 | `x-ahpd/plugins/disable` | `plugin:disable` | Turns it off the same way. Takes `id` |
 | `x-ahpd/plugins/options` | `plugin:options` | Writes one option, checked against the plugin's own schema. Takes `id`, `key` and a `value`; a `value` left out takes the option out |
+
+An `install`, `update`, `remove` or `write` that npm fails is refused `-32603` with npm's own reason, as VS Code refuses a failure of its own work; a parameter the method cannot take is refused `-32602`.
 
 The `id` is the plugin's id, which is also the row's id and the root config key
 it is edited by. A value the schema marks `writeOnly` is answered `<set>`. A
@@ -2484,7 +2505,7 @@ resource write can carry neither an image nor a limit:
 | --- | --- |
 | `request_disposable_computer` | Start one. `image`, `cpus`, `memory` and `name` override what the host was configured with |
 | `release_computer` | Stop it and remove it. Nothing on it survives |
-| `computer_exec` | Run a command line inside it through `sh -lc` |
+| `run_in_computer` | Run a command line inside it through `sh -lc` |
 
 Each declares its `effects`, so a backend with a policy has something to ask a
 person on. Docker is the runtime that ships, chosen by `runtime`; the command,

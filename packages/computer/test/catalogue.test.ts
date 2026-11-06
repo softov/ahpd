@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
-import { computerCatalogue } from '../src/catalogue.js';
+import { CATALOGUE_PASS_MS, computerCatalogue } from '../src/catalogue.js';
 import { computerProvider } from '../src/provider.js';
 import { claimedOf, stateOf } from '../src/runtime.js';
 import { createHost } from '../../sdk/src/host.js';
@@ -95,6 +95,18 @@ it('answers every machine with its state and its status', async () => {
     { id: 'cold', record: { state: 'stopped', status: held.get('cold') } },
   ]);
   expect(catalogue.channel.grant).toBe('computer:read');
+});
+
+it('is read again on VS Code\'s five-minute pass over a catalogue its source changes without telling it', () => {
+  expect(CATALOGUE_PASS_MS).toBe(5 * 60 * 1000);
+});
+
+it('leaves a machine\'s state out where its runtime gives none', async () => {
+  const { runtime, put, held } = fake();
+  put('box', true);
+  const quiet = { ...runtime, state: async () => undefined } as ComputerRuntime;
+  const answer = await computerCatalogue(quiet).channel.snapshot(URI, undefined, 'ana') as { records: { id: string; record: Record<string, unknown> }[] };
+  expect(answer.records).toEqual([{ id: 'box', record: { status: held.get('box') } }]);
 });
 
 it('answers each person only the machines they own when asked', async () => {

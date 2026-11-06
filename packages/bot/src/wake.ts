@@ -4,7 +4,7 @@ import { contextBlock, timeWithOffset } from './context.js';
 import { prepareFolder } from './folder.js';
 import { userOf } from './names.js';
 import { isFilledName, TURN_WORD } from './record.js';
-import type { Bag, Owner, RecordCollection, SessionRequest } from '@ahpd/sdk';
+import type { Bag, CreatedBy, Owner, RecordCollection, SessionRequest } from '@ahpd/sdk';
 import type { ChatMessage, TurnHandle } from './chat.js';
 import type { BackSessions } from './names.js';
 import type { BotRecord } from './record.js';
@@ -273,8 +273,18 @@ export interface Wake {
  * talk to. The bot's rules are its `AGENTS.md` in its own folder, which trust
  * still loads.
  */
-export const sessionFor = (bot: BotRecord, owner: Owner): SessionRequest => {
+export const sessionFor = (bot: BotRecord, owner: Owner, createdBy?: CreatedBy): SessionRequest => {
   const provider = bot.preset ?? bot.harness;
+  /*
+   * The main session, chat and turn a back session was started for, recorded
+   * at its start as VS Code's create_session records the session that made
+   * one, which its clients place a related session by.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1920-L1927
+   */
+  const config = {
+    ...(bot.computer === undefined ? {} : { computer: bot.computer }),
+    ...(createdBy === undefined ? {} : { _meta: { 'agentHost/createdBySession': createdBy } }),
+  };
   return {
     owner,
     ...(provider === undefined ? {} : { provider }),
@@ -282,7 +292,7 @@ export const sessionFor = (bot: BotRecord, owner: Owner): SessionRequest => {
     trusted: true,
     userSettings: false,
     ...(bot.preset !== undefined || bot.model === undefined ? {} : { model: { id: bot.model } }),
-    ...(bot.computer === undefined ? {} : { config: { computer: bot.computer } }),
+    ...(Object.keys(config).length === 0 ? {} : { config }),
     title: bot.name,
     tools: ['post_message'],
   };
@@ -314,7 +324,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * never timed.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2030-L2035
    */
-  const begun = new Map<string, { turn: string; at: number }>();
+  const startedTurns = new Map<string, { turn: string; at: number }>();
   /**
    * The messages on their way to a back session, by the main turn they belong
    * to: how many are, and whether a client stopped that turn meanwhile.
@@ -331,7 +341,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * of it has taken up, as a client takes back one it queued: each would
    * otherwise run there as a turn nobody waits on.
    */
-  const takeBack = async (back: string, waiting: Set<string>): Promise<void> => {
+  const removePendingMessages = async (back: string, waiting: Set<string>): Promise<void> => {
     if (waiting.size === 0) return;
     let looked: Looked;
     try {
@@ -360,7 +370,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1483
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2030-L2035
    */
-  const cancelBack = async (back: string): Promise<void> => {
+  const cancelSubagent = async (back: string): Promise<void> => {
     let looked: Looked;
     try {
       looked = await seams.look(back);
@@ -370,7 +380,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       return;
     }
     if (looked.turn === undefined) return;
-    const clock = begun.get(back);
+    const clock = startedTurns.get(back);
     const duration = clock?.turn === looked.turn ? Date.now() - clock.at : 0;
     let refused: string | undefined;
     try {
@@ -449,7 +459,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * together for one name start one session, which is the same guard `chatOf` in
    * the provider keeps over the main chats.
    */
-  const sessionNamed = async (bot: BotRecord, owner: Owner, user: string, name: string): Promise<string> => {
+  const sessionNamed = async (bot: BotRecord, owner: Owner, user: string, name: string, createdBy?: CreatedBy): Promise<string> => {
     /*
      * The agent before the row: a record that now names an agent its owner may
      * not use is refused even where a session of an earlier record is still
@@ -494,7 +504,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
        * the tree is isolated, and a reader that learned the URI only after the
        * start answered would miss it.
        */
-      const session = await seams.sessions.start(sessionFor(bot, owner), (uri) => {
+      const session = await seams.sessions.start(sessionFor(bot, owner, createdBy), (uri) => {
         named = uri;
         started.set(uri, bot.id);
       }).catch((error: unknown) => {
@@ -564,8 +574,8 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
        */
       const backs = [...answering].filter(([, held]) => held.session === session && held.turnId === turnId);
       for (const [back, held] of backs) {
-        if (pending === undefined) await takeBack(back, held.waiting);
-        await cancelBack(back);
+        if (pending === undefined) await removePendingMessages(back, held.waiting);
+        await cancelSubagent(back);
       }
     },
 
@@ -657,32 +667,41 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
         // session that is theirs is answered with its bot's connectors, and a
         // message is what may build its first tool list.
         await filled;
+        /*
+         * A message with nothing to send it to, or whose send failed, ends the
+         * main turn failed with the cause, as VS Code's host ends a turn whose
+         * send failed; a holder with no failed ending says the cause as a notice.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2329-L2337
+         */
+        const failed = (words: string): void => {
+          if (handle.fail !== undefined) handle.fail(words);
+          else handle.notice(words);
+        };
         const chat = await chatOf(message.session);
         if (chat === undefined) {
           /*
            * A chat no read of a bot opened, so nothing says which bot the person
            * is talking to. The turn ends here rather than staying open: there is
-           * nothing behind this chat to answer it, which is what a chat with no
-           * bot was before there was a wake at all.
+           * nothing behind this chat to answer it.
            */
           seams.problem(`${message.session} is a chat no bot on this host opened`);
-          handle.end();
+          failed(`${message.session} is a chat no bot on this host opened`);
           return;
         }
         const { bot, owner } = chat;
         const name = nameFor(bot, message);
         if (!isFilledName(name)) {
-          handle.notice(`${name} is not a name a back session can have: lowercase letters, digits and a dash, at most eighty`);
+          failed(`${name} is not a name a back session can have: lowercase letters, digits and a dash, at most eighty`);
           return;
         }
         let session: string;
         let looked: Looked;
         try {
-          session = await sessionNamed(bot, owner, userOf(owner), name);
+          session = await sessionNamed(bot, owner, userOf(owner), name, { session: message.session, chat: message.chat, turnId: message.turnId });
           looked = await seams.look(session);
         }
         catch (error) {
-          handle.notice(`${bot.name} was not woken: ${reason(error)}`);
+          failed(`${bot.name} was not woken: ${reason(error)}`);
           return;
         }
         // A message whose main turn a client stopped on its way is not sent.
@@ -746,14 +765,14 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
           // Nothing was said, so nothing is coming: the turn ends here rather
           // than waiting for an answer this session never received.
           answering.delete(session);
-          handle.notice(`${bot.name} was not woken: ${refused}`);
+          failed(`${bot.name} was not woken: ${refused}`);
           return;
         }
         // A send a stop came during: what it sent is taken back, and the turn
         // running there is stopped as well.
         if (delivery.stopped) {
-          await takeBack(session, waiting);
-          await cancelBack(session);
+          await removePendingMessages(session, waiting);
+          await cancelSubagent(session);
         }
       }
       finally {
@@ -766,7 +785,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       const held = answering.get(backSession);
       if (held === undefined) return;
       if (queuedMessageId !== undefined) held.waiting.delete(queuedMessageId);
-      begun.set(backSession, { turn: backTurn, at: Date.now() });
+      startedTurns.set(backSession, { turn: backTurn, at: Date.now() });
     },
 
     began: (backSession, session, handle, turnId, chat, backTurn) => {
@@ -781,7 +800,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       const bot = slug === undefined ? undefined : seams.store.get(slug);
       const name = bot?.name ?? '';
       answering.set(backSession, { session, turnId, handle, bot: name, waiting: new Set() });
-      begun.set(backSession, { turn: backTurn, at: Date.now() });
+      startedTurns.set(backSession, { turn: backTurn, at: Date.now() });
       handle.working?.(chat, name);
     },
   };

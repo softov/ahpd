@@ -18,7 +18,8 @@ ahpc --host ws://127.0.0.1:9200
 ```
 
 Type something. It says it back. Set **Voice** on the composer to `shouty` or
-`backwards` and type again.
+`backwards` and type again. Pick `/shout` from the slash menu, and the rest of
+the line is said back loudly whatever the voice.
 
 ## What is actually here
 

@@ -1,8 +1,8 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Turn } from '@microsoft/agent-host-protocol';
-import { idOf } from '@ahpd/sdk';
-import type { Agent, Bag, Listed, Session, Start, WireTurn } from '@ahpd/sdk';
+import { idOf, uriOf } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, MessageAttachment, MessageFrom, Session, Start, WireTurn } from '@ahpd/sdk';
 
 /**
  * A backend with tools, and the two ways one stops to ask.
@@ -23,8 +23,8 @@ import type { Agent, Bag, Listed, Session, Start, WireTurn } from '@ahpd/sdk';
  *
  * 1. `notes()` at the bottom is the `Agent`, and is echo's again except for
  *    the config key.
- * 2. `converse()` is the `Session`. `runTool` and `ask` are the two shapes
- *    worth taking away; everything else is bookkeeping around them.
+ * 2. `createSession()` is the `Session`. `runTool` and `requestInput` are the
+ *    two shapes worth taking away; everything else is bookkeeping around them.
  *
  * What this shows that echo does not:
  *
@@ -58,8 +58,11 @@ interface Waiting {
   id: string;
   /** The session-level entry, kept so the snapshot can list it. */
   entry: Bag;
-  /** Let the parked turn go. `answers` is empty for a confirmation. */
-  settle(accepted: boolean, answers: Bag): void;
+  /**
+   * Let the parked turn go. `answers` is empty for a confirmation, and
+   * `response` is the kind the client answered a question with, where it sent one.
+   */
+  settle(accepted: boolean, answers: Bag, response?: string): void;
 }
 
 /** What one line asks for. Anything unrecognised is `help`. */
@@ -69,10 +72,13 @@ type Line =
   | { verb: 'help' };
 
 const parse = (said: string): Line => {
-  const [verb = '', ...rest] = said.trim().split(/\s+/);
+  const [first = '', ...rest] = said.trim().split(/\s+/);
+  // A command picked from the slash menu the probe fills runs as the same
+  // command typed, as VS Code's providers run the commands they offer.
+  const verb = (first.startsWith('/') ? first.slice(1) : first).toLowerCase();
   const name = rest[0];
-  if (verb.toLowerCase() === 'read') return { verb: 'read', ...(name ? { name } : {}) };
-  if (verb.toLowerCase() === 'write') {
+  if (verb === 'read') return { verb: 'read', ...(name ? { name } : {}) };
+  if (verb === 'write') {
     return { verb: 'write', ...(name ? { name } : {}), text: rest.slice(1).join(' ') };
   }
   return { verb: 'help' };
@@ -91,12 +97,20 @@ const nameOf = (said: string): string | undefined => {
   return one.endsWith('.md') ? one : `${one}.md`;
 };
 
-const HELP = [
-  'I keep notes in a directory. Two things I can do:',
+/** What the two commands do, said by the `ask` setting in force, since that decides which of them asks. */
+const helpOf = (ask: Ask): string => [
+  'I keep notes in a directory. Two things I can do, typed or picked from the slash menu:',
   '',
-  '- `read <name>` - read one. Leave the name out and I will ask which.',
-  '- `write <name> <text>` - write one. I will ask before I do.',
+  `- \`read <name>\` - read one.${ask === 'always' ? ' I will ask before I do.' : ''} Leave the name out and I will ask which.`,
+  `- \`write <name> <text>\` - write one.${ask === 'never' ? '' : ' I will ask before I do.'}`,
 ].join('\n');
+
+/**
+ * A title seeded from a first message, as VS Code's host seeds one: trimmed,
+ * each run of whitespace one space, and cut to 200 characters.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L252-L255
+ */
+const titleOf = (text: string): string => Array.from(text.trim().replace(/\s+/g, ' ')).slice(0, 200).join('').trim();
 
 /** How to build the notes backend. */
 export interface NotesOptions {
@@ -116,8 +130,11 @@ export interface NotesOptions {
 interface Kept {
   id: string;
   title: string;
+  /** When the session began, which its later turns leave as it was. */
   createdAt: string;
   modifiedAt: string;
+  /** The folder the session worked in. */
+  workingDirectory: string;
   turns: Bag[];
 }
 
@@ -181,7 +198,7 @@ export function notes(options: NotesOptions): Agent<Session> {
     }
   };
 
-  function converse(start: Start): Session {
+  function createSession(start: Start): Session {
     const settings = { ...start.settings };
     /** Finished turns. The running one is `active` and is deliberately not here. */
     const turns: Bag[] = [...(start.seed ?? [])];
@@ -196,6 +213,8 @@ export function notes(options: NotesOptions): Agent<Session> {
     let activity: string | undefined;
     let draft: Bag | undefined;
     const id = start.resume ?? idOf(start.uri);
+    /** When the session began: a resumed one keeps the moment it first did. */
+    const created = kept.get(id)?.createdAt ?? modified;
     const where = start.workingDirectory ?? dir;
 
     /** Tool call parts by their call id, so a result can find the part it belongs to. */
@@ -203,8 +222,9 @@ export function notes(options: NotesOptions): Agent<Session> {
     const waiting = new Map<string, Waiting>();
 
     const said = start.seed?.[0];
-    if (said) title = String((said.message as Bag | undefined)?.text ?? title).slice(0, 60);
+    if (said) title = titleOf(String((said.message as Bag | undefined)?.text ?? '')) || title;
 
+    /** The chat's modified time, which moves at a turn's start and its end. */
     const touch = (): void => { modified = new Date().toISOString(); };
 
     const doing = (what: string | undefined): void => {
@@ -223,36 +243,37 @@ export function notes(options: NotesOptions): Agent<Session> {
     const status = (): number => (waiting.size > 0 ? 24 : active ? 8 : 1);
 
     const remember = (): void => {
-      kept.set(id, { id, title, createdAt: modified, modifiedAt: modified, turns: [...turns] });
+      kept.set(id, { id, title, createdAt: created, modifiedAt: modified, workingDirectory: where, turns: [...turns] });
     };
 
     const rest = (ms: number): Promise<void> => new Promise((wake) => { setTimeout(wake, ms); });
 
     /** Both halves of `inputNeeded`, which is a list keyed by id. */
-    const wants = (held: Waiting): void => {
+    const setInputNeeded = (held: Waiting): void => {
       waiting.set(held.id, held);
       start.emit('session', { type: 'session/inputNeededSet', request: held.entry });
-      touch();
     };
-    const wanted = (id: string): void => {
+    const removeInputNeeded = (id: string): void => {
       waiting.delete(id);
       start.emit('session', { type: 'session/inputNeededRemoved', id });
-      touch();
     };
 
     /**
-     * Prose, streamed.
+     * Prose, streamed into a response part.
      *
      * `chat/responsePart` opens it and `chat/delta` fills it, in that order:
-     * a delta naming a part nobody opened appends to nothing.
+     * a delta naming a part nobody opened appends to nothing. It stops once
+     * its turn is not the one running, as a stopped turn's work stops.
      */
-    const say = async (turn: Bag, text: string): Promise<void> => {
+    const responsePart = async (turn: Bag, text: string): Promise<void> => {
+      if (closed || active !== turn) return;
       const part: Bag = { id: `${String(turn.id)}:${String((turn.responseParts as Bag[]).length)}`, kind: 'markdown', content: '' };
       (turn.responseParts as Bag[]).push(part);
       start.emit('chat', { type: 'chat/responsePart', turnId: turn.id, part });
       for (const word of text.split(' ')) {
-        if (closed) return;
+        if (closed || active !== turn) return;
         if (pace > 0) await rest(pace);
+        if (closed || active !== turn) return;
         const chunk = part.content === '' ? word : ` ${word}`;
         part.content = `${String(part.content)}${chunk}`;
         start.emit('chat', { type: 'chat/delta', turnId: turn.id, partId: part.id, content: chunk });
@@ -266,25 +287,29 @@ export function notes(options: NotesOptions): Agent<Session> {
      * same way `chat/toolCallStart` does - so the part is held here and never
      * announced with `chat/responsePart`, or the question appears twice.
      *
-     * Resolves with the answers, or nothing if the person declined.
+     * Resolves with the answers, or nothing if the person did not accept or
+     * the turn was stopped.
      */
-    const ask = async (turn: Bag, request: Bag): Promise<Bag | undefined> => {
+    const requestInput = async (turn: Bag, request: Bag): Promise<Bag | undefined> => {
       const part: Bag = { id: String(request.id), kind: 'inputRequest', request };
       (turn.responseParts as Bag[]).push(part);
       start.emit('chat', { type: 'chat/inputRequested', request });
-      const given = await new Promise<Bag | undefined>((settle) => {
-        wants({
+      const given = await new Promise<{ accepted: boolean; answers: Bag; response?: string }>((settle) => {
+        setInputNeeded({
           id: String(request.id),
           entry: { id: request.id, chat: start.chatUri, kind: 'chatInput', request },
-          settle: (accepted, answers) => { settle(accepted ? answers : undefined); },
+          settle: (accepted, answers, response) => { settle({ accepted, answers, ...(response !== undefined ? { response } : {}) }); },
         });
       });
+      // A question a stop ended keeps no response, as the protocol's reducer
+      // keeps none, and the turn's work stops with it.
+      if (active !== turn) return undefined;
       // On the part this backend holds, so a snapshot shows the question
-      // answered. Every client is told by the host, which says the
-      // `chat/inputCompleted` back once `answer` has taken it.
-      part.response = given ? 'accept' : 'decline';
-      if (given) (part.request as Bag).answers = given;
-      return given;
+      // answered as the client answered it. Every client is told by the host,
+      // which says the `chat/inputCompleted` back once `answer` has taken it.
+      part.response = given.response ?? (given.accepted ? 'accept' : 'decline');
+      if (given.accepted) (part.request as Bag).answers = given.answers;
+      return given.accepted ? given.answers : undefined;
     };
 
     /** What one tool call is asked to do, and what it says it did. */
@@ -318,10 +343,13 @@ export function notes(options: NotesOptions): Agent<Session> {
     const runTool = async (turn: Bag, tool: Tool): Promise<boolean> => {
       const callId = crypto.randomUUID();
       const asks = tool.confirmationTitle !== undefined;
+      // The record a snapshot and the session's inputNeeded entry show, with
+      // the sentence `toolCallReady` says, which the protocol's call requires.
       const call: Bag = {
         toolCallId: callId,
         toolName: tool.name,
         displayName: tool.displayName,
+        invocationMessage: tool.invocation,
         toolInput: tool.input,
         status: asks ? 'pending-confirmation' : 'running',
         ...(asks ? { confirmationTitle: tool.confirmationTitle } : {}),
@@ -352,14 +380,18 @@ export function notes(options: NotesOptions): Agent<Session> {
 
       if (asks) {
         const allowed = await new Promise<boolean>((settle) => {
-          wants({
+          setInputNeeded({
             id: callId,
             entry: { id: callId, chat: start.chatUri, kind: 'toolConfirmation', turnId: turn.id, toolCall: call },
             settle: (accepted) => { settle(accepted); },
           });
         });
+        // A stop ends the turn and the call with it, as VS Code aborts the
+        // work a stopped turn had parked.
+        if (active !== turn) return false;
         call.status = allowed ? 'running' : 'cancelled';
         if (allowed) call.confirmed = 'user-action';
+        else call.reason = 'denied';
         // Said back, like every other action a client originates.
         start.emit('chat', {
           type: 'chat/toolCallConfirmed',
@@ -384,6 +416,7 @@ export function notes(options: NotesOptions): Agent<Session> {
         told = wrong instanceof Error ? wrong.message : String(wrong);
       }
       if (tool.edits !== undefined) start.onFileEdit?.(String(turn.id), tool.edits, 'after');
+      if (active !== turn) return false;
 
       /*
        * A tool that failed is `completed`, and says so in its result.
@@ -436,7 +469,7 @@ export function notes(options: NotesOptions): Agent<Session> {
           allowFreeformInput: true,
         }],
       };
-      const given = await ask(turn, request);
+      const given = await requestInput(turn, request);
       if (!given) return undefined;
       const answer = (given.name ?? {}) as Bag;
       const value = (answer.value ?? {}) as Bag;
@@ -454,13 +487,22 @@ export function notes(options: NotesOptions): Agent<Session> {
      * is done; `waited` is such a turn, worked now. The turn it replaced runs
      * on, in no history.
      */
-    const beginTurn = (turnId: string, text: string, waited?: Bag): void => {
-      if (waited === undefined && title === 'Notes session' && text) {
-        title = text.slice(0, 60);
+    const sendMessage = (turnId: string, text: string, from?: MessageFrom, attachments?: MessageAttachment[], waited?: Bag): void => {
+      const seeded = titleOf(text);
+      if (waited === undefined && title === 'Notes session' && seeded !== '') {
+        title = seeded;
         start.emit('session', { type: 'session/titleChanged', title });
       }
       const startedAt = new Date().toISOString();
-      const turn: Bag = waited ?? { id: turnId, startedAt, message: { text }, responseParts: [] };
+      // The message as the client sent it, its origin and attachments with it:
+      // a client reads `message.origin` of every turn it is served.
+      const message: Bag = {
+        text,
+        ...(from?.origin !== undefined ? { origin: from.origin } : {}),
+        ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+      };
+      const turn: Bag = waited ?? { id: turnId, startedAt, message, responseParts: [] };
       if (waited === undefined && (active !== undefined || handed.length > 0)) {
         replaced.add(String((handed.at(-1)?.turn ?? active)?.id));
         handed.push({ turn, text });
@@ -472,19 +514,31 @@ export function notes(options: NotesOptions): Agent<Session> {
       const began = Date.now();
 
       void (async () => {
+        let failure: string | undefined;
         try {
           await work(turn, text);
         } catch (wrong) {
-          await say(turn, wrong instanceof Error ? wrong.message : String(wrong));
+          failure = wrong instanceof Error ? wrong.message : String(wrong);
         }
         if (closed || active !== turn) return;
         turn.duration = Date.now() - began;
+        /*
+         * A turn that failed ends in `chat/error` with the error as its last
+         * part, and one that did not ends complete, as VS Code's host ends a
+         * failed send and a finished one:
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2329-L2337
+         */
+        const part: Bag | undefined = failure === undefined ? undefined : { kind: 'error', error: { errorType: 'sendFailed', message: failure } };
+        if (part !== undefined) (turn.responseParts as Bag[]).push(part);
+        turn.state = part === undefined ? 'complete' : 'error';
         if (!replaced.delete(turnId)) turns.push(turn);
         active = undefined;
         doing(undefined);
         touch();
         remember();
-        start.emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
+        start.emit('chat', part === undefined
+          ? { type: 'chat/turnComplete', turnId, duration: turn.duration }
+          : { type: 'chat/error', turnId, duration: turn.duration, part });
         sendNext();
       })();
       touch();
@@ -496,18 +550,18 @@ export function notes(options: NotesOptions): Agent<Session> {
       const policy = (settings.ask ?? 'writes') as Ask;
 
       if (line.verb === 'help') {
-        await say(turn, HELP);
+        await responsePart(turn, helpOf(policy));
         return;
       }
 
       const named = line.name ?? await whichNote(turn);
       if (named === undefined) {
-        await say(turn, 'No note named, so nothing to do.');
+        await responsePart(turn, 'No note named, so nothing to do.');
         return;
       }
       const file = nameOf(named);
       if (file === undefined) {
-        await say(turn, `\`${named}\` is not a name I will use as a file.`);
+        await responsePart(turn, `\`${named}\` is not a name I will use as a file.`);
         return;
       }
       const path = join(dir, file);
@@ -525,7 +579,7 @@ export function notes(options: NotesOptions): Agent<Session> {
             return held === '' ? `${file} is empty` : held;
           },
         });
-        await say(turn, ran ? `That is all of ${file}.` : `Left ${file} unread.`);
+        await responsePart(turn, ran ? `That is all of ${file}.` : `Left ${file} unread.`);
         return;
       }
 
@@ -543,14 +597,14 @@ export function notes(options: NotesOptions): Agent<Session> {
           return `Wrote ${String(line.text.length + 1)} bytes to ${file}`;
         },
       });
-      await say(turn, ran ? `${file} is saved.` : `Left ${file} alone.`);
+      await responsePart(turn, ran ? `${file} is saved.` : `Left ${file} alone.`);
     };
 
     /** The next turn handed while another ran, worked once nothing runs. */
     const sendNext = (): void => {
       if (active || closed) return;
       const first = handed.shift();
-      if (first !== undefined) beginTurn(String(first.turn.id), first.text, first.turn);
+      if (first !== undefined) sendMessage(String(first.turn.id), first.text, undefined, undefined, first.turn);
     };
 
     return {
@@ -566,7 +620,7 @@ export function notes(options: NotesOptions): Agent<Session> {
       status,
       title: () => title,
       modifiedAt: () => modified,
-      workingDirectories: () => [`file://${where}`],
+      workingDirectories: () => [uriOf(where)],
 
       sessionState: () => ({
         // No `resource`: it is declared on `SessionSummary` and not on
@@ -577,7 +631,7 @@ export function notes(options: NotesOptions): Agent<Session> {
         lifecycle: 'ready',
         defaultChat: start.chatUri,
         chats: [{ resource: start.chatUri, title }],
-        workingDirectories: [`file://${where}`],
+        workingDirectories: [uriOf(where)],
         customizations: start.seedCustomizations ?? [],
         ...(activity !== undefined ? { activity } : {}),
         config: { schema: start.schema(), values: { ...settings } },
@@ -598,7 +652,7 @@ export function notes(options: NotesOptions): Agent<Session> {
         ...(draft !== undefined ? { draft } : {}),
       }),
 
-      sendMessage: (turnId, text) => { beginTurn(turnId, text); },
+      sendMessage: (turnId, text, from, attachments) => { sendMessage(turnId, text, from, attachments); },
 
       // Notes are taken on no model and as no agent, so a pick of either is
       // kept by nothing.
@@ -619,8 +673,10 @@ export function notes(options: NotesOptions): Agent<Session> {
         // The chat's turn is the last one handed; the turns it took the place
         // of stop with it, in no history.
         const turn = handed.at(-1)?.turn ?? active;
+        // Each parked call and question is let go, and what it was parked in
+        // stops there: by the time it resumes its turn is not the running one.
         for (const held of [...waiting.values()]) {
-          wanted(held.id);
+          removeInputNeeded(held.id);
           held.settle(false, {});
         }
         if (!turn) return;
@@ -654,7 +710,7 @@ export function notes(options: NotesOptions): Agent<Session> {
       confirm: (toolCallId, approved) => {
         const held = waiting.get(toolCallId);
         if (!held || held.entry.kind !== 'toolConfirmation') return false;
-        wanted(held.id);
+        removeInputNeeded(held.id);
         held.settle(approved, {});
         return true;
       },
@@ -663,11 +719,11 @@ export function notes(options: NotesOptions): Agent<Session> {
        * Answer a question, keyed by the request's own id. False when nothing
        * is waiting on it; the host says the `chat/inputCompleted` back on true.
        */
-      answer: (requestId, accepted, answers) => {
+      answer: (requestId, accepted, answers, response) => {
         const held = waiting.get(requestId);
         if (!held || held.entry.kind !== 'chatInput') return false;
-        wanted(held.id);
-        held.settle(accepted, answers as Bag);
+        removeInputNeeded(held.id);
+        held.settle(accepted, answers as Bag, response);
         return true;
       },
 
@@ -726,7 +782,7 @@ export function notes(options: NotesOptions): Agent<Session> {
       title: session.title,
       createdAt: session.createdAt,
       modifiedAt: session.modifiedAt,
-      workingDirectories: [`file://${dir}`],
+      workingDirectories: [uriOf(session.workingDirectory)],
     })),
 
     // Asserted, not checked. This example assembles a turn by mutation - a
@@ -735,6 +791,6 @@ export function notes(options: NotesOptions): Agent<Session> {
     // literal where it is built; doing the same here is worth a pass of its own.
     transcript: async (id) => kept.get(id)?.turns as WireTurn<Turn>[] | undefined,
 
-    create: converse,
+    create: createSession,
   };
 }

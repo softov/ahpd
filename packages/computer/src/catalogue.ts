@@ -8,16 +8,26 @@ import type { ComputerRuntime } from './runtime.js';
  *
  * A subscribe answers `{ records }`, each entry `{ id, record }` where the
  * record is `{ state, status }`: `state` is what `computer://<id>/state` reads,
- * and `status` is what `computer://<id>/status` reads. `added`, `changed` and
+ * where the runtime gives one, and `status` is what `computer://<id>/status`
+ * reads. `added`, `changed` and
  * `removed` follow it, as every records channel sends them. A subscription to
  * `x-ahpd-computers://?owner=me` is the caller's own machines.
  *
  * The runtime is the record of truth and has no event stream, so the channel
- * hears only what `refresh` is called for: the changes this plugin makes.
+ * hears what `refresh` is called for: the changes this plugin makes, and a
+ * pass every `CATALOGUE_PASS_MS` for the changes made outside it.
  */
 
 /** The channel's scheme. */
 export const COMPUTERS_SCHEME = 'x-ahpd-computers';
+
+/**
+ * How often the channel is read again for the changes made outside this
+ * plugin: VS Code's periodic pass over a catalogue whose source can change
+ * without telling it, five minutes.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostCatalogReconciliationService.ts#L22
+ */
+export const CATALOGUE_PASS_MS = 5 * 60 * 1000;
 
 /**
  * The channel over this runtime, which reading needs `computer:read` for.
@@ -36,9 +46,11 @@ export const computerCatalogue = (
       /*
        * The state is the runtime's own answer rather than a word read out of
        * the record beside it: a client round-trips this one, and a runtime
-       * whose machine carries no Docker record answers it too.
+       * whose machine carries no Docker record answers it too. A runtime that
+       * gives none leaves it out.
        */
-      return { state: await runtime.state(id) ?? 'stopped', status };
+      const state = await runtime.state(id);
+      return { ...(state === undefined ? {} : { state }), status };
     },
   }, {
     grant: 'computer:read',

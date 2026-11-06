@@ -121,8 +121,8 @@ Every verb and every flag is one declaration under [`src/commands`](https://gith
 | `--path <dir>` | A directory this host serves. Repeatable; the first is the default a client gets when it names none |
 | `--no-cwd` | Serve only the directories named above, and never ask about the working directory. Refused when none is named |
 | `--worktrees-root <dir>` | Keep every session worktree under this folder, as `<dir>/<repo>/<name>`. Default: `<repo>.worktrees` beside each repository |
-| `--connection-token <secret>` | Require this secret on every connection |
-| `--connection-token-file <p>` | Require the secret in this file, writing a fresh one if it is not there |
+| `--connection-token <secret>` | Require this secret on every connection. It is made of `0-9`, `a-z`, `A-Z`, `_` and `-`, as VS Code's agent host holds one |
+| `--connection-token-file <p>` | Require the secret in this file, writing a fresh one if it is not there; the secret in it is made of the same characters |
 | `--without-connection-token` | Accept any connection |
 | `--config-file <p>` | Read this file instead of the one under the configuration directory |
 | `--stdio` | Serve one connection over stdin and stdout instead of binding a port. One line of JSON per frame, no token |

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { pluginHost } from '@ahpd/sdk';
+import { memoryRecords, pluginHost, raise } from '@ahpd/sdk';
 import { apply, defaults, name, settingsOf, title } from '../src/plugin.js';
 import manifest from '../package.json' with { type: 'json' };
-import type { LoaderContext } from '@ahpd/sdk';
+import type { LoaderContext, RecordStore } from '@ahpd/sdk';
 
 /*
  * The two settings of the tasks plugin.
@@ -75,5 +75,37 @@ describe('the tasks plugin', () => {
     await apply(host, { requireApproval: true, sweepAfterDays: 30 });
     seal();
     expect(problems).toEqual([]);
+  });
+
+  /*
+   * A pass that fails is something that went wrong in the daemon, which goes
+   * to its log, as VS Code's lifecycle pass logs its own:
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L102
+   */
+  it('logs a sweep that did not finish, and raises no alert for it', async () => {
+    const logged: string[] = [];
+    const problems: string[] = [];
+    const records = memoryRecords();
+    // A store whose plans cannot be listed, which is the first thing a sweep reads.
+    const failing: RecordStore = {
+      ...records,
+      collection: async (named, wanted) => {
+        const collection = await records.collection(named, wanted);
+        return named === 'plans' ? { ...collection, list: async () => { throw new Error('the disk went away'); } } : collection;
+      },
+    };
+    const { host, contribution, seal } = pluginHost(name, { ...context(), log: (line) => { logged.push(line); } }, {
+      records: () => failing,
+      alert: (alert) => { problems.push(alert.text); },
+    });
+    await apply(host, { sweepAfterDays: 30 });
+    seal();
+    const until = Date.now() + 5000;
+    while (!logged.some((line) => line.includes('the sweep did not finish')) && Date.now() < until) {
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    }
+    expect(logged).toContain('tasks: the sweep did not finish: the disk went away');
+    expect(problems).toEqual([]);
+    await raise(contribution.events, { type: 'stopping' });
   });
 });

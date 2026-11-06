@@ -23,8 +23,8 @@ import type { Alert, Bag, Catalogs, Grant, Loaded, PluginMethod, PluginSpec, Plu
 import type { Applied } from './applyplugins.js';
 import { maskOption, SET, withoutSpecSecrets, withoutUserinfoIn } from './commands/config.js';
 import {
-  enableNames, installPlugins, oneAtATime, packageOf, pluginRoot, removePlugins, run as runProgram, setPluginEnabled, setPluginOption, specsIn,
-  updatePlugins,
+  enableNames, installPlugins, NpmFailure, oneAtATime, packageOf, pluginRoot, removePlugins, run as runProgram, setPluginEnabled, setPluginOption,
+  specsIn, updatePlugins,
 } from './install.js';
 import type { Moved, Runner } from './install.js';
 import { describePlugin, sourceOf, optionsSchemaLoaded, optionsSchemaOf, pluginIdOf, runPlugins, schemaOf } from './plugins.js';
@@ -37,6 +37,15 @@ const DOMAIN = 'x-ahpd/plugins';
 
 /** The code a wrong param is refused with, which the protocol calls `INVALID_PARAMS`. */
 const INVALID_PARAMS = -32602;
+
+/**
+ * The refusal of an install, update or remove that failed: InternalError where
+ * npm, the daemon's own work, failed, as VS Code refuses a failure of its own
+ * work, and InvalidParams where what was asked could not be taken.
+ * https://www.jsonrpc.org/specification#error_object
+ */
+const failedWith = (error: unknown): RpcError =>
+  new RpcError(error instanceof NpmFailure ? -32603 : INVALID_PARAMS, withoutUserinfoIn(reason(error)));
 
 /** The message of a throw, whatever was thrown. */
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -504,7 +513,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           });
         }
         catch (error) {
-          throw new RpcError(INVALID_PARAMS, withoutUserinfoIn(reason(error)));
+          throw failedWith(error);
         }
         return {};
       }).then((answer) => {
@@ -548,7 +557,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           if (folder !== undefined && !keep) rmSync(folder, { recursive: true, force: true });
         }
         catch (error) {
-          throw new RpcError(INVALID_PARAMS, withoutUserinfoIn(reason(error)));
+          throw failedWith(error);
         }
         return { id };
       });
@@ -654,9 +663,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           // and the files in it, are as they were before the write arrived.
           rmSync(staged, { recursive: true, force: true });
           const said = done.stderr.trim();
-          throw new RpcError(INVALID_PARAMS, withoutUserinfoIn(
-            `npm could not install ${id} in ${folder}: ${said === '' ? `it ended with code ${String(done.code)}` : said}`,
-          ));
+          throw failedWith(new NpmFailure(`npm could not install ${id} in ${folder}`, said === '' ? `it ended with code ${String(done.code)}` : said));
         }
         /*
          * The staged folder replaces the old one in two renames, so the folder
@@ -849,7 +856,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           moved = all.find((one) => one.name === packageName);
         }
         catch (error) {
-          throw new RpcError(INVALID_PARAMS, withoutUserinfoIn(reason(error)));
+          throw failedWith(error);
         }
         return moved === undefined ? { id } : { id, ...(moved.from === undefined ? {} : { from: moved.from }), ...(moved.to === undefined ? {} : { to: moved.to }) };
       }, () => (moved === undefined ? undefined : [id]));

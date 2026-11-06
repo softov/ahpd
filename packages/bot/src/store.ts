@@ -24,7 +24,7 @@ import type { RecordChange, RecordCollection, StoredRecord } from '@ahpd/sdk';
  *
  * The collections answer later, so every read here is answered from a cache
  * that `ready` loads once and the collection's watch keeps current. That is
- * what lets `all`, `get` and `gone` stay synchronous: the provider reads ten
+ * what lets `all`, `get` and `tombstoned` stay synchronous: the provider reads ten
  * times and writes twice, and only the writes wait.
  *
  * No file and no format is named here. What a record looks like on disk is the
@@ -47,8 +47,8 @@ export interface BotStore {
   all(): BotRecord[];
   /** One bot, or nothing when the slug has none. */
   get(slug: string): BotRecord | undefined;
-  /** Whether this slug had a bot that was deleted. */
-  gone(slug: string): boolean;
+  /** Whether this slug had a bot that was deleted, and keeps its tombstone. */
+  tombstoned(slug: string): boolean;
   /** Read both collections into the cache, once. Every read waits for this. */
   ready(): Promise<void>;
   /** Keep one bot, replacing what the slug held, once the collection has it. */
@@ -159,8 +159,8 @@ export function botStore(
 ): BotStore {
   /** Every bot this store has read, by slug. */
   const held = new Map<string, BotRecord>();
-  /** Every slug that had a bot and lost it. */
-  const dead = new Set<string>();
+  /** Every slug that had a bot and lost it: the tombstones, as VS Code names a deleted record's marker. */
+  const tombstoned = new Set<string>();
   /** The one load of both collections, which every read waits for. */
   let loading: Promise<void> | undefined;
   /** The provider's ear for a change this store did not make. */
@@ -176,8 +176,8 @@ export function botStore(
   const writing = new Set<string>();
 
   /** Leave the tombstone a slug needs, if it is not there already. */
-  const bury = async (slug: string): Promise<void> => {
-    if (dead.has(slug)) return;
+  const tombstone = async (slug: string): Promise<void> => {
+    if (tombstoned.has(slug)) return;
     await graves.put({ id: slug, deletedAt: new Date().toISOString() });
   };
 
@@ -201,14 +201,14 @@ export function botStore(
        * leaves. The record is gone and nothing says who took it, so the name is
        * spent rather than handed to another bot.
        */
-      await bury(change.id);
-      dead.add(change.id);
+      await tombstone(change.id);
+      tombstoned.add(change.id);
       heard?.({ type: 'deleted', bot: before, before: undefined });
       return;
     }
     // A file that came back after its tombstone is the older copy of a bot
     // whose name is spent, and nothing of it is a bot this host answers.
-    if (dead.has(change.id)) {
+    if (tombstoned.has(change.id)) {
       onProblem(`bots/${change.id} has a tombstone; the name is spent and it was left out`);
       return;
     }
@@ -326,14 +326,14 @@ export function botStore(
      * known to be one before it is read: a tombstone is a record too, and only
      * its id is read - it says which slug was a bot, never what that bot was.
      */
-    for (const said of await graves.list()) dead.add(said.id);
+    for (const said of await graves.list()) tombstoned.add(said.id);
     for (const said of await bots.list()) {
       const one = kept(said);
       if (one === undefined) {
         onProblem(`bots/${said.id} is not a bot record; it was left out`);
         continue;
       }
-      if (dead.has(one.id)) {
+      if (tombstoned.has(one.id)) {
         onProblem(`bots/${one.id} has a tombstone; the name is spent and it was left out`);
         continue;
       }
@@ -355,7 +355,7 @@ export function botStore(
   return {
     all: sorted,
     get: (slug) => held.get(slug),
-    gone: (slug) => dead.has(slug),
+    tombstoned: (slug) => tombstoned.has(slug),
     ready,
     onChange: (one) => { heard = one; },
     put: async (record) => {
@@ -382,14 +382,14 @@ export function botStore(
       try {
         // The tombstone first, so a failure between the two leaves a name that
         // can never be made again rather than one that quietly can.
-        await bury(slug);
+        await tombstone(slug);
         await bots.remove(slug);
       }
       finally {
         writing.delete(slug);
       }
       held.delete(slug);
-      dead.add(slug);
+      tombstoned.add(slug);
     },
   };
 }

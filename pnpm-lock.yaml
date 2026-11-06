@@ -92,6 +92,12 @@ importers:
       '@activepieces/piece-whatsapp':
         specifier: 1.0.1
         version: 1.0.1
+      dayjs:
+        specifier: 1.11.9
+        version: 1.11.9
+      ipaddr.js:
+        specifier: 2.3.0
+        version: 2.3.0
     devDependencies:
       '@ahpd/sdk':
         specifier: workspace:*
@@ -166,8 +172,18 @@ importers:
       '@cofold/yaml':
         specifier: ^0.3.0
         version: 0.3.0
+      '@microsoft/agent-host-protocol':
+        specifier: ^1.0.0
+        version: 1.0.0
 
   packages/computer:
+    dependencies:
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
     devDependencies:
       '@ahpd/sdk':
         specifier: workspace:*
@@ -178,6 +194,9 @@ importers:
       '@ahpd/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@microsoft/agent-host-protocol':
+        specifier: ^1.0.0
+        version: 1.0.0
 
   packages/sdk:
     dependencies:
@@ -250,12 +269,18 @@ importers:
       '@ahpd/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@microsoft/agent-host-protocol':
+        specifier: ^1.0.0
+        version: 1.0.0
 
   packages/webhook:
     devDependencies:
       '@ahpd/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@microsoft/agent-host-protocol':
+        specifier: ^1.0.0
+        version: 1.0.0
 
 packages:
 
@@ -1194,6 +1219,7 @@ packages:
   '@smithy/core@3.35.0':
     resolution: {integrity: sha512-zRMhfkByhT2snNdr1si24vJitU6Cr9ix2MikUfWmkAgp4jrNP0GcKSP5YvwQ+TlI8AZXER5QOGJn3JsVtSD9/A==}
     engines: {node: '>=18.0.0'}
+    deprecated: Deprecated due to a bug in custom logger data redaction. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/credential-provider-imds@4.5.2':
     resolution: {integrity: sha512-A9uSdn72ozbRUSit0eib0TW7nXuNPlaeM0zcGkJ+nE6tFcSDbnmtwoxbTCFBukVQcszDAyvsd7+rTduPTXpygg==}
@@ -1556,6 +1582,9 @@ packages:
     resolution: {integrity: sha512-0R9ikRb668HB7QDxT1vkpuUBtqc53YyAwMwGeUFKRojY/NWKvdZ+9UYtRfGmhqNbRkTSVpMbmyhXipFFv2cb/A==}
     engines: {node: '>= 12'}
 
+  dayjs@1.11.9:
+    resolution: {integrity: sha512-QvzAURSbQ0pKdIye2txOzNaHmxtUBXerpY0FJsFXUMKbIZeFm5ht1LS/jFsrncjnmtv8HsG0W2g6c0zUjZWmpA==}
+
   debug@2.6.9:
     resolution: {integrity: sha512-bC7ElrdJaJnPbAP+1EotYvqZsb3ecl5wi6Bfi6BJTUcNowp6cvspg0jXznRTKDjm/E7AdgFBVeAPVMNcKGsHMA==}
     peerDependencies:
@@ -1886,6 +1915,10 @@ packages:
     resolution: {integrity: sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==}
     engines: {node: '>= 0.10'}
 
+  ipaddr.js@2.3.0:
+    resolution: {integrity: sha512-Zv/pA+ciVFbCSBBjGfaKUya/CcGmUHzTydLMaTwrUUEM2DIEO3iZvueGxmacvmN50fGpGVKeTXpb2LcYQxeVdg==}
+    engines: {node: '>= 10'}
+
   is-promise@4.0.0:
     resolution: {integrity: sha512-hvpoI6korhJMnej285dSg6nu1+e6uxs7zG3BYAm5byqDsgJNWwxzM6z6iZiAgQR4TJ30JmBTOwqZUw3WlyH3AQ==}
 
@@ -1917,6 +1950,9 @@ packages:
 
   json-schema-typed@8.0.2:
     resolution: {integrity: sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==}
+
+  jsonc-parser@3.3.1:
+    resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
 
   jwa@2.0.1:
     resolution: {integrity: sha512-hRF04fqJIP8Abbkq5NKGN0Bbr3JxlQ+qhZufXVr0DvujKy93ZCbXZMHDL4EOtodSbCWxOqR8MS1tXA5hwqCXDg==}
@@ -3927,6 +3963,8 @@ snapshots:
 
   data-uri-to-buffer@4.0.1: {}
 
+  dayjs@1.11.9: {}
+
   debug@2.6.9:
     dependencies:
       ms: 2.0.0
@@ -4344,6 +4382,8 @@ snapshots:
 
   ipaddr.js@1.9.1: {}
 
+  ipaddr.js@2.3.0: {}
+
   is-promise@4.0.0: {}
 
   is-typedarray@1.0.0: {}
@@ -4368,6 +4408,8 @@ snapshots:
   json-schema-traverse@1.0.0: {}
 
   json-schema-typed@8.0.2: {}
+
+  jsonc-parser@3.3.1: {}
 
   jwa@2.0.1:
     dependencies:

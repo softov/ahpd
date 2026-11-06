@@ -3,14 +3,17 @@ import type { HostTool } from '@ahpd/sdk';
 import { allowedImages, isFlag } from './manifest.js';
 import { allowedBy } from './reference.js';
 import type { ComputerRuntime } from './runtime.js';
-import { inTurn, roomFor } from './runtime.js';
+import { queue, roomFor } from './runtime.js';
 
 /**
  * Making a machine, using one, and throwing it away.
  *
  * Tools rather than resource writes, because a write carries a URI and a mode
  * and can say neither what image nor what limits. Each declares its `effects` so a backend
- * with a policy has something to ask a person on.
+ * with a policy has something to ask a person on, and carries a title and the
+ * annotations VS Code's server tools carry: `readOnlyHint`, and
+ * `destructiveHint` on a tool that can destroy what it acts on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentFeedbackServerTools.ts#L122-L171
  */
 
 /** What the tools were configured with. */
@@ -52,7 +55,9 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
     {
       definition: {
         name: 'request_disposable_computer',
+        title: 'Request Disposable Computer',
         description: 'Start a disposable computer and answer its computer:// URI. It runs until it is released.',
+        annotations: { readOnlyHint: false },
         inputSchema: {
           type: 'object',
           properties: {
@@ -68,12 +73,12 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
       effects: { writes: true, network: true },
       advancedPermission: true,
       instruction: 'Ask for one when a task needs a machine of its own - something to install into, break, or run work in that should not touch this host. Release it when the work is done.',
-      run: async (input) => inTurn(runtime, async () => {
+      run: async (input) => queue(runtime, async () => {
         const asked = object(input);
         const name = said(asked.name) ?? `${options.prefix}-${randomUUID().slice(0, 8)}`;
-        // One listing for both questions, in the same turn as the create: a
-        // create in flight is a machine this host holds by the time the next
-        // call counts.
+        // One listing for both questions, in the same queued operation as the
+        // create: a create in flight is a machine this host holds by the time
+        // the next call counts.
         const held = await runtime.list();
         const full = roomFor(held, options.max);
         if (full !== undefined) {
@@ -91,7 +96,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
           return `${image} is a flag rather than an image. Name an image, such as ${options.image}.`;
         }
         const allowed = allowedImages(options);
-        if (allowed !== undefined && !allowedBy(allowed.patterns, image)) {
+        if (allowed !== undefined && !allowedBy(allowed.scopes, image)) {
           return `This host does not run ${image}. It runs ${allowed.names.join(', ')}.`;
         }
         const made = await runtime.run({
@@ -101,13 +106,15 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
           ...(cpus === undefined ? {} : { cpus }),
           ...(memory === undefined ? {} : { memory }),
         });
-        return `computer://${made.id} is running on ${made.image}. Read computer://${made.id}/status for what it is, or run something in it with computer_exec.`;
+        return `computer://${made.id} is running on ${made.image}. Read computer://${made.id}/status for what it is, or run something in it with run_in_computer.`;
       }),
     },
     {
       definition: {
         name: 'release_computer',
+        title: 'Release Computer',
         description: 'Remove a disposable computer. Nothing on it survives.',
+        annotations: { readOnlyHint: false, destructiveHint: true },
         inputSchema: {
           type: 'object',
           properties: { id: { type: 'string', description: 'The name from its computer:// URI.' } },
@@ -137,8 +144,10 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
     },
     {
       definition: {
-        name: 'computer_exec',
+        name: 'run_in_computer',
+        title: 'Run in Computer',
         description: 'Run a shell command inside a disposable computer and answer what it printed and what it exited with.',
+        annotations: { readOnlyHint: false, destructiveHint: true },
         inputSchema: {
           type: 'object',
           properties: {

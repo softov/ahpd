@@ -25,6 +25,7 @@ import {
   automationToBlueprint,
   createAutomationBlueprintFileName,
   parseAutomationBlueprint,
+  scheduleTrigger,
   serializeAutomationBlueprint,
 } from '../src/blueprint.js';
 import { automationStatePath, automationsDir } from '../src/config.js';
@@ -168,16 +169,18 @@ describe('export', () => {
       .toBe('0b6f1c1e-4d8e-4d8a-9a43-6a3f4c2b9e10 has more than one schedule, and a VS Code automation file holds one.');
   });
 
-  it('refuses a cron the format does not allow', () => {
-    expect(refusal(entry([schedule('*/5 * * * *')])))
-      .toBe('0b6f1c1e-4d8e-4d8a-9a43-6a3f4c2b9e10 runs on "*/5 * * * *", and a VS Code automation file holds only hourly, daily, weekday and weekly schedules.');
-    expect(refusal(entry([schedule('0 9 1 * *')]))).toContain('runs on "0 9 1 * *"');
-    expect(refusal(entry([schedule('0 9 * * 1,3')]))).toContain('runs on "0 9 * * 1,3"');
+  it('writes any other cron as a cron schedule with its expression, as VS Code does', () => {
+    for (const expression of ['*/5 * * * *', '0 9 1 * *', '0 9 * * 1,3']) {
+      const text = serializeAutomationBlueprint(automationToBlueprint(entry([schedule(expression)])));
+      expect(header(text)['schedule']).toEqual({ kind: 'cron', expression, timeZone: 'local' });
+    }
+    // A weekday by name is the weekly time it is.
+    expect(automationToBlueprint(entry([schedule('0 9 * * MON')])).schedule).toMatchObject({ interval: 'weekly', scheduleDay: 1 });
   });
 
-  it('refuses an hourly schedule off the hour', () => {
-    expect(refusal(entry([schedule('30 * * * *')])))
-      .toBe('0b6f1c1e-4d8e-4d8a-9a43-6a3f4c2b9e10 runs at minute 30 of each hour, and a VS Code automation file runs hourly on the hour.');
+  it('writes an hourly schedule at any minute as hourly, as VS Code does', () => {
+    const text = serializeAutomationBlueprint(automationToBlueprint(entry([schedule('30 * * * *')])));
+    expect(header(text)['schedule']).toEqual({ kind: 'hourly' });
   });
 
   it('writes local for another zone, and keeps the hour', () => {
@@ -216,8 +219,8 @@ describe('parse', () => {
     expect(code(file(['version: 2', 'id: "a"', 'name: "A"', 'schedule:', '  kind: manual']))).toBe('unsupportedVersion: Automation blueprint version 2 is not supported.');
     expect(code(file(['version: 1', 'id: "A--b"', 'name: "A"', 'schedule:', '  kind: manual']))).toBe('invalidId: The blueprint id \'A--b\' is invalid.');
     expect(code(file(['version: 1', 'id: "a"', 'schedule:', '  kind: manual']))).toBe('invalidField: The property \'name\' is missing or invalid.');
-    expect(code(file([...base, 'schedule:', '  kind: cron', '  expression: "*/5 * * * *"', '  timeZone: local'])))
-      .toBe('unsupportedSchedule: The cron expression \'*/5 * * * *\' cannot be represented by the current Automation editor.');
+    expect(code(file([...base, 'schedule:', '  kind: cron', '  expression: "*/5 * * *"', '  timeZone: local'])))
+      .toBe('unsupportedSchedule: The cron expression \'*/5 * * *\' cannot be represented by the current Automation editor.');
     expect(code(file([...base, 'schedule:', '  kind: cron', '  expression: "0 9 * * *"', '  timeZone: "UTC"'])))
       .toBe('unsupportedTimeZone: The time zone \'UTC\' is not supported. Use \'local\' so the schedule follows the importing user\'s time zone.');
     expect(code(file([...base, 'schedule:', '  kind: manual'], '  '))).toBe('missingPrompt: The Automation prompt must follow the frontmatter.');
@@ -225,6 +228,14 @@ describe('parse', () => {
 
   it('keeps a description', () => {
     expect(parseAutomationBlueprint(file([...base, 'description: "Why"', 'schedule:', '  kind: manual'])).description).toBe('Why');
+  });
+
+  it('reads any five-field cron as a cron schedule, which becomes its trigger as it is', () => {
+    const read = parseAutomationBlueprint(file([...base, 'schedule:', '  kind: cron', '  expression: "*/5 9-17 * * 1-5"', '  timeZone: local']));
+    expect(read.schedule).toEqual({ interval: 'cron', cronExpression: '*/5 9-17 * * 1-5', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 });
+    expect(scheduleTrigger(read.schedule, 'Europe/Lisbon')).toEqual([{
+      id: 'schedule', kind: 'schedule', schedule: { expression: '*/5 9-17 * * 1-5', timeZone: 'Europe/Lisbon' }, misfirePolicy: 'runOnce',
+    }]);
   });
 });
 
@@ -279,9 +290,10 @@ describe('ahpd automation export', () => {
   });
 
   it('refuses with --vscode an automation VS Code\'s file cannot hold, and writes nothing', async () => {
-    kept([schedule('*/5 * * * *', zone)]);
+    // Two schedules, where VS Code's file holds one.
+    kept([schedule('0 9 * * 1-5', zone), schedule('0 18 * * 1-5', zone)]);
     const out = join(home, 'out.automation.md');
-    await expect(run({ id: ID, out, vscode: true })).rejects.toThrow(`${ID} runs on "*/5 * * * *"`);
+    await expect(run({ id: ID, out, vscode: true })).rejects.toThrow('has more than one schedule, and a VS Code automation file holds one.');
     expect(existsSync(out)).toBe(false);
   });
 
@@ -326,10 +338,10 @@ describe('ahpd automation export', () => {
     });
 
     it('refuses one it cannot hold as a conflict', async () => {
-      store.create('ahp-automation:/other', entry([schedule('*/5 * * * *', zone)]).definition);
+      store.create('ahp-automation:/other', entry([schedule('0 9 * * 1-5', zone), schedule('0 18 * * 1-5', zone)]).definition);
       const answer = await call('/automation/export/other?vscode=true');
       expect(answer.status).toBe(409);
-      expect((await answer.json() as { message: string }).message).toContain('runs on "*/5 * * * *"');
+      expect((await answer.json() as { message: string }).message).toContain('has more than one schedule');
     });
   });
 });

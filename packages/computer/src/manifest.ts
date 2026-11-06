@@ -6,8 +6,7 @@ import { hasDefinition } from './devcontainer.js';
 import { withRequires } from './parts.js';
 import type { CodeRoute } from './clone.js';
 import type { SessionTree } from './gitdir.js';
-import { allowedBy, patternOf } from './reference.js';
-import type { Reference } from './reference.js';
+import { allowedBy, identityOf, namesOneImage, referenceOf, scopeOf } from './reference.js';
 import type { Write } from '@ahpd/sdk';
 import type { MachineNeed, Owner, ResolvedNeed, SecretRef, StateMode } from '@ahpd/sdk';
 import type { MachineSpec, PartFallback } from './runtime.js';
@@ -428,17 +427,16 @@ export const MANIFEST_SCHEMA = (
 ): Record<string, unknown> => {
   const names = Object.keys(options.profiles ?? {});
   /*
-   * The images, as choices, but only where every one of them is a name.
+   * The images, as choices, but only where every scope names one image.
    *
-   * A set with a wildcard in it is not a list of choices: a client drawing a
-   * picker from `node:*` would offer that string, and a machine made from it
-   * would be refused by the runtime rather than by this host. So a wildcard
-   * anywhere leaves the field a text box, and the refusal is what teaches.
+   * A repository, a namespace, a registry or a domain is not a choice: a
+   * client drawing a picker from `ghcr.io/acme` would offer that string, and a
+   * machine made from it would be refused by the runtime rather than by this
+   * host. So such a scope leaves the field a text box, and the refusal is what
+   * teaches.
    */
   const allowed = allowedImages(options);
-  const choices = allowed === undefined || allowed.names.some((one) => one.includes('*'))
-    ? undefined
-    : allowed.names;
+  const choices = allowed === undefined || !allowed.oneEach ? undefined : allowed.names;
   return {
   type: 'object',
   properties: {
@@ -453,20 +451,19 @@ export const MANIFEST_SCHEMA = (
         title: 'Profile',
         description: 'What this machine is made from, and what it is given.',
         enum: names,
-        // What each one is, so a picker can say more than its key.
-        'x-choices': names.map((name) => ({
-          value: name,
-          title: (options.profiles ?? {})[name]?.title ?? name,
-          description: (options.profiles ?? {})[name]?.description,
-        })),
+        // What each one is, so a picker can say more than its key: the spec's
+        // parallel `enumLabels` and `enumDescriptions`.
+        enumLabels: names.map((name) => (options.profiles ?? {})[name]?.title ?? name),
+        enumDescriptions: names.map((name) => (options.profiles ?? {})[name]?.description ?? ''),
       },
     }),
+    // Shown and not changeable, which the spec says with `readOnly`.
     runtime: {
       type: 'string',
       title: 'Runtime',
       description: 'What makes the machine. This host runs one.',
-      enum: [options.runtime],
       default: options.runtime,
+      readOnly: true,
     },
     /*
      * The two recipes, as a choice and the two fields beside it, both always
@@ -478,10 +475,8 @@ export const MANIFEST_SCHEMA = (
         title: 'Source',
         description: 'What the machine is made from.',
         enum: ['image', 'devcontainer'],
-        'x-choices': [
-          { value: 'image', title: 'Image', description: 'What to make it from.' },
-          { value: 'devcontainer', title: 'Dev container', description: "A folder's own devcontainer.json makes it." },
-        ],
+        enumLabels: ['Image', 'Dev container'],
+        enumDescriptions: ['What to make it from.', "A folder's own devcontainer.json makes it."],
         default: 'image',
       },
     }),
@@ -544,24 +539,30 @@ export const MANIFEST_SCHEMA = (
 };
 
 /**
- * Every image this host allows, as patterns, or nothing for "any".
+ * Every image this host allows, as image scopes, or nothing for "any".
  *
- * The operator's list plus the host default plus each profile's, deduped with
- * the order kept so a refusal reads in the order somebody wrote them. A
- * deployment that named no list gets `undefined` rather than an empty one:
- * empty would mean "allow nothing", and absent means "never asked".
+ * The operator's scopes plus the host default plus each profile's image, the
+ * names deduped with the order kept so a refusal reads in the order somebody
+ * wrote them, and `oneEach` true where every scope the operator wrote names
+ * one image. A deployment that named no list gets `undefined` rather than an
+ * empty one: empty would mean "allow nothing", and absent means "never asked".
  */
 export const allowedImages = (
   defaults: { image: string; images?: string[]; profiles?: Record<string, Profile> },
-): { names: string[]; patterns: Reference[] } | undefined => {
+): { names: string[]; scopes: string[]; oneEach: boolean } | undefined => {
   if (defaults.images === undefined) return undefined;
-  const said = [
-    ...defaults.images,
+  // The host's own image and each profile's are allowed as themselves: each
+  // is the scope of its identity.
+  const own = [
     defaults.image,
     ...Object.values(defaults.profiles ?? {}).flatMap((one) => (one.image === undefined ? [] : [one.image])),
   ].filter((one) => one.trim() !== '');
-  const names = [...new Set(said)];
-  return { names, patterns: names.map((one) => patternOf(one)) };
+  const written = defaults.images.filter((one) => one.trim() !== '');
+  return {
+    names: [...new Set([...written, ...own])],
+    scopes: [...written.map((one) => scopeOf(one)), ...own.map((one) => identityOf(referenceOf(one)))],
+    oneEach: written.every((one) => namesOneImage(one)),
+  };
 };
 
 /**
@@ -929,7 +930,7 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
      * so picking a profile is never refused by this.
      */
     const allowed = allowedImages(defaults);
-    if (allowed !== undefined && !allowedBy(allowed.patterns, image)) {
+    if (allowed !== undefined && !allowedBy(allowed.scopes, image)) {
       throw new RpcError(-32602, `This host does not run ${image}; it runs ${allowed.names.join(', ')}`);
     }
   }

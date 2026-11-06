@@ -8,7 +8,7 @@ import type { FolderAnswer, Profile } from './manifest.js';
 import { revealed, vaultNamed, withDefaults } from './secrets.js';
 import type { Revealed } from './secrets.js';
 import type { ComputerRuntime } from './runtime.js';
-import { inTurn, roomFor } from './runtime.js';
+import { queue } from './runtime.js';
 
 /**
  * The `computer:` scheme.
@@ -134,11 +134,14 @@ const at = (uri: string): At => {
   return held;
 };
 
-/** When a machine or a leaf was made, as a URI's metadata wants it. */
-const moment = (created: string | undefined): string => {
-  if (created === undefined) return new Date(0).toISOString();
-  const when = new Date(created);
-  return Number.isNaN(when.getTime()) ? new Date(0).toISOString() : when.toISOString();
+/**
+ * When a machine or a leaf was made, as a resource's `mtime` and `ctime`, or
+ * nothing where the runtime does not say: the spec gives both when known.
+ */
+const times = (created: string | undefined): { mtime?: string; ctime?: string } => {
+  const when = created === undefined ? undefined : new Date(created);
+  if (when === undefined || Number.isNaN(when.getTime())) return {};
+  return { mtime: when.toISOString(), ctime: when.toISOString() };
 };
 
 /*
@@ -327,13 +330,13 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
     if (await runtime.inspect(name) !== undefined) {
       throw new RpcError(-32010, `${name} is already a computer; destroy it or choose another name`);
     }
-    // The count and the create in one turn, so a second write arriving while
-    // this one is making its machine counts the machine being made.
-    await inTurn(runtime, async () => {
-      const full = roomFor(await runtime.list(), options.max);
-      if (full !== undefined) {
-        throw new RpcError(-32602, `This host holds ${options.max} computers already, and ${name} would be one more`);
-      }
+    /*
+     * One create at a time per runtime, as VS Code queues a source's dev
+     * container operations. A client's write makes every machine it asks for,
+     * as VS Code's host makes every container a client asks for: `max` caps
+     * what the agent's tool makes.
+     */
+    await queue(runtime, async () => {
       try {
         await runtime.run({ ...spec, label: options.label });
       }
@@ -423,15 +426,11 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
 
     resolve: async (uri) => {
       const held = at(uri);
-      if (held.id === '') {
-        return { uri, type: 'directory', mtime: moment(undefined), ctime: moment(undefined) };
-      }
+      if (held.id === '') return { uri, type: 'directory' };
       const found = await runtime.inspect(held.id);
       if (found === undefined) throw absentResource('computer', uri);
-      const created = moment(typeof found.Created === 'string' ? found.Created : undefined);
-      if (isDirectory(held)) {
-        return { uri, type: 'directory', mtime: created, ctime: created };
-      }
+      const created = times(typeof found.Created === 'string' ? found.Created : undefined);
+      if (isDirectory(held)) return { uri, type: 'directory', ...created };
       if (!leaves(held.id).some((one) => one.name === held.leaf)) throw absentResource('computer', uri);
       const body = held.leaf === 'status' ? JSON.stringify(found, null, 2)
         : held.leaf === 'stats' ? await statsOf(held.id, found)
@@ -442,18 +441,23 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         uri,
         type: 'file',
         size: Buffer.byteLength(body, 'utf8'),
-        mtime: created,
-        ctime: created,
+        ...created,
       };
     },
 
     read: async (uri) => {
       const held = at(uri);
-      if (isDirectory(held)) {
-        throw new RpcError(-32008, `${uri} is a directory; read ${uri}/status`);
-      }
-      const found = await runtime.inspect(held.id);
+      const found = held.id === '' ? {} : await runtime.inspect(held.id);
       if (found === undefined) throw absentResource('computer', uri);
+      /*
+       * A directory that is there is not content, and its read fails as VS
+       * Code's file resources fail one: an internal error naming the URI and
+       * its file service's words.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L30-L48
+       */
+      if (isDirectory(held)) {
+        throw new RpcError(-32603, `Failed to read content: ${uri}: Unable to read file '${uri}' that is actually a directory`);
+      }
       if (held.leaf === 'status') return asFile(JSON.stringify(found, null, 2));
       if (held.leaf === 'capabilities') return asFile(capabilities());
       if (held.leaf === 'stats') return asFile(await statsOf(held.id, found));

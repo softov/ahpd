@@ -32,7 +32,7 @@
       "description": "Limite de memória de cada máquina, no formato do --memory do Docker."
     },
     "max": {
-      "description": "Máximo de máquinas existindo ao mesmo tempo. Padrão: 3."
+      "description": "Máximo de máquinas existindo ao mesmo tempo quando a ferramenta do agente pede outra. Padrão: 3."
     },
     "label": {
       "description": "O rótulo que toda máquina recebe. Padrão: 'ahpd.computer=1'."
@@ -62,7 +62,7 @@
       "description": "Permite montar uma part a partir da própria imagem. Use false para montar cada part de um volume preenchido uma vez a partir dela."
     },
     "images": {
-      "description": "Padrões de imagem que podem ser usados para criar máquinas. Sem isso, qualquer imagem é permitida."
+      "description": "As imagens de que uma máquina pode ser criada, como escopos de imagem do containers-policy.json: docker.io/library/node:22 uma imagem, docker.io/library/node um repositório, ghcr.io/acme um namespace, ghcr.io um registro, *.example.com seus subdomínios. Sem isso, qualquer imagem é permitida."
     },
     "devcontainer": {
       "description": "A CLI de Dev Containers, como launcher e criadora de máquinas, e as pastas a partir das quais ela pode criar. Use false para desligar os dev containers."

@@ -63,10 +63,12 @@
     "@microsoft/dev-tunnels-ssh-tcp": "^3.12.42"
   },
   "peerDependencies": {
-    "@ahpd/sdk": ">=0.14 <1"
+    "@ahpd/sdk": ">=0.14 <1",
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "devDependencies": {
-    "@ahpd/sdk": "workspace:*"
+    "@ahpd/sdk": "workspace:*",
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "ahpd": {
     "entry": "./dist/index.js",

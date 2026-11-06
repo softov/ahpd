@@ -192,8 +192,8 @@ export interface BotProvider extends ResourceProvider {
 interface At {
   /** The slug, empty at the root. */
   slug: string;
-  /** Whatever came after a further slash: the chat, or the chat's own name. */
-  leaf: string;
+  /** The path under the bot, after a further slash: the chat, or the chat's own name. */
+  path: string;
   /** The text after `?`, which only the root listing reads. */
   query: string;
 }
@@ -216,8 +216,8 @@ const split = (uri: string): At | undefined => {
   const query = mark === -1 ? '' : rest.slice(mark + 1);
   const slash = path.indexOf('/');
   return slash === -1
-    ? { slug: path, leaf: '', query }
-    : { slug: path.slice(0, slash), leaf: path.slice(slash + 1), query };
+    ? { slug: path, path: '', query }
+    : { slug: path.slice(0, slash), path: path.slice(slash + 1), query };
 };
 
 const absent = (uri: string): RpcError => new RpcError(-32008, `No bot at ${uri}`);
@@ -243,10 +243,14 @@ const at = (uri: string): At => {
   return held;
 };
 
-/** One moment, as a URI's metadata wants it. */
-const moment = (iso: string): string => {
+/**
+ * One moment, as a URI's metadata wants it, or nothing for a time that cannot
+ * be read: the protocol's resolve carries a time only when it is known.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L1082-L1085
+ */
+const moment = (iso: string): string | undefined => {
   const when = new Date(iso);
-  return Number.isNaN(when.getTime()) ? new Date(0).toISOString() : when.toISOString();
+  return Number.isNaN(when.getTime()) ? undefined : when.toISOString();
 };
 
 /** The bytes of a write, whichever encoding they arrived in. */
@@ -297,6 +301,14 @@ const manifest = (hostName: string) => ({
     },
     workspace: { type: 'string', description: 'The folder it works in, under the plugin root. Its own, and never moved.' },
     computer: { type: 'string', description: 'The machine it runs in.' },
+    // Named here because a write takes it, and a schema a client follows says
+    // every field the receiver accepts, as the schemas VS Code publishes do.
+    connectors: {
+      type: 'object',
+      propertyNames: { pattern: '^[a-z][a-z0-9-]{0,39}$' },
+      additionalProperties: { type: 'string', pattern: '^connectors://[^/]+/.+$' },
+      description: 'The connectors its sessions may use, by alias: the word a model says, and the connectors://<adapter>/<id> it stands for.',
+    },
     owner: {
       type: 'string',
       anyOf: [{ type: 'string' }, { const: `root:${hostName}`, title: 'This host' }],
@@ -525,8 +537,12 @@ export function botProvider(options: BotOptions): BotProvider {
     const workspace = asked ?? existing?.workspace ?? join(root, slug);
     // A named folder is one under `root`: the plugin makes it, and a maker
     // names folders only where the plugin's own are kept.
+    // A folder outside the allowed roots is the protocol's PermissionDenied,
+    // in the words VS Code's file resources refuse one with.
+    // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/errors.ts#L68-L79
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L83
     if (asked !== undefined && existing === undefined && !resolve(asked).startsWith(`${resolve(root)}${sep}`)) {
-      throw new RpcError(-32602, `${asked} is not under ${root}; a bot's folder is one there`);
+      throw new RpcError(-32009, `Permission denied: ${asked}`);
     }
     const clash = store.all().find((one) => one.id !== slug && one.workspace === workspace);
     if (clash !== undefined) {
@@ -589,7 +605,7 @@ export function botProvider(options: BotOptions): BotProvider {
       if (held === undefined) return false;
       // The root is the listing, which the provider answers for whoever asks
       // and narrows to what each reader may see.
-      if (held.slug === '') return held.leaf === '';
+      if (held.slug === '') return held.path === '';
       const bot = store.get(held.slug);
       return bot !== undefined && mayRead(bot, reader);
     },
@@ -612,7 +628,7 @@ export function botProvider(options: BotOptions): BotProvider {
       await store.ready();
       const held = at(uri);
       if (held.slug === '') {
-        if (held.leaf !== '') throw absent(uri);
+        if (held.path !== '') throw absent(uri);
         const every = store.all();
         const shown = reader === undefined || reader.can('bot:list')
           ? every
@@ -625,7 +641,7 @@ export function botProvider(options: BotOptions): BotProvider {
       }
       const bot = store.get(held.slug);
       if (bot === undefined) throw absent(uri);
-      const where = named(held.leaf);
+      const where = named(held.path);
       if (where === undefined || where.at !== 'sessions') throw absent(uri);
       if (!mayLook(bot, where.user, reader)) throw notTheirs(bot, where.user);
       const names = await options.backSessions.list(bot.id, where.user);
@@ -653,27 +669,29 @@ export function botProvider(options: BotOptions): BotProvider {
       await store.ready();
       const held = at(uri);
       if (held.slug === '') {
-        if (held.leaf !== '') throw absent(uri);
+        if (held.path !== '') throw absent(uri);
         const now = new Date().toISOString();
         return { uri, type: 'directory', mtime: now, ctime: now };
       }
       const bot = store.get(held.slug);
       if (bot === undefined) throw absent(uri);
-      if (held.leaf === '') {
+      if (held.path === '') {
         const body = JSON.stringify(bot, null, 2);
+        const mtime = moment(bot.updatedAt);
+        const ctime = moment(bot.createdAt);
         return {
           uri,
           type: 'file',
           size: Buffer.byteLength(body, 'utf8'),
-          mtime: moment(bot.updatedAt),
-          ctime: moment(bot.createdAt),
+          ...(mtime === undefined ? {} : { mtime }),
+          ...(ctime === undefined ? {} : { ctime }),
           // What an edit is checked against: the moment the record last changed,
           // so a write that read the bot before somebody else's edit is refused
           // rather than quietly undoing it.
           etag: bot.updatedAt,
         };
       }
-      const where = named(held.leaf);
+      const where = named(held.path);
       if (where === undefined) throw absent(uri);
       const now = new Date().toISOString();
       if (where.at === 'sessions') return { uri, type: 'directory', mtime: now, ctime: now };
@@ -711,7 +729,7 @@ export function botProvider(options: BotOptions): BotProvider {
       // the bot made to its own file shows on the next read, without anything
       // having to notice the write.
       const bot = fromAgents(options.yaml, known);
-      if (held.leaf === '') {
+      if (held.path === '') {
         /*
          * The agent it names is the bot's session's, and one this host does not
          * serve is said so here: a bot whose agent went is one that wakes
@@ -727,7 +745,7 @@ export function botProvider(options: BotOptions): BotProvider {
           : { ...bot, ...state };
         return json(answered);
       }
-      const where = named(held.leaf);
+      const where = named(held.path);
       // A directory is not a read: what is under a person's chat is the names,
       // and a listing is what answers them.
       if (where === undefined || where.at === 'sessions') throw absent(uri);
@@ -761,7 +779,7 @@ export function botProvider(options: BotOptions): BotProvider {
     write: async (uri, content, owner, _client, reader) => {
       await store.ready();
       const held = at(uri);
-      if (held.leaf !== '') {
+      if (held.path !== '') {
         throw new RpcError(-32602, `${uri} is not a bot; write to bot://<slug>`);
       }
       if (held.slug === '') throw new RpcError(-32602, `${uri} is not a name for a bot; write to bot://<slug>`);
@@ -775,7 +793,7 @@ export function botProvider(options: BotOptions): BotProvider {
       const known = store.get(slug);
       const existing = known === undefined ? undefined : fromAgents(options.yaml, known);
       if (existing !== undefined && !mayWrite(existing, owner, reader)) throw notYours(existing);
-      if (existing === undefined && store.gone(slug)) {
+      if (existing === undefined && store.tombstoned(slug)) {
         throw new RpcError(-32010, `${slug} was a bot here once; choose another name`);
       }
       if (existing !== undefined && content.createOnly === true) {
@@ -881,7 +899,7 @@ export function botProvider(options: BotOptions): BotProvider {
     remove: async (uri, _recursive, owner, reader) => {
       await store.ready();
       const held = at(uri);
-      if (held.leaf !== '' || held.slug === '') {
+      if (held.path !== '' || held.slug === '') {
         throw new RpcError(-32602, `${uri} is not a bot to delete; delete bot://<slug>`);
       }
       const bot = store.get(held.slug);
@@ -912,7 +930,7 @@ export function botProvider(options: BotOptions): BotProvider {
     watch: async (uri, _options, onChange, reader) => {
       await store.ready();
       const held = at(uri);
-      if (held.leaf !== '') throw absent(uri);
+      if (held.path !== '') throw absent(uri);
       if (held.slug !== '' && store.get(held.slug) === undefined) throw absent(uri);
       const one: Watching = { slug: held.slug, reader, onChange };
       watching.add(one);

@@ -232,6 +232,18 @@ describe('/mcp asks who is calling before it reads the call', () => {
     }
   });
 
+  it('sends each 401 a bearer challenge: the realm alone with no token, invalid_token with one', async () => {
+    const challenged = async (handler: RequestHandler, token?: string): Promise<string | null> => (await handler(new Request(`${ORIGIN}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(token === undefined ? {} : { authorization: `Bearer ${token}` }) },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    }))).headers.get('www-authenticate');
+    expect(await challenged(door())).toBe('Bearer realm="ahpd"');
+    expect(await challenged(door(), 'not-a-token-this-host-minted')).toBe('Bearer realm="ahpd", error="invalid_token"');
+    const whose = (given: string) => (given === SESSION_TOKEN ? { session: 'session-1' } : undefined);
+    expect(await challenged(door('all', ROOT_TOKEN, whose), SESSION_TOKEN)).toBe('Bearer realm="ahpd", error="invalid_token"');
+  });
+
   it('refuses a team key with 403, because a team key opens the proxy only', async () => {
     const key = await users.mintToken!(undefined, { team: 'backend', grants: ['proxy:call'] });
     const answered = await ask(door(), 'tools/list', undefined, key.secret);

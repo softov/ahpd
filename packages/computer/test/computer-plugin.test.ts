@@ -12,6 +12,7 @@ import { fileResources } from '../../sdk/src/resources/resources.js';
 import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { describePlugin, loadPlugins, pluginIdsOf } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { dockerRuntime } from '../src/runtime.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { NestedHost, NestedStart, NestedStarted } from '../../sdk/src/types/computers.js';
 import type { HostOptions, HostTool, NodeChange, NodeRegistry, ToolCall } from '../../sdk/src/types/host.js';
@@ -92,7 +93,7 @@ it('serves computer: through the host and offers the three tools', async () => {
   expect(Object.keys(options.resourceProviders ?? {})).toEqual(['computer']);
   const tools = options.tools ?? [];
   expect(tools.map((one) => one.definition.name)).toEqual([
-    'request_disposable_computer', 'release_computer', 'computer_exec',
+    'request_disposable_computer', 'release_computer', 'run_in_computer',
   ]);
 
   // A machine is made by the tool, which is the only thing that makes one.
@@ -260,6 +261,26 @@ it('answers how to reach a machine, and nothing for one that is not there', asyn
 
   // A machine that is not there is not a spawn descriptor.
   expect(await options.computers?.how('nope', { command: 'node' })).toBeUndefined();
+});
+
+/*
+ * A listed machine says when it was made in the one form a made machine does,
+ * RFC 3339, read from the machine's record: a listing's own column is the
+ * client's local time with its zone by name, which is no date a reader parses.
+ */
+it('gives a listed machine its creation time in the form a made one has, from its record', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-created-'));
+  const runtime = dockerRuntime({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: join(loose, 'docker.json') },
+    label: 'ahpd.computer=1',
+  });
+  const made = await runtime.run({ name: 'box', image: 'debian:bookworm-slim', label: 'ahpd.computer=1' });
+  const [listed] = await runtime.list();
+
+  expect(Number.isNaN(Date.parse(made.created))).toBe(false);
+  expect(listed?.created).toBe('2026-09-22T00:00:00Z');
 });
 
 /*
@@ -484,6 +505,36 @@ it('reports what a machine is using, as numbers a gauge can be drawn from', asyn
   expect(used.cpu.cores).toBe(2);
 });
 
+/*
+ * The runtime's answer is read as VS Code reads a listing: a line that does
+ * not parse, or whose fields are not the text asked for, fails the read.
+ */
+it('fails a stats read whose line does not parse or holds a field that is not text', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-stats-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+    read(uri: string): Promise<{ data: string }>;
+  };
+  await provider.write('computer://box', { data: JSON.stringify({ cpus: '2' }), encoding: 'utf-8' });
+  const answer = (line: string): void => {
+    const held = JSON.parse(readFileSync(state, 'utf8')) as { machines: Record<string, unknown>[] };
+    for (const one of held.machines) one.statsLine = line;
+    writeFileSync(state, JSON.stringify(held));
+  };
+
+  answer('not json');
+  await expect(provider.read('computer://box/stats')).rejects.toThrow(SyntaxError);
+  answer(JSON.stringify({ CPUPerc: '1%', MemUsage: 5, MemPerc: '1%', NetIO: '0B / 0B', BlockIO: '0B / 0B', PIDs: '1' }));
+  await expect(provider.read('computer://box/stats')).rejects.toThrow('Error in property \'MemUsage\': Expected string, but got number');
+});
+
 it('makes a machine from a named profile, and refuses one it does not define', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-profiles-'));
   const state = join(loose, 'docker.json');
@@ -517,13 +568,16 @@ it('makes a machine from a named profile, and refuses one it does not define', a
 
   const provider = options.resourceProviders?.computer as {
     write(uri: string, content: { data: string; encoding: string }): Promise<void>;
-    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[] }> } };
+    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[]; enumLabels?: string[]; enumDescriptions?: string[] }> } };
   };
 
   // Published in the schema, so a client draws the picker with no new
-  // protocol and no code of its own.
+  // protocol and no code of its own: each profile's title and description in
+  // the spec's parallel `enumLabels` and `enumDescriptions`.
   const picker = provider.describe().manifest?.properties?.profile;
   expect(picker?.enum).toEqual(['claude', 'plain']);
+  expect(picker?.enumLabels).toEqual(['Claude', 'plain']);
+  expect(picker?.enumDescriptions).toEqual(['The CLI and this host configuration.', '']);
 
   await provider.write('computer://box', {
     data: JSON.stringify({ profile: 'claude', workdir: '/mine' }),
@@ -560,12 +614,13 @@ it('refuses a body naming a runtime this host does not serve, and names the ones
   const provider = options.resourceProviders?.computer as {
     write(uri: string, content: { data: string; encoding: string }): Promise<void>;
     list(uri: string): Promise<{ name: string }[]>;
-    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[] }> } };
+    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[]; default?: unknown; readOnly?: boolean }> } };
   };
 
-  // The picker still offers only what this host makes machines on, which is the
-  // one runtime it was configured with.
-  expect(provider.describe().manifest?.properties?.runtime?.enum).toEqual(['docker']);
+  // The form shows the one runtime this host makes machines on, and a client
+  // cannot change it: the spec's `readOnly`.
+  expect(provider.describe().manifest?.properties?.runtime).toMatchObject({ default: 'docker', readOnly: true });
+  expect(provider.describe().manifest?.properties?.runtime?.enum).toBeUndefined();
   /*
    * Naming one of the others is refused for what it is rather than for not
    * existing, because `ssh` is a runtime this project has and this host does
@@ -844,18 +899,18 @@ it('answers the computer picker with the machines it has', async () => {
   expect(some.map((one) => one.value)).toEqual(['computer://other']);
 });
 
-it('will not load with an image pattern it cannot read', async () => {
+it('will not load with an image scope the policy does not read', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-pattern-'));
   const state = join(loose, 'docker.json');
   const { problems, loaded } = await load({
     command: process.execPath,
     args: [FIXTURE],
     env: { DOCKER_FAKE_STATE: state },
-    images: ['node:22-*'],
+    images: ['node:22'],
   });
   expect(loaded).toEqual([]);
   expect(problems.map((one) => String(one))).toContainEqual(
-    expect.stringMatching(/has a \* inside 22-\*/),
+    expect.stringMatching(/node:22 is not an image scope: name an image in its fully expanded form/),
   );
 });
 

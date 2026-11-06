@@ -1025,7 +1025,7 @@ it('hands a machine on this host the whole record of a record agent, by name', a
   expect(args.join(' ')).not.toContain('record-key');
 });
 
-it('gives computer_exec the calling session agent\'s vault-filled keys, and every one to a call with no agent', async () => {
+it('gives run_in_computer the calling session agent\'s vault-filled keys, and every one to a call with no agent', async () => {
   const state = join(temp(), 'docker.json');
   const store = holding({ 'user:ada/anthropic': 'pi-anthropic', 'user:ada/openai': 'pi-openai' });
   const { options, problems } = await load({
@@ -1043,7 +1043,7 @@ it('gives computer_exec the calling session agent\'s vault-filled keys, and ever
   expect(problems).toEqual([]);
   expect(await written(options, 'box', { profile: 'mixed' }, 'user:ada')).toBeUndefined();
 
-  const tool = (options.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (options.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   /** The variables the last command was given by name, after a call from `provider`'s session. */
   const ranWith = async (provider?: string): Promise<string[]> => {
     await tool.run({ id: 'box', command: 'env' }, (provider === undefined ? {} : { provider }) as never);
@@ -1189,7 +1189,7 @@ it('fails every command into the machine when a vault-named value cannot be read
   expect((twice as Error).message).not.toContain('other-token');
 
   // A tool's command is a command in the machine too.
-  const tool = (again.options.tools ?? []).find((one) => one.definition.name === 'computer_exec');
+  const tool = (again.options.tools ?? []).find((one) => one.definition.name === 'run_in_computer');
   const said = await Promise.resolve(tool?.run({ id: 'ada', command: 'true' }, {} as never)).catch((error: unknown) => error);
   expect(String(said instanceof Error ? said.message : said)).toContain('machine need anthropicKey');
 });

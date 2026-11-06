@@ -5,6 +5,7 @@ import { answer } from './route.js';
 import { findThread, threadId } from './thread.js';
 import type { RecordCollection } from '@ahpd/sdk';
 import type { Call } from './call.js';
+import type { Dispatched } from './plugin.js';
 import type { Endpoint } from './record.js';
 import type { Target } from './route.js';
 import type { Thread } from './thread.js';
@@ -21,35 +22,28 @@ export interface TurnEnd {
 /** How one turn ended, as the host's `turn_end` says it. */
 type Ending = Omit<TurnEnd, 'text'>;
 
-/**
- * One bot's own chat, as the seams give it.
- *
- * A read of the bot answers the session, and the session's own state names the
- * chat a turn is said in. The two are kept separate because a session can be
- * started again under the same chat: what a thread record is about is the chat,
- * and the session is how that chat was found.
- */
-export interface BotChat {
-  /** The session the bot's read answered, which a thread record keeps. */
-  session: string;
-  /** The default chat of that session: where every turn of this bot is said. */
-  chat: string;
-}
-
 /** What the bot target reads and calls, so a test gives each one. */
 export interface BotSeams {
   /** The `webhook-threads` collection. */
   threads: RecordCollection;
-  /** The bot's own chat, or nothing when the plugin is answered no chat for it. */
-  chat(bot: string): Promise<BotChat | undefined>;
-  /** Send one turn in a chat, and give the host's reason when it refused the turn, or `undefined` when it took it. */
-  send(chat: string, turn: string, text: string): Promise<string | undefined>;
+  /** The plugin's session with the bot, which a read of the bot answers, or nothing when it answers none. */
+  session(bot: string): Promise<string | undefined>;
+  /**
+   * Open a chat of its own in that session, as a client opens one with
+   * `createChat`, and answer its URI, or nothing when the host refused it.
+   */
+  openChat(session: string): Promise<string | undefined>;
+  /** Send one turn in a chat, and give what the host made of it: taken, refused with its reason, or unconfirmed. */
+  send(chat: string, turn: string, text: string): Promise<Dispatched>;
   /** Wait for one turn to end. Asked before the turn is sent, so no end is missed. */
   ended(chat: string, turn: string): Promise<TurnEnd>;
   /** Stop the wait for one turn's end, for a turn the host refused. */
   forget(chat: string, turn: string): void;
-  /** POST a JSON body to a callback URL. */
-  post(url: string, body: Record<string, unknown>): Promise<void>;
+  /**
+   * POST a JSON body to a callback URL, signed for the endpoint under the
+   * message id `id`, and settle once it is delivered or given up.
+   */
+  post(endpoint: Endpoint, url: string, id: string, body: Record<string, unknown>): Promise<void>;
   /** How long a `sync` call waits when its endpoint names no time. */
   syncTimeoutSeconds: number;
   /** Say what went wrong, for the operator to read. */
@@ -105,6 +99,16 @@ function checkCallback(endpoint: Endpoint, callback: string | undefined): { url:
   return { url: url.href };
 }
 
+/**
+ * The window a sender gives a receiver before it counts a delivery failed, in
+ * seconds, by the endpoint's scheme: GitHub's ten and Microsoft Graph's three.
+ * A sync call's wait is held within it, since an answer after it reaches a
+ * sender that has already given up.
+ * https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#respond-within-10-seconds
+ * https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks#http-codes-and-retry-logic
+ */
+const SENDER_WINDOW_SECONDS: Partial<Record<string, number>> = { github: 10, graph: 3 };
+
 /** What a reply says of a turn that ended: its status, its text, and its error when it failed. */
 const ended = (done: TurnEnd): Record<string, unknown> => ({
   status: done.status,
@@ -141,23 +145,27 @@ export function turnEnds() {
 /**
  * The target of a bot endpoint.
  *
- * A call's text is a turn in the bot's own chat: one conversation between this
- * plugin and this bot, which every thread of the endpoint says its turns in.
- * The endpoint's `reply` decides what the call is answered with.
+ * A call's text is a turn in its thread's own chat: each caller thread is a
+ * conversation of its own with the bot, a chat the plugin opens in its session
+ * with the bot, as the spec gives a separate conversation its own chat with
+ * `session/chatAdded`. The endpoint's `reply` decides what the call is
+ * answered with.
  */
 export function botTarget(seams: BotSeams): Target {
   /** The last lookup of each thread, so the lookups of one thread run one after another and keep one record. */
   const queued = new Map<string, Promise<Thread | undefined>>();
 
   const lookFor = async (endpoint: Endpoint, thread: string, bot: string): Promise<Thread | undefined> => {
-    const own = await seams.chat(bot);
-    if (own === undefined) return undefined;
+    const session = await seams.session(bot);
+    if (session === undefined) return undefined;
     const kept = await findThread(seams.threads, endpoint.id, thread);
-    // The bot's chat is the one it was, so the record already says where this
-    // thread talks. A chat that moved - a session started again - is written
-    // down again, and the record keeps the id it had.
-    if (kept !== undefined && kept.session === own.session && kept.chat === own.chat) return kept;
-    const record: Thread = { id: kept?.id ?? threadId(), endpoint: endpoint.id, thread, session: own.session, chat: own.chat };
+    // The session is the one it was, so the record already says where this
+    // thread talks. A session started again is a new chat for the thread,
+    // written down under the record's own id.
+    if (kept !== undefined && kept.session === session) return kept;
+    const chat = await seams.openChat(session);
+    if (chat === undefined) return undefined;
+    const record: Thread = { id: kept?.id ?? threadId(), endpoint: endpoint.id, thread, session, chat };
     await seams.threads.put({ ...record });
     return record;
   };
@@ -190,16 +198,29 @@ export function botTarget(seams: BotSeams): Target {
     const turn = randomUUID();
     const end = seams.ended(thread.chat, turn);
     end.catch((error: unknown) => { seams.problem(`webhooks/${endpoint.id} lost the end of turn ${turn}: ${reason(error)}`); });
-    const refused = await seams.send(thread.chat, turn, askedFor.text);
-    if (refused !== undefined) {
+    const sent = await seams.send(thread.chat, turn, askedFor.text);
+    if ('refused' in sent) {
       seams.forget(thread.chat, turn);
-      seams.problem(`webhooks/${endpoint.id} turn ${turn} was refused: ${refused}`);
-      return answer(409, { message: refused });
+      seams.problem(`webhooks/${endpoint.id} turn ${turn} was refused: ${sent.refused}`);
+      return answer(409, { message: sent.refused });
+    }
+    /*
+     * A send the host never confirmed is neither taken nor refused, and the
+     * caller is told so in VS Code's words for it, never as accepted: the
+     * turn may already be queued.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L283-L287
+     */
+    if ('unconfirmed' in sent) {
+      seams.forget(thread.chat, turn);
+      return answer(504, { thread: askedFor.thread, turn, message: 'Remote message delivery was not confirmed. It may already be queued; do not retry automatically.' });
     }
     const said = { thread: askedFor.thread, turn };
 
     if (endpoint.reply === 'sync') {
-      const seconds = endpoint.syncTimeoutSeconds ?? seams.syncTimeoutSeconds;
+      const seconds = Math.min(
+        endpoint.syncTimeoutSeconds ?? seams.syncTimeoutSeconds,
+        SENDER_WINDOW_SECONDS[endpoint.auth ?? 'bearer'] ?? Number.POSITIVE_INFINITY,
+      );
       let timer: ReturnType<typeof setTimeout> | undefined;
       const late = new Promise<undefined>((resolve) => { timer = setTimeout(() => { resolve(undefined); }, seconds * 1000); });
       const done = await Promise.race([end, late]);
@@ -212,7 +233,9 @@ export function botTarget(seams: BotSeams): Target {
       const url = callback;
       end.then(async (done) => {
         try {
-          await seams.post(url, { ...said, ...ended(done) });
+          // The turn is the event the callback is about, so its id is the
+          // message id every attempt carries.
+          await seams.post(endpoint, url, turn, { ...said, ...ended(done) });
         }
         catch (error) {
           seams.problem(`webhooks/${endpoint.id} could not call back ${url}: ${reason(error)}`);

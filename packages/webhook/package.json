@@ -56,10 +56,12 @@
     "test": "cd ../.. && vitest run packages/webhook/test"
   },
   "peerDependencies": {
-    "@ahpd/sdk": ">=0.14 <1"
+    "@ahpd/sdk": ">=0.14 <1",
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "devDependencies": {
-    "@ahpd/sdk": "workspace:*"
+    "@ahpd/sdk": "workspace:*",
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "ahpd": {
     "entry": "./dist/index.js",
@@ -75,7 +77,8 @@
     "contracts": {
       "routes": ["post /plugins/webhook/:endpoint"],
       "triggerTypes": ["webhook"],
-      "adapters": ["webhook"]
+      "adapters": ["webhook"],
+      "closers": ["the callback attempts still to come"]
     },
     "optionsSchema": {
       "type": "object",

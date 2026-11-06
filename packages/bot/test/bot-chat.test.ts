@@ -20,6 +20,7 @@ import { botStore } from '../src/store.js';
 import type { ChatMessage } from '../src/chat.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { Start } from '../../sdk/src/types/agent.js';
+import type { Session } from '../../sdk/src/types/session.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -77,8 +78,11 @@ const actions = (notes: Notes, channel: string): Bag[] => notes
  * about a grant.
  *
  * `more` is what a case adds to the host, such as the shells a command runs in.
+ * `grants` is what the plugin's own entry holds, as the daemon's entry does: a
+ * wake starts its back session in the bot's folder, which takes
+ * `session:trust`.
  */
-function made(more: Partial<HostOptions> = {}) {
+function made(more: Partial<HostOptions> = {}, grants: `${string}:${string}`[] = []) {
   const root = mkdtempSync(join(tmpdir(), 'ahpd-bot-chat-'));
   loose.push(root);
   /** Where a bot's own folder goes, which is the plugin's `root` option. */
@@ -102,6 +106,7 @@ function made(more: Partial<HostOptions> = {}) {
     sessions: () => sessions,
     records: () => records,
     alert: () => {},
+    grants,
   });
   apply(plugin, { root: bots });
 
@@ -370,9 +375,10 @@ it('tells whoever answers the chat the words and the chat they were said in, and
 /*
  * A turn whose work failed ends as failed, with its error part, as the
  * reference host ends a failed send with `chat/error` (agentSideEffects.ts
- * L1854-L1860 at a4e689ae), and a read back keeps it failed.
+ * L1854-L1860 at a4e689ae) and types the part `sendFailed` (L2564-L2573 at
+ * 6b68d3fe), and a read back keeps it failed.
  */
-it('ends a turn as failed, in the words of what failed', async () => {
+it('ends a turn as failed, in the words of what failed, typed as VS Code types a failed send', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -384,7 +390,7 @@ it('ends a turn as failed, in the words of what failed', async () => {
   chat.fail?.('the model call failed');
 
   const failed = actions(notes, CHAT).find((one) => one['type'] === 'chat/error');
-  expect(failed).toMatchObject({ turnId: 't1', part: { kind: 'error', error: { message: 'the model call failed' } } });
+  expect(failed).toMatchObject({ turnId: 't1', part: { kind: 'error', error: { errorType: 'sendFailed', message: 'the model call failed' } } });
   expect(actions(notes, CHAT).some((one) => one['type'] === 'chat/turnComplete')).toBe(false);
   const state = await stateOf(client);
   expect(state['turns']).toMatchObject([{ id: 't1', state: 'error' }]);
@@ -529,6 +535,32 @@ it('steers a message into the open turn, which goes on', async () => {
   const read = await fresh.transcript?.('one');
   expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
   expect(read?.[0]?.responseParts).toEqual([quote, { id: 't1:reply', kind: 'markdown', content: 'done' }]);
+});
+
+// The protocol's reducer moves a chat's modifiedAt at a turn's start and end only.
+it('leaves the chat\'s modified time where a steer finds it', async () => {
+  const { host, configDir, records } = made();
+  const client = await anyone(host);
+  await client.handle({
+    method: 'resourceWrite',
+    params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true },
+  });
+  const agent = await backend(configDir, records, () => {});
+  // The session a later subscriber is seeded from, read directly.
+  const session = agent.create({
+    uri: 'bot-chat:/steered',
+    chatUri: 'ahp-chat:/steered',
+    settings: { bot: 'backer' },
+    schema: () => ({}),
+    emit: () => {},
+    clientToolTimeoutMs: 0,
+  } as Start) as Session;
+  session.sendMessage('t1', 'hello');
+  const before = session.modifiedAt();
+  // Long enough that a moved time would read as another one.
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  expect(session.sendSteeringMessage?.({ id: 's1', text: 'stop that', from: { origin: { kind: 'user' } } })).toBe(true);
+  expect(session.modifiedAt()).toBe(before);
 });
 
 it('answers a steer to the client that sent it', async () => {
@@ -1323,6 +1355,42 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   expect(calls).toHaveLength(1);
   expect(undeclaredIn([...notes, { asked: 'subscribe', params: { channel: CHAT }, result: late }])).toEqual([]);
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, notes, CHAT)));
+});
+
+it('offers its host every protocol version the package speaks, newest first, once a message wakes a bot', async () => {
+  const { host, contribution } = made({}, ['session:trust']);
+  // The plugin's own connection, served by this host, with what it offered kept.
+  const offered: unknown[] = [];
+  const accept = host.accept.bind(host);
+  contribution.connects.host = {
+    ...host,
+    accept: (from, principal, root, opened) => {
+      const served = accept(from, principal, root, opened);
+      return {
+        ...served,
+        handle: (request) => {
+          if (request.method === 'initialize') offered.push((request.params as Bag)['protocolVersions']);
+          return served.handle(request);
+        },
+      };
+    },
+  };
+  const client = await anyone(host);
+  await client.handle({
+    method: 'resourceWrite',
+    params: { uri: 'bot://backer', data: JSON.stringify({ name: 'Backer' }), createOnly: true },
+  });
+  // The chat a read of the bot opens, which is the chat a message wakes it in.
+  const read = await client.handle({ method: 'resourceRead', params: { uri: 'bot://backer' } }) as { data: string };
+  const chat = chatUriFor(String((JSON.parse(read.data) as Bag)['chat']));
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
+  });
+
+  await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); });
 });
 
 it('refuses a chat with a bot that is not there', async () => {

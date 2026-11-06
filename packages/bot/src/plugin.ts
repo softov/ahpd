@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { expandHome, mayUseAgentFor, ownershipOf, reason, Status } from '@ahpd/sdk';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { botAsk } from './ask.js';
 import { botCatalogue, CATALOGUE_SCHEME } from './catalogue.js';
 import { botChatAgent, turns } from './chat.js';
@@ -493,13 +494,17 @@ export const apply: Plugin['apply'] = (host, options) => {
    * turn". Opened here rather than when the daemon listens, because nothing
    * this plugin does needs it before somebody says something to a bot; a
    * connection that failed is dropped, so the next message tries again.
+   *
+   * The handshake offers every version the package speaks, most preferred
+   * first, as the spec has a client offer them (docs/specification/versioning.md
+   * at spec/v1.0.0, "Negotiation").
    */
   let opened: Promise<Opened> | undefined;
   const connection = (): Promise<Opened> => {
     opened ??= (async () => {
       const conn = host.connect();
       const sender = dispatcher(conn, CLIENT);
-      await conn.request('initialize', { clientId: CLIENT, protocolVersions: ['0.9.0'] });
+      await conn.request('initialize', { clientId: CLIENT, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
       return { conn, sender };
     })();
     const failed = (): void => { opened = undefined; };

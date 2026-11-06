@@ -3,11 +3,12 @@ import { adapterOf, inputOf, nameOf, schemaOf } from '../src/mapping.js';
 import { checkAdapter } from '../../sdk/src/plugins/validate.js';
 import { schemaGaps } from '../../sdk/src/plugins/schemagaps.js';
 import type { ActionDescription, AuthDescription, PieceDescription, PropDescription } from '../src/wire.js';
+import type { Connector } from '@ahpd/sdk';
 
 /*
  * What a piece becomes in the daemon.
  *
- * The mapping reads the description the child sends and nothing else, so a
+ * The mapping reads the description the engine sends and nothing else, so a
  * case builds one by hand: the auth the piece takes, and the props of its
  * actions. No piece is loaded here, and no function survives into an adapter.
  */
@@ -52,7 +53,7 @@ describe('a piece becomes an adapter', () => {
 
   it('gives a SECRET_TEXT auth one secret string, secret_text', () => {
     const auth: AuthDescription = { type: 'SECRET_TEXT', displayName: 'API Key', description: 'The key.' };
-    const schema = schemaOf(auth);
+    const schema = schemaOf([auth]);
 
     expect(schema).toEqual({
       type: 'object',
@@ -72,6 +73,105 @@ describe('a piece becomes an adapter', () => {
     expect(properties['botToken']).toMatchObject({ type: 'string', secret: true, title: 'Bot Token' });
     expect(properties['userToken']).toMatchObject({ type: 'string', secret: true, title: 'User Token' });
     expect(schema['required']).toEqual(['botToken']);
+  });
+
+  it('gives a BASIC_AUTH auth a username and a secret password, as Activepieces collects them, and hands them over as its value', async () => {
+    const auth: AuthDescription = {
+      type: 'BASIC_AUTH',
+      displayName: 'Credentials',
+      username: { displayName: 'Login', description: 'Your login.' },
+      password: { displayName: 'Password' },
+    };
+    let handed: Record<string, unknown> | undefined;
+    const mapped = adapterOf(piece({ auth, actions: [action()] }), async (call) => { handed = call.auth; return null; });
+
+    expect(mapped.adapter?.schema).toEqual({
+      type: 'object',
+      properties: {
+        username: { type: 'string', title: 'Login', description: 'Your login.' },
+        password: { type: 'string', secret: true, title: 'Password' },
+      },
+      required: ['username', 'password'],
+    });
+    await mapped.adapter?.run?.({ id: 'work', adapter: 'ap-demo', owner: 'host', config: { username: 'ana', password: 'pw' } }, 'say', { text: 'hi' });
+    expect(handed).toEqual({ type: 'BASIC_AUTH', username: 'ana', password: 'pw' });
+  });
+
+  it('offers each kind a piece lists that a connector can carry, the connector picking one by its type', async () => {
+    const mapped = adapterOf(piece({
+      package: '@activepieces/piece-github',
+      displayName: 'GitHub',
+      auth: [
+        { type: 'OAUTH2', displayName: 'Connection' },
+        { type: 'CUSTOM_AUTH', displayName: 'GitHub App', props: { appId: { type: 'SHORT_TEXT', displayName: 'App ID', required: true }, privateKey: { type: 'SECRET_TEXT', displayName: 'Private key', required: true } } },
+        { type: 'SECRET_TEXT', displayName: 'Personal access token' },
+      ],
+      actions: [action()],
+    }), async (call) => call.auth);
+    const schema = mapped.adapter?.schema as Record<string, unknown>;
+
+    expect(schema['properties']).toEqual({
+      type: { type: 'string', title: 'Connection', enum: ['CUSTOM_AUTH', 'SECRET_TEXT'], enumLabels: ['GitHub App', 'Personal access token'] },
+      appId: { type: 'string', title: 'App ID' },
+      privateKey: { type: 'string', secret: true, title: 'Private key' },
+      secret_text: { type: 'string', secret: true, title: 'Personal access token' },
+    });
+    expect(schema['required']).toEqual(['type']);
+    expect(schema['allOf']).toEqual([
+      { if: { properties: { type: { const: 'CUSTOM_AUTH' } } }, then: { required: ['appId', 'privateKey'] } },
+      { if: { properties: { type: { const: 'SECRET_TEXT' } } }, then: { required: ['secret_text'] } },
+    ]);
+    expect(await mapped.adapter?.run?.({ id: 'work', adapter: 'ap-github', owner: 'host', config: { type: 'SECRET_TEXT', secret_text: 'ghp_x' } }, 'say', {}))
+      .toEqual({ type: 'SECRET_TEXT', secret_text: 'ghp_x' });
+    expect(() => checkAdapter(mapped.adapter, 'activepieces')).not.toThrow();
+  });
+
+  it('checks a connector with the piece\'s own validate, where the piece has one', async () => {
+    const auth: AuthDescription = { type: 'SECRET_TEXT', displayName: 'API Key', validates: true };
+    const asked: Record<string, unknown>[] = [];
+    const answers = [{ valid: true }, { valid: false, error: 'Invalid Api Key' }];
+    const mapped = adapterOf(piece({ auth, actions: [action()] }), undefined, undefined, async (value) => {
+      asked.push(value);
+      const said = answers.shift();
+      if (said === undefined) throw new Error('the engine is down');
+      return said;
+    });
+    const connector: Connector = { id: 'work', adapter: 'ap-demo', owner: 'host', config: { secret_text: 're_x' } };
+
+    expect(await mapped.adapter?.check?.(connector)).toEqual({ result: 'ok' });
+    expect(await mapped.adapter?.check?.(connector)).toEqual({ result: 'denied', message: 'Invalid Api Key' });
+    expect(await mapped.adapter?.check?.(connector)).toEqual({ result: 'failed', message: 'the engine is down' });
+    expect(asked[0]).toEqual({ type: 'SECRET_TEXT', secret_text: 're_x' });
+    expect(adapterOf(piece({ auth: { type: 'SECRET_TEXT', displayName: 'API Key' } }), undefined, undefined, async () => ({ valid: true })).adapter).not.toHaveProperty('check');
+  });
+
+  it('leaves out an action its piece marks for humans alone, as Activepieces hides it from agents', () => {
+    const mapped = adapterOf(piece({
+      auth: { type: 'SECRET_TEXT', displayName: 'API Key' },
+      actions: [
+        action({ name: 'create_issue', displayName: 'Create Issue', audience: 'human' }),
+        action({ name: 'create_issue_agent', displayName: 'Create Issue (Agent)', audience: 'ai' }),
+        action({ name: 'list', displayName: 'List', audience: 'both' }),
+      ],
+    }));
+
+    expect(mapped.adapter?.capabilities.map((one) => one.name)).toEqual(['create_issue_agent', 'list']);
+  });
+
+  it('types a multi-select dropdown as an array of its values', () => {
+    const input = inputOf({
+      labels: { type: 'STATIC_MULTI_SELECT_DROPDOWN', displayName: 'Labels', required: false, options: ['bug', 'feature'] },
+      people: { type: 'MULTI_SELECT_DROPDOWN', displayName: 'People', required: false },
+    });
+
+    expect(input?.['properties']).toEqual({
+      labels: { type: 'array', title: 'Labels', items: { enum: ['bug', 'feature'] } },
+      people: { type: 'array', title: 'People', items: { type: 'string' }, description: 'Give the ids.' },
+    });
+  });
+
+  it('describes an adapter in the piece\'s own words, or by its name where it wrote none', () => {
+    expect(adapterOf(piece({ auth: { type: 'SECRET_TEXT', displayName: 'API Key' } })).adapter?.description).toBe('Demo');
   });
 
   it('gives a piece with only an OAuth2 auth no adapter, and says so', () => {
@@ -134,7 +234,7 @@ describe('a piece becomes an adapter', () => {
     expect(properties['when']).toMatchObject({ type: 'string', format: 'date-time' });
     expect(properties['file']).toMatchObject({
       type: 'string',
-      description: 'An https: URL, a data: URI or the name of a session attachment.',
+      description: 'A URL, a base64 data: URI or the name of a session attachment.',
     });
     expect(properties).not.toHaveProperty('note');
   });
@@ -241,7 +341,7 @@ describe('a piece becomes an adapter', () => {
       file: {
         type: 'string',
         title: 'File',
-        description: 'The file to send. An https: URL, a data: URI or the name of a session attachment.',
+        description: 'The file to send. A URL, a base64 data: URI or the name of a session attachment.',
       },
     });
     expect(send?.input).not.toHaveProperty('required');

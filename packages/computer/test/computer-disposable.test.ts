@@ -1198,9 +1198,10 @@ it('takes the session an alone machine was made for back into it after a restart
 });
 
 /*
- * Task 09: a machine made for a session is counted like any other.
+ * A machine made for a session is made as one a client asks for, as VS Code's
+ * host makes every container a client asks for: `max` caps the agent's tool.
  */
-it('counts a machine made for a session against max, and refuses the next one', async () => {
+it('makes a session\'s machine past the tool\'s maximum, as a client\'s', async () => {
   const dir = temp();
   const state = join(dir, 'docker.json');
   const folder = join(dir, 'project');
@@ -1213,20 +1214,16 @@ it('counts a machine made for a session against max, and refuses the next one', 
   const { open } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
   await until(() => held(state).machines.length === 1);
-
-  // The host is full, so the second session is refused the sentence a write to
-  // `computer://<name>` is refused with.
-  await expect(open('ahp-session:/two', { computer: 'disposable:claude' }, folder))
-    .rejects.toThrow(/This host holds 1 computers already/);
-  await settle();
-  expect(held(state).machines).toHaveLength(1);
+  await open('ahp-session:/two', { computer: 'disposable:claude' }, folder);
+  await until(() => held(state).machines.length === 2);
+  expect(held(state).machines).toHaveLength(2);
 });
 
 /*
- * The count and the create it allows are one thing, so a machine being made is
- * one of the machines this host holds.
+ * Two sessions that ask at once are each made a machine, one create at a time
+ * per runtime, as VS Code queues a source's dev container operations.
  */
-it('counts a machine being made against max, so two sessions at once make one', async () => {
+it('makes the machines of two sessions that ask at once, one create at a time', async () => {
   const dir = temp();
   const state = join(dir, 'docker.json');
   const folder = join(dir, 'project');
@@ -1238,17 +1235,13 @@ it('counts a machine being made against max, so two sessions at once make one', 
   }), [agentWith()]);
   const { open } = await room(loaded);
 
-  // Two sessions naming a source in the same breath, which count the machines
-  // this host holds before either of them is made.
   const asked = await Promise.allSettled([
     open('ahp-session:/one', { computer: 'disposable:claude' }, folder),
     open('ahp-session:/two', { computer: 'disposable:claude' }, folder),
   ]);
-  const refused = asked.filter((one) => one.status === 'rejected');
-  expect(refused).toHaveLength(1);
-  expect(String((refused[0] as PromiseRejectedResult).reason)).toMatch(/This host holds 1 computers already/);
-  await settle();
-  expect(held(state).machines).toHaveLength(1);
+  expect(asked.map((one) => one.status)).toEqual(['fulfilled', 'fulfilled']);
+  await until(() => held(state).machines.length === 2);
+  expect(held(state).machines).toHaveLength(2);
 });
 
 /*
@@ -1450,7 +1443,7 @@ it('gives a worktree session a git directory of its own, and runs the machine as
   // Every command into it, by a backend and by the tool, as the same user.
   const how = await loaded.computers?.how(box.name, { command: 'true' });
   expect(flagValue(how?.args ?? [], '--user')).toBe(ME);
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec');
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer');
   await tool?.run({ id: box.name, command: 'true' }, {} as never);
   expect((held(state) as Held & { commands?: { user?: string }[] }).commands?.at(-1)?.user).toBe(ME);
 
@@ -2590,20 +2583,22 @@ it('keeps a machine on another box\'s Docker whose work cannot be brought back, 
 
 /*
  * A profile with `code: "clone"` has its machine fetch the session's branch
- * from the tree's `origin`, by its https form and with no credential.
+ * from the tree's `origin`, with no credential: a GitHub SSH origin by
+ * GitHub's HTTPS origin, as VS Code's agent host clones one, and any other
+ * origin as written.
  */
 
 /** A cloning profile on `dev02`. */
 const CLONING = { ...FAR_PROFILE, code: 'clone' };
 
-/** The repository `repositoryIn` makes, with an ssh `origin` its machine fetches by https. */
+/** The repository `repositoryIn` makes, with an SSH `origin` on a forge of its own. */
 const withOrigin = (dir: string) => {
   const made = repositoryIn(dir);
   execFileSync('git', ['-C', made.repo, 'remote', 'add', 'origin', 'git@git.example.com:team/repo.git'], { stdio: 'pipe' });
   return made;
 };
 
-it('fetches the session\'s branch from origin by its https form where the profile says clone', async () => {
+it('fetches the session\'s branch from origin as written where the profile says clone', async () => {
   const dir = realpathSync(temp());
   const state = join(dir, 'docker.json');
   const { repo } = withOrigin(dir);
@@ -2627,7 +2622,7 @@ it('fetches the session\'s branch from origin by its https form where the profil
     'ls-remote --exit-code origin refs/heads/main',
     'fetch -q --no-tags origin +refs/heads/main:refs/ahpd/seed',
   ]);
-  expect(commands.some((one) => one.command.join(' ').includes('remote.origin.url https://git.example.com/team/repo.git'))).toBe(true);
+  expect(commands.some((one) => one.command.join(' ').includes('remote.origin.url git@git.example.com:team/repo.git'))).toBe(true);
 }, FAR_CASE);
 
 it('refuses a clone of a branch origin does not have, and says bundle brings it without a push', async () => {

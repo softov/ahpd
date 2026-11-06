@@ -71,7 +71,9 @@
     "@activepieces/piece-smtp": "0.5.0",
     "@activepieces/piece-stripe": "0.9.0",
     "@activepieces/piece-telegram-bot": "0.9.1",
-    "@activepieces/piece-whatsapp": "1.0.1"
+    "@activepieces/piece-whatsapp": "1.0.1",
+    "dayjs": "1.11.9",
+    "ipaddr.js": "2.3.0"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*"
@@ -98,6 +100,24 @@
             "pattern": "^@activepieces/piece-[a-z0-9][a-z0-9-]*(?:@[^@\\s]+)?$"
           },
           "description": "Activepieces packages to offer, such as '@activepieces/piece-resend'. Add a version to pin one, as in '@activepieces/piece-postgres@0.5.1'. Defaults to the latest version."
+        },
+        "networkMode": {
+          "type": "string",
+          "enum": ["STRICT", "UNRESTRICTED"],
+          "default": "UNRESTRICTED",
+          "description": "Activepieces' AP_NETWORK_MODE for the engine: STRICT refuses every connection a piece makes to a private, loopback, link-local or multicast address, UNRESTRICTED refuses none."
+        },
+        "ssrfAllowList": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Activepieces' AP_SSRF_ALLOW_LIST: addresses and CIDR ranges a piece may reach under STRICT, such as 10.0.0.5 or 10.0.0.0/8."
+        },
+        "sandboxPropagatedEnvVars": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "The variables of the daemon's environment the engine is given, by name, as Activepieces' AP_SANDBOX_PROPAGATED_ENV_VARS. None by default."
         }
       },
       "required": ["pieces"]

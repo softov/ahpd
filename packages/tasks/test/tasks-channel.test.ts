@@ -76,9 +76,9 @@ const when = async (check: () => boolean, ms = 5000): Promise<void> => {
   }
 };
 
-/** The actions the host sent on the plan channel. */
-const heard = (notes: Sent[]): { type?: string; task?: TaskRecord; taskId?: string; plan?: PlanRecord }[] => notes
-  .filter((one) => one.method === 'action' && one.params.channel === 'x-ahpd-plans://p1')
+/** The actions the host sent on one plan's channel, `p1`'s unless another is named. */
+const heard = (notes: Sent[], channel = 'x-ahpd-plans://p1'): { type?: string; task?: TaskRecord; taskId?: string; plan?: PlanRecord }[] => notes
+  .filter((one) => one.method === 'action' && one.params.channel === channel)
   .map((one) => one.params.action as { type?: string; task?: TaskRecord; taskId?: string; plan?: PlanRecord });
 
 /** A call a tool is run for, as the host hands one to it. */
@@ -218,6 +218,66 @@ describe('the plan channel', () => {
     await when(() => heard(notes).some((one) => one.type === 'x-ahpd-plans/taskRemoved'));
     const removed = heard(notes).find((one) => one.type === 'x-ahpd-plans/taskRemoved');
     expect(removed?.taskId).toBe(id);
+    await host.close();
+  });
+
+  /*
+   * A chat that moves between sessions is said on both catalogs, removed on
+   * the one it left and added on the one it joined:
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L225-L226
+   */
+  it('says a task moved to another plan removed on the plan it left and added on the one it joined', async () => {
+    const { client, notes, host, tools, plans } = await served();
+    await plans.put({ ...plan(), id: 'p2', title: 'Ship the docs' });
+    await client.handle({ method: 'subscribe', params: { channel: 'x-ahpd-plans://p1' } });
+    await client.handle({ method: 'subscribe', params: { channel: 'x-ahpd-plans://p2' } });
+    const add = tools.find((one) => one.definition.name === 'task_add');
+    const set = tools.find((one) => one.definition.name === 'task_set');
+    if (add === undefined || set === undefined) throw new Error('no task_add or task_set');
+    const answer = String(await add.run({ title: 'Read the file', plan: 'p1' }, callOf('ahp-session:/one')));
+    const id = answer.slice(0, answer.indexOf(','));
+    await when(() => heard(notes).some((one) => one.type === 'x-ahpd-plans/taskAdded'));
+
+    await set.run({ task: id, plan: 'p2' }, callOf('ahp-session:/one'));
+    await when(() => heard(notes, 'x-ahpd-plans://p2').some((one) => one.type === 'x-ahpd-plans/taskAdded'));
+    expect(heard(notes).find((one) => one.type === 'x-ahpd-plans/taskRemoved')?.taskId).toBe(id);
+    expect(heard(notes).some((one) => one.type === 'x-ahpd-plans/taskSet')).toBe(false);
+    // The plan's own `set`, heard for the put that made it, is not the task's.
+    const joined = heard(notes, 'x-ahpd-plans://p2').filter((one) => one.type !== 'x-ahpd-plans/set');
+    expect(joined.map((one) => one.type)).toEqual(['x-ahpd-plans/taskAdded']);
+    expect(joined[0]?.task?.id).toBe(id);
+    expect(joined[0]?.task?.plan).toBe('p2');
+    await host.close();
+  });
+
+  it('says a task taken off its plan removed on that plan', async () => {
+    const { client, notes, host, tools, tasks } = await served();
+    await client.handle({ method: 'subscribe', params: { channel: 'x-ahpd-plans://p1' } });
+    const add = tools.find((one) => one.definition.name === 'task_add');
+    if (add === undefined) throw new Error('no task_add');
+    const answer = String(await add.run({ title: 'Read the file', plan: 'p1' }, callOf('ahp-session:/one')));
+    const id = answer.slice(0, answer.indexOf(','));
+    await when(() => heard(notes).some((one) => one.type === 'x-ahpd-plans/taskAdded'));
+
+    // No tool clears a plan, and a hand edit of the record does.
+    const held = await tasks.get(id);
+    if (held === undefined) throw new Error(`no ${id}`);
+    const { plan: _plan, ...unplanned } = held;
+    await tasks.put(unplanned);
+    await when(() => heard(notes).some((one) => one.type === 'x-ahpd-plans/taskRemoved'));
+    expect(heard(notes).find((one) => one.type === 'x-ahpd-plans/taskRemoved')?.taskId).toBe(id);
+    await host.close();
+  });
+
+  /*
+   * VS Code's host refuses a subscribe it has no state for with -32001 and
+   * these words:
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2199
+   */
+  it('refuses a subscribe to a plan that is not there as VS Code refuses an unknown resource', async () => {
+    const { client, host } = await served();
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'x-ahpd-plans://p9' } }))
+      .rejects.toMatchObject({ code: -32001, message: 'Resource not found: x-ahpd-plans://p9' });
     await host.close();
   });
 

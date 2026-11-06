@@ -21,38 +21,50 @@ import type { HostTool } from '@ahpd/sdk';
 /** The protocol's code for a body this host will not take. */
 const INVALID_PARAMS = -32602;
 
+/** The values one field may take, said as VS Code's server tools say them: "draft, active, done, or dropped". */
+const oneOf = new Intl.ListFormat('en', { type: 'disjunction' });
+
+/** What a scope that is neither a folder nor a bot is told, with the two it may be. */
+const SCOPE_REFUSAL = 'scope must be a folder or a bot (e.g. {"kind":"folder","folder":"/srv/work"} or {"kind":"bot","bot":"pilot"}).';
+
+/**
+ * A tool's refusal of its input, in the words VS Code's server tools refuse
+ * theirs with: the tool, the field, and what it must be.
+ *
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L649-L671
+ */
+const invalidInput = (tool: string, message: string): RpcError => new RpcError(INVALID_PARAMS, `Invalid ${tool} input: ${message}`);
+
 /** A line of input, trimmed, where the input says one. */
-const textOf = (input: Record<string, unknown>, key: string): string | undefined => {
+const textOf = (tool: string, input: Record<string, unknown>, key: string): string | undefined => {
   const value = input[key];
   if (value === undefined) return undefined;
-  if (typeof value !== 'string' || value.trim() === '') throw new RpcError(INVALID_PARAMS, `${key} is one line of text`);
+  if (typeof value !== 'string' || value.trim() === '') throw invalidInput(tool, `${key} must be a non-empty string.`);
   return value.trim();
 };
 
 /** The refs of an input, or none where it says none. */
-const refsOf = (input: Record<string, unknown>): string[] => {
+const refsOf = (tool: string, input: Record<string, unknown>): string[] => {
   const value = input.refs;
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.some((one) => typeof one !== 'string')) {
-    throw new RpcError(INVALID_PARAMS, 'refs is a list of text');
+    throw invalidInput(tool, 'refs must be a string array.');
   }
   return value;
 };
 
 /** The scope an input names, or a refusal where it names neither a folder nor a bot. */
-const requiredScope = (input: Record<string, unknown>): PlanScope => {
+const requiredScope = (tool: string, input: Record<string, unknown>): PlanScope => {
   const scope = scopeOf(input.scope);
   // A session's plan is the translation's, and no tool makes one: the tools take a folder or a bot.
-  if (scope === undefined || scope.kind === 'session') {
-    throw new RpcError(INVALID_PARAMS, 'scope is a folder or a bot: {"kind":"folder","folder":"/srv/work"} or {"kind":"bot","bot":"pilot"}');
-  }
+  if (scope === undefined || scope.kind === 'session') throw invalidInput(tool, SCOPE_REFUSAL);
   return scope;
 };
 
 /** One plan by id, refused where there is none. */
-const requiredPlan = async (store: TaskStore, id: string): Promise<PlanRecord> => {
+const requiredPlan = async (tool: string, store: TaskStore, id: string): Promise<PlanRecord> => {
   const plan = await store.plan(id);
-  if (plan === undefined) throw new RpcError(INVALID_PARAMS, `there is no plan ${id}`);
+  if (plan === undefined) throw invalidInput(tool, 'plan must match the id of a known plan (see plan_list).');
   return plan;
 };
 
@@ -93,16 +105,18 @@ export function planTools(store: TaskStore): HostTool[] {
         annotations: { title: 'Create Plan', readOnlyHint: false, destructiveHint: false },
       },
       run: async (input, at) => {
-        const title = textOf(input, 'title');
-        if (title === undefined) throw new RpcError(INVALID_PARAMS, 'title is one line of text');
-        if (typeof input.goal !== 'string') throw new RpcError(INVALID_PARAMS, 'goal is the plan, in Markdown');
+        const tool = 'plan_create';
+        const title = textOf(tool, input, 'title');
+        if (title === undefined) throw invalidInput(tool, 'title is required.');
+        if (input.goal === undefined) throw invalidInput(tool, 'goal is required.');
+        if (typeof input.goal !== 'string') throw invalidInput(tool, 'goal must be a string.');
         const plan: PlanRecord = {
           id: await store.nextPlanId(),
-          scope: requiredScope(input),
+          scope: requiredScope(tool, input),
           title,
           goal: input.goal,
           status: 'draft',
-          refs: refsOf(input),
+          refs: refsOf(tool, input),
           created: stampOf(at),
         };
         await store.putPlan(plan);
@@ -126,13 +140,14 @@ export function planTools(store: TaskStore): HostTool[] {
         annotations: { title: 'Set Plan', readOnlyHint: false, destructiveHint: false },
       },
       run: async (input, at) => {
-        const id = textOf(input, 'plan');
-        if (id === undefined) throw new RpcError(INVALID_PARAMS, 'plan is a plan id');
-        const plan = await requiredPlan(store, id);
-        const title = textOf(input, 'title');
+        const tool = 'plan_set';
+        const id = textOf(tool, input, 'plan');
+        if (id === undefined) throw invalidInput(tool, 'plan is required.');
+        const plan = await requiredPlan(tool, store, id);
+        const title = textOf(tool, input, 'title');
         const status = input.status;
         if (status !== undefined && !isPlanStatus(status)) {
-          throw new RpcError(INVALID_PARAMS, `status is one of ${PLAN_STATUSES.join(', ')}, and ${JSON.stringify(status)} is not`);
+          throw invalidInput(tool, `status must be ${oneOf.format(PLAN_STATUSES)}.`);
         }
         if (title !== undefined) plan.title = title;
         // Moving into `done` or `dropped` stamps `finished`, which is what the sweep counts from.
@@ -158,9 +173,10 @@ export function planTools(store: TaskStore): HostTool[] {
         annotations: { title: 'Show Plan', readOnlyHint: true, destructiveHint: false },
       },
       run: async (input) => {
-        const id = textOf(input, 'plan');
-        if (id === undefined) throw new RpcError(INVALID_PARAMS, 'plan is a plan id');
-        const plan = await requiredPlan(store, id);
+        const tool = 'plan_show';
+        const id = textOf(tool, input, 'plan');
+        if (id === undefined) throw invalidInput(tool, 'plan is required.');
+        const plan = await requiredPlan(tool, store, id);
         return [planLine(plan), ...(await store.tasksOf(plan.id)).map(taskLine)].join('\n');
       },
     },
@@ -188,14 +204,13 @@ export function planTools(store: TaskStore): HostTool[] {
         annotations: { title: 'List Plans', readOnlyHint: true, destructiveHint: false },
       },
       run: async (input) => {
+        const tool = 'plan_list';
         const status = input.status;
         if (status !== undefined && !isPlanStatus(status)) {
-          throw new RpcError(INVALID_PARAMS, `status is one of ${PLAN_STATUSES.join(', ')}, and ${JSON.stringify(status)} is not`);
+          throw invalidInput(tool, `status must be ${oneOf.format(PLAN_STATUSES)}.`);
         }
         const scope = input.scope === undefined ? undefined : scopeOf(input.scope);
-        if (input.scope !== undefined && (scope === undefined || scope.kind === 'session')) {
-          throw new RpcError(INVALID_PARAMS, 'scope is a folder or a bot: {"kind":"folder","folder":"/srv/work"} or {"kind":"bot","bot":"pilot"}');
-        }
+        if (input.scope !== undefined && (scope === undefined || scope.kind === 'session')) throw invalidInput(tool, SCOPE_REFUSAL);
         const plans = (await store.plans()).filter((one) =>
           (status === undefined || one.status === status)
           && (scope === undefined || sameScope(one.scope, scope)));

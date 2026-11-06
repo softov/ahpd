@@ -6,9 +6,10 @@ import type { Adapter, PluginHost } from '@ahpd/sdk';
  * The pieces the package ships, loaded by their packages.
  *
  * The plugin names a piece by its package, so this is the whole path a daemon
- * takes: `apply` forks the child, the child requires each package, and each
+ * takes: `apply` forks the engine, the engine requires each package, and each
  * piece becomes an adapter. The counts are the piece's own: every action it
- * declares is offered, and an action that takes a file takes a string.
+ * declares is offered but the ones it marks for humans alone, and an action
+ * that takes a file takes a string.
  */
 
 /** The packages the plugin ships. */
@@ -33,13 +34,13 @@ const PIECES = [
 const AUTH: Record<string, [string[], string[]]> = {
   'ap-airtable': [['secret_text'], ['secret_text']],
   'ap-discord': [['secret_text'], ['secret_text']],
-  'ap-github': [['appId', 'installationId', 'privateKey'], ['appId', 'installationId', 'privateKey']],
+  'ap-github': [['type', 'appId', 'installationId', 'privateKey', 'secret_text'], ['type']],
   'ap-hubspot': [['access_token'], ['access_token']],
   'ap-jira-cloud': [['instanceUrl', 'email', 'apiToken'], ['instanceUrl', 'email', 'apiToken']],
   'ap-linear': [['secret_text'], ['secret_text']],
   'ap-notion': [['accessToken'], ['accessToken']],
   'ap-resend': [['secret_text'], ['secret_text']],
-  'ap-sendgrid': [['secret_text'], ['secret_text']],
+  'ap-sendgrid': [['type', 'secret_text', 'apiKey', 'dataResidency'], ['type']],
   'ap-slack': [['botToken', 'userToken'], ['botToken']],
   'ap-smtp': [['host', 'port', 'TLS', 'email', 'password'], ['host', 'port', 'TLS']],
   'ap-stripe': [['secret_text'], ['secret_text']],
@@ -47,11 +48,11 @@ const AUTH: Record<string, [string[], string[]]> = {
   'ap-whatsapp': [['access_token', 'businessAccountId', 'app_secret'], ['access_token', 'businessAccountId']],
 };
 
-/** Each adapter's actions: every action the piece declares. */
+/** Each adapter's actions: every action the piece declares but the ones it marks for humans alone. */
 const ACTIONS: Record<string, number> = {
-  'ap-airtable': 34, 'ap-discord': 61, 'ap-github': 93, 'ap-hubspot': 54, 'ap-jira-cloud': 77,
-  'ap-linear': 58, 'ap-notion': 37, 'ap-resend': 58, 'ap-sendgrid': 8, 'ap-slack': 73,
-  'ap-smtp': 1, 'ap-stripe': 98, 'ap-telegram-bot': 41, 'ap-whatsapp': 23,
+  'ap-airtable': 22, 'ap-discord': 50, 'ap-github': 82, 'ap-hubspot': 53, 'ap-jira-cloud': 61,
+  'ap-linear': 46, 'ap-notion': 22, 'ap-resend': 57, 'ap-sendgrid': 7, 'ap-slack': 52,
+  'ap-smtp': 1, 'ap-stripe': 79, 'ap-telegram-bot': 22, 'ap-whatsapp': 22,
 };
 
 /** What the host kept, for the whole file. */
@@ -117,9 +118,7 @@ describe('the pieces are adapters', () => {
 
   it('offers each action that needs a file, with the file as a string', () => {
     const TAKING: [string, string][] = [
-      ['ap-airtable', 'airtable_upload_file_to_column'],
       ['ap-hubspot', 'upload-file'],
-      ['ap-jira-cloud', 'add_issue_attachment'],
       ['ap-jira-cloud', 'upload_attachment'],
       ['ap-slack', 'uploadFile'],
       ['ap-whatsapp', 'upload_media'],
@@ -128,7 +127,7 @@ describe('the pieces are adapters', () => {
       const found = adapter(name).capabilities.find((one) => one.name === action);
       expect(found, `${name} ${action}`).toBeDefined();
       const properties = Object.values((found?.input?.['properties'] ?? {}) as Record<string, Record<string, unknown>>);
-      const files = properties.filter((one) => String(one['description'] ?? '').includes('An https: URL'));
+      const files = properties.filter((one) => String(one['description'] ?? '').includes('A URL, a base64 data: URI'));
       expect(files, `${name} ${action}`).not.toHaveLength(0);
       for (const one of files) expect(one['type'], `${name} ${action}`).toBe('string');
     }

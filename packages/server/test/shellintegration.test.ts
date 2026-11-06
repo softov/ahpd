@@ -13,7 +13,7 @@
  */
 
 import { existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -110,6 +110,13 @@ describe('the injection a shell is given', () => {
     const folder = answer?.envMixin?.ZDOTDIR ?? '';
     expect(existsSync(join(folder, '.zshrc'))).toBe(true);
     expect(existsSync(join(folder, '.zshenv'))).toBe(true);
+  });
+
+  // VS Code's agent host asks with no environment, so a ZDOTDIR the shell
+  // would be given is not the one its own files are read from.
+  it.skipIf(process.platform === 'win32')('reads a person\'s zsh files from the home folder, as VS Code\'s agent host does', () => {
+    const answer = shellIntegration('/bin/zsh', [], { ZDOTDIR: '/somewhere/else' }, nonce);
+    expect(answer?.envMixin?.USER_ZDOTDIR).toBe(homedir());
   });
 });
 

@@ -282,12 +282,14 @@ export const apply: Plugin['apply'] = (host, options) => {
    * A finished plan is held for the days the setting names, and looked at once
    * when the plugin is applied and then every hour. The timer is unref'd, so a
    * daemon with nothing else to do is not kept up by it, and it is cleared when
-   * the daemon stops.
+   * the daemon stops. A pass that fails is something that went wrong in the
+   * daemon, so it goes to the log, as VS Code's lifecycle pass logs its own:
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L102
    */
   if (settings.sweepAfterDays !== undefined) {
     const look = (): void => {
       void oneAtATime(() => store.sweep()).catch((error: unknown) => {
-        host.problem(`${name}: the sweep did not finish: ${reason(error)}`);
+        host.log(`${name}: the sweep did not finish: ${reason(error)}`);
       });
     };
     let sweeping: ReturnType<typeof setInterval> | undefined = setInterval(look, SWEEP_MS);

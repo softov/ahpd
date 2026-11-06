@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { connectorsChannel } from '../../sdk/src/connectors/channel.js';
 import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
@@ -10,6 +10,7 @@ import { botTarget } from '../src/bot.js';
 import { apply } from '../src/plugin.js';
 import { webhookRoute } from '../src/route.js';
 import type { Connector, ServedAdapter } from '../../sdk/src/types/connectors.js';
+import type { Host } from '../../sdk/src/types/host.js';
 import type { LoaderContext, PluginMethod } from '../../sdk/src/types/plugin.js';
 import type { Vault } from '../../sdk/src/types/vault.js';
 import type { BotSeams } from '../src/bot.js';
@@ -63,6 +64,7 @@ async function started() {
       routes: ['post /plugins/webhook/:endpoint'],
       triggerTypes: ['webhook'],
       adapters: ['webhook'],
+      closers: ['the callback attempts still to come'],
     },
     records: () => records,
     collections,
@@ -71,8 +73,27 @@ async function started() {
   const adapter = contribution.adapters['webhook'];
   const route = contribution.routes;
   if (adapter === undefined || route === undefined) throw new Error('the plugin registered no adapter or no route');
-  return { adapter, route, records, collections };
+  return { adapter, route, records, collections, contribution };
 }
+
+it('offers its host every protocol version the package speaks, newest first', async () => {
+  const { contribution } = await started();
+  // A host that answers the handshake and keeps what it was offered.
+  const offered: unknown[] = [];
+  contribution.connects.host = {
+    accept: () => ({
+      handle: (request: { method: string; params?: Record<string, unknown> }) => {
+        if (request.method === 'initialize') offered.push(request.params?.['protocolVersions']);
+        return { protocolVersion: '1.0.0', serverSeq: 0, snapshots: [] };
+      },
+      close: () => {},
+    }),
+  } as unknown as Host;
+  for (const listener of contribution.events.listening ?? []) {
+    await listener.handle({ type: 'listening', runtime: 'node', host: '127.0.0.1', port: 9187, guarded: false }, listener.context);
+  }
+  await vi.waitFor(() => { expect(offered).toEqual([['1.0.0', '0.9.0']]); });
+});
 
 it('marks the secret and the verify token secret, so the host keeps them in the vault and not in the record', async () => {
   const { adapter } = await started();
@@ -208,8 +229,9 @@ it('answers a call to a connector naming only a bot and a secret with 202', asyn
   const threads = await memoryRecords().collection('webhook-threads', { format: 'json' });
   const seams: BotSeams = {
     threads,
-    chat: async () => ({ session: 'session://motion', chat: 'chat://motion' }),
-    send: async () => undefined,
+    session: async () => 'session://motion',
+    openChat: async () => 'chat://motion',
+    send: async () => ({ taken: true }),
     ended: async () => ({ status: 'complete', text: 'done' }),
     forget: () => {},
     post: async () => {},

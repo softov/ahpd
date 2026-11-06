@@ -14,7 +14,7 @@ import { basename, join } from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { installLine, knownAgents, type KnownAgent } from '@ahpd/sdk';
-import { askToServe, configure, offerConfigure, type Configured } from '../src/commands/configure.js';
+import { askToServe, configure, offerConfigure, under, type Configured } from '../src/commands/configure.js';
 import { optionsFrom } from '../src/commands/options.js';
 import { cliRegistry } from '../src/commands/registry.js';
 import { missingLines } from '../src/found.js';
@@ -186,6 +186,21 @@ const putRecord = (record: Record<string, unknown>): void => {
   mkdirSync(join(configDir, 'agents'), { recursive: true });
   writeFileSync(join(configDir, 'agents', `${String(record['id'])}.json`), `${JSON.stringify(record, null, 2)}\n`);
 };
+
+/*
+ * A folder under a served one, as VS Code's agent host tells a folder under a
+ * trusted one: a letter's case ignored where the file system ignores it, and
+ * kept on Linux, where `Work` and `work` are two folders.
+ */
+it('reads a folder under a served one as VS Code does, its letters\' case ignored except on Linux', () => {
+  const served = join(tmpdir(), 'Work');
+  expect(under(join(tmpdir(), 'work', 'app'), served, true)).toBe(true);
+  expect(under(join(tmpdir(), 'WORK'), served, true)).toBe(true);
+  expect(under(join(tmpdir(), 'workshop'), served, true)).toBe(false);
+  expect(under(join(tmpdir(), 'work', 'app'), served, false)).toBe(false);
+  expect(under(join(tmpdir(), 'Work', 'app'), served, false)).toBe(true);
+  expect(under(join(tmpdir(), 'work', 'app'), served)).toBe(process.platform !== 'linux');
+});
 
 it('is a local command, and no served one', () => {
   const command = cliRegistry().find('daemon.configure');

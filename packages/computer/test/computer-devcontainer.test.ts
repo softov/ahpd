@@ -76,6 +76,10 @@ interface DevHeld {
   commands: string[];
   /** Every override config an `up` was handed, as it was on disk. */
   overrides?: { where: string; mode: number; config: Record<string, unknown> }[];
+  /** A Compose definition's files, as the last `up` read them. */
+  composeFiles?: string[];
+  /** Every JSON Compose file an `up` was handed, as it was on disk. */
+  composes?: { where: string; mode: number; config: Record<string, unknown> }[];
 }
 const devHeld = (state: string): DevHeld => (existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8')) as DevHeld
@@ -253,13 +257,15 @@ it('makes a computer from a folder\'s devcontainer.json, and lists it by its fol
   });
 
   // The exact line, which is the whole create: the folder and the two labels
-  // every later call about this container repeats, and the override config
-  // this host adds to the folder's own definition.
+  // every later call about this container repeats, the folder's own
+  // definition where `read-configuration` found it, and the override config
+  // this host adds to it.
   expect(upOf(devState)).toEqual([
     'up',
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
+    '--config', join(folder, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   /*
@@ -436,12 +442,12 @@ it('keeps the working directory a caller asks for, mapped through the mounts', a
 /*
  * The tool a backend runs a command with, on the same road.
  *
- * `how` describes a spawn for a backend to make itself; `computer_exec` is the
+ * `how` describes a spawn for a backend to make itself; `run_in_computer` is the
  * daemon making it. Both go through the runtime, so both derive the same user
  * and the same environment - a machine reachable by one and not the other
  * would be a machine whose login shell depends on who asked.
  */
-it('runs `computer_exec` on it with the same flags a backend is reached with', async () => {
+it('runs `run_in_computer` on it with the same flags a backend is reached with', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
@@ -454,7 +460,7 @@ it('runs `computer_exec` on it with the same flags a backend is reached with', a
     encoding: 'utf-8',
   });
 
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   const ran = String(await tool.run({ id: 'box', command: 'node --version' }, {} as ToolCall));
   expect(ran).toContain('v22.14.0');
   expect(ran).toContain('exit 0');
@@ -504,6 +510,7 @@ it('makes one from the body a form sends, and still refuses an image beside it',
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
+    '--config', join(folder, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
 
@@ -678,6 +685,7 @@ it('makes it at session start, with the harness needs in the override config', a
     // The need the harness declared that names a host path, which the CLI's
     // own `--mount` takes.
     '--mount', `type=bind,source=${configDir},target=/ahpd/config`,
+    '--config', join(folder, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   /*
@@ -698,7 +706,7 @@ it('makes it at session start, with the harness needs in the override config', a
   await answered(dockerState, 2);
 });
 
-it('counts a machine made for a session against max, as one made from the form is', async () => {
+it('makes a session\'s dev container past the tool\'s maximum, as one made from the form is', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
@@ -711,10 +719,9 @@ it('counts a machine made for a session against max, as one made from the form i
 
   const { options: loaded } = await load(optionsOf(devState, dockerState, { max: 1 }), [agentWith()], join(dir, 'config'));
   const { open } = await room(loaded);
-  await expect(open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder))
-    .rejects.toThrow(/This host holds 1 computers already/);
-  // Nothing was asked of the CLI, which is what the count is for.
-  expect(devHeld(devState).calls).toEqual([]);
+  await open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder);
+  // `max` caps the agent's tool, so the CLI was asked to make it.
+  expect(devHeld(devState).calls.map((one) => one[0])).toContain('up');
 });
 
 it('binds one entry where a copy-in is the same bind as a need', async () => {
@@ -894,6 +901,7 @@ it('refuses a folder outside the list on every route, and makes one inside it', 
     '--workspace-folder', allowed,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${allowed}`,
+    '--config', join(allowed, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   await answered(dockerState, 6);
@@ -957,6 +965,7 @@ it('makes no dev container on a host with users until the operator names the fol
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
+    '--config', join(folder, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   await answered(dockerState, 6);
@@ -1034,6 +1043,7 @@ it('hands every route the folder as it resolves, and refuses one that is not a p
     '--workspace-folder', there,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${there}`,
+    '--config', join(there, '.devcontainer', 'devcontainer.json'),
     '--override-config', '<override>',
   ]);
   await answered(dockerState, 4);
@@ -1122,6 +1132,25 @@ it('takes the override file away after a failed up, as after a good one', async 
 });
 
 /*
+ * VS Code takes `up`'s result only with the CLI's exit 0 beside it: a result
+ * written before a later step of the CLI failed is refused in its words.
+ */
+it('refuses a result the CLI wrote and then exited non-zero after, in VS Code\'s words', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({ calls: [], upCode: 1 }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+
+  await expect(providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(/^Dev Container CLI returned an invalid result: .*"outcome":"success"/s);
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
+});
+
+/*
  * A need's variable, as `containerEnv`, is the container's own environment:
  * every process in there inherits it, so a command run after the create sees
  * it. `up --remote-env` reaches only the lifecycle commands `up` runs and
@@ -1146,7 +1175,7 @@ it('gives a command run after the create a need\'s variable, as the container\'s
   // The variable is the container's own environment, which every `docker exec`
   // inherits: it is on the machine Docker holds, and on no command's flags.
   const id = String(opened.snapshot.state.config?.values?.computer ?? '').slice('computer://'.length);
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await tool.run({ id, command: 'true' }, {} as ToolCall);
   const held = dockerHeld(dockerState) as DockerHeld & { machines: { env?: Record<string, string> }[] };
   expect(held.machines[0]?.env).toMatchObject({ ANTHROPIC_API_KEY: 'from-the-agent' });
@@ -1238,7 +1267,7 @@ it('keeps a vault-named need out of the override and every argv, and gives it on
   expect(dockerHeld(dockerState).commands.at(-1)?.env.ANTHROPIC_API_KEY).toBe('ada-token');
 
   // A tool's command too.
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await tool.run({ id, command: 'true' }, {} as ToolCall);
   expect(dockerHeld(dockerState).commands.at(-1)?.env.ANTHROPIC_API_KEY).toBe('ada-token');
 
@@ -1288,7 +1317,7 @@ it('passes a remoteEnv value by name to every command, and keeps it out of the s
   spawnSync(how?.command as string, how?.args as string[], { encoding: 'utf8', env: { ...outer, ...how?.env } });
   expect(dockerHeld(dockerState).commands.at(-1)?.env.FROM_HOST).toBe('local-secret');
 
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await tool.run({ id: 'box', command: 'true' }, {} as ToolCall);
   expect(dockerHeld(dockerState).commands.at(-1)?.env.FROM_HOST).toBe('local-secret');
 
@@ -1381,6 +1410,65 @@ it('records the agents a body was made for, and the limits, in the override conf
 });
 
 /*
+ * The CLI gives `runArgs` to an image or Dockerfile definition alone, so a
+ * Compose definition's labels and limits are a Compose override of its
+ * service, added after its own files, as VS Code adds its sandbox's options.
+ */
+it('gives a Compose definition its labels and limits in a Compose override of its service', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), JSON.stringify({ dockerComposeFile: 'compose.yml', service: 'app', workspaceFolder: '/workspaces/app' }));
+  writeFileSync(join(folder, '.devcontainer', 'compose.yml'), 'version: \'3.8\'\nservices:\n  app:\n    image: base\n');
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ source: 'devcontainer', runtime: 'docker', image: '', devcontainer: folder, cpus: '2', memory: '2g', workdir: '' }),
+    encoding: 'utf-8',
+  });
+
+  const config = overrideOf(devState)?.config ?? {};
+  expect(config.runArgs).toBeUndefined();
+  const files = config.dockerComposeFile as string[];
+  expect(files[0]).toBe('compose.yml');
+  const compose = devHeld(devState).composes?.[0];
+  expect(compose?.where).toBe(files[1]);
+  if (posix) expect(compose?.mode).toBe(0o600);
+  expect(compose?.config).toEqual({
+    version: '3.8',
+    services: { app: { labels: { 'ahpd.name': 'box' }, cpus: '2', mem_limit: '2g' } },
+  });
+  expect(dockerHeld(dockerState).machines[0]?.labels).toMatchObject({ 'ahpd.name': 'box' });
+  await answered(dockerState, 6);
+});
+
+/*
+ * A Compose definition naming `[]` leaves its files to the CLI's discovery,
+ * which is followed here, and the override goes after them in `COMPOSE_FILE`.
+ */
+it('gives a Compose definition naming no files its override after the files the CLI finds', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), JSON.stringify({ dockerComposeFile: [], service: 'app' }));
+  writeFileSync(join(folder, 'docker-compose.yml'), 'services:\n  app:\n    image: base\n');
+  writeFileSync(join(folder, 'docker-compose.override.yml'), 'services:\n  app:\n    environment: [A=1]\n');
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+
+  expect(overrideOf(devState)?.config.dockerComposeFile).toEqual([]);
+  const files = devHeld(devState).composeFiles ?? [];
+  expect(files.slice(0, 2)).toEqual([join(folder, 'docker-compose.yml'), join(folder, 'docker-compose.override.yml')]);
+  expect(devHeld(devState).composes?.[0]?.config).toEqual({ services: { app: { labels: { 'ahpd.name': 'box' } } } });
+  expect(dockerHeld(dockerState).machines[0]?.labels).toMatchObject({ 'ahpd.name': 'box' });
+  await answered(dockerState, 6);
+});
+
+/*
  * `--id-label` is what makes a second `up` answer the container the first one
  * made rather than build a second beside it. A fake that always made a new one
  * would pass a test that a real daemon fails.
@@ -1466,7 +1554,7 @@ it('refuses a command in a container that is not running, with the daemon\'s sen
     calls: [],
   }));
   const { options: loaded } = await load(optionsOf(devState, dockerState));
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   const ran = String(await tool.run({ id: 'stopped', command: 'true' }, {} as ToolCall));
   expect(ran).toContain('container stopped is not running');
   expect(ran).toContain('exit 1');
@@ -1536,10 +1624,10 @@ it('finds an adopted container again by its folder, on a second connect and afte
 
 /*
  * The folder's own definition is read before anything is written, so one that
- * does not parse is refused in its own words, not as a CLI that is missing,
+ * does not parse is refused in VS Code's words, not as a CLI that is missing,
  * and no override directory is left behind.
  */
-it('refuses a definition that does not parse in its own words, and leaves no override behind', async () => {
+it('refuses a definition that does not parse in VS Code\'s words, and leaves no override behind', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
@@ -1555,10 +1643,9 @@ it('refuses a definition that does not parse in its own words, and leaves no ove
       data: JSON.stringify({ devcontainer: { folder } }),
       encoding: 'utf-8',
     }).then(() => undefined, (error: unknown) => error as Error);
-    expect(refused?.message).toMatch(/devcontainer\.json and it does not parse/);
-    expect(refused?.message).not.toMatch(/Install @devcontainers\/cli/);
+    expect(refused?.message).toBe(`Invalid Dev Container configuration: ${join(folder, '.devcontainer', 'devcontainer.json')}`);
     expect(readdirSync(scratch).filter((one) => one.startsWith('ahpd-devcontainer-'))).toEqual([]);
-    expect(devHeld(devState).calls).toEqual([]);
+    expect(devHeld(devState).calls.map((one) => one[0])).toEqual(['read-configuration']);
   }
   finally {
     if (before === undefined) delete process.env.TMPDIR;
@@ -1586,9 +1673,55 @@ it('masks the values in the error a failed up is refused with', async () => {
 });
 
 /*
- * The JSONC reader takes a trailing comma out only where it is JSONC's: a comma
- * inside a string is part of the value.
+ * The definition is JSON with comments, as VS Code's parser reads it: a
+ * trailing comma is taken out wherever it is JSONC's, a comment after it
+ * included, and a comma inside a string is part of the value.
  */
+it('reads a definition whose trailing comma has a comment after it', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), [
+    '{',
+    '  "image": "base",',
+    '  "forwardPorts": [3000, /* the app */ ],',
+    '  "remoteUser": "dev", // the user',
+    '}',
+  ].join('\n'));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  expect(overrideOf(devState)?.config).toMatchObject({ image: 'base', forwardPorts: [3000], remoteUser: 'dev' });
+  await answered(dockerState, 6);
+});
+
+/*
+ * The definition the CLI's `read-configuration` names is the one read, and up
+ * is given it as `--config` beside the override, as VS Code gives it.
+ */
+it('makes the machine from the definition read-configuration names, given to up as its config', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const elsewhere = join(dir, 'elsewhere.json');
+  writeFileSync(elsewhere, '{ "image": "elsewhere" }');
+  writeFileSync(devState, JSON.stringify({ calls: [], commands: [], configFile: elsewhere }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  expect(overrideOf(devState)?.config).toMatchObject({ image: 'elsewhere' });
+  const up = devHeld(devState).calls.find((one) => one[0] === 'up') ?? [];
+  expect(up[up.indexOf('--config') + 1]).toBe(elsewhere);
+  expect(devHeld(devState).calls.map((one) => one[0])).toEqual(['read-configuration', 'up']);
+  await answered(dockerState, 6);
+});
+
 it('reads a definition with comments and trailing commas, and keeps a comma inside a string', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
@@ -1658,7 +1791,7 @@ it('reads the kept probe back after a restart, and runs no probe for it', async 
   expect(probes(dockerState)).toBe(1);
 
   const { options: later } = await load(options, [], configDir);
-  const tool = (later.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (later.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   expect(String(await tool.run({ id: 'box', command: 'true' }, {} as ToolCall))).toContain('exit 0');
   expect(probes(dockerState)).toBe(1);
   // And the command ran with what was kept.
@@ -1685,7 +1818,7 @@ it('keeps no probe that answered nothing, and probes again on the next command',
     : {};
   expect(kept.box?.probe).toBeUndefined();
 
-  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   await tool.run({ id: 'box', command: 'true' }, {} as ToolCall);
   expect(probes(dockerState)).toBe(2);
   await answered(dockerState, 9);
@@ -1862,6 +1995,39 @@ const relayed = (devState: string, dockerState: string): Record<string, unknown>
     install: false,
     plugins: ['@ahpd/agent-cofold'],
   },
+});
+
+/*
+ * Two connects for one folder at once are one container operation after the
+ * other, as VS Code's host queues them by the folder: no `up` runs beside
+ * another, and the second connect finds the container the first made running.
+ * The `up` is slowed by its log, so a second connect that did not wait would
+ * be asking the CLI while it was still making the container.
+ *
+ * POSIX-only, as the connect case above: the scripted docker stands in for a
+ * Linux container by running the command with `/bin/sh` on this host.
+ */
+it.skipIf(!posix)('runs one folder\'s connects one after the other', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({ calls: [], upLog: ['making ', 'the ', 'container ', 'slowly\n'] }));
+  writeFileSync(dockerState, JSON.stringify({ machines: [], calls: [], passthrough: [process.execPath] }));
+  const { options: loaded } = await load(relayed(devState, dockerState), [agentWith()], join(dir, 'config'));
+  const { client } = await viewer(loaded);
+
+  await Promise.all(['one', 'two'].map(async (connectionId) => await client.handle({
+    method: 'vscode/devContainers/connect',
+    params: { connectionId, workspaceFolder: folder, name: 'Box' },
+  })));
+
+  expect(existsSync(`${devState}.overlapped`)).toBe(false);
+  expect(dockerHeld(dockerState).machines).toHaveLength(1);
+  for (const connectionId of ['one', 'two']) {
+    await client.handle({ method: 'vscode/devContainers/disconnect', params: { connectionId } });
+  }
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
 });
 
 it('stops the container a folder is, ending the window\'s relay first', async () => {

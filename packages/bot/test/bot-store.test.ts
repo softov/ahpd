@@ -124,7 +124,7 @@ it('keeps a bot in the collection, and answers it from the cache', async () => {
   // record the provider composed rather than what the write's body said.
   expect(store.get('motion')).toMatchObject({ id: 'motion', name: 'Motion', owner: 'root:test' });
   expect(store.all().map((one) => one.id)).toEqual(['motion']);
-  expect(store.gone('motion')).toBe(false);
+  expect(store.tombstoned('motion')).toBe(false);
   expect(problems).toEqual([]);
 });
 
@@ -151,7 +151,7 @@ it('leaves a tombstone where a bot is deleted, and refuses to make it again', as
   await provider.remove('bot://motion');
 
   expect(store.get('motion')).toBeUndefined();
-  expect(store.gone('motion')).toBe(true);
+  expect(store.tombstoned('motion')).toBe(true);
   expect(await graves.get('motion')).toMatchObject({ id: 'motion' });
   // The name is spent: a client holding `bot://motion` is never handed another
   // bot under it, so the make is refused rather than allowed.
@@ -175,7 +175,7 @@ it('reads the collections back, as a daemon that started again does', async () =
   await again.ready();
 
   expect(again.all().map((one) => one.id)).toEqual(['other']);
-  expect(again.gone('motion')).toBe(true);
+  expect(again.tombstoned('motion')).toBe(true);
   expect(problems).toEqual([]);
 });
 
@@ -310,7 +310,7 @@ it('buries a bot deleted in the collection, and refuses to make it again', async
 
   expect(heard).toEqual(['deleted motion']);
   expect(store.get('motion')).toBeUndefined();
-  expect(store.gone('motion')).toBe(true);
+  expect(store.tombstoned('motion')).toBe(true);
   expect(await graves.get('motion')).toMatchObject({ id: 'motion' });
   await expect(provider.write('bot://motion', said({ name: 'Another' }))).rejects.toMatchObject({ code: -32010 });
 });
@@ -343,7 +343,7 @@ it('refuses a bot file that comes back after its delete', async () => {
   await next.ready();
 
   expect(next.get('motion')).toBeUndefined();
-  expect(next.gone('motion')).toBe(true);
+  expect(next.tombstoned('motion')).toBe(true);
   expect(again.join('\n')).toMatch(/bots\/motion has a tombstone; the name is spent/);
 });
 

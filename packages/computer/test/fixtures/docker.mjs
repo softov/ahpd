@@ -356,7 +356,8 @@ if (verb === 'ps') {
       // `Exited ...` for one that is not, which is what tells a listing's rows
       // apart. The listing is `ps -a`, so it holds both.
       Status: (machine.state ?? 'running') === 'running' ? 'Up 1 second' : 'Exited (0) 2 minutes ago',
-      CreatedAt: '2026-09-22 00:00:00 +0000',
+      // As a client in a zone of its own prints it: local time, the zone by name.
+      CreatedAt: '2026-09-22 02:00:00 +0200 CEST',
     };
     // `{{json .}}` keeps the shape Docker gives it, where every label is one
     // comma-joined column and a value holding a comma cannot be told from the
@@ -496,6 +497,12 @@ if (verb === 'stats') {
     process.stderr.write(`Error: No such container: ${id}\n`);
     keep();
     process.exit(1);
+  }
+  // A line a test writes in place of the answer, to see a malformed one read.
+  if (typeof found.statsLine === 'string') {
+    process.stdout.write(`${found.statsLine}\n`);
+    keep();
+    process.exit(0);
   }
   process.stdout.write(`${JSON.stringify({
     Container: id,

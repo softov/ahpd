@@ -132,7 +132,7 @@ it('posts a sealed message with the headers a push service reads', async () => {
   expect(sent.url).toBe('https://fcm.googleapis.com/wp/one');
   expect(sent.headers.get('content-encoding')).toBe('aes128gcm');
   expect(sent.headers.get('content-type')).toBe('application/octet-stream');
-  expect(sent.headers.get('ttl')).toBe('86400');
+  expect(sent.headers.get('ttl')).toBe('2419200');
   expect(sent.headers.get('urgency')).toBe('high');
   expect(sent.headers.get('topic')).toBe(createHash('sha256').update('echo:/one', 'utf8').digest('base64url').slice(0, 32));
   expect(sent.headers.get('authorization')).toMatch(/^vapid t=[^,]+, k=[A-Za-z0-9_-]+$/);

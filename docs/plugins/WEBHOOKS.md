@@ -54,7 +54,7 @@ An endpoint's URL is `/plugins/webhook/<id>` on the daemon's port, or on the rou
 
 A client builds that URL from the adapter's receive capability, whose `path` is `/plugins/webhook/{id}`: put the daemon's HTTP root, or the routes listener's, before it and the connector's id in place of `{id}`.
 
-The route reads the body first, up to the plugin's `maxBodyBytes` (5 MiB by default), and then checks the proof over those bytes, so there is nothing a caller without proof can make this process hold. A body over the limit answers 413.
+The route reads the body first, up to the plugin's `maxBodyBytes` (25 MiB by default, which holds the 25 MB GitHub caps a payload at), and then checks the proof over those bytes, so there is nothing a caller without proof can make this process hold. A body over the limit answers 413.
 
 ```bash
 curl -X POST http://127.0.0.1:37537/plugins/webhook/ci \
@@ -65,14 +65,16 @@ curl -X POST http://127.0.0.1:37537/plugins/webhook/ci \
 
 | Answer | When |
 | --- | --- |
-| 202 | The call reached its target. A call `match` does not take answers `{ "skipped": true }` and fires nothing |
+| 202 | The call reached its target. A call `match` does not take answers `{ "skipped": true }` and fires nothing; a delivery sent again answers `{ "duplicate": true }` and reaches nothing |
 | 400 | The body has a JSON content type and is not JSON, or a bot call has no thread or no text |
-| 401 | The call is not proved with the endpoint's secret |
+| 401 | The call is not proved with the endpoint's secret. `WWW-Authenticate` holds `Bearer realm="ahpd"`, with `error="invalid_token"` when the call carried the token its scheme reads |
 | 403 | A Meta `GET` sent the wrong `hub.verify_token` |
 | 404 | No open connector answers for that id, or the path has more than one segment after the prefix |
-| 405 | The method is not `POST`, or it is a `GET` on a scheme other than `meta` |
+| 405 | The method is not `POST`, or it is a `GET` on a scheme other than `meta`. `Allow` names `POST`, or `GET, POST` for `meta` |
 | 409 | A bot call could not be sent: the plugin may not read the bot, the read answered no chat, or the host refused the turn |
 | 413 | The body is larger than `maxBodyBytes` |
+
+A sender that names each delivery tells a delivery sent again by its id: GitHub's `X-GitHub-Delivery`, which a redelivery repeats, and Standard Webhooks' `webhook-id`, which a retry repeats. A proved call whose id this endpoint took in the last five minutes, Standard Webhooks' example window, answers `{ "duplicate": true }`, so the event reaches its target once. An id whose call was answered with anything but a 2xx is let go, since its sender sends it again.
 
 ## The schemes
 
@@ -87,7 +89,7 @@ Each connector names one scheme in `config.auth`. Every value is compared in a t
 | `github` | `X-Hub-Signature-256: sha256=<HMAC-SHA256 of the raw body>`, with `secret` as the key |
 | `stripe` | `Stripe-Signature` with a `t` and at least one `v1`: the HMAC-SHA256 of `<t>.<raw body>` with `secret`, hex, within 300 seconds |
 | `slack` | `X-Slack-Request-Timestamp` and `X-Slack-Signature: v0=<HMAC-SHA256 of v0:<timestamp>:<raw body>>`, with `secret` as the key, within 300 seconds |
-| `standard` | `Webhook-Id`, `Webhook-Timestamp` and `Webhook-Signature: v1,<base64>`, where the value is the HMAC-SHA256 of `<id>.<timestamp>.<raw body>` and the key is `secret` without its `whsec_` prefix, base64-decoded, within 300 seconds |
+| `standard` | `Webhook-Id`, `Webhook-Timestamp` and `Webhook-Signature: v1,<base64>`, where the value is the HMAC-SHA256 of `<id>.<timestamp>.<raw body>` and the key is `secret` base64-decoded, its `whsec_` prefix dropped when it has one, as the reference library decodes it; a `secret` that is not base64 proves no call. Within 300 seconds |
 | `meta` | `X-Hub-Signature-256` over the raw body on a `POST`, as `github`, and the `GET` handshake on the URL |
 | `graph` | Every `clientState` in the body's `value` list equal to `secret`, and the `validationToken` handshake on the URL |
 
@@ -282,7 +284,7 @@ The data's `connector` is the connector's id, set by the plugin, and no body fie
 
 ## A call to a bot
 
-A call to a bot endpoint sends its text as a turn in the plugin's own chat with the bot. That is one chat for the endpoint: the caller names a thread, and every thread talks in it. The chat is the one a read of the bot answers the plugin, and the first call starts it.
+A call to a bot endpoint sends its text as a turn in its thread's own chat with the bot. The caller names a thread, and each thread is a conversation of its own, as the spec gives a separate conversation its own chat: the first call of a thread opens a chat in the plugin's session with the bot, the session a read of the bot answers the plugin, with `createChat`, which the session says as `session/chatAdded`, and every later call of the thread talks there.
 
 A turn in that chat runs no model. It ends in the call that starts it, with no response part, so a call is answered with no `text` until the bot's own work can post into its chat.
 
@@ -293,7 +295,7 @@ The call is one of two shapes:
 
 A JSON body that has no string `text` is the second shape, so the whole body is the text.
 
-The plugin keeps each thread in the `webhook-threads` collection, as the endpoint, the thread id, the session and the chat. Every thread of an endpoint holds the same session and chat, which is what a session started again under a new URI rewrites.
+The plugin keeps each thread in the `webhook-threads` collection, as the endpoint, the thread id, the session and the thread's chat. A session started again under a new URI gives the thread a new chat there, written down under the record's own id.
 
 ### The reply
 
@@ -307,14 +309,14 @@ The plugin keeps each thread in the `webhook-threads` collection, as the endpoin
 
 A callback URL must start with the endpoint's `callbackPrefix`. The plugin compares the URL as `new URL` writes it, so `https://ci.example.com.evil.test/` does not pass the prefix `https://ci.example.com/`. Without this check, any caller could make the host post to any address. A `callback` reply with no `callbackPrefix` is refused when the connector is saved.
 
-A callback that answers with a redirect is a failed callback. The plugin does not follow the redirect, and the daemon's log gets a problem line.
+The plugin sends the callback as [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md) has a producer send a message. Each attempt is signed under `webhook-id`, the turn, `webhook-timestamp`, the attempt's own time, and `webhook-signature`, `v1,` and the base64 HMAC-SHA256 of `<id>.<timestamp>.<body>`. The key is the endpoint's secret: a `standard` endpoint's decoded as that scheme's key, and any other endpoint's as its characters, the reference library's raw format. A callback that answers anything but a 2xx, a redirect among them, which the plugin does not follow, is tried again on Standard Webhooks' example schedule: 5 seconds, 5 minutes, 30 minutes, 2 hours, 5 hours, 10 hours, 14 hours, 20 hours and 24 hours after the attempt before, or later where the answer's `retry-after` says so. An attempt waits 30 seconds for its answer. `410 Gone` ends the attempts. A callback given up, and one the daemon stopped before it was delivered, is a problem line in the daemon's log.
 
-A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugin option, which is 60 by default.
+A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugin option, which is 10 by default, the window GitHub gives a receiver. The wait is held within the sender's own window whatever the setting: at most 10 seconds for a `github` endpoint and 3 for a `graph` one, since an answer after it reaches a sender that has counted the delivery failed.
 
 ```json
 {
   "plugins": [
-    { "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 30, "maxBodyBytes": 1048576 }, "grants": ["bot:get", "bot:chat", "session:read", "session:create", "session:write"] }
+    { "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 30, "maxBodyBytes": 1048576 }, "grants": ["bot:get", "bot:chat", "session:read", "session:create", "session:write", "chat:create"] }
   ]
 }
 ```
@@ -322,7 +324,8 @@ A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugi
 | Answer | When |
 | --- | --- |
 | 400 | The call has no thread or no text, or its callback URL is missing or outside the prefix |
-| 409 | The plugin may not read the bot, the read answered no chat for it, or the host refused the turn. The answer's `message` is the host's reason. A turn that the host does not echo in 10 seconds is not refused: the call goes on, and the daemon's log gets a problem line. The first two are also a problem in the daemon's log, and the chat refusal names the grants `bot:chat` and `session:create` |
+| 409 | The plugin may not read the bot, the read answered no chat for it, the host opened no chat for the thread, or the host refused the turn. The answer's `message` is the host's reason. The first three are also a problem in the daemon's log: the read's refusal names the grants `bot:chat` and `session:create`, and the chat's the grant `chat:create` |
+| 504 | The host did not confirm the turn within 10 seconds, so its delivery is unconfirmed rather than taken or refused, as VS Code's router reads a send it never heard back on: `{ thread, turn, message }`, the message `Remote message delivery was not confirmed. It may already be queued; do not retry automatically.` The daemon's log gets a problem line, and no callback is posted |
 
 ### The grants
 
@@ -335,10 +338,11 @@ On a host with a users directory, the plugin acts as `plugin:webhook`, with the 
 | `session:read` | Read the session's state, which names the chat, and the turn's text |
 | `session:create` | Start a session for an owner, which a read of the bot does |
 | `session:write` | Send the turn |
+| `chat:create` | Open a thread's chat in the session |
 
 The chat is the plugin's own, started as the owner `plugin:webhook`, so `session:create` is asked of nobody here: it is in the list because those two are the grants the plugin's problem line prints when a read is answered no chat.
 
-The plugin opens its connection when the daemon listens, and hears each turn's end from the host.
+The plugin opens its connection when the daemon listens, and hears each turn's end from the host. It holds a subscription to a thread's chat while a turn there needs one, for the echo of the turn's start and the read of its end, and unsubscribes once the last such turn has ended or been refused, as VS Code's router holds a chat's subscription for one delivery.
 
 ## The trigger
 

@@ -1,34 +1,43 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { logoOf, LOGO_LIMIT } from '../src/logos.js';
+import type { Answer } from '../src/fetch.js';
+import type { LogoFetcher } from '../src/logos.js';
 
 /*
- * The logo one piece publishes, read from the cache or fetched once.
+ * The logo one piece publishes, read from the cache or fetched once, as VS
+ * Code reads a remote image.
  *
  * A fetch is handed in rather than reached for, so a case answers without a
- * network and can count how many times the piece was asked for.
+ * network and can count how many times the piece was asked for. The cases on
+ * the guarded fetch hand none, and name an address the guard blocks before a
+ * socket opens.
  */
 
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), 'ahpd-logos-')); });
-afterEach(() => { rmSync(home, { recursive: true, force: true }); });
+afterEach(() => {
+  vi.useRealTimers();
+  rmSync(home, { recursive: true, force: true });
+});
 
 /** The cache file of one piece, under the extension its type is kept as. */
 const cache = (piece: string, extension = 'png'): string => join(home, 'activepieces', 'icons', `${piece}.${extension}`);
 
 /** A fake fetch that answers one image, and counts the calls. */
-function fetcher(body: Buffer, init: { status?: number; contentType?: string } = {}) {
+function fetcher(body: Buffer, init: { status?: number; contentType?: string } = {}): { calls: string[]; answer: LogoFetcher } {
   const calls: string[] = [];
-  const answer = (async (url: string) => {
+  const answer: LogoFetcher = async (url) => {
     calls.push(url);
-    const response = new Response(new Uint8Array(body), {
+    const answered: Answer = {
       status: init.status ?? 200,
       headers: init.contentType === undefined ? {} : { 'content-type': init.contentType },
-    });
-    return response;
-  }) as unknown as typeof fetch;
+      bytes: body,
+    };
+    return answered;
+  };
   return { calls, answer };
 }
 
@@ -74,15 +83,13 @@ describe('logoOf', () => {
     expect(logo.icon).toEqual({ src: `data:image/svg+xml;base64,${body.toString('base64')}`, contentType: 'image/svg+xml' });
   });
 
-  it('answers a response that is not an image as image/png, and keeps it as a PNG', async () => {
-    const body = Buffer.from('<html><body>not an image</body></html>');
-    const fake = fetcher(body, { contentType: 'text/html' });
+  it('drops an answer that is not an image, as VS Code drops one, and caches nothing', async () => {
+    const fake = fetcher(Buffer.from('<html><body>not an image</body></html>'), { contentType: 'text/html' });
 
     const logo = await logoOf('ap-demo', 'https://example.com/demo', home, fake.answer);
 
-    expect(logo.problem).toBeUndefined();
-    expect(logo.icon).toEqual({ src: `data:image/png;base64,${body.toString('base64')}`, contentType: 'image/png' });
-    expect(readFileSync(cache('ap-demo'))).toEqual(body);
+    expect(logo).toEqual({ problem: 'the logo of ap-demo is not an image' });
+    expect(existsSync(cache('ap-demo'))).toBe(false);
   });
 
   it('answers no icon and one line when the fetch is not ok', async () => {
@@ -96,7 +103,7 @@ describe('logoOf', () => {
   });
 
   it('answers no icon and one line when the fetch throws', async () => {
-    const failing = (async () => { throw new Error('the CDN is down'); }) as unknown as typeof fetch;
+    const failing: LogoFetcher = async () => { throw new Error('the CDN is down'); };
 
     const logo = await logoOf('ap-demo', 'https://example.com/demo.png', home, failing);
 
@@ -104,14 +111,32 @@ describe('logoOf', () => {
     expect(logo.problem).toContain('the CDN is down');
   });
 
-  it('answers no icon and one line for a body over 32 KB, and caches nothing', async () => {
-    const fake = fetcher(Buffer.alloc(LOGO_LIMIT + 1, 'a'));
+  it('takes a logo up to VS Code\'s 256 KB for an icon, and answers one line past it, caching nothing', async () => {
+    expect(LOGO_LIMIT).toBe(256 * 1024);
+    const atLimit = await logoOf('ap-demo', 'https://example.com/demo.png', home, fetcher(Buffer.alloc(LOGO_LIMIT, 'a'), { contentType: 'image/png' }).answer);
+    expect(atLimit.problem).toBeUndefined();
 
-    const logo = await logoOf('ap-demo', 'https://example.com/demo.png', home, fake.answer);
+    const past = await logoOf('ap-other', 'https://example.com/other.png', home, fetcher(Buffer.alloc(LOGO_LIMIT + 1, 'a'), { contentType: 'image/png' }).answer);
+    expect(past).toEqual({ problem: 'the logo of ap-other is larger than 256 KB' });
+    expect(existsSync(cache('ap-other'))).toBe(false);
+  });
 
-    expect(logo.icon).toBeUndefined();
-    expect(logo.problem).toContain('larger than 32 KB');
-    expect(existsSync(cache('ap-demo'))).toBe(false);
+  it('gives the whole read ten seconds', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const hanging: LogoFetcher = async () => await new Promise<Answer>(() => undefined);
+
+    const read = logoOf('ap-demo', 'https://example.com/demo.png', home, hanging);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await read).toEqual({ problem: 'the logo of ap-demo could not be fetched: the read took longer than 10 seconds' });
+  });
+
+  it('reads through the guarded fetch: https: alone, an address that is not unicast blocked', async () => {
+    const plain = await logoOf('ap-demo', 'http://example.com/demo.png', home);
+    expect(plain.problem).toBe('the logo of ap-demo could not be fetched: only an https: URL is fetched, and http: is not');
+
+    const inside = await logoOf('ap-other', 'https://169.254.169.254/latest/meta-data/logo.png', home);
+    expect(inside.problem).toContain('SSRF protection: refusing to connect to 169.254.169.254 (resolved 169.254.169.254)');
   });
 
   it('makes no fetch when there is nowhere to cache', async () => {
@@ -132,32 +157,13 @@ describe('logoOf', () => {
     expect(fake.calls).toEqual([]);
   });
 
-  it('answers the host mark of a piece in the table, before the cache and the CDN', async () => {
-    mkdirSync(join(home, 'activepieces', 'icons'), { recursive: true });
-    writeFileSync(cache('ap-whatsapp', 'svg'), '<svg/>');
-    const failing = (async () => { throw new Error('a marked piece must not fetch'); }) as unknown as typeof fetch;
-
-    const logo = await logoOf('ap-whatsapp', 'https://cdn.activepieces.com/pieces/whatsapp.png', home, failing);
-
-    expect(logo).toEqual({ icon: { src: 'mark:whatsapp' } });
-  });
-
-  it('answers the GitHub mark for the GitHub piece', async () => {
-    const failing = (async () => { throw new Error('a marked piece must not fetch'); }) as unknown as typeof fetch;
-
-    const logo = await logoOf('ap-github', 'https://cdn.activepieces.com/pieces/github.png', home, failing);
-
-    expect(logo).toEqual({ icon: { src: 'mark:github' } });
-  });
-
-  it('fetches the CDN logo of a piece with no mark', async () => {
+  it('fetches each piece\'s own logo, GitHub\'s among them', async () => {
     const body = Buffer.from('the logo');
-    const fake = fetcher(body, { contentType: 'image/svg+xml' });
+    const fake = fetcher(body, { contentType: 'image/png' });
 
-    const logo = await logoOf('ap-demo', 'https://example.com/demo.svg', home, fake.answer);
+    const logo = await logoOf('ap-github', 'https://cdn.activepieces.com/pieces/github.png', home, fake.answer);
 
-    expect(fake.calls).toEqual(['https://example.com/demo.svg']);
-    expect(logo.problem).toBeUndefined();
-    expect(logo.icon).toEqual({ src: `data:image/svg+xml;base64,${body.toString('base64')}`, contentType: 'image/svg+xml' });
+    expect(fake.calls).toEqual(['https://cdn.activepieces.com/pieces/github.png']);
+    expect(logo.icon).toEqual({ src: `data:image/png;base64,${body.toString('base64')}`, contentType: 'image/png' });
   });
 });

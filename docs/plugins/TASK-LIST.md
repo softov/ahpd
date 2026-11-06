@@ -82,14 +82,14 @@ The state is `{ plan: PlanRecord, tasks: TaskRecord[] }`, the records above as t
 
 | Action | When the client gets it |
 | --- | --- |
-| `{ type: 'x-ahpd-plans/taskAdded', task: TaskRecord }` | A task of the plan was made |
+| `{ type: 'x-ahpd-plans/taskAdded', task: TaskRecord }` | A task of the plan was made, or a task moved to the plan |
 | `{ type: 'x-ahpd-plans/taskSet', task: TaskRecord }` | A task of the plan changed |
 | `{ type: 'x-ahpd-plans/taskRemoved', taskId: string }` | A task left the plan, and `taskId` is the one it had |
 | `{ type: 'x-ahpd-plans/set', plan: PlanRecord }` | The plan itself changed |
 
 A subscribe needs `session:read`, which every built-in role holds. A client cannot dispatch an action to the channel: the records are the only writer, so a change made through a tool, a translation or a hand edit is the one the channel sends.
 
-A URI under the scheme with no plan behind it is refused rather than answered with an empty state. A task is published to the plan it now names. A removed task is the one action with no record to carry, so it says the id it had: the sweep removes a finished plan's tasks this way, and the channel the removal goes to is the one the task was last seen on.
+A subscribe to a URI under the scheme with no plan behind it is refused with `-32001` and `Resource not found: <uri>`, as VS Code's host refuses a subscribe it has no state for. A task is published to the plan it now names. A task that leaves a plan, for another plan or for none, is `taskRemoved` on the plan it left and `taskAdded` on the one it joined, as a chat that moves between sessions is removed from one catalog and added to the other. A removal says the id the task had: the sweep removes a finished plan's tasks this way, and the channel the removal goes to is the one the task was last seen on.
 
 The channel is an `x-ahpd` extension and not part of the protocol yet. [The proposal](../../.project/proposals/agent-host-protocol-plan-channel.md) is the text for filing it upstream.
 
@@ -127,6 +127,8 @@ Each tool answers in one line per item, so a model reads a list in a turn rather
 | `task_review` | `task`, `verdict` | Stamps a task `reviewed`, with `approved` or `changes` where a verdict is given. Asks no grant |
 
 `task_list` reads its filters against a whole task. `by` and `since` match any of the five stamps, so a task appears under the person who created it, approved it or touched its start, finish or review. `ready` is a `todo` task whose every `blockedBy` task is `done`, and, with approval on, one that has an `approved` stamp.
+
+A tool refuses an input it cannot take in the words VS Code's server tools refuse theirs with, naming the tool, the field and what it must be: `Invalid task_set input: status must be todo, doing, blocked, review, done, or dropped.`, or `Invalid task_add input: plan must match the id of a known plan (see plan_list).` for an id no record holds.
 
 ## The task record
 
@@ -199,7 +201,7 @@ A host with no user directory has nobody to ask, and its tools act as they alway
 | `requireApproval` | `false` | Whether `task_set` refuses to move a task to `doing` until it has an `approved` stamp. `ready` in `task_list` also asks for one |
 | `sweepAfterDays` | absent | How many days a `done` or `dropped` plan is kept, with the tasks that name it. Absent keeps it forever, which is the default |
 
-The sweep looks once when the plugin is applied and then every hour. It removes a finished plan and every task that names it, once the newest stamp among them is older than the setting. A plan that is `draft` or `active` never goes.
+The sweep looks once when the plugin is applied and then every hour. It removes a finished plan and every task that names it, once the newest stamp among them is older than the setting. A plan that is `draft` or `active` never goes. A pass that fails is written to the daemon's log, and the next hour's pass looks again.
 
 ## How the tools reach a session
 

@@ -4,9 +4,6 @@
     "description": "Envie notificações push para seus dispositivos quando uma sessão precisar da sua atenção."
   },
   "options": {
-    "title": {
-      "description": "Título da notificação. Por padrão, o nome do daemon."
-    },
     "accessToken": {
       "description": "Token de acesso do Expo, para projetos com a segurança de push ativada. Pode ser uma referência do vault, como {\"$secret\": \"host:expo\"}."
     },
@@ -16,5 +13,14 @@
     "contact": {
       "description": "URI mailto: ou https: enviada como claim 'sub' do VAPID, para que um serviço de push possa contatar o operador. Não é enviada quando não definida."
     }
+  },
+  "messages": {
+    "sessions.notification.title": "Sessão: {0}",
+    "sessions.notification.needsInput": "Atenção necessária.",
+    "sessions.notification.needsInputWithWorkspace": "Atenção necessária em {0}.",
+    "sessions.notification.completed": "Sessão concluída.",
+    "sessions.notification.completedWithWorkspace": "Concluída em {0}.",
+    "sessions.notification.failed": "A sessão falhou.",
+    "sessions.notification.failedWithWorkspace": "Falhou em {0}."
   }
 }

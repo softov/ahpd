@@ -28,8 +28,12 @@ const CAPABILITIES: RuntimeCapabilities = {
   resources: ['status', 'capabilities', 'stats', 'server'],
 };
 
-/** How long `ssh` is given to reach a box, in seconds, before it refuses. */
-const DEFAULT_CONNECT_TIMEOUT = 10;
+/**
+ * How long `ssh` is given to reach a box, in seconds, before it refuses: VS
+ * Code's handshake bound for an ssh host, 30 seconds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sshRemoteAgentHostService.ts#L142
+ */
+const DEFAULT_CONNECT_TIMEOUT = 30;
 
 /**
  * How much longer than `ConnectTimeout` one `ssh` process is given.

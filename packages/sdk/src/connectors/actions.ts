@@ -19,9 +19,10 @@ import { isRecordSlug } from '../resources/records.js';
 import { isRecord, reason } from '../utils/values.js';
 import { bindingTarget } from './bindings.js';
 import type { ConnectorsChannel } from './channel.js';
-import type { ToolDefinition } from '@microsoft/agent-host-protocol';
-import type { Capability, ServedAdapter } from '../types/connectors.js';
+import type { ToolDefinition, ToolResultContent } from '@microsoft/agent-host-protocol';
+import type { ActionCall, Capability, ServedAdapter } from '../types/connectors.js';
 import type { HostTool } from '../types/host.js';
+import type { OnWire } from '../types/wire.js';
 import type { Principal } from '../types/users.js';
 
 /** The input schema a tool definition carries, as the protocol declares it. */
@@ -163,10 +164,15 @@ const actionTool = (
         throw new Error(`${alias}: this session's owner has to sign in once before ${name} can run.`);
       }
       // The folder is read now, as the bindings are: it belongs to the session
-      // this call came from, and a call names no folder of its own.
+      // this call came from, and a call names no folder of its own. A call
+      // with nothing beside its input is handed no `call`.
       const files = host.attachmentsDir(at.session);
+      const call: ActionCall = {
+        ...(files === undefined ? {} : { files }),
+        ...(at.setContent === undefined ? {} : { setContent: (content: OnWire<ToolResultContent>[]) => { at.setContent?.(content); } }),
+      };
       try {
-        const answer = await run(id, reader, action, rest, files);
+        const answer = await run(id, reader, action, rest, Object.keys(call).length === 0 ? undefined : call);
         return typeof answer === 'string' ? answer : JSON.stringify(answer) ?? 'Done.';
       }
       catch (error) {

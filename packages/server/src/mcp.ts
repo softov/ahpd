@@ -20,9 +20,10 @@
  */
 
 import type { RequestHandler } from '@cofold/remote';
-import { answerTools, type BoundTool, type ToolCaller } from '@ahpd/sdk';
+import { answerTools, bearerChallenge, type BoundTool, type ToolCaller } from '@ahpd/sdk';
 import { guarded, isUnder, json } from './http.js';
 import { callerOf, type CallerOptions } from './proxy/caller.js';
+import type { Refusal } from './proxy/dialects.js';
 
 /** The path the host's tools are served to a person under, beside `/v1`. */
 export const MCP_PREFIX = '/mcp';
@@ -50,9 +51,16 @@ export interface McpOptions {
   version: string;
 }
 
-/** One refusal, in the shape an MCP client reads: a JSON-RPC error rather than a message. */
-const refused = (status: number, message: string): Response =>
-  json(status, { jsonrpc: '2.0', id: null, error: { code: -32001, message } });
+/**
+ * One refusal, in the shape an MCP client reads: a JSON-RPC error rather than a
+ * message, and a 401 with its challenge as the `WWW-Authenticate` HTTP has
+ * every 401 carry.
+ */
+const refused = (refusal: Refusal): Response => {
+  const answer = json(refusal.status, { jsonrpc: '2.0', id: null, error: { code: -32001, message: refusal.message } });
+  if (refusal.challenge !== undefined) answer.headers.set('www-authenticate', refusal.challenge);
+  return answer;
+};
 
 /**
  * The door at `/mcp`.
@@ -66,17 +74,21 @@ const refused = (status: number, message: string): Response =>
 export function mcpHandler(options: McpOptions): RequestHandler {
   return guarded(async (request, path) => {
     if (!isUnder(path, MCP_PREFIX)) return options.otherwise(request);
-    if (options.setting !== 'all') return refused(404, `No MCP server at ${path}`);
+    if (options.setting !== 'all') return refused({ status: 404, message: `No MCP server at ${path}` });
     // Nothing here is charged, so a person in no team is not refused.
     const called = await callerOf(request, options.caller, 'mcp:call', { scoped: false });
-    if ('refusal' in called) return refused(called.refusal.status, called.refusal.message);
+    if ('refusal' in called) return refused(called.refusal);
     /*
      * A session has an endpoint of its own, which is where its tools live. One
      * reaching here is a caller options mistake as much as a caller's: the door
      * is a person's, and it says so instead of serving a session's list.
      */
     if (called.caller.kind === 'session') {
-      return refused(401, 'A session\'s token is served at its own tools endpoint; /mcp answers a person');
+      return refused({
+        status: 401,
+        message: 'A session\'s token is served at its own tools endpoint; /mcp answers a person',
+        challenge: bearerChallenge(true),
+      });
     }
     if (called.caller.kind === 'root') {
       return answerTools(request, { tools: options.tools({ root: true }), toolsChanged: 'list' }, { name: 'ahpd', version: options.version });

@@ -81,6 +81,16 @@ it('answers 413 for a body over the limit, and fires nothing', async () => {
   expect(fired).toEqual([]);
 });
 
+it('reads a body as large as GitHub delivers by default, and answers 413 past 25 MiB', async () => {
+  opens('github-sized');
+  const route = makes();
+  // Over the 5 MiB a smaller cap would refuse, under GitHub's 25 MB.
+  expect((await route(post('github-sized', 'x'.repeat(6 * 1024 * 1024), { 'content-type': 'text/plain' }))).status).toBe(202);
+  expect(fired).toHaveLength(1);
+  expect((await route(post('github-sized', 'x'.repeat(25 * 1024 * 1024 + 1), { 'content-type': 'text/plain' }))).status).toBe(413);
+  expect(fired).toHaveLength(1);
+});
+
 it('skips the calls its match does not take, and fires the ones it does', async () => {
   opens('push-only', { match: { 'headers.x-github-event': 'push' } });
   const route = makes();

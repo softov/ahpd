@@ -33,7 +33,7 @@ For a person's own token instead of the shared one, see [Users](USERS.md).
 ## Test a token
 
 A plain `GET /?tkn=<token>` on the daemon's port tells a client whether the host accepts the token.
-A refused token gets 401 with `A connection token is required`, the same sentence the WebSocket handshake gives.
+A refused token gets 401 with `A connection token is required`, the same sentence the WebSocket handshake gives, and the bearer challenge in `WWW-Authenticate`: `Bearer realm="ahpd"`, with `error="invalid_token"` when a token came.
 An accepted token gets 426, because the port speaks AHP over WebSocket.
 A host with no token answers 426 to every request.
 

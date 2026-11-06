@@ -55,6 +55,14 @@ describe('the gaps in one schema', () => {
     expect(schemaGaps({ anyOf: [{ type: 'string' }, { type: 'number' }] })).toEqual([]);
   });
 
+  it('takes a condition on the value around it, such as a field one kind requires', () => {
+    expect(schemaGaps({
+      type: 'object',
+      properties: { kind: { type: 'string', enum: ['a', 'b'] }, key: { type: 'string' } },
+      allOf: [{ if: { properties: { kind: { const: 'a' } } }, then: { required: ['key'] } }],
+    })).toEqual([]);
+  });
+
   it('takes an empty schema as any JSON value', () => {
     expect(schemaGaps({})).toEqual([]);
     expect(schemaGaps(undefined)).toEqual([]);

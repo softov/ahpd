@@ -6,15 +6,15 @@ import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Pl
 import { AGENT_RECORD_VARIABLE, resolveNeeds, secretRef, strings } from '@ahpd/sdk';
 import { cliOf, devContainer, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
-import { COMPUTERS_SCHEME, computerCatalogue } from './catalogue.js';
+import { CATALOGUE_PASS_MS, COMPUTERS_SCHEME, computerCatalogue } from './catalogue.js';
 import { computerMethods, computerProvider } from './provider.js';
-import { patternOf } from './reference.js';
+import { scopeOf } from './reference.js';
 import { madeAgain, namedAgain, revealed, scopedTo, vaultNamed, withDefaults } from './secrets.js';
 import type { VaultRead } from './secrets.js';
 import { absoluteOnHost, manifestOf } from './manifest.js';
 import { ensureJoined, ensureParts, readParts, refusedWithout } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { adoptedDevContainer, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, machineDirectory, madeUnderBind, profileOf, roomFor, sessionOf, stateVolumeOf, within } from './runtime.js';
+import { SequencerByKey, adoptedDevContainer, disposableOf, dockerRuntime, hostOf, isRunning, machineDirectory, madeUnderBind, profileOf, queue, sessionOf, stateVolumeOf, within } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, Machine, MachineSpec } from './runtime.js';
 import { routed, parseMachineId, spellMachineId } from './router.js';
 import type { Routed } from './router.js';
@@ -540,16 +540,16 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   const bodyMounts = options.bodyMounts === true;
   /*
-   * The images a machine may be made from.
+   * The images a machine may be made from, as image scopes.
    *
-   * Absent, any image is allowed, which is what every host did before this
-   * existed: naming a set is the operator opting in. A pattern the matcher
-   * will not read is fatal here rather than a rule that silently matches
-   * nothing - an operator who wrote one meant something by it.
+   * Absent, any image is allowed: naming a set is the operator opting in. A
+   * scope in a form the policy does not read is fatal here, since it would
+   * silently match nothing, and an operator who wrote one meant something by
+   * it.
    */
   const images = options.images as string[] | undefined;
   for (const one of images ?? []) {
-    try { patternOf(one); }
+    try { scopeOf(one); }
     catch (error) {
       throw new Error(`plugin ${name}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1089,11 +1089,20 @@ export const apply: Plugin['apply'] = (host, options) => {
   });
   if (watching !== undefined) host.registerClose(() => { watching.close(); });
 
-  /** The `x-ahpd-computers://` channel, refreshed after each change this plugin makes to a machine. */
+  /**
+   * The `x-ahpd-computers://` channel, refreshed after each change this plugin
+   * makes to a machine, and read again every five minutes for the changes made
+   * outside it, VS Code's periodic pass over a catalogue whose source changes
+   * without telling it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostCatalogReconciliationService.ts#L22
+   */
   const catalogue = computerCatalogue(computerRouter, (line) => { host.log(`${name}: ${line}`); });
   catalogue.bind(host.registerChannel(COMPUTERS_SCHEME, catalogue.channel));
   // A reader whose grants changed is sent what they gained and lost.
   host.on('users_changed', () => { void catalogue.refresh(); });
+  const reconciling = setInterval(() => { void catalogue.refresh(); }, CATALOGUE_PASS_MS);
+  reconciling.unref?.();
+  host.registerClose(() => { clearInterval(reconciling); });
 
   /**
    * The runtime, with a stretch around every change of state, and the computer
@@ -2022,16 +2031,10 @@ export const apply: Plugin['apply'] = (host, options) => {
           ...(asked.team === undefined ? {} : { team: asked.team }),
           ...(asked.project === undefined ? {} : { project: asked.project }),
         });
-        // Counted before it is made, and with the same count a write to
-        // `computer://<name>` passes: a machine made for a session is a machine
-        // this host holds.
-        // The count and the create are one turn, so a second session starting
-        // while this one is making its machine counts the machine being made.
-        return inTurn(made, async () => {
-          const full = roomFor(await made.list(), max);
-          if (full !== undefined) {
-            throw new Error(`This host holds ${max} computers already, and ${id} would be one more`);
-          }
+        // One create at a time per runtime, as VS Code queues a source's dev
+        // container operations; a session's machine is made as a client's is,
+        // with `max` capping the agent's tool alone.
+        return queue(made, async () => {
           try {
             // The CLI decides the container's name, so the id is the one it made
             // rather than the one this host suggested.
@@ -2130,18 +2133,12 @@ export const apply: Plugin['apply'] = (host, options) => {
         ...(git.repository === undefined ? {} : { repository: git.repository }),
         ...(git.sessionTree === undefined ? {} : { sessionTree: git.sessionTree }),
       });
-      // Counted before it is made, and with the same count a write to
-      // `computer://<name>` passes: a machine made for a session is a machine
-      // this host holds.
-      // The count and the create are one turn, so a second session starting
-      // while this one is making its machine counts the machine being made.
+      // One create at a time per runtime, as VS Code queues a source's dev
+      // container operations; a session's machine is made as a client's is,
+      // with `max` capping the agent's tool alone.
       // The id the router spells, which names the runtime a machine made on a
       // box's Docker is on: the name alone would be this host's Docker's.
-      const machine = await inTurn(made, async () => {
-        const full = roomFor(await made.list(), max);
-        if (full !== undefined) {
-          throw new Error(`This host holds ${max} computers already, and ${id} would be one more`);
-        }
+      const machine = await queue(made, async () => {
         // The runtime's own sentence is kept: it is the only thing that says
         // what Docker refused, and the session reads it as its creation error.
         return making(async () => made.run({
@@ -2296,6 +2293,13 @@ export const apply: Plugin['apply'] = (host, options) => {
     });
 
     relay = launcher;
+    /*
+     * One container operation at a time for each folder: a connect, a stop and
+     * a remove of one folder's computer are queued behind each other, as VS
+     * Code's dev container host queues them by the folder
+     * (devContainerAgentHostService.ts L224, L246, L988-L994 at 6b68d3fe).
+     */
+    const folders = new SequencerByKey<string>();
     host.registerContainers({
       ...launcher,
       /*
@@ -2310,15 +2314,16 @@ export const apply: Plugin['apply'] = (host, options) => {
       connect: async (asked, sink) => {
         const answer = folderFor(asked.workspaceFolder);
         if (typeof answer !== 'string') throw new Error(answer.refusal);
-        const here = { ...asked, workspaceFolder: answer };
-        const result = await launcher.connect(here, sink);
-        const machine = await machineFor(answer);
-        if (machine === undefined) return result;
-        if (asked.owner !== undefined) {
-          claimOwned(host.configDir, machine.id, { owner: asked.owner }, noted);
-        }
-        open(machine.id);
-        return result;
+        return await folders.queue(answer, async () => {
+          const result = await launcher.connect({ ...asked, workspaceFolder: answer }, sink);
+          const machine = await machineFor(answer);
+          if (machine === undefined) return result;
+          if (asked.owner !== undefined) {
+            claimOwned(host.configDir, machine.id, { owner: asked.owner }, noted);
+          }
+          open(machine.id);
+          return result;
+        });
       },
       /*
        * VS Code's `stop` and `remove`, on the computer a folder is.
@@ -2335,16 +2340,22 @@ export const apply: Plugin['apply'] = (host, options) => {
        * delete does.
        */
       stop: async (folder) => {
-        const found = await machineFor(resolved(folder));
-        if (found === undefined) return true;
-        await made.stop(found.id);
-        return true;
+        const at = resolved(folder);
+        return await folders.queue(at, async () => {
+          const found = await machineFor(at);
+          if (found === undefined) return true;
+          await made.stop(found.id);
+          return true;
+        });
       },
       remove: async (folder) => {
-        const found = await machineFor(resolved(folder));
-        if (found === undefined) return true;
-        await made.remove(found.id);
-        return true;
+        const at = resolved(folder);
+        return await folders.queue(at, async () => {
+          const found = await machineFor(at);
+          if (found === undefined) return true;
+          await made.remove(found.id);
+          return true;
+        });
       },
     });
   }

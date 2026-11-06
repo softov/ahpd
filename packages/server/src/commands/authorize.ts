@@ -9,13 +9,14 @@
  * needs the declaration.
  *
  * `HttpError` is what `serve()` maps to a status: 401 for no credentials or a
- * credential this host does not know. A missing grant is the registry hook's
+ * credential this host does not know, which the API's handler sends with the
+ * bearer challenge `challengeOf` words. A missing grant is the registry hook's
  * 403, carrying the sentence the WebSocket gives.
  */
 
 import { timingSafeEqual } from 'node:crypto';
 import { HttpError, type ServeRequest } from '@cofold/remote';
-import type { Principal, Users } from '@ahpd/sdk';
+import { bearerChallenge, type Principal, type Users } from '@ahpd/sdk';
 
 /** What the hook is built from: who may be here. */
 export interface AuthorizeOptions {
@@ -48,6 +49,9 @@ export const SIGN_IN = 'Sign in to use this host';
 const bearer = (headers: ServeRequest['headers']): string | undefined => {
   return /^Bearer\s+(.+)$/iu.exec(headers.get('authorization') ?? '')?.[1];
 };
+
+/** The challenge this door's 401 carries, by whether the request presented a bearer. */
+export const challengeOf = (headers: ServeRequest['headers']): string => bearerChallenge((bearer(headers) ?? '') !== '');
 
 /**
  * Two secrets compared without stopping at the first difference.
