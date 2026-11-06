@@ -177,6 +177,22 @@ export const dontAsk: Declaration = {
 };
 
 /**
+ * The first wait and the longest between the reads that follow a background
+ * shell's output, in milliseconds: VS Code's output monitor's 500 ms and 10 s
+ * by default, read where the follow starts.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/terminalContrib/chatAgentTools/browser/tools/monitoring/types.ts#L45-L51
+ */
+export const taskOutputFirstWaitMs: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: "The first wait between the reads that follow a background shell's output, in milliseconds. 500 by default, as VS Code's output monitor." },
+  default: 500,
+};
+
+export const taskOutputLongestWaitMs: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: "The longest wait between the reads that follow a background shell's output, in milliseconds. 10000 by default, as VS Code's output monitor." },
+  default: 10_000,
+};
+
+/**
  * What a stop ends.
  *
  * `turn`, the default, interrupts the turn through the SDK's `interrupt()`
@@ -312,7 +328,8 @@ export const extraArgs: Declaration = {
 
 /** Every declared option, by the name a record gives it. */
 export const DECLARED: Record<string, Declaration> = {
-  sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, storedSandbox: storedSandboxDeclaration, outputStyle, env, logins, extraArgs,
+  sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, storedSandbox: storedSandboxDeclaration,
+  taskOutputFirstWaitMs, taskOutputLongestWaitMs, outputStyle, env, logins, extraArgs,
 };
 
 /** One model a record writes out: an id, and the name the picker draws. */

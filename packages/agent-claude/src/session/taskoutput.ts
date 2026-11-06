@@ -67,6 +67,10 @@ export interface TaskOutputOptions {
   terminal: OutputTerminal;
   /** One read, as the query offers it. */
   read(taskId: string): Promise<TaskOutput>;
+  /** The first wait between reads, in milliseconds; `FIRST_WAIT_MS` when absent. */
+  firstWaitMs?: number;
+  /** The longest wait between reads, in milliseconds; `LONGEST_WAIT_MS` when absent. */
+  longestWaitMs?: number;
   /** What to do about a read that failed, which is not the same as a task ending. */
   onError?(error: unknown): void;
 }
@@ -95,8 +99,10 @@ export const pollTaskOutput = (options: TaskOutputOptions): TaskOutputPoll => {
   let seen = 0;
   let done = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const first = options.firstWaitMs ?? FIRST_WAIT_MS;
+  const longest = options.longestWaitMs ?? LONGEST_WAIT_MS;
   /** The next wait, and the reads in a row that found no output. */
-  let wait = FIRST_WAIT_MS;
+  let wait = first;
   let quiet = 0;
 
   const write = (answer: TaskOutput): void => {
@@ -108,7 +114,7 @@ export const pollTaskOutput = (options: TaskOutputOptions): TaskOutputPoll => {
       quiet += 1;
       return;
     }
-    if (quiet >= QUIET_READS) wait = FIRST_WAIT_MS;
+    if (quiet >= QUIET_READS) wait = first;
     quiet = 0;
     if (grown > utf8(output)) options.terminal.replace(output);
     else options.terminal.append(tailText(output, grown));
@@ -131,7 +137,7 @@ export const pollTaskOutput = (options: TaskOutputOptions): TaskOutputPoll => {
   const again = (): void => {
     if (done) return;
     const now = wait;
-    wait = Math.min(wait * 2, LONGEST_WAIT_MS);
+    wait = Math.min(wait * 2, longest);
     timer = setTimeout(() => { void take().then(again); }, now);
   };
 

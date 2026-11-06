@@ -413,6 +413,8 @@ export function createWorkers(ctx: SessionContext): Workers {
         taskId,
         terminal,
         read: (id) => (ctx.query as unknown as TaskOutputReader).getTaskOutput(id),
+        ...(typeof ctx.values['taskOutputFirstWaitMs'] === 'number' ? { firstWaitMs: ctx.values['taskOutputFirstWaitMs'] } : {}),
+        ...(typeof ctx.values['taskOutputLongestWaitMs'] === 'number' ? { longestWaitMs: ctx.values['taskOutputLongestWaitMs'] } : {}),
       }),
     });
     return terminal.uri;

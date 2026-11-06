@@ -211,6 +211,27 @@ describe('the poll', () => {
 
     expect(at).toEqual([0, 500, 1500, 3500, 7500, 15_500, 16_000, 17_000]);
   });
+
+  it('waits the first and longest waits the record names', async () => {
+    const terminal = fakeTerminal();
+    const start = Date.now();
+    const at: number[] = [];
+    const poll = pollTaskOutput({
+      taskId: 't-sleep',
+      terminal,
+      firstWaitMs: 100,
+      longestWaitMs: 300,
+      read: async () => {
+        at.push(Date.now() - start);
+        return { output: 'x', total_bytes: 1, truncated: false };
+      },
+    });
+    await vi.advanceTimersByTimeAsync(1000);
+    poll.cancel();
+
+    // 100 first, then 200, then 300 and no longer.
+    expect(at.slice(0, 5)).toEqual([0, 100, 300, 600, 900]);
+  });
 });
 
 it('cuts a tail on a character boundary, never inside one', () => {
