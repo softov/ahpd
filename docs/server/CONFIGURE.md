@@ -99,7 +99,9 @@ An unknown key is logged and ignored:
 | `terminalAutoApproveDefaults` | `--terminal-auto-approve-defaults` | `vscode` | The rules for a session whose window pushed none; `none` approves no command. See [Terminal rules](#terminal-rules) |
 | `wire` | `--wire` | | Log every frame to this file, for debugging |
 
-Keys with no flag: `httpApi`, `mcpTools`, `modelProxy`, `usage`, `policies`, `service`, `mcpServers`, `commandParser`, `tunnelHosts`, `onPath`. Flags with no key: `--no-plugins`, `--no-cwd`, `--plugin-option`, `--stdio`, `--config-file`.
+Keys with no flag: `httpApi`, `mcpTools`, `modelProxy`, `usage`, `policies`, `service`, `mcpServers`, `commandParser`, `tunnelHosts`, `onPath`, `daemonRecord`. Flags with no key: `--no-plugins`, `--no-cwd`, `--plugin-option`, `--stdio`, `--config-file`.
+
+`daemonRecord` is how `ahpd stop`, `ahpd status` and the other verbs read `daemon.json`, the record of the running daemon. `fields`, the default, reads each field as it is there, so a record an older daemon wrote still names its daemon in the middle of an upgrade. `schemaVersion` ignores a record of another `schemaVersion` and leaves it where it is, as VS Code's CLI ignores a registry entry of another version.
 
 `onPath` is how `ahpd configure` and `ahpd doctor` find a command on PATH. `runnable`, the default, takes a regular file with an execute bit, tries each `PATHEXT` extension and then the name as written on Windows, and skips an empty entry, so a setup reports what the machine installs and not what the folder it ran in holds. `findExecutable` is VS Code's lookup: any file that is not a folder, with every entry that is not absolute, the empty one among them, read against the working directory.
 

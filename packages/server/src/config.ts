@@ -350,6 +350,17 @@ export interface Config {
    */
   pluginEntryOutside?: 'refuse' | 'warn';
   /**
+   * How `daemon.json`, the record of the running daemon, is read by the verbs
+   * that find it.
+   *
+   * `fields`, the default, reads each field as it is there, so a record an
+   * older daemon wrote still names its daemon in the middle of an upgrade.
+   * `schemaVersion` ignores a record of another `schemaVersion` and leaves it
+   * where it is, as VS Code's CLI ignores a registry entry of another version
+   * (cli/src/tunnels/agent_host_registry.rs L36-L42, L217-L228 at 6b68d3fe).
+   */
+  daemonRecord?: 'fields' | 'schemaVersion';
+  /**
    * How `ahpd configure` and `ahpd doctor` find a command on PATH.
    *
    * `runnable`, the default, takes a regular file with an execute bit, tries

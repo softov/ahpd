@@ -229,6 +229,21 @@ describe('the record on disk', () => {
     expect(found?.argv).toBeUndefined();
   });
 
+  // daemonRecord schemaVersion: VS Code's CLI ignores a registry entry of
+  // another schemaVersion (cli/src/tunnels/agent_host_registry.rs L36-L42,
+  // L217-L228 at 6b68d3fe).
+  it('writes its schemaVersion, and under daemonRecord schemaVersion ignores a record of another and leaves it', () => {
+    expect(recordOf('ahpd on ws://127.0.0.1:9187', process.pid).schemaVersion).toBe(1);
+    put({ pid: process.pid, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/', paths: [], startedAt: '2026-09-19T00:00:00.000Z' });
+    expect(running('schemaVersion')).toBeUndefined();
+    expect(running('fields')?.pid).toBe(process.pid);
+    writeFileSync(join(home, 'ahpd', 'config.json'), JSON.stringify({ daemonRecord: 'schemaVersion' }));
+    expect(running()).toBeUndefined();
+    expect(existsSync(join(home, 'ahpd', 'daemon.json'))).toBe(true);
+    put({ schemaVersion: 1, pid: process.pid, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/', paths: [], startedAt: '2026-09-19T00:00:00.000Z' });
+    expect(running()?.pid).toBe(process.pid);
+  });
+
   it('prints the token-free origin through statusLine', () => {
     const record: Running = { pid: 42, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/?tkn=secret', paths: [], startedAt: '2026-09-19T00:00:00.000Z' };
     const line = statusLine(record);

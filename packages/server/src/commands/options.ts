@@ -653,6 +653,11 @@ export const serverFields = {
     enum: ['refuse', 'warn'],
     description: 'How a plugin whose entry points outside its own package is taken: refuse, the default, so a manifest cannot point its own package at somebody else\'s code; warn loads it with a warning on its row, as VS Code loads an extension whose main is outside its folder.',
   },
+  daemonRecord: {
+    type: 'string',
+    enum: ['fields', 'schemaVersion'],
+    description: 'How daemon.json, the record of the running daemon, is read by the verbs that find it: fields, the default, reads each field as it is there, so an older daemon\'s record still names its daemon in the middle of an upgrade; schemaVersion ignores a record of another schemaVersion, as VS Code\'s CLI ignores a registry entry of another version. Set in the configuration file only.',
+  },
   onPath: {
     type: 'string',
     enum: ['runnable', 'findExecutable'],
@@ -796,7 +801,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['httpApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts', 'onPath'] as const;
+const FILE_ONLY = ['httpApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts', 'onPath', 'daemonRecord'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;

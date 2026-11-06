@@ -6,7 +6,7 @@ import { closeSync, fstatSync, openSync, readdirSync, readSync, renameSync, stat
 import { connect } from 'node:net';
 import { basename, dirname, join } from 'node:path';
 import { readJson, writeJsonAtomic } from '@ahpd/sdk';
-import { daemonLog, daemonPath, ensureConfigDir } from './config.js';
+import { daemonLog, daemonPath, ensureConfigDir, loadConfig } from './config.js';
 import { realManager } from './service.js';
 import type { Manager, Service } from './service.js';
 
@@ -28,8 +28,22 @@ export interface Control {
   key: string;
 }
 
+/** The shape of the record this release writes, as `schemaVersion` names it. */
+export const RECORD_SCHEMA_VERSION = 1;
+
+/**
+ * How a record is read, as the configuration's `daemonRecord` says: `fields`,
+ * each field as it is there, so a record an older daemon wrote still names its
+ * daemon mid-upgrade; or `schemaVersion`, a record of another version ignored,
+ * as VS Code's CLI ignores a registry entry of another `schemaVersion`
+ * (cli/src/tunnels/agent_host_registry.rs L36-L42, L217-L228 at 6b68d3fe).
+ */
+export type RecordReading = 'fields' | 'schemaVersion';
+
 /** What a detached daemon records about itself. */
 export interface Running {
+  /** The shape of this record, `RECORD_SCHEMA_VERSION`. Absent from a record an older daemon wrote. */
+  schemaVersion?: number;
   pid: number;
   /** The origin it listens on, without the token. What every verb prints. */
   url: string;
@@ -213,8 +227,12 @@ const present = (pid: number): boolean => {
  *
  * This is the one reader of the record, and a caller printing one takes `url`:
  * `connectUrl` carries the secret and belongs on no line.
+ *
+ * `reading` is the configuration's `daemonRecord`; under `schemaVersion` a
+ * record of another version is ignored and left where it is, as VS Code's CLI
+ * ignores an entry of another `schemaVersion` rather than rejecting it.
  */
-export function running(): Running | undefined {
+export function running(reading: RecordReading = recordReading()): Running | undefined {
   const read = readJson(daemonPath());
   // A file that is not there, and one that could not be opened, are both a
   // daemon with no record: neither is a file anybody may clear.
@@ -228,6 +246,7 @@ export function running(): Running | undefined {
     catch { /* it was already gone, which is what was wanted */ }
     return undefined;
   }
+  if (reading === 'schemaVersion' && found.schemaVersion !== RECORD_SCHEMA_VERSION) return undefined;
   if (!alive(found.pid)) {
     // Through `forget`, so a record another daemon claimed since the read stays.
     forget([found.pid]);
@@ -235,6 +254,20 @@ export function running(): Running | undefined {
   }
   return found;
 }
+
+/**
+ * How the configuration says a record is read, `fields` when it says nothing
+ * or does not load: a verb that cannot read its configuration still finds the
+ * daemon it was asked about.
+ */
+const recordReading = (): RecordReading => {
+  try {
+    return loadConfig().values.daemonRecord === 'schemaVersion' ? 'schemaVersion' : 'fields';
+  }
+  catch {
+    return 'fields';
+  }
+};
 
 /** The record in that value: a JSON object with a numeric pid, or nothing. */
 const recordIn = (parsed: unknown): Running | undefined => {
@@ -338,6 +371,7 @@ export function recordOf(
   const skipped = skippedOf(announced);
   const startFolder = /^start folder (.+)$/m.exec(announced)?.[1]?.trim();
   return {
+    schemaVersion: RECORD_SCHEMA_VERSION,
     pid,
     url,
     connectUrl: readyUrl(url, token),
