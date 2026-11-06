@@ -354,6 +354,14 @@ export interface Config {
    */
   clientToolTimeoutMs?: number;
   /**
+   * How long a client whose connections have all closed keeps its place in a
+   * session, and the tool calls it owes there, as VS Code's
+   * `CLIENT_TOOL_CALL_DISCONNECT_TIMEOUT`.
+   *
+   * Unset is thirty seconds; zero releases a client as soon as it goes.
+   */
+  clientToolCallDisconnectTimeoutMs?: number;
+  /**
    * The environment every shell this host starts is given, by variable name.
    *
    * A string is what the variable is set to; `null` removes it. A deployment

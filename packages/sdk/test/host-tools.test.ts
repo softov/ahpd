@@ -1631,9 +1631,10 @@ describe('tools a client contributes', () => {
     client.handle({ method: 'unsubscribe', params: { channel: chatUri } });
     client.handle({ method: 'unsubscribe', params: { channel: uri } });
     await settle();
+    // Failed by the host in VS Code's words for a client that left.
     const answer = await answering;
     expect(answer?.isError).toBe(true);
-    expect(answer?.content[0]?.text).toContain('no longer here');
+    expect(answer?.content[0]?.text).toContain('disconnected before completing');
 
     // And the tool goes with the client: one whose provider has left is one
     // every call to would fail.
@@ -2516,10 +2517,16 @@ describe('a client\'s call, held by the backend', () => {
     ]);
   });
 
-  it('fails the call of a client that leaves, naming the other client\'s tool', async () => {
+  /*
+   * A client that leaves owes its calls nothing more: this host fails each in
+   * VS Code's words, telling the model another client in the session provides
+   * the same tool, and hands the backend the same failure.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
+   */
+  it('fails the call of a client that leaves in VS Code\'s words, naming the other client\'s tool', async () => {
     const { held, clients, uri, chatUri } = await open(['a', 'b']);
     const { calls } = held();
-    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     const waiting = calls.wait('call-1');
     await settle();
 
@@ -2530,12 +2537,61 @@ describe('a client\'s call, held by the backend', () => {
     clients[0]?.handle({ method: 'unsubscribe', params: { channel: uri } });
     await settle();
 
+    const retry = 'The client that was running openFile disconnected, but another active client now provides openFile. You may try calling the tool again.';
     const lost = await waiting;
-    expect(lost.ok).toBe(false);
-    expect(lost.text).toBe('The client a that was running openFile is no longer here. b__openFile provides the same tool');
+    expect(lost).toEqual({ ok: false, text: 'Client a disconnected before completing openFile', content: [{ type: 'text', text: retry }] });
+    const chat = await state(clients[1] as Client, chatUri) as unknown as { activeTurn?: { responseParts: Bag[] } };
+    expect(chat.activeTurn?.responseParts.at(-1)).toMatchObject({
+      kind: 'toolCall',
+      toolCall: {
+        toolCallId: 'call-1',
+        status: 'completed',
+        success: false,
+        pastTenseMessage: 'openFile failed',
+        content: [{ type: 'text', text: retry }],
+        error: { message: 'Client a disconnected before completing openFile' },
+      },
+    });
 
     const held_ = await state(clients[1] as Client, uri);
-    expect((held_.inputNeeded ?? []).some((one) => one.id === id)).toBe(false);
+    expect((held_.inputNeeded ?? []).length).toBe(0);
+  });
+
+  /*
+   * A client whose connection closes keeps its calls for the daemon's window,
+   * VS Code's thirty seconds, set short here; when it runs out, a call still
+   * streaming is readied first and then failed, as VS Code's host fails one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1637-L1660
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
+   */
+  it('fails a dropped client\'s streaming call once the daemon\'s window runs out, readied first', async () => {
+    const { held, clients, chatUri, peers } = await open(['a', 'b'], { clientToolCallDisconnectTimeoutMs: 50 });
+    const { start, calls } = held();
+    start.emit('chat', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'open it', origin: { kind: 'user' } } });
+    start.emit('chat', {
+      type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'call-2', toolName: 'readFile', displayName: 'readFile',
+      contributor: { kind: 'client', clientId: 'a' },
+    });
+    calls.open({ turnId: 't1', toolCall: running('call-2', 'readFile'), owner: 'a' });
+    const waiting = calls.wait('call-2');
+    await settle();
+
+    clients[0]?.close();
+    await settle();
+    expect(calls.owner('call-2')).toBe('a');
+
+    const lost = await waiting;
+    expect(lost).toEqual({ ok: false, text: 'Client a disconnected before completing readFile', content: [] });
+    const said = (peers[1]?.notes ?? [])
+      .filter((note) => note.method === 'action')
+      .map((note) => (note.params as { channel: string; action: Bag }))
+      .filter((one) => one.channel === chatUri && String(one.action.toolCallId ?? '') === 'call-2')
+      .map((one) => one.action);
+    expect(said.map((one) => one.type)).toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+    expect(said[1]).toMatchObject({ invocationMessage: 'readFile', confirmed: 'not-needed' });
+    expect(said[2]).toMatchObject({
+      result: { success: false, pastTenseMessage: 'readFile failed', error: { message: 'Client a disconnected before completing readFile' } },
+    });
   });
 
   it('fails a call nobody answers in the time the host allows', async () => {

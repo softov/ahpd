@@ -392,12 +392,14 @@ it('fails a call whose client went away and finishes the turn', async () => {
   await client.handle({ method: 'unsubscribe', params: { channel: chatUri } });
   await until(() => ended(watcher.peer, chatUri));
 
+  // Failed by the host in VS Code's words for a client that left.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
   const done = completion(watcher.peer, chatUri);
   expect(done?.success).toBe(false);
   const error = done?.error as { message?: string } | undefined;
-  expect(error?.message).toContain('no longer here');
+  expect(error?.message).toContain('disconnected before completing');
   // The failure is the tool result the model read, and the run went on.
-  expect(JSON.stringify(model.requests[1]?.messages)).toContain('no longer here');
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('disconnected before completing');
   // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
   expect(types(watcher.peer, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });

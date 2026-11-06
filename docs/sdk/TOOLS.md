@@ -66,6 +66,8 @@ A client announces them when it becomes active in a session, and this host offer
 
 None of them runs here. The call is reported against the client that provides it, and only that client may complete it, which is what unblocks the agent. A client that never answers is one the call is failed on after `clientToolTimeoutMs`: ten minutes, or never when it is `0`. This host hands the number to the backend when the session starts rather than timing a call itself, so what a call waits is one number decided once.
 
+A client whose connections all close keeps its place in the session, and the calls it owes there, for `clientToolCallDisconnectTimeoutMs`, thirty seconds by default, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1637-L1660) does; one that connects again inside it has never left. When it runs out, or the client unsubscribes from the session, this host fails each call the client still owes in VS Code's words: a call still streaming is readied first, then completed with `success: false`, `pastTenseMessage` "<name> failed" and the error "Client <id> disconnected before completing <name>", and where another client in the session provides a tool of the same name, the content tells the model it may try the call again. The backend holding the call is handed the same failure, so the agent goes on.
+
 ## MCP servers
 
 `mcpServers` is the host's own servers, by the name a person gave each, and every session is offered them whatever agent it runs. An entry is one of the two shapes VS Code uses.
@@ -144,9 +146,10 @@ A backend that cannot - an ACP agent, which asks its client for tools - is hande
 | `sessionToolsProviders` | a list of provider ids | none | Offer the session tools to the sessions of these providers alone. Empty offers them to every provider. Applies live, and is worked out per session |
 | `mcpServers` | an object of server entries | none | The MCP servers every session is offered. Applies live, and is read again for each session opened |
 | `clientToolTimeoutMs` | integer, milliseconds | `600000` (ten minutes) | How long a tool call a client runs may wait for that client. `0` waits for ever |
+| `clientToolCallDisconnectTimeoutMs` | integer, milliseconds | `30000` (thirty seconds) | How long a client whose connections all closed keeps its place in a session and the tool calls it owes there. `0` releases it at once |
 | `plugins.<name>.hostTools` | `true` or `false` | `true` | Whether a plugin's sessions are offered this host's own tools as one MCP server |
 
-The first four are the daemon's keys and apply while it runs; a root config push of any needs `config:write`. `clientToolTimeoutMs` is a daemon key and needs `ahpd restart`. Every key with its values and its default is [HOST.md](HOST.md#configuration-keys) and [HOST.md](HOST.md#root-config).
+The first four are the daemon's keys and apply while it runs; a root config push of any needs `config:write`. `clientToolTimeoutMs` and `clientToolCallDisconnectTimeoutMs` are daemon keys and need `ahpd restart`. Every key with its values and its default is [HOST.md](HOST.md#configuration-keys) and [HOST.md](HOST.md#root-config).
 
 ## Commands
 

@@ -842,6 +842,17 @@ export interface HostOptions {
    */
   clientToolTimeoutMs?: number;
   /**
+   * How long a client whose connections have all closed keeps its place in a
+   * session, and the tool calls it owes there, in milliseconds, as VS Code's
+   * `CLIENT_TOOL_CALL_DISCONNECT_TIMEOUT`.
+   *
+   * A client that connects again inside it has never left. Once it runs out,
+   * each call the client still owes fails in VS Code's words, the client's
+   * entry leaves the session, and its tools with it. Unset is thirty seconds;
+   * zero releases a client as soon as it goes.
+   */
+  clientToolCallDisconnectTimeoutMs?: number;
+  /**
    * The environment the operator names for the shells this host starts.
    *
    * A daemon that runs with an environment of its own - a service unit with a

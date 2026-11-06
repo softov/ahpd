@@ -905,11 +905,14 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     if (type === 'session/activeClientRemoved') {
       /*
        * A client leaving a session by its own action: the entry held under
-       * the id it names goes, the calls out with that client fail, and every
-       * chat is offered the tools that are left, as the reference host's
-       * reducer removes the entry and its side effect removes the client's
-       * tools. A session it does not know is refused as `activeClientSet` is.
+       * the id it names goes, and every chat is offered the tools that are
+       * left, as the reference host's reducer removes the entry and its side
+       * effect removes the client's tools. A call already out with the client
+       * stays its to complete while it is connected, and fails when it goes,
+       * as every call a gone client owes does. A session it does not know is
+       * refused as `activeClientSet` is.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2012-L2015
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L569-L573
        */
       if (!sessions.has(channel) && !owners.has(channel)) {
         no(`No agent for session: ${channel}`);
@@ -920,9 +923,6 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       held?.delete(named);
       if (held !== undefined && held.size === 0) presence.delete(idOf(channel));
       dispatch(channel, action, origin);
-      if (typeof named === 'string') {
-        for (const chat of sessions.get(channel)?.chats.values() ?? []) chat.clientGone?.(named);
-      }
       retool(channel);
       return;
     }

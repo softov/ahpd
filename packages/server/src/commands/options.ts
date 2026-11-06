@@ -112,6 +112,8 @@ export interface Options {
   pullRequestLookup: 'url' | 'branch';
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
+  /** How long a gone client keeps its place and its calls, absent when the deployment said nothing. */
+  clientToolCallDisconnectTimeoutMs?: number;
   /** The environment every shell this host starts is given, absent when the deployment named none. */
   shellEnv?: ShellEnv;
   /** The rules a session's commands are matched against when its window pushed none. */
@@ -673,6 +675,12 @@ export const serverFields = {
     type: 'integer',
     minimum: 0,
     description: 'How long a call a client runs may wait. Default ten minutes; 0 waits for ever.',
+    cli: { value: 'MS' },
+  },
+  clientToolCallDisconnectTimeoutMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long a client whose connections all closed keeps its place in a session and the tool calls it owes there, as VS Code does. Default thirty seconds; 0 releases it at once.',
     cli: { value: 'MS' },
   },
   shellEnv: asJsonSchema(shellEnvField),
@@ -1268,6 +1276,7 @@ const noCwd = input['noCwd'] === true;
   const issuerVerify = given('issuerVerify');
   const wire = given('wire');
   const clientToolTimeoutMs = given('clientToolTimeoutMs');
+  const clientToolCallDisconnectTimeoutMs = given('clientToolCallDisconnectTimeoutMs');
   const shellEnv = given('shellEnv');
   // File-only, and already absolute: `anchored` resolved it against the file.
   const commandParser = file.commandParser;
@@ -1315,6 +1324,7 @@ const noCwd = input['noCwd'] === true;
     nodeRestart: given('nodeRestart') ?? 'end',
     pullRequestLookup: given('pullRequestLookup') ?? 'url',
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
+    ...(clientToolCallDisconnectTimeoutMs === undefined ? {} : { clientToolCallDisconnectTimeoutMs }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',
     ...(commandParser === undefined ? {} : { commandParser }),

@@ -27,10 +27,10 @@ const host = () => createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })
 /**
  * The example backend, with what a session's clients come to for the work.
  *
- * A backend reaches the clients of its session through two calls: the tools it
- * may offer, retold whenever they move, and the one that fails what a client
- * that is gone still owed it. A fake that keeps both is what says whether a
- * client is still in the session as far as anything but the bookkeeping goes.
+ * A backend reaches the clients of its session through the tools it may
+ * offer, retold whenever they move. A fake that keeps them is what says whether
+ * a client is still in the session as far as anything but the bookkeeping
+ * goes.
  */
 const watched = (pace = 0, backend?: Agent) => {
   const base = backend ?? echo({ path: DIR, pace });
@@ -40,8 +40,6 @@ const watched = (pace = 0, backend?: Agent) => {
   const born: string[][] = [];
   /** The tool names each chat was handed, in the order it was handed them. */
   const offered: string[][] = [];
-  /** The clients each chat was told have gone. */
-  const gone: string[] = [];
   const agent: Agent = {
     ...base,
     create: (start) => {
@@ -56,11 +54,10 @@ const watched = (pace = 0, backend?: Agent) => {
         // A backend that can be told, so the list is a real one rather than
         // one this host built and had nowhere to send.
         setTools: async (tools) => { offered.push(tools.map((one) => one.definition.name)); return true; },
-        clientGone: (clientId) => { gone.push(clientId); chat.clientGone?.(clientId); },
       };
     },
   };
-  return { agent, spawned, born, offered, gone };
+  return { agent, spawned, born, offered };
 };
 
 // The cases that hold a clock put it back, so no test runs on another's time.
@@ -594,7 +591,7 @@ it('keeps a client in while another window of theirs is still watching', async (
 
 it('keeps a client that dropped, with its tool, for thirty seconds', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-  const { agent, offered, gone } = watched();
+  const { agent, offered } = watched();
   const held = createHost({ path: DIR, agents: [agent] });
   const a = await joins(held, 'watcher');
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
@@ -610,11 +607,10 @@ it('keeps a client that dropped, with its tool, for thirty seconds', async () =>
   await settle();
   await vi.advanceTimersByTimeAsync(29_999);
 
-  // One millisecond short: nothing said, nothing taken away, nothing failed.
+  // One millisecond short: nothing said, nothing taken away.
   expect(removals(a.peer, URI)).toEqual([]);
   expect(await clientsIn(a.client, URI)).toEqual(['dropper']);
   expect(offered.at(-1)).toContain('dropper__openFile');
-  expect(gone).toEqual([]);
 
   await vi.advanceTimersByTimeAsync(1);
 
@@ -622,7 +618,6 @@ it('keeps a client that dropped, with its tool, for thirty seconds', async () =>
   expect(removals(a.peer, URI)).toMatchObject([{ clientId: 'dropper' }]);
   expect(await clientsIn(a.client, URI)).toEqual([]);
   expect(offered.at(-1)).not.toContain('dropper__openFile');
-  expect(gone).toEqual(['dropper']);
 });
 
 it('has not gone anywhere when it subscribes again inside the window', async () => {

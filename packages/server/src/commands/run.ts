@@ -1378,6 +1378,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * is the same answer and one place should hold it.
      */
     ...(options.clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs: options.clientToolTimeoutMs }),
+    // And how long a gone client keeps its place and its calls, the host's own thirty seconds unless the operator said.
+    ...(options.clientToolCallDisconnectTimeoutMs === undefined ? {} : { clientToolCallDisconnectTimeoutMs: options.clientToolCallDisconnectTimeoutMs }),
     /*
      * The environment the operator names for the shells this host starts.
      *

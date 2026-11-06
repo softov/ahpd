@@ -634,10 +634,12 @@ it('answers the request with isError when the owning client goes', async () => {
   await until(() => ended(p, chatUri));
 
   // The agent is told the call failed rather than left blocked on a client
-  // that is not there: nobody else provides the tool, so there is no hint.
+  // that is not there, in VS Code's words for the call as it is named here:
+  // nobody else provides the tool, so there is no hint.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
   expect(results(p, chatUri)).toEqual([{
     isError: true,
-    content: [{ type: 'text', text: 'The client a that was running openFile is no longer here' }],
+    content: [{ type: 'text', text: 'Client a disconnected before completing a__openFile' }],
   }]);
 });
 
@@ -776,7 +778,7 @@ it("takes a departed client's tool off the list as well as failing its call", as
   expect(await listed(endpoint)).not.toContain('a__openFile');
   expect(results(p, chatUri)).toEqual([{
     isError: true,
-    content: [{ type: 'text', text: 'The client a that was running openFile is no longer here' }],
+    content: [{ type: 'text', text: 'Client a disconnected before completing a__openFile' }],
   }]);
 });
 

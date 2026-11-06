@@ -773,9 +773,11 @@ export interface Session {
   /**
    * A client that was running tool calls here has gone.
    *
-   * Its outstanding calls are failed rather than left open: the agent is
-   * waiting on a promise that nothing can settle any more, and a turn that
-   * hangs for ever is worse than a tool that says it could not run.
+   * @deprecated The host fails each call a gone client still owes itself, in
+   * VS Code's words, once the client's window runs out or it leaves the
+   * session, and hands the backend the failure through `completeToolCall`, as
+   * VS Code's host does; it calls no backend's `clientGone`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
    */
   clientGone?(clientId: string): void;
   /**

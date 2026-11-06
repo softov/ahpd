@@ -67,6 +67,7 @@ Every flag can be a key in the configuration file instead, spelled without the d
 | `paths` | list of directories | the directory the daemon was started in | The directories this host catalogues |
 | `worktreesRoot` | directory | `<repo>.worktrees` beside each repository | Where session worktrees are kept |
 | `clientToolTimeoutMs` | integer, milliseconds | `600000` (ten minutes) | How long a tool call a client runs may wait for that client. `0` waits for ever |
+| `clientToolCallDisconnectTimeoutMs` | integer, milliseconds | `30000` (thirty seconds) | How long a client whose connections all closed keeps its place in a session and the tool calls it owes there, VS Code's `CLIENT_TOOL_CALL_DISCONNECT_TIMEOUT`; when it runs out, each call it owes fails in VS Code's words. `0` releases it at once |
 | `shellEnv` | an object of variable name to text or `null` | none | The environment every shell this host starts is given. A client that needs a variable in one session sets `shellInitScripts` instead |
 | `terminalAutoApproveDefaults` | `vscode` or `none` | `vscode` | The rules a session's shell commands are matched against when the window that started it pushed none. `vscode` is VS Code's table, `none` approves no command - [AHP.md](AHP.md#root--4-of-4) |
 | `commandParser` | file path | unset | A `.js` or `.ts` module whose default export splits a shell command before the terminal rules match it. A path is relative to the configuration file - [PLUGINS.md](../plugins/PLUGINS.md#what-a-command-parser-has-to-answer) |

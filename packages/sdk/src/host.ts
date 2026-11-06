@@ -124,7 +124,11 @@ export { GATE, refusalReason } from './host/gate.js';
 export const HOST_CLOSE_WAIT_MS = 5_000;
 
 /**
- * How long a client's place in a session is kept after its connection closes.
+ * How long a client's place in a session, and the tool calls it owes there,
+ * are kept after its connection closes, where the daemon's
+ * `clientToolCallDisconnectTimeoutMs` says nothing: VS Code's
+ * `CLIENT_TOOL_CALL_DISCONNECT_TIMEOUT`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L132
  *
  * A dropped socket is not a client that has finished with a session: what it
  * announced there - the tools it runs, the plugins it handed over - is in the
@@ -132,7 +136,7 @@ export const HOST_CLOSE_WAIT_MS = 5_000;
  * again inside this window has never left. Nothing is said about it in the
  * meantime, and nothing it contributes is taken away.
  */
-const CLIENT_DISCONNECT_GRACE_MS = 30_000;
+export const CLIENT_TOOL_CALL_DISCONNECT_TIMEOUT_MS = 30_000;
 
 /**
  * How long a resource watch's watcher is held after its last subscriber left:
@@ -1333,8 +1337,9 @@ export function createHost(options: HostOptions): Host {
 
   /**
    * Release a client from a session, if nothing else is holding it there, as
-   * VS Code's host releases an active client.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1690
+   * VS Code's host releases an active client: the tool calls it still owes
+   * there failed, then its entry taken out.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1684-L1694
    *
    * The protocol names three ways this happens - unsubscribe, disconnect
    * without reconnecting, reconnect without resubscribing - and they are the
@@ -1348,25 +1353,76 @@ export function createHost(options: HostOptions): Host {
    */
   const releaseActiveClientForSession = (channel: string, clientId: string): void => {
     const uri = sessionOfChannel(channel);
-    const held = presence.get(idOf(uri));
-    if (!held?.has(clientId)) return;
     for (const connection of connections) {
       if (connection.clientId === clientId && [...connection.watching].some((one) => sessionOfChannel(one) === uri)) return;
     }
+    completeDisconnectedClientToolCalls(uri, clientId);
+    const held = presence.get(idOf(uri));
+    if (!held?.has(clientId)) return;
     // The entry held under this client's id, which is the id the entry carries.
     held.delete(clientId);
     if (held.size === 0) presence.delete(idOf(uri));
     dispatch(uri, { type: 'session/activeClientRemoved', clientId });
-    /*
-     * And the tools it was providing, which leave with it.
-     *
-     * Both halves matter. The model is offered a smaller list from here on -
-     * a tool whose client has gone is one every call to would fail - and any
-     * call already out with that client is failed now rather than left as a
-     * turn waiting on a promise nothing can settle.
-     */
-    for (const chat of sessions.get(uri)?.chats.values() ?? []) chat.clientGone?.(clientId);
+    // And the tools it was providing, which leave with it: a tool whose client
+    // has gone is one every call to would fail.
     retool(uri);
+  };
+
+  /**
+   * Every client tool call still pending in the running turns of a session's
+   * chats, a worker's among them, with the client its contributor names: one
+   * streaming, running or waiting on a confirmation, as VS Code's host reads
+   * the calls a client still owes.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L187-L191
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1696-L1729
+   */
+  const pendingClientToolCalls = (uri: string): { chat: string; turnId: string; call: Bag; clientId: string }[] => {
+    const chats = [...(sessions.get(uri)?.chats.keys() ?? []), ...[...subagents].filter(([, held]) => held.session === uri).map(([chat]) => chat)];
+    return chats.flatMap((chat) => {
+      const turn = ctx.stateOf(chat)?.activeTurn as Bag | null | undefined;
+      const parts = Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [];
+      return parts.flatMap((part) => {
+        const call = part.kind === 'toolCall' ? part.toolCall as Bag | undefined : undefined;
+        const contributor = call?.contributor as Bag | undefined;
+        if (call === undefined || contributor?.kind !== 'client' || typeof contributor.clientId !== 'string') return [];
+        if (call.status !== 'streaming' && call.status !== 'running' && call.status !== 'pending-confirmation') return [];
+        return [{ chat, turnId: String(turn?.id ?? ''), call, clientId: contributor.clientId }];
+      });
+    });
+  };
+
+  /**
+   * A client's calls still pending in a session, failed once it has gone, in
+   * VS Code's words: a streaming call readied first, then completed as
+   * failed, with the model told where another client still in the session
+   * provides a tool of the same name. The backend holding each call is handed
+   * the failure as it is handed a client's own answer, so the agent waiting
+   * on it goes on; no backend ends a call of a client that left.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
+   */
+  const completeDisconnectedClientToolCalls = (uri: string, clientId: string): void => {
+    const others = activeClientsOf(uri).filter((one) => one.clientId !== clientId);
+    for (const { chat, turnId, call } of pendingClientToolCalls(uri).filter((one) => one.clientId === clientId)) {
+      const toolCallId = String(call.toolCallId ?? '');
+      const name = String(call.displayName ?? call.toolName ?? '');
+      const retry = others.some((one) => Array.isArray(one.tools) && (one.tools as Bag[]).some((tool) => tool.name === call.toolName));
+      if (call.status === 'streaming') {
+        dispatch(chat, { type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: call.invocationMessage ?? name, confirmed: 'not-needed' });
+      }
+      const error = { message: `Client ${clientId} disconnected before completing ${name}` };
+      const content = retry
+        ? [{ type: 'text' as const, text: `The client that was running ${name} disconnected, but another active client now provides ${name}. You may try calling the tool again.` }]
+        : [];
+      dispatch(chat, {
+        type: 'chat/toolCallComplete',
+        turnId,
+        toolCallId,
+        result: { success: false, pastTenseMessage: `${name} failed`, ...(retry ? { content } : {}), error },
+      });
+      for (const one of sessions.get(uri)?.chats.values() ?? []) {
+        if (one.completeToolCall?.(toolCallId, clientId, { ok: false, text: error.message, content }) === true) break;
+      }
+    }
   };
 
   /**
@@ -1393,9 +1449,12 @@ export function createHost(options: HostOptions): Host {
 
   /**
    * A client's connection has closed: its place in the session the channel
-   * is, or holds, is kept.
+   * is, or holds, and the tool calls it owes there, are kept for the daemon's
+   * `clientToolCallDisconnectTimeoutMs`, as VS Code's host keeps a client
+   * that is active in a session or owns a call pending there.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1637-L1660
    *
-   * Nothing is kept for a client that holds no place there, which is every
+   * Nothing is kept for a client that holds neither there, which is every
    * session a connection watched without ever announcing itself in it -
    * `releaseActiveClientForSession` would take nothing out, so there is nothing to wait for.
    *
@@ -1405,7 +1464,7 @@ export function createHost(options: HostOptions): Host {
    */
   const waitsOut = (channel: string, clientId: string): void => {
     const uri = sessionOfChannel(channel);
-    if (!presence.get(idOf(uri))?.has(clientId)) return;
+    if (!presence.get(idOf(uri))?.has(clientId) && !pendingClientToolCalls(uri).some((one) => one.clientId === clientId)) return;
     const waits = graces.get(clientId) ?? new Map<string, ReturnType<typeof setTimeout>>();
     graces.set(clientId, waits);
     clearTimeout(waits.get(uri));
@@ -1413,7 +1472,7 @@ export function createHost(options: HostOptions): Host {
       waits.delete(uri);
       if (waits.size === 0 && graces.get(clientId) === waits) graces.delete(clientId);
       releaseActiveClientForSession(uri, clientId);
-    }, CLIENT_DISCONNECT_GRACE_MS));
+    }, options.clientToolCallDisconnectTimeoutMs ?? CLIENT_TOOL_CALL_DISCONNECT_TIMEOUT_MS));
   };
 
   /** Let every wait go, for a host that is closing and will remove nothing later. */
@@ -2407,11 +2466,12 @@ export function createHost(options: HostOptions): Host {
            * finds at the end of it is every *other* connection this client has
            * and not this one; a client that comes back inside the window has
            * not gone anywhere, and every wait is called off. Each session the
-           * client is in waits, the ones this connection never watched among
-           * them, as the reference host times out a client's every session.
+           * client is in, or owes a tool call in, waits, the ones this
+           * connection never watched among them, as the reference host times
+           * out a client's every session.
            */
           const gone = connection.clientId;
-          for (const [id, held] of presence) if (held.has(gone)) waitsOut(ctx.nameOf(id), gone);
+          for (const uri of new Set([...[...presence.keys()].map((id) => ctx.nameOf(id)), ...sessions.keys()])) waitsOut(uri, gone);
           // A plugin channel forgets the client at once: a client that comes
           // back is asked for its snapshot again.
           for (const channel of was) leftChannel(connection.clientId, channel);
