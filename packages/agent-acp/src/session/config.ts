@@ -20,6 +20,9 @@ export interface Config {
   setConfig: NonNullable<Session['setConfig']>;
 }
 
+/** One value a picker draws: the id the server takes, its name, and what the server says of it. */
+type Choice = { value: string; name: string; description: string | null | undefined };
+
 export function createConfig(ctx: SessionContext): Config {
   const { emit, provider, values, start } = ctx;
 
@@ -183,42 +186,45 @@ export function createConfig(ctx: SessionContext): Config {
     if (Object.keys(moved).length > 0) emit('session', { type: 'session/configChanged', config: moved });
   };
 
-  /** A select's values, flattening any groups into the flat list a picker draws. */
-  const choicesOf = (option: SessionConfigOption & { type: 'select' }): { value: string; name: string }[] => {
-    const choices: { value: string; name: string }[] = [];
-    for (const entry of option.options) {
-      if ('group' in entry) {
-        for (const leaf of entry.options) choices.push({ value: leaf.value, name: leaf.name });
-      }
-      else choices.push({ value: entry.value, name: entry.name });
-    }
-    return choices;
-  };
+  /**
+   * A select's values, flattening any groups into the flat list a picker
+   * draws, each with the description the server gave it.
+   */
+  const choicesOf = (option: SessionConfigOption & { type: 'select' }): Choice[] =>
+    option.options
+      .flatMap((entry) => ('group' in entry ? entry.options : [entry]))
+      .map((one) => ({ value: one.value, name: one.name, description: one.description }));
+
+  /**
+   * Values as the picker a client draws: their ids as the enum, their names as
+   * the labels and, where the server described any of them, one description
+   * per value, empty for a value it gave none, which are the parallel arrays
+   * the spec's schema carries for a picker.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L143-L170
+   */
+  const pickerOf = (choices: Choice[]): Bag => ({
+    enum: choices.map((one) => one.value),
+    enumLabels: choices.map((one) => one.name),
+    ...(choices.some((one) => typeof one.description === 'string')
+      ? { enumDescriptions: choices.map((one) => one.description ?? '') }
+      : {}),
+  });
 
   /**
    * One option, as the control a client draws.
    *
-   * A select carries the values the server serves as its enum and their names
-   * as the labels, which is the only place either can come from, and the value
-   * in force as the default, so a client that never asked still draws it where
-   * the agent left it.
+   * A select carries the values the server serves as its picker, which is the
+   * only place they can come from, and the value in force as the default, so a
+   * client that never asked still draws it where the agent left it.
    */
-  const optionControl = (option: SessionConfigOption): Bag => {
-    const choices = option.type === 'select' ? choicesOf(option) : [];
-    return {
-      type: option.type === 'boolean' ? 'boolean' : 'string',
-      title: option.name,
-      ...(option.description === null || option.description === undefined ? {} : { description: option.description }),
-      sessionMutable: true,
-      ...(option.type === 'boolean'
-        ? { default: option.currentValue }
-        : {
-            enum: choices.map((one) => one.value),
-            enumLabels: choices.map((one) => one.name),
-            default: option.currentValue,
-          }),
-    };
-  };
+  const optionControl = (option: SessionConfigOption): Bag => ({
+    type: option.type === 'boolean' ? 'boolean' : 'string',
+    title: option.name,
+    ...(option.description === null || option.description === undefined ? {} : { description: option.description }),
+    sessionMutable: true,
+    ...(option.type === 'select' ? pickerOf(choicesOf(option)) : {}),
+    default: option.currentValue,
+  });
 
   /**
    * The schema this session reports, with what the server named.
@@ -236,15 +242,10 @@ export function createConfig(ctx: SessionContext): Config {
     const mode = modeOption();
     const approvals = mode === undefined
       ? ctx.modes === undefined ? undefined : {
-        enum: ctx.modes.availableModes.map((one) => one.id),
-        enumLabels: ctx.modes.availableModes.map((one) => one.name),
+        ...pickerOf(ctx.modes.availableModes.map((one) => ({ value: one.id, name: one.name, description: one.description }))),
         default: ctx.modes.currentModeId,
       }
-      : {
-        enum: choicesOf(mode).map((one) => one.value),
-        enumLabels: choicesOf(mode).map((one) => one.name),
-        default: mode.currentValue,
-      };
+      : { ...pickerOf(choicesOf(mode)), default: mode.currentValue };
     const controls = controlOptions().map((one) => [keyOf(one), optionControl(one)] as const);
     if (approvals === undefined && controls.length === 0) return base;
     return {

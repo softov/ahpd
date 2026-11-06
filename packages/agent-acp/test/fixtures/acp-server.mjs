@@ -131,6 +131,10 @@
  * account of the same thing the legacy modes carry: a client sets the mode
  * through `session/set_config_option` rather than `session/set_mode`.
  *
+ * `--described` gives the modes and the values of each select the descriptions
+ * ACP lets a server give them, as the protocol's own example does, leaving the
+ * legacy `code` mode without one.
+ *
  * `--refuse-mode` answers every `session/set_mode` with an error of its own,
  * which is a server that names its modes and stays in the one it is in.
  *
@@ -258,12 +262,15 @@ const nextSession = () => {
   return session;
 };
 
+/** What a `--described` server says of a mode or a value, and a server without it says nothing. */
+const about = (description) => (process.argv.includes('--described') ? { description } : {});
+
 /** The modes this server offers, with the one currently in force. */
 let mode = 'ask';
 const modes = () => ({
   currentModeId: mode,
   availableModes: [
-    { id: 'ask', name: 'Ask' },
+    { id: 'ask', name: 'Ask', ...about('Request permission before making any changes') },
     { id: 'code', name: 'Code' },
   ],
 });
@@ -303,8 +310,8 @@ const configOptions = () => [
         category: 'mode',
         currentValue: mode,
         options: [
-          { value: 'ask', name: 'Ask' },
-          { value: 'code', name: 'Code' },
+          { value: 'ask', name: 'Ask', ...about('Request permission before making any changes') },
+          { value: 'code', name: 'Code', ...about('Write and modify code with full tool access') },
         ],
       }]
     : []),
@@ -315,8 +322,8 @@ const configOptions = () => [
     category: 'thought_level',
     currentValue: thinking,
     options: [
-      { value: 'off', name: 'Off' },
-      { value: 'deep', name: 'Deep' },
+      { value: 'off', name: 'Off', ...about('Answers at once') },
+      { value: 'deep', name: 'Deep', ...about('Thinks before it answers') },
     ],
   },
   { type: 'boolean', id: 'telemetry', name: 'Telemetry', currentValue: telemetry },

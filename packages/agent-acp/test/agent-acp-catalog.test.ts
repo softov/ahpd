@@ -1093,6 +1093,30 @@ it('draws every option of its own as a control, and sets each through the server
   expect(String(await session.setConfig?.('acp.nothing', true))).toContain('nothing');
 });
 
+/*
+ * What the server says of each value, carried as the picker's descriptions:
+ * the spec's schema holds one per value beside the labels, and a value the
+ * server said nothing of has an empty one.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L143-L170
+ */
+it('carries the description the server gave each value as the picker\'s enumDescriptions', async () => {
+  const { agent } = backend(['--described']);
+  const { session, watch } = start(agent, 'described');
+  await runTurn(session, watch, 't1', 'hi');
+
+  const properties = propertiesOf(session);
+  expect(properties['acp.thinking']?.enumDescriptions).toEqual(['Answers at once', 'Thinks before it answers']);
+  // The legacy modes, where the server described one of the two.
+  expect(properties.permissionMode?.enumDescriptions).toEqual(['Request permission before making any changes', '']);
+
+  // The mode option, the newer account of the same modes, with both described.
+  const { agent: optioned } = backend(['--described', '--modes']);
+  const { session: moded, watch: seen } = start(optioned, 'described-option');
+  await runTurn(moded, seen, 't1', 'hi');
+  expect(propertiesOf(moded).permissionMode?.enumDescriptions)
+    .toEqual(['Request permission before making any changes', 'Write and modify code with full tool access']);
+});
+
 it('sets the mode through the option the server named, not the legacy call', async () => {
   const { agent, log } = backend(['--modes']);
   const { session, watch } = start(agent, 'mode-option');
