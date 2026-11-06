@@ -681,13 +681,15 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * confirms but about what somebody types. The request goes on the
          * chat, where the reducer inserts the part a client answers, and the
          * entry carries the questions and their options, so a composer draws
-         * the form from the session channel alone.
+         * the form from the session channel alone. The questions say what is
+         * asked, as VS Code's Claude agent puts a model's questions with no
+         * message of its own.
          * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L25-L33
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L292-L295
          */
         case 'input.requested': {
           const chatRequest: Bag = {
             id: event.requestId,
-            message: 'The agent has a question',
             questions: event.questions.map(questionOf),
           };
           const request: Bag = { id: `input:${event.requestId}`, chat: options.chatUri, kind: 'chatInput', request: chatRequest };

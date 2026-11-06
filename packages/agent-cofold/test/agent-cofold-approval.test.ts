@@ -581,6 +581,9 @@ it('raises a chatInput entry for cofold\'s own ask tool and answers it back', as
   };
   expect(entry.request.questions[0]).toMatchObject({ id: 'which', kind: 'single-select', message: 'Which note?' });
   expect(entry.request.questions[0]?.options.map((one) => one.label)).toEqual(['monday', 'tuesday']);
+  // The questions say what is asked, with no message of the host's own, as
+  // VS Code's Claude agent puts a model's questions.
+  expect(entry.request).not.toHaveProperty('message');
   await settle();
   expect(ended(p, chatUri)).toBe(false);
   /*
