@@ -267,9 +267,10 @@ const open = (client: Client): Promise<unknown> => client.handle({
   method: 'createSession', params: { channel: uri, provider: 'meter', config: {} },
 });
 
+/** A turn sent, begun at the time the chat holds it as begun. */
 const ask = (client: Client, text = 'go', turn = 't1'): Promise<unknown> => client.handle({
   method: 'dispatchAction',
-  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: turn, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
+  params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: turn, startedAt: '2026-10-04T10:00:00.000Z', message: { text, origin: { kind: 'user' } } } },
 });
 
 /** Watch the chat, which is what makes its actions arrive on this connection. */
