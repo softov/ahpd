@@ -5,7 +5,7 @@
   },
   "options": {
     "paths": {
-      "description": "As pastas que ele cataloga, e onde uma sessão fica por padrão. Por padrão, as do host."
+      "description": "As pastas em que ele trabalha; a primeira é onde uma sessão fica quando um cliente não nomeia nenhuma. Por padrão, as do host."
     },
     "computerExecutable": {
       "description": "Onde fica a CLI dentro de uma máquina. Por padrão, claude no PATH da imagem."

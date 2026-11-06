@@ -19,7 +19,8 @@ refs:
   - "[code://packages/agent-claude/src/options.ts#L27-L36](../../packages/agent-claude/src/options.ts#L27-L36) - `Declaration`, one Claude option with its schema and its place"
   - "[code://packages/agent-claude/src/options.ts#L156](../../packages/agent-claude/src/options.ts#L156) - `DECLARED`, the options a session and a preset share"
   - "[code://packages/agent-claude/src/options.ts#L216-L232](../../packages/agent-claude/src/options.ts#L216-L232) - `presetSchema`, a preset held to the same declarations"
-  - "[code://packages/agent-claude/src/catalog.ts#L115-L123](../../packages/agent-claude/src/catalog.ts#L115-L123) - `sharedCatalogue`, one listing run for all variants"
+  - "[code://packages/agent-claude/src/catalog.ts#L33-L57](../../packages/agent-claude/src/catalog.ts#L33-L57) - `catalogue` and `findSession`, the SDK's store asked with no directory"
+  - "[code://packages/agent-claude/src/catalog.ts#L170-L192](../../packages/agent-claude/src/catalog.ts#L170-L192) - `sharedCatalogue`, one listing run for all variants"
   - "[code://packages/agent-claude/src/plugin.ts#L173-L197](../../packages/agent-claude/src/plugin.ts#L173-L197) - the options every variant of one load shares"
   - "[code://packages/agent-claude/src/claude.ts#L246-L256](../../packages/agent-claude/src/claude.ts#L246-L256) - `permissionMode`, the six Claude modes"
   - "[code://packages/agent-claude/src/session/clienttools.ts#L492-L515](../../packages/agent-claude/src/session/clienttools.ts#L492-L515) - `setTools`, the `ahp` server removed and added again"
@@ -59,10 +60,18 @@ WHEN the Claude plugin loads a preset
 THEN each key is held to the schema of its declaration, or to the variant keys
 AND a key that is neither makes the preset fail with a message that names it.
 
+### The Claude catalogue is the CLI's whole store
+
+WHEN the Claude backend lists its sessions
+THEN it lists every session the CLI's store holds, wherever each ran, as VS Code's Claude agent lists them
+AND a row is in the folder the store names for the session, and in none when the store names none.
+WHEN the host asks the Claude backend for one session, its transcript or its subagents
+THEN the backend asks the store by the session's id alone, whatever folder the host recorded.
+
 ### Claude variants share one listing
 
 WHEN the Claude plugin registers more than one variant
-THEN all variants read the same paths
+THEN all variants list the same store
 AND they share one run over the projects folder when the sessions are listed
 AND the shared run is dropped when it ends, because the host keeps the catalogue.
 
@@ -139,7 +148,9 @@ See [`code://packages/agent-claude/src/session/logins.ts`](../../packages/agent-
 WHEN a turn starts on a new CLI, for an agent the message picked, an edited record or another login
 THEN its prompt goes to the new CLI, however late the SDK starts reading that CLI's input
 AND the reader of the CLI it replaced takes nothing more and ends.
-The reason: the SDK reads a new CLI's input only after its initialize request is written, which waits on the manifests of the in-process MCP servers, and it drops what a closed CLI's reader is handed.
+The reason: the SDK reads a new CLI's input only after its initialize request is written.
+That request waits on the manifests of the in-process MCP servers.
+And the SDK drops what a closed CLI's reader is handed.
 See [`code://packages/agent-claude/src/session/query.ts`](../../packages/agent-claude/src/session/query.ts).
 
 ### A Claude steering message answered after the turn's last answer
@@ -201,7 +212,9 @@ THEN it is sent once the CLI has answered the one before it.
 WHEN a turn begins while a change is being taken
 THEN its prompt goes to the CLI once the CLI has answered that change
 AND a turn with no change in hand starts at once.
-The reason: the protocol applies a session's actions in one order, so a turn a client sends after announcing its tools is a turn of a session that has them, and the host hands the tools over without waiting for them to land.
+The reason: the protocol applies a session's actions in one order.
+So a turn a client sends after announcing its tools is a turn of a session that has them.
+And the host hands the tools over without waiting for them to land.
 
 ### pi models come from the pi runtime
 

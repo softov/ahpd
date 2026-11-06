@@ -241,7 +241,7 @@ const history = (turns: Bag[]): unknown[] => turns.map((turn) => [
 /** The turns a transcript reads back as, from what the SDK's reader returns for it. */
 async function readBack(messages: Record<string, unknown>[]): Promise<Bag[]> {
   sdk.messages = messages;
-  return await turnsOf('session', '/tmp/project') as unknown as Bag[];
+  return await turnsOf('session') as unknown as Bag[];
 }
 
 const said = (one: Bag): unknown => (one.message as Bag).content;

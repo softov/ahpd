@@ -72,7 +72,7 @@ Resources have no key of their own. What changes what a client can reach is whic
 
 | Key | Values | Default | What changes |
 | --- | --- | --- | --- |
-| `paths` | list of directories | the directory the daemon was started in | The directories this host catalogues, and where a session goes when a client names none. It does not restrict what a client may read - the first directory is the session default, not a boundary |
+| `paths` | list of directories | the directory the daemon was started in | The directories this host serves, the first of them where a session goes when a client names none. It does not restrict what a client may read - the first directory is the session default, not a boundary |
 | `plugins` | a list of specs | none | Which plugins are loaded, and so which schemes this host serves |
 
 Everything else about the daemon's keys is [HOST.md](HOST.md#configuration-keys), and a host built from the SDK is given its file store and its schemes directly - [BUILD-A-HOST.md](BUILD-A-HOST.md).

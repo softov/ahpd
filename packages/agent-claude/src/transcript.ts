@@ -45,23 +45,28 @@ function resultText(content: unknown): string | undefined {
  * the answer a client draws nothing for - so it is worth one more attempt
  * rather than being shown as a session that has no turns.
  *
+ * The SDK is asked by the session's id alone, which searches every project,
+ * as VS Code's Claude agent reads a transcript back, so a session is read
+ * wherever it ran.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSavedChatReader.ts#L67-L68
+ *
  * `ends`, when given, is filled with where each turn ended, by turn id: the
  * entry a fork of that turn copies through and a rewind to it keeps.
  */
-export async function turnsOf(sessionId: string, dir: string, ends?: Map<string, string>): Promise<WireTurn<Turn>[]> {
+export async function turnsOf(sessionId: string, ends?: Map<string, string>): Promise<WireTurn<Turn>[]> {
   let messages: unknown[];
   try {
-    messages = await getSessionMessages(sessionId, { dir });
+    messages = await getSessionMessages(sessionId);
   } catch {
     try {
-      messages = await getSessionMessages(sessionId, { dir });
+      messages = await getSessionMessages(sessionId);
     } catch {
       return [];
     }
   }
 
   const asked = askedIn(messages);
-  const answered = asked.size === 0 ? new Map<string, unknown>() : await answeredIn(sessionId, dir, asked);
+  const answered = asked.size === 0 ? new Map<string, unknown>() : await answeredIn(sessionId, asked);
   return buildTurns(answered.size === 0 ? messages : messages.map((message) => {
     const result = answered.get(str(bag(message).uuid) ?? '');
     return result === undefined ? message : { ...bag(message), toolUseResult: result };
@@ -97,9 +102,9 @@ function askedIn(messages: unknown[]): Set<string> {
  *
  * https://nodejs.org/api/readline.html#example-read-file-stream-line-by-line
  */
-async function answeredIn(sessionId: string, dir: string, wanted: Set<string>): Promise<Map<string, unknown>> {
+async function answeredIn(sessionId: string, wanted: Set<string>): Promise<Map<string, unknown>> {
   const answered = new Map<string, unknown>();
-  const files = sessionFiles(sessionId, dir);
+  const files = sessionFiles(sessionId);
   if (files === undefined) return answered;
   const input = createReadStream(join(files.project, `${files.session}.jsonl`));
   const lines = createInterface({ input, crlfDelay: Infinity });
@@ -132,14 +137,12 @@ async function answeredIn(sessionId: string, dir: string, wanted: Set<string>): 
  * `<config>/projects/<directory>/<id>.jsonl` for the session, and
  * `<config>/projects/<directory>/<id>/subagents/agent-<id>.jsonl` for the
  * conversations that ran inside its calls - with a `.meta.json` beside each
- * naming the tool call that spawned it. The directory is spelled the way the
- * CLI spells it, and a session resumed elsewhere may have been written under
- * the directory it started in, so the other projects are looked through.
+ * naming the tool call that spawned it. They are in whichever project holds
+ * the session's transcript, found by its id alone wherever the session ran,
+ * as the SDK finds a session asked for by its id.
  */
-function sessionFiles(sessionId: string, dir: string): { project: string; session: string } | undefined {
+function sessionFiles(sessionId: string): { project: string; session: string } | undefined {
   const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects');
-  const own = join(projects, dir.replace(/[^A-Za-z0-9]/g, '-'));
-  if (existsSync(join(own, `${sessionId}.jsonl`))) return { project: own, session: sessionId };
   let names: string[];
   try { names = readdirSync(projects); }
   catch { return undefined; }
@@ -193,8 +196,8 @@ export function agentIdIn(turns: WireTurn<Turn>[], agentId: string): string | un
  * guessed at: a chat linked to the wrong call is worse than one that is not
  * there, and a session with an orphaned file on disk still opens.
  */
-export function subagentsOf(sessionId: string, dir: string, mainTurns: WireTurn<Turn>[]): RestoredSubagent[] {
-  const files = sessionFiles(sessionId, dir);
+export function subagentsOf(sessionId: string, mainTurns: WireTurn<Turn>[]): RestoredSubagent[] {
+  const files = sessionFiles(sessionId);
   if (files === undefined) return [];
   const folder = join(files.project, files.session, 'subagents');
   if (!existsSync(folder)) return [];

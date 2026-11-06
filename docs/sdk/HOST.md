@@ -64,7 +64,7 @@ Every flag can be a key in the configuration file instead, spelled without the d
 | `port` | integer | `9187`; `0` picks a free one | The port the host listens on |
 | `host` | address | `127.0.0.1` | The address it binds. `0.0.0.0` accepts from other machines, and then a token is required |
 | `origins` | list of origins, such as `http://203.0.113.5:9187` | none | Extra origins a browser may reach this host by. A host bound to `0.0.0.0` answers only to its loopback names, so a page served on its public address needs that address here |
-| `paths` | list of directories | the directory the daemon was started in | The directories this host catalogues |
+| `paths` | list of directories | the directory the daemon was started in | The directories this host serves |
 | `worktreesRoot` | directory | `<repo>.worktrees` beside each repository | Where session worktrees are kept |
 | `clientToolTimeoutMs` | integer, milliseconds | `600000` (ten minutes) | How long a tool call a client runs may wait for that client. `0` waits for ever |
 | `shellEnv` | an object of variable name to text or `null` | none | The environment every shell this host starts is given. A client that needs a variable in one session sets `shellInitScripts` instead |
@@ -96,7 +96,7 @@ Eight keys are about who may connect rather than about how the host behaves. The
 
 Each key that needs more than a line:
 
-`paths` is the list of directories this host catalogues, and the **first** is where a session goes when a client names none. A relative one is taken from the directory of the file that set it, not from where the daemon was started. `--no-cwd` serves only what is named and asks about no other folder; it is refused when the list would be empty. `worktreesRoot` keeps every session worktree under `<dir>/<repo>/<name>` instead of the reference host's `<repo>.worktrees` beside each repository, and is made absolute against the working directory because it is a base other paths are joined to.
+`paths` is the list of directories this host serves, and the **first** is where a session goes when a client names none. A relative one is taken from the directory of the file that set it, not from where the daemon was started. `--no-cwd` serves only what is named and asks about no other folder; it is refused when the list would be empty. `worktreesRoot` keeps every session worktree under `<dir>/<repo>/<name>` instead of the reference host's `<repo>.worktrees` beside each repository, and is made absolute against the working directory because it is a base other paths are joined to.
 
 `shellEnv` is the environment every shell this host starts is given, as a map of variable name to value. A daemon that runs as a service unit has an environment of its own, and this is how the operator says which of it an agent's shells get: `{"shellEnv": {"XDG_CONFIG_HOME": "/home/me/.config"}}` opens every terminal and runs every Bash command with that directory. A name set to `null` is removed from what the daemon itself runs with, which is the other half - a shell that inherits a variable the operator does not want it to have. It reaches the host terminals and the Claude backend's Bash commands, and the other backends come later. A wrong value is `...: shellEnv.PORT must be text or null`, and a name a shell cannot export is `...: shellEnv.2FA is not a shell variable name`. A client that needs a variable in one session sends `shellInitScripts`, which is that session's own.
 

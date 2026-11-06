@@ -5,7 +5,7 @@
   },
   "options": {
     "paths": {
-      "description": "Las carpetas que cataloga, y dónde va una sesión por defecto. Por defecto, las del host."
+      "description": "Las carpetas en las que trabaja; la primera es dónde va una sesión cuando un cliente no nombra ninguna. Por defecto, las del host."
     },
     "computerExecutable": {
       "description": "Dónde está la CLI dentro de una máquina. Por defecto, claude en el PATH de la imagen."

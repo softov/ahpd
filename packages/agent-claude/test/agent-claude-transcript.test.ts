@@ -33,7 +33,7 @@ const said = (uuid: string, id: string, blocks: unknown[], outputTokens = 1): Re
 
 async function read(messages: Record<string, unknown>[]): Promise<Bag[]> {
   sdk.messages = messages;
-  return await turnsOf('session', '/tmp/project') as unknown as Bag[];
+  return await turnsOf('session') as unknown as Bag[];
 }
 
 it('reads a prompt and every round that answered it as one turn', async () => {

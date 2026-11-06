@@ -138,9 +138,10 @@ What a turn used is what its live turn said it used.
 
 **`at` says where the session ran.** It is `{ workingDirectory }`, a path,
 when the host recorded the session's folder, and absent when it did not.
-Look for the session there first and in your own directories after, so a
-session that ran in a subfolder, a worktree or any folder you do not serve
-still opens after a restart.
+A store kept by folder is looked in there first and in your own directories
+after, so a session that ran in a subfolder, a worktree or any folder you do
+not serve still opens after a restart. A store that finds a session by its id
+alone, as Claude's does, is asked by the id.
 
 **`outputs` is what the host kept for that chat's terminals.** A tool call may
 name a terminal, and a client opens it for as long as the chat lasts, with no

@@ -65,13 +65,14 @@ const baseUrlOf = (preset: Bag | undefined): string | undefined => {
 /** How to build the Claude backend. */
 export interface ClaudeOptions {
   /**
-   * The directories it lists, and where a session goes by default.
+   * The directories it works in, and where a session goes by default.
    *
-   * The catalogue's scope: past sessions in these directories are listed and
-   * openable, and ones elsewhere are not. The first is also where a new
-   * session goes when the client names no directory. A client that names one
-   * gets it, wherever on the machine it is - the connection token decided who
-   * may be here, the way it does on the reference host.
+   * The first is where a new session goes when the client names no
+   * directory, and where the CLI that reads what the agent offers runs. A
+   * client that names one gets it, wherever on the machine it is - the
+   * connection token decided who may be here, the way it does on the reference
+   * host. The sessions it lists are every one the CLI's store holds, wherever
+   * each ran.
    */
   paths: string[];
   /** The id clients name. The variant's own key, `claude` for the built-in. */
@@ -176,11 +177,11 @@ export interface ClaudeOptions {
    * The listing this harness shares with the other variants of one load.
    *
    * Written by `apply`, which registers one agent per preset and builds this
-   * once for all of them: every variant of one load reads the same `paths` out
-   * of the same `CLAUDE_CONFIG_DIR`, so one pass over the projects directory
+   * once for all of them: every variant of one load lists the same store, the
+   * projects directory of the same `CLAUDE_CONFIG_DIR`, so one pass over it
    * answers for all of them. Left out - an embedder calling `claude()` itself -
-   * and the harness lists those paths itself, which is what a single variant
-   * wants and what a preset with its own paths must have.
+   * and the harness lists the store itself, which is what a single variant
+   * wants.
    */
   sharedCatalogue?: () => Promise<Listed[]>;
 }
@@ -498,24 +499,22 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     // The personal folder only, which is the one the probe reads.
     probeChanged: (onChange) => watchFolders({ configDir: configDirOf() }, onChange),
 
-    // Every directory it serves, as one list. A session is listed by the
-    // catalogue of the directory it ran in, and a host serving several has
-    // one catalogue. The shared listing is copied rather than handed over:
-    // the host's fold does not touch a row, and one variant handing another
-    // its array is a row that changes under a caller that owns it.
-    list: async () => (options.sharedCatalogue === undefined
-      ? (await Promise.all(dirs.map((served) => catalogue(served)))).flat()
-      : [...await options.sharedCatalogue()]),
+    // Every session the store holds, wherever it ran. The shared listing is
+    // copied rather than handed over: the host's fold does not touch a row,
+    // and one variant handing another its array is a row that changes under a
+    // caller that owns it.
+    list: async () => (options.sharedCatalogue === undefined ? catalogue() : [...await options.sharedCatalogue()]),
 
     /*
      * One session, without a listing.
      *
      * What a client opening a row the host does not hold costs: a link from
      * another machine, a session written to disk after the last listing. The
-     * store is asked about that id and nothing else, which is one file read
-     * where a listing is every transcript on the machine.
+     * store is asked about that id and nothing else, wherever the session ran,
+     * which is one file read where a listing is every transcript on the
+     * machine.
      */
-    find: async (id, at) => (await findSession(dirs, id, at?.workingDirectory))?.row,
+    find: (id) => findSession(id),
 
     /*
      * The transcript on disk, which is the CLI's own record of a session, and
@@ -537,15 +536,13 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       expectedStatus: 401,
     }],
 
-    // Whichever directory holds it, the session's own folder first. The
-    // transcript reader wants the one the session ran in, and asking the store
-    // about this one id is what says so, rather than listing every directory
-    // to find out.
-    transcript: async (id, at, outputs) => {
-      const found = await findSession(dirs, id, at?.workingDirectory);
-      if (found === undefined) return undefined;
+    // The session's turns, read by its id wherever it ran, as VS Code's
+    // Claude agent reads them; nothing for an id the store does not hold.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSavedChatReader.ts#L67-L68
+    transcript: async (id, _at, outputs) => {
+      if (await findSession(id) === undefined) return undefined;
       const ends = new Map<string, string>();
-      const turns = await turnsOf(id, found.dir, ends);
+      const turns = await turnsOf(id, ends);
       readEnds.set(id, ends);
       /*
        * The transcript holds what the model was sent, so a `Bash` call whose
@@ -567,10 +564,9 @@ export function claude(options: ClaudeOptions): Agent<Session> {
      * that writes no meta file, and a worker neither names is left out rather
      * than linked to the wrong call.
      */
-    subagents: async (id, turns, at) => {
-      const found = await findSession(dirs, id, at?.workingDirectory);
-      if (found === undefined) return undefined;
-      return subagentsOf(id, found.dir, turns ?? await turnsOf(id, found.dir));
+    subagents: async (id, turns) => {
+      if (await findSession(id) === undefined) return undefined;
+      return subagentsOf(id, turns ?? await turnsOf(id));
     },
 
     /*

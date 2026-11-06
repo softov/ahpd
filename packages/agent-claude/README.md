@@ -35,13 +35,13 @@ Update, remove and one-run flags such as `--plugin` are in [Plugins](https://git
 }
 ```
 
-The ordinary install takes no options: it catalogues whatever directories the daemon was started on. `paths` is the one option a person sets most often, because it narrows the catalogue the daemon serves. Everything else has a default that fits most installs. The daemon loads the change on its next restart.
+The ordinary install takes no options: it lists every session the CLI's store holds, wherever each ran, and works in the directories the daemon was started on. Everything else has a default that fits most installs. The daemon loads the change on its next restart.
 
 Every option below is a key under `options` in the plugin's entry, and the daemon checks each value against the schema before `apply` runs. These are the plugin's answers for every agent it serves, not any one agent's: what one agent runs on is its record's `config`, below. `provider`, `displayName` and `name` are not options at all - a record's id is the provider and its `name` is what a client draws.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `paths` | the host's directories | The directories it catalogues, and where a session goes by default |
+| `paths` | the host's directories | The directories it works in; the first is where a session goes when a client names none |
 | `computerExecutable` | `claude` | Where the CLI is *inside a machine* |
 | `computerCli` | `part` | Where the CLI a machine runs comes from |
 | `computerCliFallback` | `refuse` | With `computerCli: "part"`, what a machine gets when the `claude` part cannot be built |
@@ -169,9 +169,8 @@ It starts the [Claude agent SDK](https://www.npmjs.com/package/@anthropic-ai/cla
 | --- | --- |
 | `claude(options)` | the `Agent` to pass to `createHost` |
 | `createSession(options)` | one live session |
-| `catalogue(dir)` | Claude's sessions in a directory, as rows a host can list |
-| `turnsOf(sessionId, dir)` | a past session read from its transcript, as turns |
-| `subagentsOf(sessionId, dir, turns)` | the subagent chats a past session ran, linked to the calls that spawned them |
+| `catalogue()` | every session Claude's store holds, wherever it ran, as rows a host can list |
+| `turnsOf(sessionId)` | a past session read from its transcript, as turns |
 | `probe(options)` | runs a CLI at startup to read the available models and commands |
 | `apply(host, options)` | the plugin entry, with `name` and `title` beside it |
 

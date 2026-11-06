@@ -179,7 +179,7 @@ async function restored(content: Bag[] = calls, after: Record<string, unknown>[]
     ...after,
   ];
   written(sdk.frames);
-  const turns = await turnsOf('session', '/tmp/project') as unknown as Bag[];
+  const turns = await turnsOf('session') as unknown as Bag[];
   const out = new Map<string, Bag>();
   for (const part of (turns[0]?.responseParts ?? []) as Bag[]) {
     if (part.kind === 'toolCall') {
@@ -690,7 +690,7 @@ const partsOf = async (after: Record<string, unknown>[]): Promise<Bag[]> => {
     ...after,
   ];
   written(sdk.frames);
-  const turns = await turnsOf('session', '/tmp/project') as unknown as Bag[];
+  const turns = await turnsOf('session') as unknown as Bag[];
   return (turns[0]?.responseParts ?? []) as Bag[];
 };
 

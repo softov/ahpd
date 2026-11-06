@@ -85,7 +85,7 @@
     "optionsSchema": {
       "type": "object",
       "properties": {
-        "paths": { "type": "array", "items": { "type": "string" }, "description": "The directories it catalogues, and where a session goes by default. Defaults to the host's." },
+        "paths": { "type": "array", "items": { "type": "string" }, "description": "The directories it works in; the first is where a session goes when a client names none. Defaults to the host's." },
         "computerExecutable": { "type": "string", "description": "Where the CLI is inside a machine. claude on the image's PATH by default." },
         "computerCli": {
           "type": "string",

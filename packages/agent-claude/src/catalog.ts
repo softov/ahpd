@@ -1,5 +1,5 @@
 import { deleteSession, getSessionInfo, listSessions } from '@anthropic-ai/claude-agent-sdk';
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
@@ -16,71 +16,44 @@ import type { Listed } from '@ahpd/sdk';
  * load this one to find that out.
  */
 /**
- * What this backend is a catalogue *of*.
- *
- * `dir`, not `cwd` - the option that scopes a listing to one project is spelled
- * `dir`, and an unrecognised key is ignored rather than refused, so the wrong
- * spelling answers with every session on the machine and looks like it worked.
- */
-/**
- * One SDK session as a row, under the directory it was asked for, titled by
- * its custom title or else the SDK's summary, as VS Code's Claude agent titles
- * a row; a session with neither is listed untitled.
+ * One SDK session as a row, titled by its custom title or else the SDK's
+ * summary, in the folder the SDK says it ran in, as VS Code's Claude agent
+ * projects a row; a session with neither title is listed untitled, and one
+ * with no folder in none.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSessionMetadataStore.ts#L191-L198
  */
-const listed = (info: SDKSessionInfo, dir: string): Listed => ({
+const listed = (info: SDKSessionInfo): Listed => ({
   id: info.sessionId,
   title: info.customTitle ?? info.summary ?? '',
   createdAt: new Date(info.createdAt ?? info.lastModified).toISOString(),
   modifiedAt: new Date(info.lastModified).toISOString(),
-  workingDirectories: [uriOf(info.cwd ?? dir)],
+  workingDirectories: info.cwd ? [uriOf(info.cwd)] : [],
 });
 
-export async function catalogue(dir: string): Promise<Listed[]> {
-  const found = await listSessions({ dir });
-  return found.map((info) => listed(info, dir));
+/**
+ * Every session the CLI's store holds, wherever it ran: the SDK's
+ * `listSessions` with no directory, as VS Code's Claude agent lists them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSdkService.ts#L171-L174
+ */
+export async function catalogue(): Promise<Listed[]> {
+  return (await listSessions()).map(listed);
 }
 
 /**
- * One session's own row, as the SDK answers it without listing the rest.
+ * One session's own row, as the SDK answers it by id without listing the rest.
  *
  * `getSessionInfo` reads one session file where `listSessions` reads every one
  * of them, which is what a client opening a row the host does not hold costs:
  * a link from another machine, a session written to disk after the last
- * listing. Same shape as `catalogue`'s rows and the same mapping, so a row
- * found this way is the row a listing would have offered.
- *
- * `dir` is passed per path rather than left out because the path is the answer
- * here as well as the row: the transcript reader wants the directory the
- * session ran in, and this is the one call that says which it was without a
- * listing. The paths are asked in turn, since a session lives under exactly one
- * of them and the first that has it is the only one that will.
- *
- * `folder` is the session's own working folder where the host recorded one,
- * and is asked before the paths: a session that ran outside them, in a
- * subfolder, a worktree or a bot's folder, is under none of them. It is asked
- * once, in its place in the order when it is one of the paths. A folder that
- * is not one of them is a path a client chose, so it is asked only when the
- * transcript for this id is already in its project folder: the SDK looks for
- * worktrees inside the folder itself when it is not, which is reading more of
- * that folder than the one session asked for.
+ * listing. Asked with no directory, it searches every project, as VS Code's
+ * Claude agent asks it, so a session is found wherever it ran. Same shape as
+ * `catalogue`'s rows and the same mapping, so a row found this way is the row
+ * a listing would have offered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2239
  */
-export async function findSession(
-  dirs: string[],
-  id: string,
-  folder?: string,
-): Promise<{ row: Listed; dir: string } | undefined> {
-  const served = folder !== undefined && dirs.includes(folder);
-  if (folder !== undefined && !served && hasTranscript(id, folder)) {
-    const info = await getSessionInfo(id, { dir: folder }).catch(() => undefined);
-    if (info !== undefined) return { row: listed(info, folder), dir: folder };
-  }
-  for (const dir of served ? [folder, ...dirs.filter((one) => one !== folder)] : dirs) {
-    const info = await getSessionInfo(id, { dir }).catch(() => undefined);
-    if (info === undefined) continue;
-    return { row: listed(info, dir), dir };
-  }
-  return undefined;
+export async function findSession(id: string): Promise<Listed | undefined> {
+  const info = await getSessionInfo(id).catch(() => undefined);
+  return info === undefined ? undefined : listed(info);
 }
 
 /** `~/.claude/projects`, or the same under `CLAUDE_CONFIG_DIR` where it is set. */
@@ -92,12 +65,6 @@ const fileNamed = (id: string): boolean => /^[A-Za-z0-9-]+$/.test(id);
 /** The transcript for `id` in `project`, where the CLI writes it. */
 const transcriptIn = (project: string, id: string): string => join(projectsDir(), project, `${id}.jsonl`);
 
-/** Whether `project` holds a transcript for `id` that is not empty. */
-const holds = (project: string, id: string): boolean => {
-  try { return statSync(transcriptIn(project, id)).size > 0; }
-  catch { return false; }
-};
-
 /**
  * The project folder of `folder`, spelled the way the SDK spells it: from its
  * real path where it has one and as given where it does not.
@@ -108,17 +75,6 @@ const projectOf = (folder: string): string => {
   catch { /* a folder that is gone keeps its transcript under the name it had */ }
   return real.replace(/[^A-Za-z0-9]/g, '-');
 };
-
-/**
- * Whether the project folder of `folder` holds a transcript for `id` that is not
- * empty, which is where the SDK finds it without looking anywhere else.
- *
- * An id that is not a filename has no transcript.
- */
-function hasTranscript(id: string, folder: string): boolean {
-  if (!fileNamed(id)) return false;
-  return holds(projectOf(folder), id);
-}
 
 /** What every entry of a conversation carries, and the CLI's other lines in a transcript do not. */
 const ENTRY = Buffer.from('"parentUuid":');
@@ -212,7 +168,9 @@ export function clearFor(id: string, folder: string): void {
 }
 
 /**
- * One listing the variants of one load of this plugin share.
+ * One listing the variants of one load of this plugin share, as VS Code's SDK
+ * service shares one `listSessions` among the callers that overlap it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSdkService.ts#L167-L181
  *
  * Every preset is registered as an agent of its own, and every one of them
  * reads the same projects directory for the same sessions - so three presets
@@ -225,12 +183,10 @@ export function clearFor(id: string, folder: string): void {
  * settles, because the host holds the catalogue (host 56, task 03) and a
  * listing kept here would be a second, older copy of the same rows.
  */
-export function sharedCatalogue(dirs: string[]): () => Promise<Listed[]> {
+export function sharedCatalogue(): () => Promise<Listed[]> {
   let running: Promise<Listed[]> | undefined;
   return () => {
-    running ??= Promise.all(dirs.map((dir) => catalogue(dir)))
-      .then((lists) => lists.flat())
-      .finally(() => { running = undefined; });
+    running ??= catalogue().finally(() => { running = undefined; });
     return running;
   };
 }
@@ -244,8 +200,8 @@ export function sharedCatalogue(dirs: string[]): () => Promise<Listed[]> {
  * set.
  *
  * A session resumed elsewhere may have been written under the directory it
- * *started* in, which is a folder no listing was asked about, so the other
- * projects are looked through before answering that there is none. What a
+ * *started* in, so the other projects are looked through before answering
+ * that there is none. What a
  * session does not have is an id that is not a filename: a client may name
  * anything at all, and one id would otherwise be a path out of the store.
  */
