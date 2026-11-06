@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { canonicalFromCli, check, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, JsonSchema, Registry } from '@cofold/commands';
-import type { Agent, Alert, AutomationStore, AutomationsOptions, ClientCounts, ClientRegistry, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, Alert, AutomationStore, AutomationsOptions, ClientCounts, ClientRegistry, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, PluginContext, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
+import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import {
   adaptersChannel,
   enginesChannel,
@@ -36,6 +37,7 @@ import {
   policyChannels,
   fileUsers,
   fileNodes,
+  frozenCopy,
   liveNodes,
   nodesFileOf,
   gitBranches,
@@ -97,7 +99,10 @@ import { filesOf, lineFor, writerFor } from '../wire.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npmRegistry, stale, updateLine } from '../update.js';
 import { manifest, version } from '../version.js';
 import { conflict, namedOptionsFrom, secret, flagFields, stop } from './options.js';
-import { FORCED_SIGNAL, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, restartMethod, successorTakes } from './restart.js';
+import {
+  FORCED_SIGNAL, RESTART_DELAY_MS, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, parking, restartMethod, successorTakes,
+} from './restart.js';
+import type { RestartOutcome } from './restart.js';
 import type { Options } from './options.js';
 
 /**
@@ -537,7 +542,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   // Both are this daemon's once the host is built and the socket is open; a
   // request before then finds no turn and nothing to restart.
   let turning = (): string[] => [];
-  let restart = async (_argv: string[], _force: boolean): Promise<void> => { conflict('It is still starting; restart it once it has.'); };
+  let restart = async (_argv: string[], _force: boolean): Promise<RestartOutcome> => conflict('It is still starting; restart it once it has.');
+  // A restart asked for while a turn runs, held until the turns end.
+  const parked = parking(() => turning(), (step) => { setTimeout(step, 0); });
   const facts: ServedFacts = {
     options,
     configFile: options.configFile ?? configPath(),
@@ -1178,6 +1185,21 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   if (filed?.available === false) automationMode = `unavailable until ${automationStatePath()} is recovered`;
   automationsStore = automations;
 
+  /** What the daemon's own event listeners are handed, the facts a plugin's context carries. */
+  const daemonContext: PluginContext = Object.freeze({
+    path: options.paths[0] as string,
+    paths: frozenCopy(options.paths),
+    version: version(),
+    hostName: hostname(),
+    configDir: configDir(),
+    hostId: hostId(),
+    ...(users === undefined ? {} : { hasUsers: true }),
+    log: stamp,
+    say: stamp,
+    parseYaml: (text: string) => parseYaml(text),
+    stringifyYaml,
+  });
+
   const base: HostOptions = {
     path: options.paths[0] as string,
     /*
@@ -1516,6 +1538,15 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * `onEvent` hands it the message to do that with.
      */
     onEvent: stamp,
+    /*
+     * The daemon's own listeners, ahead of every plugin's: a turn or a session
+     * that ended may be the last one a parked restart waits for. Handed the
+     * daemon's facts as their context, as a plugin's are handed its own.
+     */
+    events: {
+      turn_end: [{ by: 'ahpd', context: daemonContext, handle: () => { parked.ended(); } }],
+      session_end: [{ by: 'ahpd', context: daemonContext, handle: () => { parked.ended(); } }],
+    },
     /*
      * What the window's diagnostics get from this daemon.
      *
@@ -2222,6 +2253,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   let controlListener: ControlServer | undefined;
   const way = lifecycle({
     down: async () => {
+      // A restart parked until the turns end is one this way down replaces,
+      // and the turns it ends would otherwise run it.
+      parked.drop();
       /*
        * The tunnels first, so a kind has already let go when the plugin that
        * registered it hears `stopping` and starts closing its own work. Each
@@ -2270,7 +2304,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     forget: () => { forget([process.pid]); },
     log: stamp,
     exit: (code) => process.exit(code),
-    later: (step) => { setTimeout(step, 0); },
+    later: (step) => { setTimeout(step, RESTART_DELAY_MS); },
     /*
      * A daemon a service manager holds is restarted through it: the manager
      * starts the next daemon from the unit or the agent, and a successor this
@@ -2286,10 +2320,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   process.on('SIGTERM', way.shutdown);
   /*
    * A restart, served or signalled: the recorded line and its token read over
-   * the configuration as it is now, before anything goes down; then, after the
-   * answer has gone, the same steps as a shutdown, the successor started with
-   * that line and token, and the exit. The token is the one the line reads
-   * now, so a changed token is the one the successor's record carries.
+   * the configuration as it is now, before anything goes down; then, once the
+   * answer has had its three seconds, the same steps as a shutdown, the
+   * successor started with that line and token, and the exit. The token is the
+   * one the line reads now, so a changed token is the one the successor's
+   * record carries. While a turn runs, one that is not forced waits in
+   * `parked` for the host's word that the last turn or session ended.
    *
    * Before any of that, the host stops taking new turns: the way down awaits
    * the plugins' `stopping` handlers, which have no limit, and a turn begun
@@ -2330,6 +2366,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     () => host.turning(),
     way,
     (why) => { host.refuseTurns(why); },
+    parked,
+    stamp,
   );
   /*
    * `ahpd restart` at the terminal: a signal to the recorded process, which
@@ -2337,9 +2375,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   if (detached) {
     const answer = (forced: boolean, piped: boolean) => (): void => {
-      void answerRestartSignal(forced, {
-        self: process.pid, recorded: running, turning: () => host.turning(), log: stamp, restart,
-      }, piped);
+      void answerRestartSignal(forced, { self: process.pid, recorded: running, log: stamp, restart }, piped);
     };
     const onRestart = answer(false, false);
     const onForced = answer(true, false);

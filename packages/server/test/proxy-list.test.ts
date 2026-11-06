@@ -109,7 +109,7 @@ describe('proxy list, served', () => {
       configFile: config,
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9351, paths: [], startedAt: '' }),
       turning: () => [],
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     };
     const handler = apiHandler({
       registry: servedRegistry(facts),

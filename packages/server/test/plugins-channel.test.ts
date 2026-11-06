@@ -336,7 +336,7 @@ const servedHttp = (users: Users) => {
     users,
     running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
     turning: () => [],
-    restart: () => {},
+    restart: () => ({ restartDelayMs: 0 }),
   };
   const handler = apiHandler({
     registry: servedRegistry(facts),

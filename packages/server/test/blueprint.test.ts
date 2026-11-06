@@ -313,7 +313,7 @@ describe('ahpd automation export', () => {
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9361, paths: [], startedAt: '' }),
       turning: () => [],
       automations: () => store,
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     });
 
     const call = async (path: string): Promise<Response> => {
@@ -421,7 +421,7 @@ describe('ahpd automation list', () => {
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9361, paths: [], startedAt: '' }),
       turning: () => [],
       automations: () => unavailable,
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     };
     const handler = apiHandler({
       registry: servedRegistry(facts),
@@ -447,7 +447,7 @@ describe('ahpd automation list', () => {
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9361, paths: [], startedAt: '' }),
       turning: () => [],
       automations: () => store,
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     };
     const handler = apiHandler({
       registry: servedRegistry(facts),
@@ -584,7 +584,7 @@ describe('ahpd automation import', () => {
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9361, paths: [work], startedAt: '' }),
       turning: () => [],
       automations: () => store,
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     });
 
     const call = async (body: unknown): Promise<Response> => {
@@ -785,7 +785,7 @@ describe('ahpd\'s own automation file', () => {
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9361, paths: [work], startedAt: '' }),
       turning: () => [],
       automations: () => store,
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     });
 
     const call = async (path: string, body?: unknown): Promise<Response> => {

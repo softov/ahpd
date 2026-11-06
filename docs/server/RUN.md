@@ -7,8 +7,8 @@
 | `ahpd status` | Say if it runs, and where |
 | `ahpd doctor` | Say what is wrong, and how to fix it |
 | `ahpd stop` | Stop it, and kill it after `stopWaitMs` (5 s, as VS Code's CLI) |
-| `ahpd restart` | Stop and start again with the same flags |
-| `ahpd restart --force` | Restart even while a turn runs |
+| `ahpd restart` | Stop and start again with the same flags, once no turn runs |
+| `ahpd restart --force` | Restart at once, ending the running turns |
 | `ahpd update` | Move to a newer ahpd and restart it. See [Upgrade](UPGRADE.md) |
 
 `start` takes the same flags as `ahpd`. A bad flag is refused before anything starts.
@@ -32,14 +32,16 @@ tail -f ~/.config/ahpd/daemon.log
 
 ## Restart
 
-`ahpd restart` keeps the sessions, and the port when it is fixed. It is refused while a turn runs, and the refusal names the sessions:
+`ahpd restart` keeps the sessions, and the port when it is fixed. While a turn runs, the restart waits for the turns to end, as VS Code waits for its turns before it restarts its agent runtime, and says which sessions it waits for. Turns go on meanwhile, and the last one to end starts the restart, which the daemon log says. `--force` restarts at once, as VS Code's CLI replaces a running agent host:
 
 ```bash
-ahpd restart            # waits for no turn
-ahpd restart --force    # ends the running turns
+ahpd restart            # once the running turns end
+ahpd restart --force    # at once, ending the running turns
 ```
 
-Before it stops, the daemon checks that the new code accepts the recorded flags. If it does not, the restart is refused and the old daemon keeps running.
+Before it stops, the daemon checks that the new code accepts the recorded flags. If it does not, the restart is refused and the old daemon keeps running. A restart that waited checks again when the turns end.
+
+The daemon goes down 3 seconds after it answers, VS Code's delay before it stops an agent host it is upgrading, so the answer reaches a client behind a tunnel or a proxy before the connection drops.
 
 ::: info Environment and folder
 The new daemon keeps the old one's environment variables and working folder. To change either, use `ahpd stop` and `ahpd start`.
@@ -47,7 +49,7 @@ The new daemon keeps the old one's environment variables and working folder. To 
 
 From another machine: `ahpd --remote <url> restart`. See [Remote access](REMOTE.md#run-commands-from-another-machine).
 
-A client of the daemon's AHP restarts it with the command `x-ahpd/restart`, which runs the same checks. It takes `config:write`, and only the host's own connection may send it. The answer is `{ "restarting": true, "pid": <pid> }`, and the daemon restarts once the answer has gone.
+A client of the daemon's AHP restarts it with the command `x-ahpd/restart`, which runs the same checks and takes `force` as the API does. It takes `config:write`, and only the host's own connection may send it. The answer is `{ "restarting": true, "pid": <pid>, "restartDelayMs": 3000 }`, as VS Code's upgrade answer says how long until the server goes, or `{ "restarting": false, "pid": <pid>, "parked": [<session>, ...] }` while the restart waits for the turns in those sessions.
 
 ## Doctor
 

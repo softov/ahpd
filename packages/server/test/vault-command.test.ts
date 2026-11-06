@@ -86,7 +86,7 @@ const facts = (): ServedFacts => ({
   running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9361, paths: [], startedAt: '' }),
   turning: () => [],
   vault: () => fileVault({ file: at }),
-  restart: () => {},
+  restart: () => ({ restartDelayMs: 0 }),
 });
 
 /** The daemon's own answer to a path under the API, as one bearer. */
