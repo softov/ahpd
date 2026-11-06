@@ -274,7 +274,7 @@ A connector has one of three targets, and `match` applies to all of them.
 
 | The connector names | What a call does | The answer |
 | --- | --- | --- |
-| `bot` | Sends its text as a turn in the bot's chat | Depends on `reply`, see below |
+| `bot` | Queues its text as a message in the bot's chat | Depends on `reply`, see below |
 | `automation` | Starts that one automation | 202 with `{ "connector": "<id>", "automation": "<id>" }` |
 | Neither | Fires the `webhook` trigger | 202 with `{ "connector": "<id>" }` |
 
@@ -284,7 +284,9 @@ The data's `connector` is the connector's id, set by the plugin, and no body fie
 
 ## A call to a bot
 
-A call to a bot endpoint sends its text as a turn in its thread's own chat with the bot. The caller names a thread, and each thread is a conversation of its own, as the spec gives a separate conversation its own chat: the first call of a thread opens a chat in the plugin's session with the bot, the session a read of the bot answers the plugin, with `createChat`, which the session says as `session/chatAdded`, and every later call of the thread talks there.
+A call to a bot endpoint queues its text as a message in its thread's own chat with the bot. The caller names a thread, and each thread is a conversation of its own, as the spec gives a separate conversation its own chat: the first call of a thread opens a chat in the plugin's session with the bot, the session a read of the bot answers the plugin, with `createChat`, which the session says as `session/chatAdded`, and every later call of the thread talks there.
+
+The message is a `chat/pendingMessageSet` of kind `queued`, with the origin `agent`, as [VS Code's router](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L270-L282) sends a message into another session's chat. The host takes it up as a turn once the chat runs nothing, so the calls of one thread are answered in the order they came. The turn is the host's, and names the message as its `queuedMessageId`, which is how the plugin knows which turn answers the call.
 
 A turn in that chat runs no model. It ends in the call that starts it, with no response part, so a call is answered with no `text` until the bot's own work can post into its chat.
 
@@ -301,15 +303,15 @@ The plugin keeps each thread in the `webhook-threads` collection, as the endpoin
 
 | `reply` | What the call answers |
 | --- | --- |
-| `callback` | 202 with `{ thread, turn }` once the turn is sent. At the turn's end, the plugin posts `{ thread, turn, status, text, error }` to the call's `callback` URL |
-| `sync` | 200 with `{ thread, turn, status, text, error }` at the turn's end, or 502 when the turn failed. When the turn runs longer than the timeout, 202 with `status: "running"`, and the turn goes on |
-| `none` | 202 with `{ thread, turn }` once the turn is sent. This is the default, so a connector made with only `bot` and `secret` answers its calls |
+| `callback` | 202 once the host has the message, as `none` answers. At the turn's end, the plugin posts `{ thread, queuedMessageId, turn, status, text, error }` to the call's `callback` URL |
+| `sync` | 200 with `{ thread, queuedMessageId, turn, status, text, error }` at the turn's end, or 502 when the turn failed. When the turn runs longer than the timeout, 202 with `status: "running"` and the turn, and the turn goes on; a message still waiting then answers 202 with `status: "queued"` |
+| `none` | 202 once the host has the message: `{ thread, queuedMessageId, turn, status: "sent" }` where the host has started the turn, and `{ thread, queuedMessageId, status: "queued" }` while the message waits, as VS Code's router answers a message it queued. This is the default, so a connector made with only `bot` and `secret` answers its calls |
 
-`text` is the turn's `markdown` response parts, joined: what the bot said in it. A turn in a `bot-chat` has none until the bot posts into its chat, so `text` is empty. `status` is `complete`, `cancelled` or `error`. A turn that failed has `status: "error"` and the message of its error in `error`, which no other answer holds. A `sync` call answers a failed turn with 502, so a caller that reads only the HTTP status sees the failure. A cancelled turn answers 200.
+`queuedMessageId` is the message's id, which every answer and the callback carry. `turn` is the turn the host took the message up as. `text` is the turn's `markdown` response parts, joined: what the bot said in it. A turn in a `bot-chat` has none until the bot posts into its chat, so `text` is empty. At the turn's end, `status` is `complete`, `cancelled` or `error`. A turn that failed has `status: "error"` and the message of its error in `error`, which no other answer holds. A `sync` call answers a failed turn with 502, so a caller that reads only the HTTP status sees the failure. A cancelled turn answers 200.
 
 A callback URL must start with the endpoint's `callbackPrefix`. The plugin compares the URL as `new URL` writes it, so `https://ci.example.com.evil.test/` does not pass the prefix `https://ci.example.com/`. Without this check, any caller could make the host post to any address. A `callback` reply with no `callbackPrefix` is refused when the connector is saved.
 
-The plugin sends the callback as [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md) has a producer send a message. Each attempt is signed under `webhook-id`, the turn, `webhook-timestamp`, the attempt's own time, and `webhook-signature`, `v1,` and the base64 HMAC-SHA256 of `<id>.<timestamp>.<body>`. The key is the endpoint's secret: a `standard` endpoint's decoded as that scheme's key, and any other endpoint's as its characters, the reference library's raw format. A callback that answers anything but a 2xx, a redirect among them, which the plugin does not follow, is tried again on Standard Webhooks' example schedule: 5 seconds, 5 minutes, 30 minutes, 2 hours, 5 hours, 10 hours, 14 hours, 20 hours and 24 hours after the attempt before, or later where the answer's `retry-after` says so. An attempt waits 30 seconds for its answer. `410 Gone` ends the attempts. A callback given up, and one the daemon stopped before it was delivered, is a problem line in the daemon's log.
+The plugin sends the callback as [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md) has a producer send a message. Each attempt is signed under `webhook-id`, the message's `queuedMessageId`, `webhook-timestamp`, the attempt's own time, and `webhook-signature`, `v1,` and the base64 HMAC-SHA256 of `<id>.<timestamp>.<body>`. The key is the endpoint's secret: a `standard` endpoint's decoded as that scheme's key, and any other endpoint's as its characters, the reference library's raw format. A callback that answers anything but a 2xx, a redirect among them, which the plugin does not follow, is tried again on Standard Webhooks' example schedule: 5 seconds, 5 minutes, 30 minutes, 2 hours, 5 hours, 10 hours, 14 hours, 20 hours and 24 hours after the attempt before, or later where the answer's `retry-after` says so. An attempt waits 30 seconds for its answer. `410 Gone` ends the attempts. A callback given up, and one the daemon stopped before it was delivered, is a problem line in the daemon's log.
 
 A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugin option, which is 10 by default, the window GitHub gives a receiver. The wait is held within the sender's own window whatever the setting: at most 10 seconds for a `github` endpoint and 3 for a `graph` one, since an answer after it reaches a sender that has counted the delivery failed.
 
@@ -324,8 +326,8 @@ A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugi
 | Answer | When |
 | --- | --- |
 | 400 | The call has no thread or no text, or its callback URL is missing or outside the prefix |
-| 409 | The plugin may not read the bot, the read answered no chat for it, the host opened no chat for the thread, or the host refused the turn. The answer's `message` is the host's reason. The first three are also a problem in the daemon's log: the read's refusal names the grants `bot:chat` and `session:create`, and the chat's the grant `chat:create` |
-| 504 | The host did not confirm the turn within 10 seconds, so its delivery is unconfirmed rather than taken or refused, as VS Code's router reads a send it never heard back on: `{ thread, turn, message }`, the message `Remote message delivery was not confirmed. It may already be queued; do not retry automatically.` The daemon's log gets a problem line, and no callback is posted |
+| 409 | The plugin may not read the bot, the read answered no chat for it, the host opened no chat for the thread, or the host refused the message. The answer's `message` is the host's reason. The first three are also a problem in the daemon's log: the read's refusal names the grants `bot:chat` and `session:create`, and the chat's the grant `chat:create` |
+| 504 | The host did not confirm the message within 10 seconds, so its delivery is unconfirmed rather than taken or refused, as VS Code's router reads a send it never heard back on: `{ thread, queuedMessageId, message }`, the message `Remote message delivery was not confirmed. It may already be queued; do not retry automatically.` The daemon's log gets a problem line, and no callback is posted |
 
 ### The grants
 
@@ -337,12 +339,12 @@ On a host with a users directory, the plugin acts as `plugin:webhook`, with the 
 | `bot:chat` | Be answered a chat by it, which the read starts |
 | `session:read` | Read the session's state, which names the chat, and the turn's text |
 | `session:create` | Start a session for an owner, which a read of the bot does |
-| `session:write` | Send the turn |
+| `session:write` | Queue the message |
 | `chat:create` | Open a thread's chat in the session |
 
 The chat is the plugin's own, started as the owner `plugin:webhook`, so `session:create` is asked of nobody here: it is in the list because those two are the grants the plugin's problem line prints when a read is answered no chat.
 
-The plugin opens its connection when the daemon listens, and hears each turn's end from the host. It holds a subscription to a thread's chat while a turn there needs one, for the echo of the turn's start and the read of its end, and unsubscribes once the last such turn has ended or been refused, as VS Code's router holds a chat's subscription for one delivery.
+The plugin opens its connection when the daemon listens, and hears each turn's start and end from the host. It holds a subscription to a thread's chat while a message there needs one, for the echo of the message and the read of its turn's end, and unsubscribes once the last such message's turn has ended or the host refused it, as VS Code's router holds a chat's subscription for one delivery.
 
 ## The trigger
 

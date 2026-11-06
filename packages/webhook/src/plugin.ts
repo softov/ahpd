@@ -7,7 +7,7 @@ import { botTarget, turnEnds } from './bot.js';
 import { webhookAdapter } from './adapter.js';
 import { DEFAULT_MAX_BODY_BYTES } from './call.js';
 import { NAME, webhookRoute } from './route.js';
-import type { Bag, Plugin, PluginHost, PluginPeer, TurnEndEvent } from '@ahpd/sdk';
+import type { Bag, Plugin, PluginHost, PluginPeer, TurnEndEvent, TurnStartEvent } from '@ahpd/sdk';
 import type { BotSeams } from './bot.js';
 import type { Endpoint } from './record.js';
 
@@ -198,6 +198,7 @@ const textOf = (state: unknown, turn: string): string => {
 export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number): BotSeams {
   const peer = async (): Promise<PluginPeer> => (await open()).conn;
   const ends = turnEnds();
+  host.on('turn_start', (event: TurnStartEvent) => { ends.started(event); });
   host.on('turn_end', (event: TurnEndEvent) => { ends.heard(event); });
   const problem = (line: string): void => { host.problem(`${name}: ${line}`); };
   /*
@@ -281,33 +282,35 @@ export function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout:
       }
       return chat;
     },
-    send: async (chat, turn, text) => {
+    send: async (chat, message, text) => {
       const { conn, sender } = await open();
-      // The host echoes a taken turn only to the subscribers of its chat.
+      // The host echoes a taken message only to the subscribers of its chat.
       await hold(conn, chat);
       /*
-       * Sent as VS Code's client sends a turn: the time it starts and a
-       * person's message, which the host says as it came.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L3717-L3726
+       * Queued as VS Code's router sends a message into another session's
+       * chat: a pending message whatever the chat is doing, since the host
+       * takes queued messages up in the order they came, and an agent's.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L270-L282
        */
       return await sender.dispatch(chat, {
-        type: 'chat/turnStarted',
-        turnId: turn,
-        startedAt: new Date().toISOString(),
-        message: { text, origin: { kind: 'user' } },
+        type: 'chat/pendingMessageSet',
+        kind: 'queued',
+        id: message,
+        message: { text, origin: { kind: 'agent' } },
       });
     },
-    forget: (chat, turn) => {
-      ends.forget(chat, turn);
+    turnOf: (chat, message) => ends.turnOf(chat, message),
+    forget: (chat, message) => {
+      ends.forget(chat, message);
       void peer().then((conn) => { release(conn, chat); });
     },
-    ended: async (chat, turn) => {
-      const ending = await ends.wait(chat, turn);
+    ended: async (chat, message) => {
+      const ending = await ends.wait(chat, message);
       const conn = await peer();
       try {
-        // Read through the subscription the turn holds, then let it go.
+        // Read through the subscription the message holds, then let it go.
         const opened = await conn.request('subscribe', { channel: chat }) as { snapshot?: { state?: unknown } };
-        return { ...ending, text: textOf(opened.snapshot?.state, turn) };
+        return { ...ending, text: textOf(opened.snapshot?.state, ending.turn) };
       }
       finally {
         release(conn, chat);
