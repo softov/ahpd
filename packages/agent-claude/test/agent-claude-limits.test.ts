@@ -324,7 +324,7 @@ it('carries a login\'s windows on a turn, and draws them on the login', async ()
   // The two windows the account answered, beside the ones its plan names.
   expect((shown[0]?.['windows'] as Bag[]).slice(0, 2)).toEqual([
     { name: 'Session', left: 60, reset: '2026-11-04T12:00:00.000Z' },
-    { name: 'Weekly', left: 90, reset: '2026-11-10T12:00:00.000Z' },
+    { name: 'Weekly', left: 90, reset: '2026-11-10T12:00:00.000Z', extra: true, extraUsed: 250, extraCap: 1000 },
   ]);
 
   session.sendMessage('one', 'how much is left');

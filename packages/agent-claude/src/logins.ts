@@ -158,8 +158,8 @@ export class OpenLogins {
   /** The view handle of each open login, by connector id. Absent for a connector opened with none. */
   private readonly views = new Map<string, ViewHandle>();
 
-  /** The last plan answer of each open login, by connector id, as its view and its agents show it. */
-  private readonly saids = new Map<string, PlanNote>();
+  /** The last plan answer of each login, by connector id, with the token it was for, as its view and its agents show it. */
+  private readonly saids = new Map<string, { token: string; said: PlanNote }>();
 
   /** The view handle and the record of each open agent, by agent id. */
   private readonly agents = new Map<string, OpenAgent>();
@@ -187,22 +187,26 @@ export class OpenLogins {
    * Keep one connector's token and view handle, as the adapter's `open` is
    * handed them, show its view, and answer the connector's stop, which forgets
    * both.
+   *
+   * The last plan answer is kept past a stop, with the token it was for. A
+   * connector that opens again with the same token shows it again at once: a
+   * session sends a plan only when it changes, so nothing else would. A new
+   * token may sign in to another account, so it starts with no answer.
    */
   opened(connector: Connector, view?: ViewHandle): () => void {
     const token = connector.config['token'];
     if (typeof token !== 'string' || token === '') throw new Error(`${connector.id} holds no token`);
     this.rests.clear(connector.id);
     this.open.set(connector.id, { owner: connector.owner, token });
-    this.saids.delete(connector.id);
+    if (this.saids.get(connector.id)?.token !== token) this.saids.delete(connector.id);
     if (view === undefined) this.views.delete(connector.id);
     else {
       this.views.set(connector.id, view);
-      view.showView({ ...LOGIN_VIEW, dataModel: loginDataOf(undefined) });
+      view.showView({ ...LOGIN_VIEW, dataModel: loginDataOf(this.saids.get(connector.id)?.said) });
     }
     return () => {
       this.open.delete(connector.id);
       this.views.delete(connector.id);
-      this.saids.delete(connector.id);
     };
   }
 
@@ -235,7 +239,9 @@ export class OpenLogins {
       const id = typeof one === 'string' ? one : '';
       if (id === '' || this.usable(id, record.owner) === undefined) continue;
       if (out.some((login) => login.id === id)) continue;
-      const said = this.saids.get(id);
+      // An answer for a token the login no longer holds is another account's.
+      const kept = this.saids.get(id);
+      const said = kept !== undefined && kept.token === this.open.get(id)?.token ? kept.said : undefined;
       out.push({ id, ...(said === undefined ? {} : { said }) });
     }
     return out;
@@ -295,7 +301,7 @@ export class OpenLogins {
    */
   noted(id: string, token: string, said: PlanNote): void {
     if (this.open.get(id)?.token !== token) return;
-    this.saids.set(id, said);
+    this.saids.set(id, { token, said });
     this.views.get(id)?.setViewData('/', loginDataOf(said));
     for (const [agentId, agent] of this.agents) {
       if (!this.agentLogins(agent.record).some((login) => login.id === id)) continue;

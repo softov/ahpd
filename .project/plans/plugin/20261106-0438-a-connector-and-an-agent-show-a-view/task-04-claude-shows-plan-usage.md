@@ -69,5 +69,8 @@ After Softov's test on 2026-11-06, the login's view shows the account's email ma
 `maskedEmail` in `session/limits.ts` masks it, and the plan keeps it apart from `ahpd.account`.
 A setup token names no plan type, and its windows come from rate limit events, which may carry no utilization.
 
+Each window row carries `extra`, `extraUsed` and `extraCap` when the account has extra usage, and draws the credits spent and the cap.
+`OpenLogins` keeps the last plan answer past a stop, with its token, so a reopen with the same token shows it again.
+
 Left: Softov checks the view again after this change, with a daemon.
 `OpenLogins` keeps a closed agent's entry, as `deferred.md` says.

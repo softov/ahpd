@@ -131,6 +131,41 @@ it('sets a plan answer only on the agents that name the login', () => {
   expect(other.set).toEqual([]);
 });
 
+it('carries extra usage on the window it is billed beside', () => {
+  const logins = new OpenLogins();
+  const login = viewOf();
+  logins.opened(connectorOf('work', 'token-work'), login.view);
+  logins.noted('work', 'token-work', {
+    quotaSnapshots: {
+      weekly: { remainingPercentage: 10, resetDate: '2026-11-10T12:00:00.000Z', overageAllowedWithExhaustedQuota: true, overage: 12.5, overageEntitlement: 50 },
+    },
+    account: { subscriptionType: 'max' },
+  });
+  expect(login.data()).toEqual({
+    plan: 'max',
+    windows: [{ name: 'Weekly', left: 10, reset: '2026-11-10T12:00:00.000Z', extra: true, extraUsed: 12.5, extraCap: 50 }],
+  });
+});
+
+it('shows the last plan again when a login opens again with the same token, and none for a new token', () => {
+  const logins = new OpenLogins();
+  const first = viewOf();
+  const close = logins.opened(connectorOf('work', 'token-work'), first.view);
+  logins.noted('work', 'token-work', { account: { subscriptionType: 'max' }, quotaSnapshots: { session: { remainingPercentage: 40 } } });
+  close();
+
+  // A session sends a plan only when it changes, so the reopen is what shows it again.
+  const again = viewOf();
+  const closeAgain = logins.opened(connectorOf('work', 'token-work'), again.view);
+  expect(again.data()).toEqual({ plan: 'max', windows: [{ name: 'Session', left: 40 }] });
+  closeAgain();
+
+  // A new token may be another account's, so its view starts empty.
+  const other = viewOf();
+  logins.opened(connectorOf('work', 'token-other'), other.view);
+  expect(other.data()).toEqual({ windows: [] });
+});
+
 it('keeps the login\'s email off the agent\'s view', () => {
   const logins = new OpenLogins();
   logins.opened(connectorOf('work', 'token-work'));

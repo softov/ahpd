@@ -140,6 +140,8 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | The plan fields of the connector health go; plan usage travels in the view | (defaulted: one copy of a fact) | 04 |
 | A `claude-login` connector's view shows the account's email masked, as `so****@brbyte.com`; an agent's view does not show it, and `ahpd.account` keeps no email | Softov, 2026-11-06, chose "Masked, e.g. so****@brbyte.com" | 04 |
 | The plan line shows nothing when the account names no plan type; the provider is not a plan, and `firstParty` is not shown | Softov, 2026-11-06, chose "Nothing in the plan line" | 04 |
+| A login's view carries extra usage on the window it rides: whether it continues, the credits spent and the cap, as the old health held them | Softov, 2026-11-06, chose "Yes, add it to the view" | 04 |
+| A login that opens again with the same token shows its last plan at once; a new token starts empty | (defaulted: a session sends a plan only when it changes, so a reopen showed none) | 04 |
 
 ## Proposed architecture
 

@@ -24,6 +24,12 @@ export type WindowData = {
   left?: number;
   /** When the window resets, as the ISO time the plan reported. */
   reset?: string;
+  /** Whether extra usage continues once the window is exhausted. Absent when the account has none. */
+  extra?: boolean;
+  /** The extra usage spent, in credits. */
+  extraUsed?: number;
+  /** The monthly cap on extra usage, in credits. */
+  extraCap?: number;
 };
 
 /** What a login's plan draws: the plan type, and one row for each window. */
@@ -64,12 +70,19 @@ const nameOf = (key: string): string => {
   return rest.length === 0 ? head : `${head}: ${rest.join(':').replace(/_/g, ' ')}`;
 };
 
-/** One row for each window a plan holds. A window with no figure draws no row cell. */
+/**
+ * One row for each window a plan holds. A window with no figure draws no row
+ * cell. Extra usage rides the window it is billed beside, as the plan's
+ * snapshots carry it.
+ */
 const windowsOf = (snapshots: QuotaSnapshots | undefined): WindowData[] =>
   Object.entries(snapshots ?? {}).map(([key, snapshot]) => ({
     name: nameOf(key),
     ...(snapshot.remainingPercentage === undefined ? {} : { left: snapshot.remainingPercentage }),
     ...(snapshot.resetDate === undefined ? {} : { reset: snapshot.resetDate }),
+    ...(snapshot.overageAllowedWithExhaustedQuota === undefined ? {} : { extra: snapshot.overageAllowedWithExhaustedQuota }),
+    ...(snapshot.overage === undefined ? {} : { extraUsed: snapshot.overage }),
+    ...(snapshot.overageEntitlement === undefined ? {} : { extraCap: snapshot.overageEntitlement }),
   }));
 
 /** The plan and the windows of a login, from the last plan answer its account gave. */
@@ -95,14 +108,21 @@ export const agentDataOf = (logins: readonly { id: string; said?: PlanNote }[]):
 /**
  * The components one window row draws, under the ids `prefix` names them.
  *
- * A row is the window's name, what is left of it and when it resets, and each
- * cell reads its own item of the list the row is repeated over.
+ * A row is the window's name, what is left of it, when it resets, and the
+ * extra usage spent and its cap; each cell reads its own item of the list the
+ * row is repeated over, and a cell whose value the window lacks draws nothing.
  */
 const windowRow = (prefix: string): PluginView['components'] => ({
-  [prefix]: { id: prefix, component: 'Row', children: [`${prefix}Name`, `${prefix}Left`, `${prefix}Reset`] },
+  [prefix]: {
+    id: prefix,
+    component: 'Row',
+    children: [`${prefix}Name`, `${prefix}Left`, `${prefix}Reset`, `${prefix}ExtraUsed`, `${prefix}ExtraCap`],
+  },
   [`${prefix}Name`]: { id: `${prefix}Name`, component: 'Text', text: { path: 'name' } },
   [`${prefix}Left`]: { id: `${prefix}Left`, component: 'Text', text: { path: 'left' } },
   [`${prefix}Reset`]: { id: `${prefix}Reset`, component: 'Text', text: { path: 'reset' } },
+  [`${prefix}ExtraUsed`]: { id: `${prefix}ExtraUsed`, component: 'Text', text: { path: 'extraUsed' } },
+  [`${prefix}ExtraCap`]: { id: `${prefix}ExtraCap`, component: 'Text', text: { path: 'extraCap' } },
 });
 
 /** A `claude-login` connector's view, with no data: the masked email, the plan type, then one row for each window. */
