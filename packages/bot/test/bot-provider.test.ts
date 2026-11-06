@@ -298,9 +298,11 @@ it('offers in the make form every field a write takes', async () => {
   expect(entry).toMatchObject({ title: 'Bot', root: 'bot://' });
   const properties = ((entry?.['manifest'] as Bag)?.['properties'] ?? {}) as Bag;
   expect(Object.keys(properties)).toEqual(expect.arrayContaining([
-    'name', 'labels', 'description', 'body', 'color', 'instructions', 'template', 'harness', 'model', 'preset',
+    'name', 'labels', 'description', 'body', 'color', 'instructions', 'template', 'provider', 'model', 'preset',
     'workspace', 'computer', 'connectors', 'owner',
   ]));
+  // AHP's word for the agent a session runs on, and no other.
+  expect(Object.keys(properties)).not.toContain('harness');
   // The connectors a write takes, by alias, which the form's
   // additionalProperties would otherwise refuse.
   expect(properties['connectors']).toMatchObject({ type: 'object', additionalProperties: { type: 'string' } });
@@ -696,7 +698,7 @@ it('leaves a team bot out of the listing asked for me', async () => {
 /*
  * The agent a bot's record names.
  *
- * A bot's `preset` or `harness` is an agent of this host, and the host asks its
+ * A bot's `preset` or `provider` is an agent of this host, and the host asks its
  * own rule of whoever starts a session on one. A bot is its owner's work, so a
  * write asks the same rule of the owner rather than of the person writing: one
  * person cannot point a bot at another person's agent.
@@ -1063,11 +1065,11 @@ it('runs a bot in its own folder, and makes the folder first', async () => {
 it('starts no session on a make', async () => {
   // A bot is not talked to in a session of its own: what is said to it is said
   // in a chat, and a chat is opened by a read of the bot. So a make opens
-  // nothing at all, whatever the body named - a preset, a harness or neither.
+  // nothing at all, whatever the body named - a preset, a provider or neither.
   const { host } = made({ soft: ['bot:*', 'session:*'] });
   const soft = await as(host, 'soft');
 
-  await write(soft, 'bot://motion', { name: 'Motion', preset: 'loud', harness: 'whisper', model: 'the-big-one' }, { createOnly: true });
+  await write(soft, 'bot://motion', { name: 'Motion', preset: 'loud', provider: 'whisper', model: 'the-big-one' }, { createOnly: true });
   await write(soft, 'bot://quiet', { name: 'Quiet' }, { createOnly: true });
 
   expect(await allSessions(soft)).toEqual([]);
@@ -1148,7 +1150,7 @@ it('answers the writes docs/plugins/BOTS.md shows', async () => {
   // A make from a name alone.
   expect(await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true })).toEqual({ result: {} });
 
-  // A bot on a harness of its own, with a body and a colour of its choosing.
+  // A bot on a provider of its own, with a body and a colour of its choosing.
   expect(await write(soft, 'bot://reader', {
     name: 'Motion',
     labels: ['review', 'ci'],
@@ -1156,12 +1158,15 @@ it('answers the writes docs/plugins/BOTS.md shows', async () => {
     body: 'robot',
     color: 'teal',
     instructions: 'You review pull requests. Say what would break, in one paragraph.',
-    harness: 'claude',
+    provider: 'claude',
     model: 'claude-sonnet-5',
   }, { createOnly: true })).toEqual({ result: {} });
   expect(await record(soft, 'bot://reader')).toMatchObject({
-    body: 'robot', color: 'teal', harness: 'claude', model: 'claude-sonnet-5',
+    body: 'robot', color: 'teal', provider: 'claude', model: 'claude-sonnet-5',
   });
+  // The record's word is AHP's, and a body naming the other is naming a key no bot has.
+  expect(await write(soft, 'bot://other', { name: 'Other', harness: 'claude' }, { createOnly: true }))
+    .toMatchObject({ code: -32602, message: 'harness is not something a bot has' });
 });
 
 /*

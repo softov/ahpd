@@ -131,7 +131,7 @@ it('answers a sync call with the turn status and no text, in the plugin chat', a
   // by the first read of a bot who may chat, and that read is the plugin's.
   const root = host.accept(peer(), undefined, true);
   await root.handle({ method: 'initialize', params: { clientId: 'root', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
-  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', harness: 'echo' }) } });
+  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', provider: 'echo' }) } });
 
   openCi(adapters, { reply: 'sync', syncTimeoutSeconds: 10 });
 
@@ -177,7 +177,7 @@ it('answers 409 when the plugin may not read the bot', async () => {
   const { host, routes, adapters } = await started([]);
   const root = host.accept(peer(), undefined, true);
   await root.handle({ method: 'initialize', params: { clientId: 'root', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
-  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', harness: 'echo' }) } });
+  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', provider: 'echo' }) } });
   openCi(adapters, { reply: 'none' });
 
   const answer = await routes['webhook']!(new Request('http://127.0.0.1:1/plugins/webhook/ci?thread=pr-12', {
@@ -192,7 +192,7 @@ it('answers 409 and names the grants when the plugin is answered no chat', async
   const { host, lines, routes, records, adapters } = await started(['bot:get', 'session:read']);
   const root = host.accept(peer(), undefined, true);
   await root.handle({ method: 'initialize', params: { clientId: 'root', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
-  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', harness: 'echo' }) } });
+  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', provider: 'echo' }) } });
   openCi(adapters, { reply: 'none' });
 
   const answer = await routes['webhook']!(new Request('http://127.0.0.1:1/plugins/webhook/ci?thread=pr-12', {

@@ -57,7 +57,7 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
   labels: [],
   body: 'robot',
   color: 'red',
-  harness: 'base',
+  provider: 'base',
   session: 'work',
   workspace: WORKSPACE,
   owner: 'user:soft',

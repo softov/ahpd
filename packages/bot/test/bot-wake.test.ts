@@ -51,7 +51,7 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
   labels: [],
   body: 'robot',
   color: 'red',
-  harness: 'base',
+  provider: 'base',
   session: 'work',
   workspace: WORKSPACE,
   owner: 'user:soft',
@@ -234,8 +234,8 @@ async function sitting(
   };
 }
 
-it('starts a back session on the bot\'s own harness, in its folder, for the person who woke it', () => {
-  const wanted = sessionFor(bot({ harness: 'claude', model: 'claude-sonnet-5', computer: 'workstation' }), PERSON);
+it('starts a back session on the bot\'s own provider, in its folder, for the person who woke it', () => {
+  const wanted = sessionFor(bot({ provider: 'claude', model: 'claude-sonnet-5', computer: 'workstation' }), PERSON);
   expect(wanted).toEqual({
     owner: PERSON,
     provider: 'claude',
@@ -249,8 +249,8 @@ it('starts a back session on the bot\'s own harness, in its folder, for the pers
   });
 
   // A preset is a session whose backend and settings are already decided, so it
-  // wins over the harness and the model rather than sitting beside them.
-  expect(sessionFor(bot({ preset: 'loud', harness: 'claude', model: 'claude-sonnet-5' }), PERSON))
+  // wins over the provider and the model rather than sitting beside them.
+  expect(sessionFor(bot({ preset: 'loud', provider: 'claude', model: 'claude-sonnet-5' }), PERSON))
     .toEqual({
       owner: PERSON, provider: 'loud', workingDirectory: WORKSPACE, trusted: true, userSettings: false,
       title: 'Backer', tools: ['post_message'],
@@ -259,7 +259,7 @@ it('starts a back session on the bot\'s own harness, in its folder, for the pers
   // A bot that names no backend at all says nothing about one: the host starts
   // the session on whatever it starts its own on.
   const quiet = { ...bot() };
-  delete quiet.harness;
+  delete quiet.provider;
   expect(sessionFor(quiet, PERSON)).toEqual({
     owner: PERSON, workingDirectory: WORKSPACE, trusted: true, userSettings: false, title: 'Backer',
     tools: ['post_message'],
@@ -294,7 +294,7 @@ it('refuses a wake whose record names an agent the bot\'s owner may not use', as
   // is talking: a session the host starts for the person would otherwise reach
   // an agent only the bot's owner can be refused.
   const asked: Owner[] = [];
-  const one = await sitting(bot({ harness: 'theirs' }), [], (owner, provider) => {
+  const one = await sitting(bot({ provider: 'theirs' }), [], (owner, provider) => {
     asked.push(owner);
     return provider !== 'theirs';
   });

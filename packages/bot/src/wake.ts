@@ -245,11 +245,11 @@ export interface Wake {
 /**
  * The session one bot is started as.
  *
- * The bot's preset, harness and model, in the bot's own folder, owned by the
+ * The bot's preset, provider and model, in the bot's own folder, owned by the
  * person of the main chat that woke it - a back session works for somebody, and
  * that somebody started the conversation.
  *
- * A preset wins over the harness and the model, because a preset *is* a session
+ * A preset wins over the provider and the model, because a preset *is* a session
  * whose backend and settings are already decided: naming a model beside it
  * would write over the one it asked for. What decides the owner is the main
  * chat rather than the bot, since a bot owned by a team is chatted with by a
@@ -274,7 +274,7 @@ export interface Wake {
  * still loads.
  */
 export const sessionFor = (bot: BotRecord, owner: Owner, createdBy?: CreatedBy): SessionRequest => {
-  const provider = bot.preset ?? bot.harness;
+  const provider = bot.preset ?? bot.provider;
   /*
    * The main session, chat and turn a back session was started for, recorded
    * at its start as VS Code's create_session records the session that made
@@ -467,7 +467,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
      * agent. The refusal is the host's own sentence for an agent it does not
      * serve this caller.
      */
-    const provider = bot.preset ?? bot.harness;
+    const provider = bot.preset ?? bot.provider;
     if (provider !== undefined && seams.mayUse !== undefined && !seams.mayUse(bot.owner, provider)) {
       throw new Error(`No provider called ${provider}`);
     }

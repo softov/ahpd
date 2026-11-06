@@ -152,7 +152,7 @@ export interface BotOptions {
    * Whether an owner may start a session on the agent a bot names, read at each
    * write.
    *
-   * A bot's `preset` or `harness` is an agent of this host, and the host asks
+   * A bot's `preset` or `provider` is an agent of this host, and the host asks
    * its own rule of whoever starts a session on one. A write names it for the
    * bot's owner rather than for the person making the change, so the same rule
    * is asked here: one person cannot point their bot at another person's agent.
@@ -292,7 +292,7 @@ const manifest = (hostName: string) => ({
     },
     instructions: { type: 'string', description: 'What it was asked to be, in its own words.' },
     template: { type: 'string', description: 'The template a chat with it would open with, by name. Absent is the default.' },
-    harness: { type: 'string', description: 'The backend a session of it runs on.' },
+    provider: { type: 'string', description: 'The agent provider a session of it runs on.' },
     model: { type: 'string', description: 'The model it asks for.' },
     preset: { type: 'string', description: 'The session preset it starts from.' },
     session: {
@@ -736,7 +736,7 @@ export function botProvider(options: BotOptions): BotProvider {
          * nothing, and a client reading it is told rather than left to find out
          * when a message goes unanswered.
          */
-        const provider = bot.preset ?? bot.harness;
+        const provider = bot.preset ?? bot.provider;
         const state = provider !== undefined && options.available !== undefined && !options.available(provider)
           ? { state: 'unavailable' as const }
           : {};
@@ -811,7 +811,7 @@ export function botProvider(options: BotOptions): BotProvider {
        * the person writing: a bot is the owner's work, and the host would ask
        * its own rule of whoever starts a session on it.
        */
-      const provider = draft.preset ?? draft.harness;
+      const provider = draft.preset ?? draft.provider;
       if (provider !== undefined && options.mayUse !== undefined && !options.mayUse(whose, provider)) {
         throw new RpcError(-32009, `${provider} is not an agent ${whose} may use`);
       }
@@ -831,7 +831,7 @@ export function botProvider(options: BotOptions): BotProvider {
         color: draft.color,
         ...(draft.instructions === undefined ? {} : { instructions: draft.instructions }),
         ...(draft.template === undefined ? {} : { template: draft.template }),
-        ...(draft.harness === undefined ? {} : { harness: draft.harness }),
+        ...(draft.provider === undefined ? {} : { provider: draft.provider }),
         ...(draft.model === undefined ? {} : { model: draft.model }),
         ...(draft.preset === undefined ? {} : { preset: draft.preset }),
         session: draft.session,

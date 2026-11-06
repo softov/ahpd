@@ -2,7 +2,7 @@
 
 A **bot** is a record a person keeps on the host, with a folder of its own, talked to in a chat of its own. `@ahpd/bot` serves it as the `bot:` scheme, so a bot is made, read, listed, edited and deleted through the same `resource*` methods every other resource uses - [RESOURCES.md](../sdk/RESOURCES.md).
 
-A bot is not a backend of its own. It names whichever harness the host already has, by its `preset`, or by its `harness` and `model`, and the chat a person talks to it in runs no model at all - [The chat and its back sessions](#the-chat-and-its-back-sessions).
+A bot is not a backend of its own. It names whichever agent the host already has, by its `preset`, or by its `provider` and `model`, and the chat a person talks to it in runs no model at all - [The chat and its back sessions](#the-chat-and-its-back-sessions).
 
 ## The record
 
@@ -16,9 +16,9 @@ A bot is not a backend of its own. It names whichever harness the host already h
 | `color` | Which colour it is drawn in: one of the eleven below, or a hex colour `#rrggbb` |
 | `instructions` | What it was asked to be, in its own words |
 | `template` | The template a chat with it would open with, and the text its `AGENTS.md` is made from, by name. Absent is the default template - [The template](#the-template) |
-| `harness` | The backend a session of it runs on, where a bot chooses one |
+| `provider` | The agent provider a session of it runs on, AHP's `provider`, where a bot chooses one |
 | `model` | The model it asks for |
-| `preset` | The session preset it starts from. Where one is set it wins over `harness` and `model` |
+| `preset` | The session preset it starts from. Where one is set it wins over `provider` and `model` |
 | `workspace` | The folder it works in, under `root`. Its own, and never moved |
 | `session` | The name of the back session a message wakes. `work` where absent, and a name with `{turn}` in it starts one session per message |
 | `computer` | The machine it runs in, where it names one |
@@ -43,7 +43,7 @@ labels:
   - ci
 body: robot
 color: teal
-harness: claude
+provider: claude
 model: claude-sonnet-5
 session: work
 workspace: /srv/bots/motion
@@ -132,7 +132,7 @@ A make that names neither gets a body at random and the first colour.
 
 A person talks to a bot in a **chat**: one session of the `bot-chat` provider per bot and person. That provider runs no model, and keeps each turn as one JSON line under `<configDir>/bots/<slug>/logs/`, so a chat is still readable after a daemon restarts. A turn it begins stays open until the plugin ends it, which is what the work behind the chat answers into.
 
-A message said in the chat wakes a **back session**: an ordinary session of the host, on the bot's harness, which does the work and replies. The chat is the person's main chat with the bot, and each back session is behind it. Their two names are:
+A message said in the chat wakes a **back session**: an ordinary session of the host, on the bot's agent, which does the work and replies. The chat is the person's main chat with the bot, and each back session is behind it. Their two names are:
 
 | Name | What it is |
 | --- | --- |
@@ -159,7 +159,7 @@ A chat's session, its chat and its row carry the bot in `_meta['ahpd.bot']`, nam
 
 The bot's `session` names the back session a message goes to. It is `work` unless the bot says otherwise, and it may hold `{turn}`: the turn id of the message takes that word's place, so a bot that names `{turn}` starts a back session for each message rather than continuing one. A name is up to 40 lowercase letters, digits and dashes, starting with a letter, and `{turn}` may stand anywhere in it; a make that names anything else is refused `-32602`.
 
-A message that reaches the wake is sent to its back session as a **queued** `chat/pendingMessageSet`, whatever the session is doing, as VS Code's Agents window sends a message from one session into another: the back session's host takes it up at once when the session is idle, and after the turn in front of it otherwise. The message is an agent's (`origin: { kind: 'agent' }`), and its `_meta['vscode.chat.delegation']` names the main chat's session and chat. It names no model, agent or attachments, so the back session runs it on its own defaults; the main chat keeps those with the person's message. The main turn is answered by the turn the last message it sent becomes, and a stop of the main turn takes back the messages still waiting in the back session. A back session is started on the bot's `preset`, or its `harness` and `model`, in the bot's folder, owned by the person of the main chat, and titled with the bot's name. It loads none of the settings of the person who runs the daemon: the bot's rules are its own `AGENTS.md`, not the operator's.
+A message that reaches the wake is sent to its back session as a **queued** `chat/pendingMessageSet`, whatever the session is doing, as VS Code's Agents window sends a message from one session into another: the back session's host takes it up at once when the session is idle, and after the turn in front of it otherwise. The message is an agent's (`origin: { kind: 'agent' }`), and its `_meta['vscode.chat.delegation']` names the main chat's session and chat. It names no model, agent or attachments, so the back session runs it on its own defaults; the main chat keeps those with the person's message. The main turn is answered by the turn the last message it sent becomes, and a stop of the main turn takes back the messages still waiting in the back session. A back session is started on the bot's `preset`, or its `provider` and `model`, in the bot's folder, owned by the person of the main chat, and titled with the bot's name. It loads none of the settings of the person who runs the daemon: the bot's rules are its own `AGENTS.md`, not the operator's.
 
 The session a name is on is kept in the bot's own `sessions/` rows, so a message that comes back to an idle name continues the session it started. A name whose session the host no longer has - a daemon that restarted - is started again and the row written over. Two messages that arrive together for one name start one session.
 
@@ -297,7 +297,7 @@ A make from a name alone, which is the whole of what is required:
 { "name": "Motion" }
 ```
 
-A bot that runs on a harness of its own, with something to be:
+A bot that runs on a provider of its own, with something to be:
 
 ```json
 {
@@ -307,15 +307,15 @@ A bot that runs on a harness of its own, with something to be:
   "body": "robot",
   "color": "teal",
   "instructions": "You review pull requests. Say what would break, in one paragraph.",
-  "harness": "claude",
+  "provider": "claude",
   "model": "claude-sonnet-5"
 }
 ```
 
-An edit that asks for a harness, leaving everything else as it was:
+An edit that asks for a provider, leaving everything else as it was:
 
 ```json
-{ "harness": "claude", "model": "claude-sonnet-5" }
+{ "provider": "claude", "model": "claude-sonnet-5" }
 ```
 
 ## Options
