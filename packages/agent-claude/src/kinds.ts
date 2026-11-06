@@ -10,21 +10,25 @@
  * stamped here, from the harness's own tool names, which are the one thing
  * about a tool call this backend can be sure of.
  *
- * Names only. Nothing else about the call decides the kind, and a tool this
- * table has not heard of is left unstamped rather than guessed at - the
- * generic renderer is right for a tool nobody here knows.
+ * Names only, as VS Code's Claude table stamps them: the shell's three tools
+ * are terminals, a file or a notebook read is a read, a glob and a grep are
+ * searches, and a worker is a subagent. Nothing else about the call decides
+ * the kind, and a tool the table does not name, a web fetch among them, is
+ * left unstamped: the generic renderer is right for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L105
  */
 
 export type ToolKind = 'terminal' | 'read' | 'search' | 'subagent';
 
 const KINDS: Readonly<Record<string, ToolKind>> = {
   Bash: 'terminal',
+  BashOutput: 'terminal',
+  KillBash: 'terminal',
   terminal: 'terminal',
   Read: 'read',
+  NotebookRead: 'read',
   Glob: 'search',
   Grep: 'search',
-  WebSearch: 'search',
-  WebFetch: 'search',
   Task: 'subagent',
   Agent: 'subagent',
 };

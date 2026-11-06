@@ -70,6 +70,21 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
 const { createSession } = await import('../src/session.js');
 const { turnsOf } = await import('../src/transcript.js');
 const { questionRequest } = await import('../src/input.js');
+const { toolKindOf } = await import('../src/kinds.js');
+
+/*
+ * The kinds VS Code's Claude table stamps: the shell's three tools terminals,
+ * a file or notebook read a read, a glob and a grep searches, a worker a
+ * subagent, and a web fetch or search none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L105
+ */
+it('stamps the kinds VS Code\'s Claude table stamps', () => {
+  const names = ['Bash', 'BashOutput', 'KillBash', 'Read', 'NotebookRead', 'Glob', 'Grep', 'WebFetch', 'WebSearch', 'Task'];
+  expect(Object.fromEntries(names.map((name) => [name, toolKindOf(name)]))).toEqual({
+    Bash: 'terminal', BashOutput: 'terminal', KillBash: 'terminal', Read: 'read', NotebookRead: 'read',
+    Glob: 'search', Grep: 'search', WebFetch: undefined, WebSearch: undefined, Task: 'subagent',
+  });
+});
 
 /*
  * The CLI's own file for the session the reads below restore, one entry a
