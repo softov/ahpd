@@ -415,7 +415,7 @@ export function createTooling(ctx: HostContext): Tooling {
     activeClientsOf, leadOf, clientResources, allRows, setArtifacts, forWhom,
     principalFor, senderOf, senders,
     chatSummary, persistChatTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
-    resolveCreatedSessionConfig, openSession, backendsOwn, removeSession, spawn,
+    resolveCreatedSessionConfig, createProviderSession, backendsOwn, removeSession, spawn,
   } = ctx;
   /**
    * Where a decision that outlives one session is kept, or nothing for a host
@@ -1506,7 +1506,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * The catalogue is `allRows()`, which is what `listSessions` answers; a
    * message is a turn this host starts, or a message it queues on the chat,
    * which is what `chat/turnStarted` and `chat/pendingMessageSet` come to; a
-   * session is `openSession`, which is what `createSession` comes to. Nothing is reachable from here that is not
+   * session is `createProviderSession`, which is what `createSession` comes to. Nothing is reachable from here that is not
    * reachable from a client, and the reverse is nearly true.
    */
   /**
@@ -1968,12 +1968,12 @@ export function createTooling(ctx: HostContext): Tooling {
       // The owner of the session this one was made inside, which is what a
       // tool acting for somebody means: the work is theirs whichever session
       // it ends up running in. And the session, chat and turn it was made
-      // from, which `openSession` writes down beside the record so the summary
+      // from, which `createProviderSession` writes down beside the record so the summary
       // carries them from its announcement, as the reference host's create
       // carries its creation reference.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1236-L1242
       const madeFrom = { session: uri, chat: chatUri, ...(turn === undefined ? {} : { turnId: turn }) };
-      openSession(made, provider, { ...config, _meta: { [CREATED_BY_META]: madeFrom } }, where, undefined, undefined, undefined,
+      createProviderSession(made, provider, { ...config, _meta: { [CREATED_BY_META]: madeFrom } }, where, undefined, undefined, undefined,
         asked.title, forWhom(kept.owner(idOf(uri))));
       /*
        * The session this one was made inside, kept with its record.
@@ -2187,7 +2187,7 @@ export function createTooling(ctx: HostContext): Tooling {
         };
         const where = asked.workingDirectory;
         await resolveCreatedSessionConfig(made, asked.workingDirectory, config);
-        openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
+        createProviderSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
           sender === undefined ? undefined : forWhom(sender, caller.principal));
         ctx.oweTree(made, {}, undefined, () => ({}));
         const lead = byChat.get(chatUriFor(made));

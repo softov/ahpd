@@ -203,7 +203,7 @@ export function createSleep(ctx: HostContext): Sleep {
      * the tree, and the other gives the tree back itself once it is done.
      */
     if (!sessions.has(uri) && !restarting.has(uri) && !closing.has(id) && !waking.has(id) && archived(uri)) {
-      void ctx.shelve(uri);
+      void ctx.requestSessionWorktreeRemoval(uri);
       return false;
     }
     if (!quiet(uri)) return false;
@@ -245,7 +245,7 @@ export function createSleep(ctx: HostContext): Sleep {
     closing.set(id, closed);
     // An archived session gives its tree back once its agents have closed.
     // Queued now, so a wake asked for during the close waits behind it.
-    if (archived(uri)) void ctx.shelve(uri, closed);
+    if (archived(uri)) void ctx.requestSessionWorktreeRemoval(uri, closed);
     await closed;
     if (closing.get(id) === closed) closing.delete(id);
     return true;
@@ -522,7 +522,7 @@ export function createSleep(ctx: HostContext): Sleep {
       return already.then((woken) => ({ uri: woken.uri, chat: picked(woken.uri, chat) ?? woken.chat }));
     }
     // The tree first, where an archive took it, so the agent starts in it.
-    const resumed = ctx.restore(uri).then(() => resume(uri, chat, sender));
+    const resumed = ctx.restoreSessionWorktree(uri).then(() => resume(uri, chat, sender));
     waking.set(id, resumed);
     const clear = (): void => { if (waking.get(id) === resumed) waking.delete(id); };
     resumed.then(clear, clear);

@@ -107,19 +107,21 @@ export interface Lifecycle {
   ): Promise<void>;
   /** The move `set_workspace` asked for, once the turn that asked is over. */
   moveSession(uri: string, move: Move): Promise<void>;
-  /** Start one chat again, in the directories it now has. */
-  restartChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void;
+  /** Relaunch one chat, in the directories it now has, as the same conversation, as VS Code relaunches a chat's provider. */
+  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void;
   /** The name a backend is handed for one chat, which is the id a restart resumes it by. */
   chatIdOf(uri: string, chatUri: string, own: string | undefined): string | undefined;
-  /** The backend's own copy of one chat's conversation, gone. */
-  deletedChat(backendId: string, agent: Agent, directory: string | undefined): Promise<unknown>;
+  /** The backend's own copy of one chat's conversation disposed, as VS Code's provider disposes a chat. */
+  disposeProviderChat(backendId: string, agent: Agent, directory: string | undefined): Promise<unknown>;
   /**
-   * The backend that serves one chat: the chat's own, or the session's.
+   * The backend that serves one chat: the chat's own, or the session's, as
+   * VS Code resolves the provider for a chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L387
    *
    * A chat opened on a backend the session does not run on is served by that
    * one wherever it is started again, and every other chat by the session's.
    */
-  chatAgent(held: Held, chatUri: string): Agent;
+  getProviderForChat(held: Held, chatUri: string): Agent;
   /** The config that chat runs on: the chat's own where it has one, the session's otherwise. */
   chatConfig(held: Held, chatUri: string): Record<string, unknown>;
   /** What the backend is given: everything except what this host answered. */
@@ -135,12 +137,13 @@ export interface Lifecycle {
   oweTree(uri: string, credentials: Record<string, string>, sender: Connection | undefined, tokensFor: (provider: string) => Record<string, string>): void;
   /**
    * An archived session's tree taken away once the session has stopped, with
-   * its branch kept for `restore`. `after` is what has to settle first: the
+   * its branch kept for `restoreSessionWorktree`, as VS Code requests a
+   * session's worktree removal. `after` is what has to settle first: the
    * close of the agents that ran in the tree.
    */
-  shelve(uri: string, after?: Promise<unknown>): Promise<void>;
-  /** A session's tree put back at its path on its branch, where `shelve` took it. */
-  restore(uri: string): Promise<void>;
+  requestSessionWorktreeRemoval(uri: string, after?: Promise<unknown>): Promise<void>;
+  /** A session's tree put back at its path on its branch, where `requestSessionWorktreeRemoval` took it, as VS Code restores a session's worktree. */
+  restoreSessionWorktree(uri: string): Promise<void>;
   /**
    * A tree of the window's own, cut for a creating session whose tree is
    * pending and named after the handle the window holds it by.
@@ -193,8 +196,8 @@ export interface Lifecycle {
    * out at all - and is absent where nobody sent the message.
    */
   messageAttachments(message: Record<string, unknown>, sender?: Connection): Attached;
-  /** Start a session, with what its request asked to be told, offered and shaped by. */
-  openSession(
+  /** Create a session on its provider, with what its request asked to be told, offered and shaped by. */
+  createProviderSession(
     uri: string,
     provider: string,
     config: Record<string, unknown>,
@@ -536,7 +539,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * same question and so the same answer, one log line and one returned
    * failure included.
    */
-  const deletedChat = (backendId: string, agent: Agent, directory: string | undefined): Promise<unknown> =>
+  const disposeProviderChat = (backendId: string, agent: Agent, directory: string | undefined): Promise<unknown> =>
     deleted(uriFor(backendId), agent, directory);
 
   /**
@@ -706,8 +709,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        */
       const served = chat.provider !== undefined
         ? ctx.agents.get(chat.provider) ?? agent
-        : held === undefined ? agent : chatAgent(held, chat.uri);
-      const gone = await deletedChat(chat.backendId, served, directory);
+        : held === undefined ? agent : getProviderForChat(held, chat.uri);
+      const gone = await disposeProviderChat(chat.backendId, served, directory);
       if (failure === undefined) failure = gone;
     }
     if (held === undefined) {
@@ -768,7 +771,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * starts the chat with none.
      */
     const credentialsOf = (chat: string): Record<string, string> => {
-      const agent = chatAgent(held, chat);
+      const agent = getProviderForChat(held, chat);
       if (agent === held.agent) return credentials;
       return tokensFor?.(agent.provider) ?? {};
     };
@@ -895,7 +898,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       // The last thing before the new backend: the old one's process is gone.
       await Promise.all(stopping);
       spawn(
-        chatAgent(held, held.defaultChat),
+        getProviderForChat(held, held.defaultChat),
         uri,
         held.defaultChat,
         chatIdOf(uri, held.defaultChat, lead?.agentId()),
@@ -912,7 +915,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * A peer chat is a conversation of its own, with a transcript of its own
        * the backend keeps under an id of its own - so the session coming back
        * is not the whole of what has to come back. Each is respawned the way
-       * `restartChat` respawns one: under its own URI, resumed as its own
+       * `relaunchChat` respawns one: under its own URI, resumed as its own
        * conversation, with its own turns when the backend cannot resume.
        *
        * Read from `held.chats` rather than from the store, because these are
@@ -924,7 +927,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         if (chatUri === held.defaultChat) continue;
         const own = chat.agentId();
         spawn(
-          chatAgent(held, chatUri),
+          getProviderForChat(held, chatUri),
           uri,
           chatUri,
           // The name the backend answered with, where it minted one: the record
@@ -1151,7 +1154,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * moved chat worked in, which it goes on working in under the session that
    * holds it now. The chat keeps its place among its session's chats.
    */
-  const restartChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection, directory?: string): void => {
+  const relaunchChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection, directory?: string): void => {
     const held = sessions.get(uri);
     const chat = held?.chats.get(chatUri);
     if (held === undefined || chat === undefined) return;
@@ -1173,7 +1176,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     held.chats.delete(chatUri);
     byChat.drop(chatUri);
     spawn(
-      chatAgent(held, chatUri),
+      getProviderForChat(held, chatUri),
       uri,
       chatUri,
       chatIdOf(uri, chatUri, own),
@@ -1211,7 +1214,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * session's own. The session keeps its own either way: what a client reads
    * as its provider and what a resume records are the session's, not a chat's.
    */
-  const chatAgent = (held: Held, chatUri: string): Agent => held.backends.get(chatUri)?.agent ?? held.agent;
+  const getProviderForChat = (held: Held, chatUri: string): Agent => held.backends.get(chatUri)?.agent ?? held.agent;
 
   /** The config one chat runs on: its own where it has a backend of its own, the session's otherwise. */
   const chatConfig = (held: Held, chatUri: string): Record<string, unknown> =>
@@ -1367,23 +1370,25 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
 
   /**
    * The removal and the restore of each session's tree, by session id, as one
-   * chain: an archive and an unarchive sent together run in the order they
-   * were sent, and a wake waits for the tree the archive was taking away.
+   * chain, each step under the worktree's lock as VS Code runs them: an
+   * archive and an unarchive sent together run in the order they were sent,
+   * and a wake waits for the tree the archive was taking away.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L352
    */
-  const shelving = new Map<string, Promise<void>>();
+  const worktreeLocks = new Map<string, Promise<void>>();
 
   // What archive does with a dirty tree, from the host's own option: set here
-  // because `shelve` is where it is read.
+  // because `requestSessionWorktreeRemoval` is where it is read.
   ctx.archiveDirtyWorktree = options.archiveDirtyWorktree ?? 'keep';
 
   /** One step on a session's chain, run once the step before it has settled. */
-  const inTurn = (uri: string, step: () => Promise<void>): Promise<void> => {
+  const runExclusive = (uri: string, step: () => Promise<void>): Promise<void> => {
     const id = idOf(uri);
-    const next = (shelving.get(id) ?? Promise.resolve()).then(step).catch((error: unknown) => {
+    const next = (worktreeLocks.get(id) ?? Promise.resolve()).then(step).catch((error: unknown) => {
       log(`worktree of ${uri}: ${error instanceof Error ? error.message : String(error)}`);
     });
-    shelving.set(id, next);
-    void next.then(() => { if (shelving.get(id) === next) shelving.delete(id); });
+    worktreeLocks.set(id, next);
+    void next.then(() => { if (worktreeLocks.get(id) === next) worktreeLocks.delete(id); });
     return next;
   };
 
@@ -1441,7 +1446,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    *
    * Only once the session has stopped, and only while it is still archived:
    * an unarchive sent before this step ran is the person changing their mind.
-   * The record stays, since it is what `restore` puts the tree back from.
+   * The record stays, since it is what `restoreSessionWorktree` puts the tree back from.
    *
    * Removed without its branch, which is what makes it come back: the branch
    * holds every commit the session made, and the tree is only a checkout of
@@ -1455,7 +1460,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * goes only once git says it is clean. The folders this host linked into
    * the tree are not work, and are neither counted nor committed.
    */
-  const shelve = (uri: string, after?: Promise<unknown>): Promise<void> => inTurn(uri, async () => {
+  const requestSessionWorktreeRemoval = (uri: string, after?: Promise<unknown>): Promise<void> => runExclusive(uri, async () => {
     await after?.catch(() => undefined);
     const port = options.worktrees;
     const trees = treesOf(uri);
@@ -1519,7 +1524,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   });
 
   /*
-   * A session's trees, put back where `shelve` took them.
+   * A session's trees, put back where `requestSessionWorktreeRemoval` took them.
    *
    * At the same path on the same branch, with the folders the session asked
    * to have linked linked again. The include files are not copied again: they
@@ -1527,7 +1532,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    *
    * Nothing to do for a session with no record or a tree that is there.
    */
-  const restore = (uri: string): Promise<void> => inTurn(uri, async () => {
+  const restoreSessionWorktree = (uri: string): Promise<void> => runExclusive(uri, async () => {
     const port = options.worktrees;
     if (port === undefined) return;
     const symlink = linkedOf(uri);
@@ -1805,7 +1810,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (moved !== undefined) {
       ctx.chatRelaunches.delete(session.chatUri);
       const owner = byChat.get(session.chatUri)?.uri;
-      if (owner !== undefined) restartChat(owner, session.chatUri, moved.credentials, moved.sender, moved.directory);
+      if (owner !== undefined) relaunchChat(owner, session.chatUri, moved.credentials, moved.sender, moved.directory);
       const back = byChat.get(session.chatUri)?.chat;
       if (back === undefined) throw new Error(`${session.chatUri} did not start again`);
       return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
@@ -2193,20 +2198,22 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   /**
-   * Start a session.
+   * Create a session on its provider, as VS Code's agent service creates a
+   * provider session for every road that makes one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10135
    *
-   * At host scope rather than inside a connection because there are two ways
-   * in and only one of them has a client: `createSession` is a request
-   * somebody made, and an automation coming round at nine in the morning is
-   * not. Both need the same eight steps, and a second copy of them would be a
-   * second answer to what creating a session means.
+   * At host scope, outside any connection, because there are two ways in and
+   * one of them has a client: `createSession` is a request somebody made, and
+   * an automation coming round at nine in the morning is not. Both take the
+   * same eight steps, here, as the one answer to what creating a session
+   * means.
    *
    * `by` is who asked: whose the work belongs to, and the person behind a
    * `user:` owner, which is what a later scope change is resolved against. An
    * automation carries a name rather than a connection, so it passes the first
    * and leaves the second to the directory.
    */
-  const openSession = (
+  const createProviderSession = (
     uri: string,
     provider: string,
     config: Record<string, unknown>,
@@ -2377,9 +2384,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   return {
-    removeSession, respawning, restart, moveSession, restartChat, chatIdOf, deletedChat, backendsOwn,
-    chatAgent, chatConfig, isolated, oweTree,
-    shelve, restore, canAutomaticallyDeleteArchivedSession, createDetachedWorktree,
-    beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, openSession,
+    removeSession, respawning, restart, moveSession, relaunchChat, chatIdOf, disposeProviderChat, backendsOwn,
+    getProviderForChat, chatConfig, isolated, oweTree,
+    requestSessionWorktreeRemoval, restoreSessionWorktree, canAutomaticallyDeleteArchivedSession, createDetachedWorktree,
+    beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, createProviderSession,
   };
 }

@@ -211,7 +211,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
     // Checked again, since GitHub took a while to answer.
     const fresh = await rowNow(row.resource);
     if (ctx.closed || fresh === undefined || archived(row.resource) || busy(row.resource) || !idleFor(fresh, days)) return false;
-    // The time first, so `shelve` knows the archive is the host's own.
+    // The time first, so `requestSessionWorktreeRemoval` knows the archive is the host's own.
     kept.setAutoArchivedAt?.(idOf(row.resource), new Date(now()).toISOString());
     sessionFlag(ctx, row.resource, Status.IsArchived, true, { type: 'session/isArchivedChanged', isArchived: true });
     log(`archived ${row.resource}: its pull requests are merged (${related.filter((one) => one.state === 'merged').map((one) => one.url).join(', ')})`);
@@ -222,7 +222,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
    * Delete one session the host archived, once deleting it keeps its work:
    * each of its trees gone, or synced with its remote, as VS Code's host
    * deletes one by itself. A synced tree is taken away with the session, by
-   * `shelve` while the record that names it is still here, as the automatic
+   * `requestSessionWorktreeRemoval` while the record that names it is still here, as the automatic
    * archive takes one away; a running session's goes with its teardown.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L184-L191
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11163-L11179
@@ -236,7 +236,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
     }
     // Checked again, since GitHub and the disk took a while to answer.
     if (ctx.closed || !archived(row.resource) || busy(row.resource) || kept.autoArchivedAt?.(idOf(row.resource)) !== at) return false;
-    await ctx.shelve(row.resource);
+    await ctx.requestSessionWorktreeRemoval(row.resource);
     try {
       await ctx.removeSession(row.resource);
     }

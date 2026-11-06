@@ -183,7 +183,7 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
       });
     };
     const lead = sessions.get(owner.uri);
-    const provider = lead === undefined ? 'This provider' : ctx.chatAgent(lead, chat).provider;
+    const provider = lead === undefined ? 'This provider' : ctx.getProviderForChat(lead, chat).provider;
     /*
      * The chats the message attaches, read out as the turn is sent, as a
      * client's start's are: one that cannot be read ends the turn, as the

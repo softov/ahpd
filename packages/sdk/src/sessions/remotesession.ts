@@ -144,7 +144,7 @@ export const readMultiRoot = (source: unknown): MultiRoot | undefined => asMulti
 
 /**
  * The config a `createSession` request opens its session with, holding the
- * window's keys where `openSession` reads them.
+ * window's keys where `createProviderSession` reads them.
  *
  * VS Code sends the origin, the creator and the multi-root workspace on the
  * request's own `_meta`, the protocol's place for request metadata, and leaves

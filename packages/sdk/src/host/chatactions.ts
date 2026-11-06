@@ -67,7 +67,7 @@ export function sessionFlag(
   // the session is no longer one the host archived.
   if (bit === Status.IsArchived && !on) {
     ctx.kept.setAutoArchivedAt?.(idOf(uri), undefined);
-    void ctx.restore(uri);
+    void ctx.restoreSessionWorktree(uri);
   }
   return true;
 }
@@ -242,11 +242,11 @@ export function chatAction(
   const { connection } = conn;
   const { refuse } = ctx;
   const {
-    admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig,
+    admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, getProviderForChat, chatConfig,
     contributedDefaults, decided,
     described, dispatch, fire, kept, known, leadOf, lifeOf, lives, log, messageAttachments,
     messageFrom, modelIn, names, ownerFor, owners, restoreSession, pluginsMoved, principalFor, propertyOf, putIn, renameChat,
-    renameSession, restart, restartChat, restarting, rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting,
+    renameSession, restart, relaunchChat, restarting, rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting,
     statusOf, subagents, markSummaryDirty, value, unavailableProvider, wake, hold,
   } = ctx;
 
@@ -909,7 +909,7 @@ export function chatAction(
         return active === undefined || active === null || (chat === session.chatUri && active.id === turnId);
       });
       if (owner !== undefined && between && pluginsMoved(session.uri, session.chatUri)) {
-        restartChat(session.uri, session.chatUri, conn.tokensFor(chatAgent(owner, session.chatUri).provider), connection);
+        relaunchChat(session.uri, session.chatUri, conn.tokensFor(getProviderForChat(owner, session.chatUri).provider), connection);
         // The chat that was running is closed and this is the one that took its
         // place, so the turn below goes to the agent listening now.
         live = owner.chats.get(session.chatUri) ?? session;
@@ -2160,7 +2160,7 @@ export function chatAction(
        */
       const startOver = (kept: Bag[]): void => {
         const owner = sessions.get(session.uri);
-        const agent = owner === undefined ? undefined : chatAgent(owner, session.chatUri);
+        const agent = owner === undefined ? undefined : getProviderForChat(owner, session.chatUri);
         if (owner === undefined || agent?.delete === undefined) {
           uncut(all.slice(kept.length) as Bag[], 'its backend cannot delete a conversation');
           return;
@@ -2174,7 +2174,7 @@ export function chatAction(
         ctx.deleteLocalTurns(uri, chatUri, all.slice(kept.length) as Bag[]);
         const work = (async () => {
           await session.close('stopping');
-          const failed = own === undefined || own === '' ? undefined : await ctx.deletedChat(own, agent, ctx.dirOf(uri));
+          const failed = own === undefined || own === '' ? undefined : await ctx.disposeProviderChat(own, agent, ctx.dirOf(uri));
           ctx.described.delete(chatUri);
           spawn(
             agent,
@@ -2289,7 +2289,7 @@ export function chatAction(
       // rather than compared against what the old one last said.
       ctx.described.delete(session.chatUri);
       spawn(
-        chatAgent(owner, session.chatUri),
+        getProviderForChat(owner, session.chatUri),
         session.uri,
         session.chatUri,
         chatIdFor(session.uri, session.chatUri),

@@ -1296,7 +1296,7 @@ it('refuses a chat with a bot that is not there', async () => {
   }));
 
   // The host's own code for what a backend refused `create` with, and the
-  // backend's sentence: `openSession` answers every one of them the same way.
+  // backend's sentence: `createProviderSession` answers every one of them the same way.
   expect(refusal.code).toBe(-32602);
   expect(refusal.message).toBe('There is no bot nobody.');
 });

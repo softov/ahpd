@@ -59,11 +59,11 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
   const { connection } = conn;
   const {
     about, activeSessionsChanged, admitted, agents, projectSnapshot, backendsOwn, beginOrRun, beginTurn, beside, byChat,
-    charged, chatAgent, chatConfig, chatIdOf, chatShown,
+    charged, getProviderForChat, chatConfig, chatIdOf, chatShown,
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
     isolating, keepChat, recordSessionProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
-    movable, updateChatMovability, openSession, openedBy, options, orderChats, oweTree,
+    movable, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
     ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
     snapshotOf, spawn, subagentSummary, subagents, markSummaryDirty, unheld, visible, unavailableProvider, wake,
@@ -1101,7 +1101,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // This connection's tokens and no other's. A client that pushed
         // nothing gets a session on the daemon's own credentials, which is
         // how every session worked before there was anything to push.
-        // Handed over, since `openSession` refuses a name this still holds.
+        // Handed over, since `createProviderSession` refuses a name this still holds.
         release();
         /*
          * The creator claiming its place in the session it is making.
@@ -1135,7 +1135,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // so a scope change before the first turn is resolved against who
         // owns the work rather than against whoever sent it.
         try {
-          openSession(uri, provider, config, running, undefined, conn.tokensFor(provider), peers, undefined,
+          createProviderSession(uri, provider, config, running, undefined, conn.tokensFor(provider), peers, undefined,
             { ...forWhom(ownerFor(connection), connection.principal), sender: connection });
         }
         catch (error) {
@@ -1303,7 +1303,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
            * is a conversation in that backend's own format, and the session's
            * backend has never seen it.
            */
-          const sourceAgent = chatAgent(held, from.chat.chatUri);
+          const sourceAgent = getProviderForChat(held, from.chat.chatUri);
           if (kind === 'fork') {
             if (sourceAgent.chats?.fork !== true)
               throw new RpcError(INVALID_PARAMS, `${sourceAgent.provider} cannot fork a chat from a turn`);
@@ -1413,7 +1413,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L9828-L9838
        */
       if (fromChat !== undefined && made?.seed !== undefined) ctx.persistForkedLocalTurns(uri, fromChat, chatUri, made.seed);
-      const agent = fromChat === undefined ? held.agent : chatAgent(held, fromChat);
+      const agent = fromChat === undefined ? held.agent : getProviderForChat(held, fromChat);
       const config = fromChat === undefined ? held.config : chatConfig(held, fromChat);
       // Read until something is said in it, written before its state opens.
       startsRead(ctx, uri, chatUri);
@@ -1500,7 +1500,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * by `movable`, which answers the client's move control with no room for
        * a reason.
        */
-      const serving = chatAgent(held, chatUri);
+      const serving = getProviderForChat(held, chatUri);
       if (serving !== held.agent) {
         throw refused('differentProvider', 'Chats can only move between sessions of the same agent.'
           + ' Turn on chats with their own agents to move it to a session of another agent.');
@@ -1647,7 +1647,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * told its request failed.
        */
       if (ctx.closedChats === 'delete' && held !== undefined && own !== undefined && own !== '') {
-        await ctx.deletedChat(own, chatAgent(held, chatUri), ctx.dirOf(found.uri));
+        await ctx.disposeProviderChat(own, getProviderForChat(held, chatUri), ctx.dirOf(found.uri));
       }
       log(`closed ${chatUri}`);
       dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });

@@ -274,7 +274,7 @@ export function createChangesets(ctx: HostContext): Changesets {
     let watching: ReturnType<typeof watchTurn> | undefined;
     try {
       ctx.bareSessions.add(uri);
-      ctx.openSession(uri, provider, {}, uriOf(dir));
+      ctx.createProviderSession(uri, provider, {}, uriOf(dir));
       const held = sessions.get(uri);
       const lead = held === undefined ? undefined : leadOf(held);
       if (lead === undefined) return undefined;

@@ -234,7 +234,7 @@ export function createAutomations(ctx: HostContext): Automations {
   const {
     options, sessions, byChat, senders, charged, origins, kept,
     dispatch, log, fire, statusOf, principalFor, admitted, placedIn,
-    resolveCreatedSessionConfig, openSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
+    resolveCreatedSessionConfig, createProviderSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
     turnInstructions,
   } = ctx;
 
@@ -846,7 +846,7 @@ export function createAutomations(ctx: HostContext): Automations {
     if (wanted.trusted === true && wanted.workingDirectory !== undefined) {
       kept.setTrustedFolder?.(idOf(uri), localPath(wanted.workingDirectory));
     }
-    openSession(
+    createProviderSession(
       uri,
       provider,
       config,
