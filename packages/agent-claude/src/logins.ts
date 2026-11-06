@@ -15,6 +15,7 @@
 
 import type { AgentView, Bag, CallOutcome, Connector, ConnectorAccount, ConnectorOwner, QuotaSnapshots, ViewHandle } from '@ahpd/sdk';
 import { sameOwnerOrHost } from '@ahpd/sdk';
+import { maskedEmail } from './session/limits.js';
 import { AGENT_VIEW, agentDataOf, LOGIN_VIEW, loginDataOf } from './views.js';
 
 /** One call of a login as its connector's health keeps it; the host stamps the time. */
@@ -28,6 +29,23 @@ export interface PlanNote {
   account?: ConnectorAccount;
   /** The account's email, masked: `so****@brbyte.com`. The full email never leaves the host. */
   email?: string;
+}
+
+/**
+ * The scopes a token that reads its profile has, as the CLI is told them.
+ *
+ * The CLI takes a `CLAUDE_CODE_OAUTH_TOKEN` as `user:inference` alone unless
+ * `CLAUDE_CODE_OAUTH_SCOPES` says more, and then reads no profile and no plan
+ * limits. The sign-in asks these, and a token whose profile answers has them.
+ */
+export const PROFILE_SCOPES = 'user:profile user:inference';
+
+/** What a login's profile says of its account: the email, and the plan type. */
+export interface LoginProfile {
+  /** The account's email, in full: masked before it reaches a view. */
+  email?: string;
+  /** The plan type, as the CLI names it: `max`, `pro`, `team` or `enterprise`. */
+  plan?: string;
 }
 
 /** The adapter whose connectors are Claude logins. */
@@ -161,6 +179,13 @@ export class OpenLogins {
   /** The last plan answer of each login, by connector id, with the token it was for, as its view and its agents show it. */
   private readonly saids = new Map<string, { token: string; said: PlanNote }>();
 
+  /**
+   * What each login's profile said, masked, by connector id, with the token it
+   * was for. A token whose profile answered reads it, so its sessions are told
+   * `PROFILE_SCOPES`.
+   */
+  private readonly profiles = new Map<string, { token: string; profile: LoginProfile }>();
+
   /** The view handle and the record of each open agent, by agent id. */
   private readonly agents = new Map<string, OpenAgent>();
 
@@ -199,10 +224,11 @@ export class OpenLogins {
     this.rests.clear(connector.id);
     this.open.set(connector.id, { owner: connector.owner, token });
     if (this.saids.get(connector.id)?.token !== token) this.saids.delete(connector.id);
+    if (this.profiles.get(connector.id)?.token !== token) this.profiles.delete(connector.id);
     if (view === undefined) this.views.delete(connector.id);
     else {
       this.views.set(connector.id, view);
-      view.showView({ ...LOGIN_VIEW, dataModel: loginDataOf(this.saids.get(connector.id)?.said) });
+      view.showView({ ...LOGIN_VIEW, dataModel: loginDataOf(this.noteOf(connector.id)) });
     }
     return () => {
       this.open.delete(connector.id);
@@ -239,9 +265,7 @@ export class OpenLogins {
       const id = typeof one === 'string' ? one : '';
       if (id === '' || this.usable(id, record.owner) === undefined) continue;
       if (out.some((login) => login.id === id)) continue;
-      // An answer for a token the login no longer holds is another account's.
-      const kept = this.saids.get(id);
-      const said = kept !== undefined && kept.token === this.open.get(id)?.token ? kept.said : undefined;
+      const said = this.noteOf(id);
       out.push({ id, ...(said === undefined ? {} : { said }) });
     }
     return out;
@@ -302,7 +326,56 @@ export class OpenLogins {
   noted(id: string, token: string, said: PlanNote): void {
     if (this.open.get(id)?.token !== token) return;
     this.saids.set(id, { token, said });
-    this.views.get(id)?.setViewData('/', loginDataOf(said));
+    this.shown(id);
+  }
+
+  /**
+   * Say what an open login's profile answered, which its connector shows
+   * before any session, and which tells its sessions the token reads it.
+   *
+   * The email is masked here, so the full one stays in this call. A profile of
+   * a token the login no longer holds says nothing.
+   */
+  profiled(id: string, token: string, profile: LoginProfile): void {
+    if (this.open.get(id)?.token !== token) return;
+    const email = maskedEmail(profile.email);
+    this.profiles.set(id, {
+      token,
+      profile: { ...(email === undefined ? {} : { email }), ...(profile.plan === undefined ? {} : { plan: profile.plan }) },
+    });
+    this.shown(id);
+  }
+
+  /** The scopes an open login's token has, when its profile answered: `PROFILE_SCOPES`. */
+  scopesOf(id: string): string | undefined {
+    const token = this.open.get(id)?.token;
+    return token !== undefined && this.profiles.get(id)?.token === token ? PROFILE_SCOPES : undefined;
+  }
+
+  /**
+   * What one login's account has said, for the token it holds now: a session's
+   * last answer, with the profile's email and plan type where it named none.
+   * An answer for a token the login no longer holds is another account's.
+   */
+  private noteOf(id: string): PlanNote | undefined {
+    const token = this.open.get(id)?.token;
+    const kept = this.saids.get(id);
+    const said = kept !== undefined && kept.token === token ? kept.said : undefined;
+    const held = this.profiles.get(id);
+    const profile = held !== undefined && held.token === token ? held.profile : undefined;
+    if (profile === undefined) return said;
+    const plan = said?.account?.subscriptionType ?? profile.plan;
+    const email = said?.email ?? profile.email;
+    return {
+      ...said,
+      ...(plan === undefined ? {} : { account: { ...said?.account, subscriptionType: plan } }),
+      ...(email === undefined ? {} : { email }),
+    };
+  }
+
+  /** Set one login's data on its view, and on each open agent that names it. */
+  private shown(id: string): void {
+    this.views.get(id)?.setViewData('/', loginDataOf(this.noteOf(id)));
     for (const [agentId, agent] of this.agents) {
       if (!this.agentLogins(agent.record).some((login) => login.id === id)) continue;
       this.showAgent(agentId);
@@ -318,10 +391,12 @@ export interface AgentLogins {
   owner: () => ConnectorOwner;
 }
 
-/** One login: its connector's id, and the token the CLI signs in with. */
+/** One login: its connector's id, the token the CLI signs in with, and its scopes when known. */
 export interface Login {
   id: string;
   token: string;
+  /** `PROFILE_SCOPES` when the token's profile answered; absent, the CLI takes `user:inference`. */
+  scopes?: string;
 }
 
 /**
@@ -339,7 +414,8 @@ export const loginsOf = (values: Bag, logins: AgentLogins | undefined): Login[] 
     const id = typeof one === 'string' ? one : '';
     const token = id === '' ? undefined : logins.open.usable(id, logins.owner());
     if (token === undefined || out.some((login) => login.id === id)) continue;
-    out.push({ id, token });
+    const scopes = logins.open.scopesOf(id);
+    out.push({ id, token, ...(scopes === undefined ? {} : { scopes }) });
   }
   return out;
 };

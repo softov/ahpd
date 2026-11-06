@@ -9,7 +9,7 @@
 
 import { probe, PROBE_TIMEOUT_MS } from '@ahpd/sdk';
 import type { Adapter, Connector } from '@ahpd/sdk';
-import { LOGIN_ADAPTER, type OpenLogins } from './logins.js';
+import { LOGIN_ADAPTER, PROFILE_SCOPES, type LoginProfile, type OpenLogins } from './logins.js';
 
 /*
  * Claude Code's own sign-in for a long-lived token, as the CLI 2.1.301 that
@@ -27,7 +27,7 @@ const AUTHORIZE_URL = 'https://claude.com/cai/oauth/authorize';
 const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 const CODE_PAGE = 'https://platform.claude.com/oauth/code/callback';
 const CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
-const SCOPE = 'user:profile user:inference';
+const SCOPE = PROFILE_SCOPES;
 const YEAR_SECONDS = 31_536_000;
 
 /** The API a login's token is for, and the version a call to it names. */
@@ -42,6 +42,59 @@ const ANTHROPIC_VERSION = '2023-06-01';
  * the check says so.
  */
 const CHECK_MODEL = 'claude-haiku-5-5';
+
+/**
+ * The plan type each organization type of a profile names, as the CLI maps it.
+ * A type not in the map names no plan.
+ */
+const PLANS: Readonly<Record<string, string>> = {
+  claude_max: 'max',
+  claude_pro: 'pro',
+  claude_team: 'team',
+  claude_enterprise: 'enterprise',
+};
+
+/** The value as one object, or an empty one. */
+const objectOf = (value: unknown): Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+
+/**
+ * What a token's profile says of its account, or nothing when the token may
+ * not read it or the call fails.
+ *
+ * The call is the CLI's own: `GET /api/oauth/profile` with the token as a
+ * bearer. The answer is `{ account: { uuid, email }, organization: { uuid,
+ * organization_type, ... } }`, as the CLI 2.1.301 checks it. A token without
+ * `user:profile` is refused, and that refusal is what tells a session the
+ * token reads no profile.
+ */
+export const profileOf = async (token: string, fetcher: typeof fetch): Promise<LoginProfile | undefined> => {
+  try {
+    const answer = await fetcher(`${API}/api/oauth/profile`, {
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'cache-control': 'no-cache' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    if (!answer.ok) {
+      await answer.body?.cancel().catch(() => undefined);
+      return undefined;
+    }
+    const held = objectOf(await answer.json() as unknown);
+    // The CLI refuses an answer with no account, and so does this.
+    const account = objectOf(held['account']);
+    if (Object.keys(account).length === 0) return undefined;
+    const email = account['email'];
+    const type = objectOf(held['organization'])['organization_type'];
+    const plan = typeof type === 'string' ? PLANS[type] : undefined;
+    return {
+      ...(typeof email === 'string' && email !== '' ? { email } : {}),
+      ...(plan === undefined ? {} : { plan }),
+    };
+  }
+  catch {
+    return undefined;
+  }
+};
 
 /** The beta the CLI names on a call it makes with an OAuth token: its `OAUTH_BETA_HEADER`. */
 const OAUTH_BETA = 'oauth-2025-04-20';
@@ -101,7 +154,18 @@ export function loginAdapter(logins: OpenLogins, options: LoginAdapterOptions = 
       description: 'The account this login signs in to, its plan, and what is left of each window.',
     }],
     icons: [{ src: './icon.svg' }],
-    open: (connector, view) => logins.opened(connector, view),
+    /*
+     * The profile is asked once at each open: its answer says whether the
+     * token reads it, and gives the email and the plan type before a session.
+     */
+    open: (connector, view) => {
+      const stop = logins.opened(connector, view);
+      const token = tokenOf(connector);
+      void profileOf(token, fetcher).then((profile) => {
+        if (profile !== undefined) logins.profiled(connector.id, token, profile);
+      });
+      return stop;
+    },
     /*
      * A count of one prompt's tokens with the token: a model request that
      * costs nothing, since a `setup-token` token makes model requests and

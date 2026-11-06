@@ -198,7 +198,9 @@ export function createQuery(ctx: SessionContext): Query {
    * the login the turn runs on, or a credential a client pushed.
    *
    * A login is `CLAUDE_CODE_OAUTH_TOKEN`, the variable a `claude setup-token`
-   * token is read from. The CLI takes a cloud provider's switch and both
+   * token is read from, and `CLAUDE_CODE_OAUTH_SCOPES` when its profile answered:
+   * without it the CLI takes the token as `user:inference` alone, and reads no
+   * account and no plan limits. The CLI takes a cloud provider's switch and both
    * Anthropic keys before it, so a CLI on a login gets none of them, from the
    * record's `env` or from the daemon's, and signs in with the login. A pushed
    * credential is laid over as it came; such a session runs on no login, which
@@ -210,6 +212,9 @@ export function createQuery(ctx: SessionContext): Query {
     if (login === undefined) return { ...base, ...ctx.options.env };
     const out: Bag = { ...base, CLAUDE_CODE_OAUTH_TOKEN: login.token };
     for (const name of BEFORE_TOKEN) delete out[name];
+    // The scopes are the login's own, never a value the base environment held.
+    delete out['CLAUDE_CODE_OAUTH_SCOPES'];
+    if (login.scopes !== undefined) out['CLAUDE_CODE_OAUTH_SCOPES'] = login.scopes;
     return out;
   };
 

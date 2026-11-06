@@ -41,7 +41,8 @@ const HEADERS = (init: RequestInit | undefined): Headers => new Headers(init?.he
 
 /** The adapter over a record of logins of its own, with a `fetch` that is faked. */
 const adapterOf = (fetcher?: typeof fetch, logins = new OpenLogins()): Adapter =>
-  loginAdapter(logins, fetcher === undefined ? {} : { fetch: fetcher });
+  // No case touches the network: one that hands no `fetch` gets one that fails, as an offline host's does.
+  loginAdapter(logins, { fetch: fetcher ?? fake(new Error('offline')).fetch });
 
 /** The pasted-code sign-in of an adapter, which is the one claude-login declares. */
 const signInOf = (adapter: Adapter): CodeSignIn => {
@@ -209,6 +210,34 @@ describe('an open login', () => {
     // The provider is not a plan, so an account that names no plan type shows none.
     logins.noted('first', 'sk-ant-oat01-first', { quotaSnapshots: {}, account: { apiProvider: 'bedrock' } });
     expect(shown).toEqual([{ windows: [] }]);
+  });
+
+  it('asks the profile at open, and shows its masked email and plan before any session', async () => {
+    const logins = new OpenLogins();
+    const shown: Record<string, unknown>[] = [];
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    const probe = fake(json({ account: { uuid: 'a-1', email: 'softov@brbyte.com' }, organization: { uuid: 'o-1', organization_type: 'claude_max' } }));
+    adapterOf(probe.fetch, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+    await new Promise((done) => { setTimeout(done, 0); });
+
+    expect(probe.calls.map((one) => one.url)).toEqual(['https://api.anthropic.com/api/oauth/profile']);
+    expect(HEADERS(probe.calls[0]?.init).get('authorization')).toBe('Bearer sk-ant-oat01-first');
+    expect(shown).toEqual([{ email: 'so****@brbyte.com', plan: 'max', windows: [] }]);
+    expect(logins.scopesOf('first')).toBe('user:profile user:inference');
+    // The full email stays in the call: nothing a view holds has it.
+    expect(JSON.stringify(shown)).not.toContain('softov@');
+  });
+
+  it('takes a refused or empty profile as a token that reads none, and shows nothing of it', async () => {
+    for (const answer of [json({ error: 'forbidden' }, 403), json({}), new Error('offline')]) {
+      const logins = new OpenLogins();
+      const shown: Record<string, unknown>[] = [];
+      const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+      adapterOf(fake(answer).fetch, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+      await new Promise((done) => { setTimeout(done, 0); });
+      expect(shown).toEqual([]);
+      expect(logins.scopesOf('first')).toBeUndefined();
+    }
   });
 
   it('sets the masked email beside the plan', () => {
