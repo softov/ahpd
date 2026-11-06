@@ -214,6 +214,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
     reject?: string;
     /** Every option the server offered, as the call offers them to a person. */
     offered: ConfirmationOption[];
+    /** The input-needed entry said for it, which the session's state lists while it stands. */
+    entry?: Bag;
     settle(answer: PermissionAnswer): void;
   }>;
   /**
@@ -233,6 +235,8 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
     fields: Set<string>;
     /** Where each question open to an answer of its own takes a typed one, and whether it offers `None of the above`. */
     typed: Map<string, TypedAnswer>;
+    /** The input-needed entry said for it, which the session's state lists while it stands. */
+    entry?: Bag;
     settle(answer: CreateElicitationResponse): void;
   }>;
 }

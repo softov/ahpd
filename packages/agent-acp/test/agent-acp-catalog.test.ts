@@ -2044,6 +2044,34 @@ it('holds a refused call cancelled as denied in the session\'s own snapshot', as
   expect(held?.toolCall).toMatchObject({ status: 'cancelled', reason: 'denied' });
 });
 
+/*
+ * A permission or a question the server waits on is in the session's state, so
+ * a client that connects while it waits can answer it, as the pi and cofold
+ * sessions list theirs.
+ */
+it('lists the permission and the question the server waits on in the session\'s state', async () => {
+  const { agent } = backend();
+  const { session, watch } = start(agent, 'waiting-listed');
+  const said = (kind: string): Bag | undefined => watch.actions
+    .filter((one) => one.action.type === 'session/inputNeededSet')
+    .map((one) => one.action.request as Bag)
+    .find((one) => one.kind === kind);
+
+  session.sendMessage('t1', 'ask me first');
+  await until(() => said('toolConfirmation') !== undefined);
+  expect(session.sessionState().inputNeeded).toEqual([said('toolConfirmation')]);
+  session.confirm?.('call-perm', true);
+  await until(() => watch.endings().length === 1);
+  expect(session.sessionState().inputNeeded).toBeUndefined();
+
+  session.sendMessage('t2', 'elicitform please');
+  await until(() => said('chatInput') !== undefined);
+  expect(session.sessionState().inputNeeded).toEqual([said('chatInput')]);
+  session.answer?.('call-elicit:elicitation', false, {}, 'decline');
+  await until(() => watch.endings().length === 2);
+  expect(session.sessionState().inputNeeded).toBeUndefined();
+});
+
 it('reports the folder a session is in as a URI a host reads back as that folder', () => {
   const { agent } = backend();
   /*

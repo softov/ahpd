@@ -653,10 +653,10 @@ export function createHandlers(ctx: SessionContext): Handlers {
       confirmationTitle: call.confirmationTitle,
       ...(offered.length > 0 ? { options: offered } : {}),
     });
-    emit('session', {
-      type: 'session/inputNeededSet',
-      request: { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: { ...call } },
-    });
+    const entry: Bag = { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: { ...call } };
+    const held = permissions.get(toolCallId);
+    if (held !== undefined) held.entry = entry;
+    emit('session', { type: 'session/inputNeededSet', request: entry });
     return answered;
   };
 
@@ -786,21 +786,20 @@ export function createHandlers(ctx: SessionContext): Handlers {
       ...(page === undefined ? {} : { url: page.url }),
       ...(questions.length === 0 ? {} : { questions }),
     };
+    // The chat input entry, which is the one kind of input request that names
+    // no turn: a question stands on the chat rather than in the turn that
+    // happened to be running when the server asked it.
+    const entry: Bag = { id, chat: start.chatUri, kind: 'chatInput', request: asking };
     const answered = new Promise<CreateElicitationResponse>((resolve) => {
       elicitations.set(id, {
         fields: new Set(questions.map((one) => String(one.id))),
         typed: typedOf(held.requestedSchema),
+        entry,
         settle: resolve,
       });
     });
     emit('chat', { type: 'chat/inputRequested', request: asking });
-    // The chat input entry, which is the one kind of input request that names
-    // no turn: a question stands on the chat rather than in the turn that
-    // happened to be running when the server asked it.
-    emit('session', {
-      type: 'session/inputNeededSet',
-      request: { id, chat: start.chatUri, kind: 'chatInput', request: asking },
-    });
+    emit('session', { type: 'session/inputNeededSet', request: entry });
     /*
      * The question the server takes back.
      *

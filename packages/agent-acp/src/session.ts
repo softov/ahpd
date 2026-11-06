@@ -242,34 +242,40 @@ export function acpSession(
     modifiedAt: () => modified,
     workingDirectories: () => [uriOf(cwd)],
 
-    sessionState: () => ({
-      // No `resource`: it is declared on `SessionSummary` and not on
-      // `SessionState`, and a client subscribed to this channel named it.
-      provider,
-      title: ctx.title,
-      status: ctx.status(),
-      lifecycle: 'ready',
-      defaultChat: start.chatUri,
-      chats: [{ resource: start.chatUri, title: ctx.title }],
-      workingDirectories: [uriOf(cwd)],
-      customizations: [...seeds, ...ctx.commands],
+    sessionState: () => {
       /*
-       * The calls this session has out with its clients, which is what a client
-       * connecting now draws the request from: the entries were raised as
-       * actions while nobody was watching, and a session whose state did not
-       * carry them would be one whose request only a client that was there
-       * already could answer.
+       * What this session waits on: the permissions and questions the server
+       * is blocked on and the calls it has out with its clients, which is what
+       * a client connecting now draws each request from. The entries were
+       * raised as actions while nobody was watching, and a session whose state
+       * did not carry them would be one whose request only a client that was
+       * there already could answer, as the pi and cofold sessions list theirs.
        *
        * Set only while there are any, so a key that is always present and
        * sometimes empty is not a thing a client has to guess about.
        */
-      ...(ctx.calls.entries().length > 0 ? { inputNeeded: ctx.calls.entries() } : {}),
-      // The schema *and* what is in force: a client reads
-      // `config.schema.properties` for the controls and `config.values` for
-      // where each one sits. The schema carries the server's modes once they
-      // are known, so `permissionMode` has an enum exactly when it can have one.
-      config: { schema: ctx.schemaOf(), values: { ...values } },
-    }),
+      const needed = [...ctx.permissions.values(), ...ctx.elicitations.values()]
+        .flatMap((one) => (one.entry === undefined ? [] : [one.entry]))
+        .concat(ctx.calls.entries());
+      return {
+        // No `resource`: it is declared on `SessionSummary` and not on
+        // `SessionState`, and a client subscribed to this channel named it.
+        provider,
+        title: ctx.title,
+        status: ctx.status(),
+        lifecycle: 'ready',
+        defaultChat: start.chatUri,
+        chats: [{ resource: start.chatUri, title: ctx.title }],
+        workingDirectories: [uriOf(cwd)],
+        customizations: [...seeds, ...ctx.commands],
+        ...(needed.length > 0 ? { inputNeeded: needed } : {}),
+        // The schema *and* what is in force: a client reads
+        // `config.schema.properties` for the controls and `config.values` for
+        // where each one sits. The schema carries the server's modes once they
+        // are known, so `permissionMode` has an enum exactly when it can have one.
+        config: { schema: ctx.schemaOf(), values: { ...values } },
+      };
+    },
 
     chatState: () => ({
       resource: start.chatUri,
