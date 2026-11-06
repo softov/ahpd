@@ -384,9 +384,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         duration: Math.max(0, Date.now() - since),
         part: { kind: 'error', error: { errorType, message: why } },
       });
+      const error = { errorType, message: why };
       ctx.raiseTurnEnd({
-        session: uri, chat: chat.chatUri, turn: turnId, status: ending, error: why, errorType,
-        ...(ending === 'rejected' ? { recoverable: false } : {}),
+        session: uri, channel: chat.chatUri, turnId,
+        reason: ending === 'rejected' ? { kind: 'rejected', error, recoverable: false } : { kind: 'error', error, resumable: false },
       });
     };
     let settled: Bag;

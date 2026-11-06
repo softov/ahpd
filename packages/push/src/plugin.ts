@@ -207,10 +207,11 @@ export const apply: Plugin['apply'] = (host, options) => {
   /**
    * A session's own chat finished a turn, so the phones of the clients in it
    * are told it is done. A worker's chat ends many turns inside one of the
-   * session's, and a turn somebody stopped was stopped by a person who knows.
+   * session's, a turn somebody stopped was stopped by a person who knows, and
+   * a `!` command is the person's own.
    */
   host.on('turn_end', async (event: TurnEndEvent) => {
-    if (event.status !== 'complete' || event.chat.startsWith(WORKER_CHAT)) return;
+    if (event.reason.kind !== 'success' || event.channel.startsWith(WORKER_CHAT)) return;
     await notify(event.session, FINISHED, 'turnComplete');
   });
 

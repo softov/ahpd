@@ -318,7 +318,7 @@ export function createTerminals(ctx: HostContext): Terminals {
       if (road !== undefined) return;
       ctx.recordLocalTurn(session.uri, chat, (ctx.stateOf(chat)?.turns ?? []) as Bag[], turnId);
       // The road raises its chat's turn end; a worker's chat, with none, has it raised here.
-      ctx.raiseTurnEnd({ session: session.uri, chat, turn: turnId, status: 'localCommand' });
+      ctx.raiseTurnEnd({ session: session.uri, channel: chat, turnId, reason: { kind: 'localCommand' } });
       ctx.forgetSender(turnId);
     });
   };

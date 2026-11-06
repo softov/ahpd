@@ -21,7 +21,7 @@ import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
-import type { TurnEndEvent } from '../types/events.js';
+import type { TurnEndEvent, TurnEndReason } from '../types/events.js';
 import type { Owner } from '../types/usage.js';
 import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
@@ -209,20 +209,29 @@ export function createSpawn(ctx: HostContext): Spawn {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1127-L1152
    */
   const raiseTurnEnd = (end: Omit<TurnEndEvent, 'type'>): void => {
-    const sender = end.sender ?? senderOf(end.turn) ?? kept.sender(idOf(end.session), end.turn);
+    const sender = end.sender ?? senderOf(end.turnId) ?? kept.sender(idOf(end.session), end.turnId);
     void fire({ ...end, type: 'turn_end', ...(sender === undefined ? {} : { sender }) });
   };
-  /** How an action that ends a turn on `chat` ended it, in `turn_end`'s words. */
-  const endingOf = (chat: string, action: Bag): Pick<TurnEndEvent, 'status' | 'error' | 'errorType'> => {
-    if (action.type === 'chat/turnCancelled') return { status: 'cancelled' };
+  /*
+   * Why an action that ends a turn on `chat` ended it, as VS Code's host reads
+   * its agent's ending actions: an error with the part's own error and its
+   * `resumable`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1127-L1152
+   */
+  const endingOf = (chat: string, action: Bag): TurnEndReason => {
+    if (action.type === 'chat/turnCancelled') return { kind: 'cancelled' };
     if (action.type === 'chat/turnComplete') {
-      return { status: ctx.commandTurns.has(commandTurnKey(chat, String(action.turnId ?? ''))) ? 'localCommand' : 'complete' };
+      return ctx.commandTurns.has(commandTurnKey(chat, String(action.turnId ?? ''))) ? { kind: 'localCommand' } : { kind: 'success' };
     }
-    const failure = (((action.part ?? {}) as Bag).error ?? {}) as Bag;
+    const part = (action.part ?? {}) as Bag;
+    const failure = (part.error ?? {}) as Bag;
     return {
-      status: 'error',
-      error: typeof failure.message === 'string' ? failure.message : 'The turn failed',
-      ...(typeof failure.errorType === 'string' ? { errorType: failure.errorType } : {}),
+      kind: 'error',
+      error: {
+        errorType: typeof failure.errorType === 'string' ? failure.errorType : 'turnFailed',
+        message: typeof failure.message === 'string' ? failure.message : 'The turn failed',
+      },
+      resumable: part.resumable === true,
     };
   };
 
@@ -418,7 +427,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const ends = (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')
       && String((ctx.stateOf(uri)?.activeTurn as Bag | undefined)?.id ?? '') === turn;
     dispatch(uri, action);
-    if (ends) raiseTurnEnd({ session: ref.session, chat: uri, turn, ...endingOf(uri, action) });
+    if (ends) raiseTurnEnd({ session: ref.session, channel: uri, turnId: turn, reason: endingOf(uri, action) });
     // Unread where the protocol's chat reducer makes it so, from the action a
     // client reduces, with nothing said of this host's own.
     if (clearsRead(String(action.type)) && sessions.has(ref.session)) {
@@ -1465,7 +1474,7 @@ export function createSpawn(ctx: HostContext): Spawn {
           });
         }
         else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
-          raiseTurnEnd({ session: uri, chat: chatUri, turn, ...endingOf(chatUri, action), ...(sender === undefined ? {} : { sender }) });
+          raiseTurnEnd({ session: uri, channel: chatUri, turnId: turn, reason: endingOf(chatUri, action), ...(sender === undefined ? {} : { sender }) });
         }
         /*
          * And the run this session was started for, when its default chat's

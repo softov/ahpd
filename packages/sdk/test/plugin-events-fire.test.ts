@@ -210,7 +210,8 @@ const directory = (): Users => ({
 
 /** A turn event as the two facts a turn carries: which one, and who sent it. */
 const asked = (event: HostEvent): { turn: string; sender?: string } => {
-  const { turn, sender } = event as { turn: string; sender?: string };
+  const { sender } = event as { sender?: string };
+  const turn = event.type === 'turn_end' ? event.turnId : (event as { turn: string }).turn;
   return sender === undefined ? { turn } : { turn, sender };
 };
 
@@ -343,7 +344,10 @@ it('fires message, turn_start and turn_end once each, and nothing per delta', as
   // it uses everywhere, and a session is held under its provider's name.
   expect(about[0]).toMatchObject({ session: 'ahp-session:/turn', chat: expect.stringMatching(/^ahp-chat:/), turn: 'turn-1', text: 'hello there' });
   expect(about[1]).toMatchObject({ turn: 'turn-1' });
-  expect(about[2]).toMatchObject({ turn: 'turn-1', status: 'complete' });
+  // VS Code's ITurnEnd: the session, the channel the turn ran on, its id and why it ended.
+  expect(about[2]).toEqual({
+    type: 'turn_end', session: 'ahp-session:/turn', channel: (about[0] as { chat: string }).chat, turnId: 'turn-1', reason: { kind: 'success' },
+  });
 });
 
 /*
@@ -385,7 +389,7 @@ it('fires turn_end cancelled when a running turn is stopped', async () => {
 
   const ended = of(seen, 'turn_end');
   expect(ended).toHaveLength(1);
-  expect(ended[0]).toMatchObject({ turn: 'turn-c', status: 'cancelled' });
+  expect(ended[0]).toMatchObject({ turnId: 'turn-c', reason: { kind: 'cancelled' } });
 });
 
 it('fires turn_end error, with the message and its type, when a turn ends in chat/error', async () => {
@@ -401,7 +405,9 @@ it('fires turn_end error, with the message and its type, when a turn ends in cha
 
   const ended = of(seen, 'turn_end');
   expect(ended).toHaveLength(1);
-  expect(ended[0]).toMatchObject({ turn: 'turn-f', status: 'error', error: 'the model refused', errorType: 'turnFailed' });
+  expect(ended[0]).toMatchObject({
+    turnId: 'turn-f', reason: { kind: 'error', error: { errorType: 'turnFailed', message: 'the model refused' }, resumable: false },
+  });
 });
 
 /*
@@ -434,11 +440,13 @@ it('fires turn_end rejected, with the refusal, for a start the host refuses befo
   expect(of(seen, 'turn_start')).toEqual([]);
   expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
     session: 'ahp-session:/filed',
-    turn: 'turn-r',
-    status: 'rejected',
-    errorType: 'archived',
-    error: 'This session is archived and read-only. Restore the session to continue the conversation.',
-    recoverable: true,
+    channel: chatUriFor('ahp-session:/filed'),
+    turnId: 'turn-r',
+    reason: {
+      kind: 'rejected',
+      error: { errorType: 'archived', message: 'This session is archived and read-only. Restore the session to continue the conversation.' },
+      recoverable: true,
+    },
   })]);
 });
 
@@ -452,7 +460,8 @@ it('fires turn_end rejected for a queued message the host will not run, naming t
   await wait(100);
 
   expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
-    status: 'rejected', errorType: 'rejected', error: 'This host is stopping', recoverable: true, queuedMessageId: 'q-1',
+    reason: { kind: 'rejected', error: { errorType: 'rejected', message: 'This host is stopping' }, recoverable: true },
+    queuedMessageId: 'q-1',
   })]);
 });
 
@@ -475,7 +484,10 @@ it('fires turn_end for a worker\'s turn, on the worker\'s chat', async () => {
   await wait(50);
 
   expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
-    session: 'ahp-session:/lead', chat: worker.uri, turn: worker.turnId, status: 'error', error: 'the worker gave up', errorType: 'subagentFailed',
+    session: 'ahp-session:/lead',
+    channel: worker.uri,
+    turnId: worker.turnId,
+    reason: { kind: 'error', error: { errorType: 'subagentFailed', message: 'the worker gave up' }, resumable: false },
   })]);
 });
 
@@ -489,9 +501,8 @@ it('fires turn_end error, with the failure, for a turn whose send fails before i
 
   expect(of(seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-s' }]);
   expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
-    turn: 'turn-s', status: 'error', errorType: 'sendFailed', error: 'the CLI is gone',
+    turnId: 'turn-s', reason: { kind: 'error', error: { errorType: 'sendFailed', message: 'the CLI is gone' }, resumable: false },
   })]);
-  expect(of(seen, 'turn_end')[0]).not.toHaveProperty('recoverable');
 });
 
 it('fires turn_end localCommand for a ! command the host ran as the turn', async () => {
@@ -502,7 +513,7 @@ it('fires turn_end localCommand for a ! command the host ran as the turn', async
   await send(client, chatUriFor('ahp-session:/bang'), 'turn-b', '!echo here');
   for (let i = 0; i < 200 && of(seen, 'turn_end').length === 0; i++) await wait(25);
 
-  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({ turn: 'turn-b', status: 'localCommand' })]);
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({ turnId: 'turn-b', reason: { kind: 'localCommand' } })]);
   expect(of(seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-b' }]);
 });
 

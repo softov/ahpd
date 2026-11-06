@@ -367,9 +367,10 @@ export function chatAction(
       duration: Math.max(0, Date.now() - since),
       part: { kind: 'error', error: { errorType, message } },
     });
+    const error = { errorType, message };
     ctx.raiseTurnEnd({
-      session: sessionFor(where), chat: where, turn, status: ending, error: message, errorType,
-      ...(ending === 'rejected' ? { recoverable: true } : {}),
+      session: sessionFor(where), channel: where, turnId: turn,
+      reason: ending === 'rejected' ? { kind: 'rejected', error, recoverable: true } : { kind: 'error', error, resumable: false },
     });
   };
   /*
@@ -1648,7 +1649,9 @@ export function chatAction(
           duration: resumed.duration + (Date.now() - resumed.since),
           part: { kind: 'error', error: { errorType: 'sendFailed', message }, resumable: true },
         });
-        ctx.raiseTurnEnd({ session: session.uri, chat: channel, turn: named, status: 'error', error: message, errorType: 'sendFailed' });
+        ctx.raiseTurnEnd({
+          session: session.uri, channel, turnId: named, reason: { kind: 'error', error: { errorType: 'sendFailed', message }, resumable: true },
+        });
       };
       try { void Promise.resolve(session.resumeTurn(named)).catch(rejected); }
       catch (error) { rejected(error); }

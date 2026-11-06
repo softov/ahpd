@@ -1623,7 +1623,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         duration: Math.max(0, Date.now() - since),
         part: { kind: 'error', error: { errorType, message } },
       });
-      ctx.raiseTurnEnd({ session: session.uri, chat: session.chatUri, turn: turnId, status: 'error', error: message, errorType });
+      ctx.raiseTurnEnd({
+        session: session.uri, channel: session.chatUri, turnId, reason: { kind: 'error', error: { errorType, message }, resumable: false },
+      });
     };
     /*
      * A model the chat's agent does not offer, decided here where VS Code's
@@ -1729,7 +1731,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           duration: Math.max(0, Date.now() - since),
           part: { kind: 'error', error: { errorType: 'sendFailed', message } },
         });
-        ctx.raiseTurnEnd({ session: session.uri, chat: chatUri, turn: turnId, status: 'error', error: message, errorType: 'sendFailed' });
+        ctx.raiseTurnEnd({
+          session: session.uri, channel: chatUri, turnId, reason: { kind: 'error', error: { errorType: 'sendFailed', message }, resumable: false },
+        });
       };
       return relaunch(session.uri).then(() => {
         const back = byChat.get(chatUri)?.chat;

@@ -698,7 +698,7 @@ describe('more than one chat in a session', () => {
     });
     await settle();
     expect(ends).toEqual([expect.objectContaining({
-      chat: second, status: 'rejected', errorType: 'rejected', error: 'This host is stopping', recoverable: false,
+      channel: second, reason: { kind: 'rejected', error: { errorType: 'rejected', message: 'This host is stopping' }, recoverable: false },
     })]);
   });
 

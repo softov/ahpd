@@ -756,7 +756,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   function ended(event: TurnEndEvent): void {
     const held = wake.main(event.session);
-    if (held === undefined || event.chat !== held.chat) return;
+    if (held === undefined || event.channel !== held.chat) return;
     /*
      * Whether this is still the main turn waiting when the read comes back: a
      * message that arrived meanwhile holds its own turn in the same chat, and
@@ -769,15 +769,15 @@ export const apply: Plugin['apply'] = (host, options) => {
     };
     const read = (async (): Promise<string> => {
       const { conn } = await connection();
-      const answered = await conn.request('subscribe', { channel: event.chat }) as { snapshot?: { state?: unknown } };
-      return textOf(answered.snapshot?.state, event.turn);
+      const answered = await conn.request('subscribe', { channel: event.channel }) as { snapshot?: { state?: unknown } };
+      return textOf(answered.snapshot?.state, event.turnId);
     })();
     read.then((text) => {
       if (!still()) return;
-      const failed = event.status === 'error' || event.status === 'rejected';
-      wake.finished(event.session, text, failed ? event.error ?? 'The turn failed' : undefined);
+      const failed = event.reason.kind === 'error' || event.reason.kind === 'rejected' ? event.reason.error.message : undefined;
+      wake.finished(event.session, text, failed);
     }, (error: unknown) => {
-      host.problem(`${name}: the end of turn ${event.turn} in ${event.chat} was not read: ${reason(error)}`);
+      host.problem(`${name}: the end of turn ${event.turnId} in ${event.channel} was not read: ${reason(error)}`);
       if (!still()) return;
       wake.finished(event.session, '');
     });
@@ -788,8 +788,8 @@ export const apply: Plugin['apply'] = (host, options) => {
    * took up, so its end says it, and the message waits no more.
    */
   host.on('turn_end', (event) => {
-    if (event.status === 'rejected' && event.queuedMessageId !== undefined) wake.taken(event.session, event.turn, event.queuedMessageId);
-    const note = opening.get(openingKey(event.session, event.turn));
+    if (event.reason.kind === 'rejected' && event.queuedMessageId !== undefined) wake.taken(event.session, event.turnId, event.queuedMessageId);
+    const note = opening.get(openingKey(event.session, event.turnId));
     if (note !== undefined) {
       note.ended = event;
       return;

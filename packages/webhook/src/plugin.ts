@@ -122,17 +122,7 @@ const textOf = (state: unknown, turn: string): string => {
 function botSeams(host: PluginHost, open: () => Promise<Opened>, timeout: number): BotSeams {
   const peer = async (): Promise<PluginPeer> => (await open()).conn;
   const ends = turnEnds();
-  /*
-   * A turn's end in the three words a reply says: a start the host refused is
-   * a turn that failed, with the refusal's message, and a `!` command the host
-   * ran is a turn that completed.
-   */
-  host.on('turn_end', (event: TurnEndEvent) => {
-    ends.heard({
-      ...event,
-      status: event.status === 'rejected' ? 'error' : event.status === 'localCommand' ? 'complete' : event.status,
-    });
-  });
+  host.on('turn_end', (event: TurnEndEvent) => { ends.heard(event); });
   const problem = (line: string): void => { host.problem(`${name}: ${line}`); };
   return {
     threads: host.records('webhook-threads'),

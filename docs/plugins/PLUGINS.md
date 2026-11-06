@@ -1275,7 +1275,7 @@ export function apply(host: PluginHost) {
     ctx.log(`session ${event.session} on ${event.provider}`);
   });
   host.on('turn_end', async (event) => {
-    await report(event.session, event.turn, event.status);
+    await report(event.session, event.turnId, event.reason.kind);
   });
 }
 ```
@@ -1293,7 +1293,7 @@ does not stop the next handler or the action it observed.
 | `session_end` | `session`, `reason` |
 | `session_opened` | `session`, `client` |
 | `turn_start` | `session`, `chat`, `turn`, `sender` (`user:<id>` or `root:<host>`) when the host knows who sent it, and `queuedMessageId` when the turn took up a queued message. Raised when the turn is handed to a session's chat: its backend, or the host's own `!` command. A worker's turn begins inside a call of its lead chat's turn, with none |
-| `turn_end` | `session`, `chat`, `turn`, `status`, `error` with the ending error's message and `errorType` with its type on `error` and `rejected`, `recoverable` on `rejected`, `queuedMessageId` where the queue drain that began the turn ended it itself, and `sender` as on `turn_start`. Raised on every chat, a worker's included, so a plugin waiting on one chat's turn reads `chat`. `status` is `complete`, `cancelled`, `error` for a turn that ended in `chat/error`, a send that failed included, `rejected` for a start the host refused before handing it over (no `turn_start` comes before it, and `recoverable` says whether whoever sent it still holds the message), or `localCommand` for a `!` command the host ran, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L19-L49) offers every turn's end to its chat contributions |
+| `turn_end` | The shape of [VS Code's `ITurnEnd`](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L19-L49), which its host offers its chat contributions after every turn ends: `session`, `channel` (the chat the turn ran on, the session's default chat, a peer chat or a worker's), `turnId` and `reason`, and beside them `sender` as on `turn_start` and `queuedMessageId` where the queue drain that began the turn ended it itself. `reason.kind` is `success`, `cancelled`, `error` for a turn that ended in `chat/error`, a send that failed included, with `error` (`errorType` and `message`) and `resumable`, `rejected` for a start the host refused before handing it over, with `error` and `recoverable`, whether whoever sent it still holds the message (no `turn_start` comes before it), or `localCommand` for a `!` command the host ran. Raised on every chat, a worker's included, so a plugin waiting on one chat's turn reads `channel` |
 | `message` | `session`, `chat`, `turn`, `text` |
 | `tool_call` | `session`, `chat`, `tool`, `ok`, and `error` when it threw |
 | `plan_update` | `session`, `chat`, `turn`, `harness`, `tool`, `title` when the session has one, `sender` when the host knows who sent the turn, and either `entries` (a whole list) or `change` (one change, with the harness's id where it names one) |

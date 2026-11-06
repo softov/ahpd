@@ -1242,7 +1242,7 @@ it('ends a main turn at once when its back turn ended while it opened', async ()
   // The end arrives while the start is still reading.
   const listeners = contribution.events as unknown as Record<string, { handle: (event: Bag) => unknown }[]>;
   void listeners['turn_start']?.[0]?.handle({ type: 'turn_start', session: backSession, chat: backChat, turn: 'b1' });
-  void listeners['turn_end']?.[0]?.handle({ type: 'turn_end', session: backSession, chat: backChat, turn: 'b1', status: 'complete' });
+  void listeners['turn_end']?.[0]?.handle({ type: 'turn_end', session: backSession, channel: backChat, turnId: 'b1', reason: { kind: 'success' } });
 
   const ended = await vi.waitFor(async () => {
     const state = await stateOf(client);
@@ -1297,11 +1297,11 @@ async function heldOnBack() {
  */
 it('leaves a main turn waiting when a worker\'s turn in its back session ends', async () => {
   const { client, backSession, backChat, turnEnded } = await heldOnBack();
-  void turnEnded({ chat: subagentChatUri(backSession, 'call-w'), turn: 'w1', status: 'complete' });
+  void turnEnded({ channel: subagentChatUri(backSession, 'call-w'), turnId: 'w1', reason: { kind: 'success' } });
   await new Promise((done) => { setTimeout(done, 200); });
   expect((await stateOf(client))['activeTurn']).toBeDefined();
 
-  void turnEnded({ chat: backChat, turn: 'b1', status: 'complete' });
+  void turnEnded({ channel: backChat, turnId: 'b1', reason: { kind: 'success' } });
   await vi.waitFor(async () => { expect((await stateOf(client))['activeTurn']).toBeUndefined(); });
 });
 
@@ -1313,7 +1313,7 @@ it('leaves a main turn waiting when a worker\'s turn in its back session ends', 
 it('fails a main turn whose back start the host refused, in the refusal\'s words', async () => {
   const { client, backChat, turnEnded } = await heldOnBack();
   void turnEnded({
-    chat: backChat, turn: 'r1', status: 'rejected', errorType: 'rejected', error: 'This host is stopping', recoverable: true,
+    channel: backChat, turnId: 'r1', reason: { kind: 'rejected', error: { errorType: 'rejected', message: 'This host is stopping' }, recoverable: true },
   });
   const failed = await vi.waitFor(async () => {
     const state = await stateOf(client);

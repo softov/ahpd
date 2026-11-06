@@ -25,7 +25,7 @@ export type {
   EventName, HostEvent, HostEventOf, HostHandlers, InputNeededRemovedEvent, InputNeededSetEvent, ListeningEvent,
   LogEvent, MessageEvent, ResourceWriteEvent, SessionEndEvent, SessionOpenedEvent, SessionStartEvent,
   StoppingEvent, TerminalOpenEvent, UsersChangedEvent,
-  ToolCallEvent, TurnEndEvent, TurnStartEvent, PlanUpdateEvent,
+  ToolCallEvent, TurnEndEvent, TurnEndReason, TurnStartEvent, PlanUpdateEvent,
 } from './events.js';
 export type { Page } from './paging.js';
 export type {
