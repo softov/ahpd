@@ -22,14 +22,20 @@ export type WindowData = {
   name: string;
   /** What is left of the window, as a percentage. Absent when the plan gave none. */
   left?: number;
+  /** What is used of the window, as a percentage: 100 less `left`, which the gauge draws. */
+  used?: number;
   /** When the window resets, as the ISO time the plan reported. */
   reset?: string;
+  /** The seconds from when this data was made to `reset`, and nought once it has passed. */
+  resetInSeconds?: number;
   /** Whether extra usage continues once the window is exhausted. Absent when the account has none. */
   extra?: boolean;
   /** The extra usage spent, in credits. */
   extraUsed?: number;
   /** The monthly cap on extra usage, in credits. */
   extraCap?: number;
+  /** The extra usage as a line a person reads, `Extra usage: 12.5 of 50 credits`. Absent with no extra usage. */
+  extraText?: string;
 };
 
 /** What a login's plan draws: the plan type, and one row for each window. */
@@ -42,7 +48,7 @@ export type PlanData = {
 
 /** What a login's connector draws: its plan, and the account's email, masked. */
 export type LoginData = PlanData & {
-  /** The account's email, masked: `so****@brbyte.com`. */
+  /** The account's email, masked: `som****@example.com`. */
   email?: string;
 };
 
@@ -75,77 +81,94 @@ const nameOf = (key: string): string => {
  * cell. Extra usage rides the window it is billed beside, as the plan's
  * snapshots carry it.
  */
-const windowsOf = (snapshots: QuotaSnapshots | undefined): WindowData[] =>
-  Object.entries(snapshots ?? {}).map(([key, snapshot]) => ({
-    name: nameOf(key),
-    ...(snapshot.remainingPercentage === undefined ? {} : { left: snapshot.remainingPercentage }),
-    ...(snapshot.resetDate === undefined ? {} : { reset: snapshot.resetDate }),
-    ...(snapshot.overageAllowedWithExhaustedQuota === undefined ? {} : { extra: snapshot.overageAllowedWithExhaustedQuota }),
-    ...(snapshot.overage === undefined ? {} : { extraUsed: snapshot.overage }),
-    ...(snapshot.overageEntitlement === undefined ? {} : { extraCap: snapshot.overageEntitlement }),
-  }));
+const windowsOf = (snapshots: QuotaSnapshots | undefined, now: number): WindowData[] =>
+  Object.entries(snapshots ?? {}).map(([key, snapshot]) => {
+    const left = snapshot.remainingPercentage;
+    const reset = snapshot.resetDate;
+    const resetAt = reset === undefined ? Number.NaN : Date.parse(reset);
+    const used = snapshot.overage;
+    const cap = snapshot.overageEntitlement;
+    return {
+      name: nameOf(key),
+      ...(left === undefined ? {} : { left, used: 100 - left }),
+      ...(reset === undefined ? {} : { reset }),
+      ...(Number.isNaN(resetAt) ? {} : { resetInSeconds: Math.max(0, Math.round((resetAt - now) / 1000)) }),
+      ...(snapshot.overageAllowedWithExhaustedQuota === undefined ? {} : { extra: snapshot.overageAllowedWithExhaustedQuota }),
+      ...(used === undefined ? {} : { extraUsed: used }),
+      ...(cap === undefined ? {} : { extraCap: cap }),
+      ...(used === undefined && cap === undefined
+        ? {}
+        : { extraText: `Extra usage: ${used === undefined ? '-' : String(used)}${cap === undefined ? '' : ` of ${String(cap)}`} credits` }),
+    };
+  });
 
 /** The plan and the windows of a login, from the last plan answer its account gave. */
-const planDataOf = (said: PlanNote | undefined): PlanData => {
+const planDataOf = (said: PlanNote | undefined, now: number): PlanData => {
   const plan = said?.account?.subscriptionType;
   return {
     ...(plan === undefined ? {} : { plan }),
-    windows: windowsOf(said?.quotaSnapshots),
+    windows: windowsOf(said?.quotaSnapshots, now),
   };
 };
 
-/** The data a login's connector sends: its plan and its masked email. */
-export const loginDataOf = (said: PlanNote | undefined): LoginData => ({
+/** The data a login's connector sends: its plan and its masked email, with each reset counted from `now`. */
+export const loginDataOf = (said: PlanNote | undefined, now: number = Date.now()): LoginData => ({
   ...(said?.email === undefined ? {} : { email: said.email }),
-  ...planDataOf(said),
+  ...planDataOf(said, now),
 });
 
 /** The data an agent sends, from the logins its record names and their last answers. */
-export const agentDataOf = (logins: readonly { id: string; said?: PlanNote }[]): AgentData => ({
-  logins: logins.map((login) => ({ name: login.id, ...planDataOf(login.said) })),
+export const agentDataOf = (logins: readonly { id: string; said?: PlanNote }[], now: number = Date.now()): AgentData => ({
+  logins: logins.map((login) => ({ name: login.id, ...planDataOf(login.said, now) })),
 });
 
 /**
- * The components one window row draws, under the ids `prefix` names them.
+ * The components one window draws, under the ids `prefix` names them.
  *
- * A row is the window's name, what is left of it, when it resets, and the
- * extra usage spent and its cap; each cell reads its own item of the list the
- * row is repeated over, and a cell whose value the window lacks draws nothing.
+ * A window is a gauge of what is used of it, labelled with its name, then the
+ * time it resets in the reader's own zone, then its extra usage. Each reads its
+ * own item of the list the window is repeated over, and a component whose value
+ * the window lacks draws nothing.
  */
-const windowRow = (prefix: string): PluginView['components'] => ({
-  [prefix]: {
-    id: prefix,
-    component: 'Row',
-    children: [`${prefix}Name`, `${prefix}Left`, `${prefix}Reset`, `${prefix}ExtraUsed`, `${prefix}ExtraCap`],
+const windowOf = (prefix: string): PluginView['components'] => ({
+  [prefix]: { id: prefix, component: 'Column', children: [`${prefix}Gauge`, `${prefix}Reset`, `${prefix}Extra`] },
+  [`${prefix}Gauge`]: {
+    id: `${prefix}Gauge`, component: 'Progress', label: { path: 'name' }, value: { path: 'used' }, max: 100, display: 'percent',
   },
-  [`${prefix}Name`]: { id: `${prefix}Name`, component: 'Text', text: { path: 'name' } },
-  [`${prefix}Left`]: { id: `${prefix}Left`, component: 'Text', text: { path: 'left' } },
-  [`${prefix}Reset`]: { id: `${prefix}Reset`, component: 'Text', text: { path: 'reset' } },
-  [`${prefix}ExtraUsed`]: { id: `${prefix}ExtraUsed`, component: 'Text', text: { path: 'extraUsed' } },
-  [`${prefix}ExtraCap`]: { id: `${prefix}ExtraCap`, component: 'Text', text: { path: 'extraCap' } },
+  [`${prefix}Reset`]: { id: `${prefix}Reset`, component: 'Row', children: [`${prefix}ResetLabel`, `${prefix}ResetAt`] },
+  [`${prefix}ResetLabel`]: { id: `${prefix}ResetLabel`, component: 'Text', text: 'Reset at:' },
+  [`${prefix}ResetAt`]: { id: `${prefix}ResetAt`, component: 'DateTime', value: { path: 'reset' }, format: 'auto' },
+  [`${prefix}Extra`]: { id: `${prefix}Extra`, component: 'Text', text: { path: 'extraText' } },
 });
 
-/** A `claude-login` connector's view, with no data: the masked email, the plan type, then one row for each window. */
+/** One labelled line: a label, then the value at `path`. */
+const lineOf = (id: string, label: string, path: string): PluginView['components'] => ({
+  [id]: { id, component: 'Row', children: [`${id}Label`, `${id}Value`] },
+  [`${id}Label`]: { id: `${id}Label`, component: 'Text', text: label },
+  [`${id}Value`]: { id: `${id}Value`, component: 'Text', text: { path } },
+});
+
+/** A `claude-login` connector's view, with no data: the masked email, the plan type, then a gauge for each window. */
 export const LOGIN_VIEW: PluginView = {
   root: 'login',
   components: {
     login: { id: 'login', component: 'Column', children: ['email', 'plan', 'windows'] },
-    email: { id: 'email', component: 'Text', text: { path: '/email' } },
-    plan: { id: 'plan', component: 'Text', text: { path: '/plan' } },
+    ...lineOf('email', 'Email', '/email'),
+    ...lineOf('plan', 'Plan', '/plan'),
     windows: { id: 'windows', component: 'List', children: { path: '/windows', componentId: 'window' } },
-    ...windowRow('window'),
+    ...windowOf('window'),
   },
 };
 
-/** A Claude agent's view, with no data: a list over the agent's logins, each with its windows. */
+/** A Claude agent's view, with no data: a list over the agent's logins, each with its plan and its gauges. */
 export const AGENT_VIEW: PluginView = {
   root: 'logins',
   components: {
     logins: { id: 'logins', component: 'List', children: { path: '/logins', componentId: 'login' } },
     login: { id: 'login', component: 'Column', children: ['loginName', 'loginPlan', 'loginWindows'] },
     loginName: { id: 'loginName', component: 'Text', text: { path: 'name' } },
-    loginPlan: { id: 'loginPlan', component: 'Text', text: { path: 'plan' } },
+    ...lineOf('loginPlan', 'Plan', 'plan'),
     loginWindows: { id: 'loginWindows', component: 'List', children: { path: 'windows', componentId: 'loginWindow' } },
-    ...windowRow('loginWindow'),
+    ...windowOf('loginWindow'),
   },
 };

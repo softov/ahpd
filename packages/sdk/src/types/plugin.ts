@@ -821,7 +821,8 @@ export type ViewSurface = 'main';
  *
  * `id` names the component, and it is also the key the component is held under
  * in `PluginView.components`. `component` is the kind: `Text`, `Link`,
- * `Button`, `Card`, `Row`, `Column`, `List`, `Divider` or `Icon`. The rest are
+ * `Button`, `Card`, `Row`, `Column`, `List`, `Divider`, `Icon`, `Progress` or
+ * `DateTime`, as `VIEW_KINDS` says. The rest are
  * the kind's own properties, and each is a literal value or `{ path }`, the
  * A2UI way to read the value at `path` from the view's `dataModel`.
  *

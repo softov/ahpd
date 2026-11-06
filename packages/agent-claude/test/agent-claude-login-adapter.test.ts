@@ -191,8 +191,8 @@ describe('an open login', () => {
     expect(shown).toEqual([{
       plan: 'max',
       windows: [
-        { name: 'Session', left: 60, reset: '2026-11-04T15:00:00.000Z' },
-        { name: 'Weekly: opus', left: 80 },
+        { name: 'Session', left: 60, used: 40, reset: '2026-11-04T15:00:00.000Z', resetInSeconds: 0 },
+        { name: 'Weekly: opus', left: 80, used: 20 },
       ],
     }]);
   });
@@ -216,16 +216,16 @@ describe('an open login', () => {
     const logins = new OpenLogins();
     const shown: Record<string, unknown>[] = [];
     const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
-    const probe = fake(json({ account: { uuid: 'a-1', email: 'softov@brbyte.com' }, organization: { uuid: 'o-1', organization_type: 'claude_max' } }));
+    const probe = fake(json({ account: { uuid: 'a-1', email: 'someone@example.com' }, organization: { uuid: 'o-1', organization_type: 'claude_max' } }));
     adapterOf(probe.fetch, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
     await new Promise((done) => { setTimeout(done, 0); });
 
     expect(probe.calls.map((one) => one.url)).toEqual(['https://api.anthropic.com/api/oauth/profile']);
     expect(HEADERS(probe.calls[0]?.init).get('authorization')).toBe('Bearer sk-ant-oat01-first');
-    expect(shown).toEqual([{ email: 'so****@brbyte.com', plan: 'max', windows: [] }]);
+    expect(shown).toEqual([{ email: 'som****@example.com', plan: 'max', windows: [] }]);
     expect(logins.scopesOf('first')).toBe('user:profile user:inference');
     // The full email stays in the call: nothing a view holds has it.
-    expect(JSON.stringify(shown)).not.toContain('softov@');
+    expect(JSON.stringify(shown)).not.toContain('someone@');
   });
 
   it('takes a refused or empty profile as a token that reads none, and shows nothing of it', async () => {
@@ -246,7 +246,7 @@ describe('an open login', () => {
     const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
     adapterOf(undefined, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
 
-    logins.noted('first', 'sk-ant-oat01-first', { account: { subscriptionType: 'max' }, email: 'so****@brbyte.com' });
-    expect(shown).toEqual([{ email: 'so****@brbyte.com', plan: 'max', windows: [] }]);
+    logins.noted('first', 'sk-ant-oat01-first', { account: { subscriptionType: 'max' }, email: 'som****@example.com' });
+    expect(shown).toEqual([{ email: 'som****@example.com', plan: 'max', windows: [] }]);
   });
 });

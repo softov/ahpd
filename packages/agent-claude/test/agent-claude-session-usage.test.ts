@@ -255,11 +255,11 @@ it('draws a login\'s plan with its limits and its masked email, and nothing else
   const windowsOf = (one: Bag | undefined): Bag[] => (one?.['windows'] as Bag[] | undefined) ?? [];
   await until(() => shown.some((one) => windowsOf(one).some((window) => window['name'] === 'Weekly')));
   expect(shown.at(-1)).toEqual({
-    email: 'so*****@example.com',
+    email: 'som****@example.com',
     plan: 'max',
     windows: [
-      { name: 'Session', left: 60, reset: '2026-11-04T12:00:00.000Z' },
-      { name: 'Weekly', left: 90, reset: '2026-11-10T12:00:00.000Z' },
+      { name: 'Session', left: 60, used: 40, reset: '2026-11-04T12:00:00.000Z', resetInSeconds: 0 },
+      { name: 'Weekly', left: 90, used: 10, reset: '2026-11-10T12:00:00.000Z', resetInSeconds: expect.any(Number) },
     ],
   });
   expect(JSON.stringify(shown)).not.toContain('someone@example.com');

@@ -82,7 +82,7 @@ it('shows a login\'s view at its open, and sets the plan on each answer', () => 
     account: { subscriptionType: 'max' },
   });
   expect(login.set).toHaveLength(1);
-  expect(login.data()).toEqual({ plan: 'max', windows: [{ name: 'Session', left: 50, reset: '2026-11-04T15:00:00.000Z' }] });
+  expect(login.data()).toEqual({ plan: 'max', windows: [{ name: 'Session', left: 50, used: 50, reset: '2026-11-04T15:00:00.000Z', resetInSeconds: 0 }] });
 
   // A note of a token the login no longer holds sets nothing.
   logins.noted('work', 'token-old', { account: { subscriptionType: 'pro' } });
@@ -125,7 +125,7 @@ it('sets a plan answer only on the agents that name the login', () => {
   });
   expect(mine.set.map(([path]) => path)).toEqual(['/logins']);
   expect(mine.data()).toEqual({
-    logins: [{ name: 'work', plan: 'max', windows: [{ name: 'Session', left: 50, reset: '2026-11-04T15:00:00.000Z' }] }],
+    logins: [{ name: 'work', plan: 'max', windows: [{ name: 'Session', left: 50, used: 50, reset: '2026-11-04T15:00:00.000Z', resetInSeconds: 0 }] }],
   });
   // The other agent names another login, so nothing it shows changed.
   expect(other.set).toEqual([]);
@@ -143,7 +143,10 @@ it('carries extra usage on the window it is billed beside', () => {
   });
   expect(login.data()).toEqual({
     plan: 'max',
-    windows: [{ name: 'Weekly', left: 10, reset: '2026-11-10T12:00:00.000Z', extra: true, extraUsed: 12.5, extraCap: 50 }],
+    windows: [{
+      name: 'Weekly', left: 10, used: 90, reset: '2026-11-10T12:00:00.000Z', resetInSeconds: expect.any(Number),
+      extra: true, extraUsed: 12.5, extraCap: 50, extraText: 'Extra usage: 12.5 of 50 credits',
+    }],
   });
 });
 
@@ -157,7 +160,7 @@ it('shows the last plan again when a login opens again with the same token, and 
   // A session sends a plan only when it changes, so the reopen is what shows it again.
   const again = viewOf();
   const closeAgain = logins.opened(connectorOf('work', 'token-work'), again.view);
-  expect(again.data()).toEqual({ plan: 'max', windows: [{ name: 'Session', left: 40 }] });
+  expect(again.data()).toEqual({ plan: 'max', windows: [{ name: 'Session', left: 40, used: 60 }] });
   closeAgain();
 
   // A new token may be another account's, so its view starts empty.
@@ -172,7 +175,7 @@ it('keeps the login\'s email off the agent\'s view', () => {
   const mine = viewOf();
   logins.agentOpened(recordOf('mine', ['work']), mine.view);
 
-  logins.noted('work', 'token-work', { account: { subscriptionType: 'max' }, email: 'so****@brbyte.com' });
+  logins.noted('work', 'token-work', { account: { subscriptionType: 'max' }, email: 'som****@example.com' });
   expect(mine.data()).toEqual({ logins: [{ name: 'work', plan: 'max', windows: [] }] });
 });
 
@@ -192,7 +195,7 @@ it('reads a record\'s logins as they are now, not as they were when it opened', 
   expect(mine.data()).toEqual({
     logins: [
       { name: 'work', windows: [] },
-      { name: 'home', windows: [{ name: 'Weekly', left: 20 }] },
+      { name: 'home', windows: [{ name: 'Weekly', left: 20, used: 80 }] },
     ],
   });
 });

@@ -251,6 +251,31 @@ describe('a view bound to its data model', () => {
     expect(() => { checkView(view, 'main', 'board', GO); }).not.toThrow();
   });
 
+  it('passes a Progress and a DateTime, bound or literal', () => {
+    const view: PluginView = {
+      root: 'col',
+      components: {
+        col: { id: 'col', component: 'Column', children: ['bar', 'fixed', 'at', 'when'] },
+        bar: { id: 'bar', component: 'Progress', label: { path: '/name' }, value: { path: '/used' }, max: 100, display: 'percent' },
+        fixed: { id: 'fixed', component: 'Progress', value: 3, max: 4 },
+        at: { id: 'at', component: 'DateTime', value: { path: '/reset' }, format: 'auto' },
+        when: { id: 'when', component: 'DateTime', value: '2026-11-12T08:00:00.000Z', format: 'datetime' },
+      },
+      dataModel: { name: 'Session', used: 23, reset: '2026-11-06T09:10:00.000Z' },
+    };
+    expect(() => { checkView(view, 'main', 'board', GO); }).not.toThrow();
+  });
+
+  it('refuses a Progress or a DateTime whose literal it cannot draw', () => {
+    const one = (component: Record<string, unknown>) => ({ root: 'a', components: { a: { id: 'a', ...component } } });
+    expect(refusedBound(one({ component: 'Progress', value: 'half' })))
+      .toBe('plugin board: showView needs the value of the Progress a to be a number or a { path } binding');
+    expect(refusedBound(one({ component: 'DateTime', value: 'tomorrow' })))
+      .toBe('plugin board: showView needs the value of the DateTime a to be an ISO time or a { path } binding');
+    expect(refusedBound(one({ component: 'DateTime', value: { path: '/reset' }, format: 'relative' })))
+      .toBe('plugin board: showView needs the format of the DateTime a to be one of time, date, datetime, auto');
+  });
+
   it('refuses an unknown componentId', () => {
     const view = {
       root: 'logins',

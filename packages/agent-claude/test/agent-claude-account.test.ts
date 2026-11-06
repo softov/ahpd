@@ -32,15 +32,15 @@ const offeredWith = async (account: unknown) => {
 it('reports the email and the plan of a signed-in subscription', async () => {
   const before = Date.now();
   const account = (await offeredWith({
-    email: 'softov@brbyte.com',
-    organization: 'brbyte',
+    email: 'someone@example.com',
+    organization: 'Example Org',
     subscriptionType: 'max',
     apiKeySource: 'none',
     apiProvider: 'firstParty',
   })).account;
   expect(account).toEqual({
     status: 'signedIn',
-    email: 'softov@brbyte.com',
+    email: 'someone@example.com',
     planType: 'max',
     observedAt: expect.any(Number),
   });
@@ -51,7 +51,7 @@ it('reports the email and the plan of a signed-in subscription', async () => {
 it('says unavailable for an API key, and names no email', async () => {
   // A key is not an account, so the state says so and the fields stay out of
   // it: an email answered beside the key is not published as one.
-  const account = (await offeredWith({ email: 'softov@brbyte.com', apiKeySource: 'ANTHROPIC_API_KEY' })).account;
+  const account = (await offeredWith({ email: 'someone@example.com', apiKeySource: 'ANTHROPIC_API_KEY' })).account;
   expect(account).toEqual({ status: 'unavailable', observedAt: expect.any(Number) });
 });
 

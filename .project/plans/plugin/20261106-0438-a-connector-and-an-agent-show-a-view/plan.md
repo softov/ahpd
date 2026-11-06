@@ -138,12 +138,16 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | A close, a removal or an unload removes a record's views, and an old handle writes nothing | (defaulted: as #248 built it) | 02 |
 | A record's view text is sent as the plugin wrote it; a plugin's view stays in the reader's locale | (defaulted: no adapter or engine row is translated today; see `deferred.md`) | - |
 | The plan fields of the connector health go; plan usage travels in the view | (defaulted: one copy of a fact) | 04 |
-| A `claude-login` connector's view shows the account's email masked, as `so****@brbyte.com`; an agent's view does not show it, and `ahpd.account` keeps no email | Softov, 2026-11-06, chose "Masked, e.g. so****@brbyte.com" | 04 |
+| A `claude-login` connector's view shows the account's email masked, as `som****@example.com`; an agent's view does not show it, and `ahpd.account` keeps no email | Softov, 2026-11-06, chose the masked email | 04 |
 | The plan line shows nothing when the account names no plan type; the provider is not a plan, and `firstParty` is not shown | Softov, 2026-11-06, chose "Nothing in the plan line" | 04 |
 | A login's view carries extra usage on the window it rides: whether it continues, the credits spent and the cap, as the old health held them | Softov, 2026-11-06, chose "Yes, add it to the view" | 04 |
 | A login that opens again with the same token shows its last plan at once; a new token starts empty | (defaulted: a session sends a plan only when it changes, so a reopen showed none) | 04 |
 | The `claude-login` sign-in asks `user:profile` beside `user:inference` | Softov, 2026-11-06, chose "Scope only" | 07 |
 | A session learns a token's scopes from a profile read at open, which also shows the email and the plan before a session | Softov, 2026-11-06, chose "Asked at open" | 07 |
+| A view may hold a `Progress` kind, and a Claude login draws a gauge for each window | Softov, 2026-11-06, chose "A progress kind" | 08 |
+| A `DateTime` kind shows an ISO time in the reader's zone, with `format` of `time`, `date`, `datetime` or `auto` | Softov, 2026-11-06, chose "One DateTime kind" | 08 |
+| A masked email keeps the first three letters of its name | Softov, 2026-11-06: "make it 3" | 08 |
+| Each window's data has `resetInSeconds`, counted when the data is made | Softov, 2026-11-06: "reset on dataModel windows need a resetInSeconds" | 08 |
 
 ## Proposed architecture
 
@@ -164,6 +168,7 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | [05 - devtunnel shows its account](task-05-devtunnel-shows-its-account.md) | implemented | 03 |
 | [06 - the docs say how a view is made](task-06-the-docs-say-how-a-view-is-made.md) | implemented | 03 |
 | [07 - a login asks the profile scope](task-07-a-login-asks-the-profile-scope.md) | implemented | 04 |
+| [08 - a view draws a gauge and a time](task-08-a-view-draws-a-gauge-and-a-time.md) | implemented | 07 |
 
 ## Risks and tradeoffs
 
@@ -173,7 +178,7 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 07 are `implemented` on 2026-11-06, on #249's branch.
+- **Done so far:** tasks 01 to 08 are `implemented` on 2026-11-06, on #249's branch.
 - **Next action:** Softov signs in again and opens the login, as task 07's *Validation* says.
 - **Open questions:** none.
 - **Watch out for:** a plugin, a connector and an agent must stay one structure. A change to one needs the same change to the others.

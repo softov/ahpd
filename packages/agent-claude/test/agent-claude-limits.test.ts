@@ -245,18 +245,18 @@ it('sends the email masked to the login, and keeps it out of the account a turn 
   const login: Login = { id: 'limits-email', token: 'token-email' };
   const fake = fakeOf(login, {});
   const ctx = ctxOf(fake);
-  noteAccount(ctx, { tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty', email: 'softov@brbyte.com', organization: 'BrByte' });
-  expect(fake.noted).toEqual([{ id: 'limits-email', account: { apiProvider: 'firstParty' }, email: 'so****@brbyte.com' }]);
+  noteAccount(ctx, { tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty', email: 'someone@example.com', organization: 'Example Org' });
+  expect(fake.noted).toEqual([{ id: 'limits-email', account: { apiProvider: 'firstParty' }, email: 'som****@example.com' }]);
   expect(accountOf(ctx)).toEqual({ apiProvider: 'firstParty' });
 });
 
 it('masks all of an email\'s name but its first letters, and answers nothing for what is not an email', () => {
-  expect(maskedEmail('softov@brbyte.com')).toBe('so****@brbyte.com');
-  expect(maskedEmail('lfs@softov.dev')).toBe('lf****@softov.dev');
-  expect(maskedEmail('ab@x.io')).toBe('a****@x.io');
-  expect(maskedEmail('a.very.long.name@x.io')).toBe('a.**************@x.io');
+  expect(maskedEmail('someone@example.com')).toBe('som****@example.com');
+  expect(maskedEmail('abc@example.org')).toBe('a****@example.org');
+  expect(maskedEmail('ab@example.io')).toBe('a****@example.io');
+  expect(maskedEmail('a.very.long.name@example.io')).toBe('a.v*************@example.io');
   expect(maskedEmail('not an email')).toBeUndefined();
-  expect(maskedEmail('@x.io')).toBeUndefined();
+  expect(maskedEmail('@example.io')).toBeUndefined();
   expect(maskedEmail(undefined)).toBeUndefined();
 });
 
@@ -323,8 +323,11 @@ it('carries a login\'s windows on a turn, and draws them on the login', async ()
   expect(sdk.usageAsked).toBe(1);
   // The two windows the account answered, beside the ones its plan names.
   expect((shown[0]?.['windows'] as Bag[]).slice(0, 2)).toEqual([
-    { name: 'Session', left: 60, reset: '2026-11-04T12:00:00.000Z' },
-    { name: 'Weekly', left: 90, reset: '2026-11-10T12:00:00.000Z', extra: true, extraUsed: 250, extraCap: 1000 },
+    { name: 'Session', left: 60, used: 40, reset: '2026-11-04T12:00:00.000Z', resetInSeconds: 0 },
+    {
+      name: 'Weekly', left: 90, used: 10, reset: '2026-11-10T12:00:00.000Z', resetInSeconds: expect.any(Number),
+      extra: true, extraUsed: 250, extraCap: 1000, extraText: 'Extra usage: 250 of 1000 credits',
+    },
   ]);
 
   session.sendMessage('one', 'how much is left');

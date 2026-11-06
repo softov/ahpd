@@ -119,8 +119,8 @@ export const noteAccount = (ctx: SessionContext, info: unknown): void => {
 };
 
 /**
- * An email with all of its name but the first two letters as `*`, and its
- * domain whole: `softov@brbyte.com` is `so****@brbyte.com`. A name of two
+ * An email with all of its name but the first three letters as `*`, and its
+ * domain whole: `someone@example.com` is `som****@example.com`. A name of three
  * letters or fewer keeps only its first. Anything that is not an email answers
  * nothing, so nothing of it is shown.
  */
@@ -129,7 +129,7 @@ export const maskedEmail = (value: unknown): string | undefined => {
   const at = value.lastIndexOf('@');
   if (at <= 0 || at === value.length - 1) return undefined;
   const name = value.slice(0, at);
-  const kept = name.length > 2 ? 2 : 1;
+  const kept = name.length > 3 ? 3 : 1;
   return `${name.slice(0, kept)}${'*'.repeat(Math.max(name.length - kept, 4))}${value.slice(at)}`;
 };
 

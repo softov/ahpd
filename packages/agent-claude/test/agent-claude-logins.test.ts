@@ -206,7 +206,7 @@ describe("a turn's login", () => {
 
   it("tells the CLI the profile scopes of a login whose profile answered, and none of one whose did not", async () => {
     const logins = twoLogins();
-    logins.profiled('work', 'token-work', { email: 'softov@brbyte.com', plan: 'max' });
+    logins.profiled('work', 'token-work', { email: 'someone@example.com', plan: 'max' });
     // A profile of a token the login no longer holds says nothing.
     logins.profiled('personal', 'token-old', { plan: 'pro' });
     process.env.CLAUDE_CODE_OAUTH_SCOPES = 'user:inference user:everything';

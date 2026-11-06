@@ -18,8 +18,21 @@ import { isWebUrl } from '../weburl.js';
 /** The surfaces a view may be shown on, for a plugin's page and for a record alike. */
 export const VIEW_SURFACES: readonly ViewSurface[] = ['main'];
 
-/** The component kinds a view may hold: a small set each client can draw. */
-export const VIEW_KINDS: readonly string[] = ['Text', 'Link', 'Button', 'Card', 'Row', 'Column', 'List', 'Divider', 'Icon'];
+/**
+ * The component kinds a view may hold: a small set each client can draw.
+ *
+ * `Progress` is a bar: `value` out of `max`, 100 when absent, with an optional
+ * `label` and `display`. `DateTime` is a time a client shows in its reader's
+ * own zone: `value` is an ISO time, and `format` is one of `DATE_TIME_FORMATS`.
+ */
+export const VIEW_KINDS: readonly string[] = ['Text', 'Link', 'Button', 'Card', 'Row', 'Column', 'List', 'Divider', 'Icon', 'Progress', 'DateTime'];
+
+/**
+ * How a `DateTime` shows its time: the hour, the day, both, or `auto`, which is
+ * the hour on the reader's today and the weekday, the day and the hour on any
+ * other day. `auto` is the default.
+ */
+export const DATE_TIME_FORMATS: readonly string[] = ['time', 'date', 'datetime', 'auto'];
 
 /** The members that say what a component is rather than what it draws. */
 const STRUCTURE = new Set(['id', 'component', 'child', 'children', 'action']);
@@ -181,10 +194,40 @@ export const checkView = (
       fail(`the Link ${key} to have href as an absolute http(s) URL with a host, or a { path } binding`);
     }
     if (component.action !== undefined) checkAction(component.action, key, methods, fail);
+    checkKindProps(component, key, fail);
   }
   const dataModel = (view as Record<string, unknown>).dataModel;
   if (dataModel !== undefined && asObject(dataModel) === undefined) fail('the dataModel to be a JSON object');
   walkTree((view as Record<string, unknown>).root as string, (id) => belowOf(components[id] as Record<string, unknown>), fail);
+};
+
+/**
+ * Refuse a literal prop a `Progress` or a `DateTime` cannot draw.
+ *
+ * A bound prop is read from the data, which the check cannot see, so only a
+ * literal is checked: a bar's `value` and `max` are numbers, and a time's
+ * `value` is an ISO time and its `format` one of `DATE_TIME_FORMATS`.
+ */
+const checkKindProps = (component: Record<string, unknown>, key: string, fail: Fail): void => {
+  const literal = (prop: string): unknown => (bindingOf(component[prop]) === undefined ? component[prop] : undefined);
+  if (component['component'] === 'Progress') {
+    for (const prop of ['value', 'max']) {
+      const held = literal(prop);
+      if (held !== undefined && (typeof held !== 'number' || !Number.isFinite(held))) {
+        fail(`the ${prop} of the Progress ${key} to be a number or a { path } binding`);
+      }
+    }
+  }
+  if (component['component'] === 'DateTime') {
+    const value = literal('value');
+    if (value !== undefined && (typeof value !== 'string' || Number.isNaN(Date.parse(value)))) {
+      fail(`the value of the DateTime ${key} to be an ISO time or a { path } binding`);
+    }
+    const format = literal('format');
+    if (format !== undefined && (typeof format !== 'string' || !DATE_TIME_FORMATS.includes(format))) {
+      fail(`the format of the DateTime ${key} to be one of ${DATE_TIME_FORMATS.join(', ')}`);
+    }
+  }
 };
 
 /**

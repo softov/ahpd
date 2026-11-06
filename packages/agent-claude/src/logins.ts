@@ -27,7 +27,7 @@ export interface PlanNote {
   quotaSnapshots?: QuotaSnapshots;
   /** The plan type and the provider. */
   account?: ConnectorAccount;
-  /** The account's email, masked: `so****@brbyte.com`. The full email never leaves the host. */
+  /** The account's email, masked: `som****@example.com`. The full email never leaves the host. */
   email?: string;
 }
 
