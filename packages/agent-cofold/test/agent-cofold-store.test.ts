@@ -9,7 +9,7 @@ import type { Message, MessageSource, ModelAdapter, ModelReply, ModelStreamEvent
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { uriOf } from '@ahpd/sdk';
-import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
+import type { Agent, Bag, BoundTool, Listed, MessageAttachment, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { startedNow } from '../../sdk/test/support/started.js';
 import { cofoldAgent, turnsOf } from '../src/index.js';
@@ -691,6 +691,87 @@ it('rebuilds a call whose run recorded a result but no start, with the duration 
   const call = parts.find((one) => one.kind === 'toolCall')?.toolCall as Bag;
   // The completion measured the call, so the duration needs no start.
   expect(call._meta).toEqual({ toolKind: 'terminal', 'vscode.toolCallDurationMs': expect.any(Number) });
+});
+
+/** A session's `messages.jsonl` in the file store, one message a line. */
+const messagesOf = (root: string): string => {
+  const found = readdirSync(root, { recursive: true }).map(String).filter((one) => one.endsWith('messages.jsonl'));
+  expect(found).toHaveLength(1);
+  return join(root, found[0] as string);
+};
+
+it('reads a shell call back with the command it runs as its input, as the live row has it', async () => {
+  const { root, sweep } = place();
+  const model = createFakeModel({
+    script: [{ toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'call-1' }] }, { text: 'done' }],
+    stream: true,
+  });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'one', sweep, { tools: [] });
+  one.session.sendMessage('t1', 'run it');
+  await until(() => ended(one.view));
+  one.session.close();
+
+  const parts = ((await agent.transcript?.('one'))?.[0]?.responseParts ?? []) as Bag[];
+  expect((parts.find((part) => part.kind === 'toolCall')?.toolCall as Bag).toolInput).toBe('echo hi');
+});
+
+/*
+ * A finished turn's call with no result ends as the reducer ends it at the
+ * turn's end; a result closes its call in whatever turn holds it, and one with
+ * no call is dropped, as VS Code's reader applies a completion by its call.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+ */
+it('ends a call with no result as the turn\'s end does, and closes a call by a result read in a later turn', async () => {
+  const { root, sweep } = place();
+  const model = createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'lookup', input: { query: 'x' }, callId: 'call-1' }] },
+      { text: 'found it' },
+      { toolCalls: [{ name: 'lookup', input: { query: 'y' }, callId: 'call-2' }] },
+      { text: 'found that' },
+    ],
+    stream: true,
+  });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'one', sweep, { tools: [lookup([])] });
+  one.session.sendMessage('t1', 'first');
+  await until(() => ended(one.view));
+  one.session.sendMessage('t2', 'second');
+  await until(() => one.view.types('chat').filter((type) => type === 'chat/turnComplete').length === 2);
+  one.session.close();
+
+  // The first call's result read after the second question, and the second
+  // call's result gone.
+  const file = messagesOf(root);
+  const lines = readFileSync(file, 'utf8').split('\n').filter((line) => line !== '');
+  const results = lines.filter((line) => (JSON.parse(line) as { role?: string }).role === 'tool');
+  const rest = lines.filter((line) => !results.includes(line));
+  const second = rest.findIndex((line) => line.includes('second'));
+  writeFileSync(file, [...rest.slice(0, second + 1), results[0], ...rest.slice(second + 1)].join('\n') + '\n');
+
+  const turns = (await agent.transcript?.('one')) ?? [];
+  const callIn = (turn: number, id: string): Bag | undefined =>
+    ((turns[turn]?.responseParts ?? []) as Bag[]).find((part) => (part.toolCall as Bag | undefined)?.toolCallId === id)?.toolCall as Bag | undefined;
+  expect(callIn(0, 'call-1')).toMatchObject({ status: 'completed', success: true });
+  expect(callIn(1, 'call-2')).toMatchObject({ status: 'cancelled', reason: 'skipped' });
+  expect(turns.flatMap((turn) => (turn.responseParts as Bag[]).filter((part) => part.kind === 'systemNotification'))).toEqual([]);
+});
+
+it('reads a person\'s message back as the words they typed, without what an attachment was read into', async () => {
+  const { root, sweep } = place();
+  mkdirSync(sweep, { recursive: true });
+  const notes = join(sweep, 'notes.txt');
+  writeFileSync(notes, 'one\ntwo\n');
+  const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'one', sweep);
+  const attached = { type: 'resource', uri: `file://${notes}`, label: 'notes.txt', contentType: 'text/plain' } as unknown as MessageAttachment;
+  one.session.sendMessage('t1', 'read this', undefined, [attached]);
+  await until(() => ended(one.view));
+  one.session.close();
+
+  expect((await agent.transcript?.('one'))?.[0]?.message.text).toBe('read this');
 });
 
 it('answers undefined for a session the store does not know and empty for one with nothing said', async () => {

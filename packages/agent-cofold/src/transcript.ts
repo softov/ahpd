@@ -21,9 +21,9 @@
 import { textOf } from '@cofold/agents';
 import type { Message, RunEvent, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
-import { bag, str, withToolCallDuration } from '@ahpd/sdk';
+import { bag, endedParts, str, withToolCallDuration } from '@ahpd/sdk';
 import { compactionNotification } from './mapping.js';
-import { describe, pastTenseOf, toolMetaOf } from './tools.js';
+import { describe, pastTenseOf, toolInputOf, toolMetaOf } from './tools.js';
 
 /**
  * The turns `Agent.transcript` answers with.
@@ -85,11 +85,13 @@ const usageOf = (usage: Usage): WireUsage => {
 const invocationOf = (call: ToolCallPart, waiting: Waiting | undefined, subject: string | undefined): string =>
   waiting?.prompt ?? describe(call.name, subject);
 
-/** The call's arguments as the wire carries them, which is the JSON the model produced. */
-const inputOf = (call: ToolCallPart): string | undefined => {
-  if (call.input === undefined) return undefined;
+/**
+ * The call's input as the live row wrote it: the command a shell call runs,
+ * and the JSON the model produced for every other call.
+ */
+const inputOf = (call: ToolCallPart, subject: string | undefined): string | undefined => {
   try {
-    return JSON.stringify(call.input);
+    return toolInputOf(call.name, call.input, subject);
   } catch {
     // An argument shape JSON cannot write is still a fact; the raw string the
     // model produced is the closest honest form of it.
@@ -100,10 +102,10 @@ const inputOf = (call: ToolCallPart): string | undefined => {
 /**
  * The part a tool call holds between its proposal and its result.
  *
- * A call with no result and no open request is left `running`: nothing in the
- * store says it finished, and inventing a completion would draw a spinner that
- * stopped for a reason nobody recorded. A call a paused run is waiting on is
- * `pending-confirmation`, which is what a client draws a question from.
+ * A call with no result and no open request is `running` while its turn is
+ * read, and the turn's end cancels it as the reducer does (`sealed`). A call a
+ * paused run is waiting on is `pending-confirmation`, which is what a client
+ * draws a question from.
  *
  * `durationMs` is how long the call ran, as cofold's completion measured it,
  * for a call that completed.
@@ -114,7 +116,7 @@ const callPartOf = (
   waiting: Waiting | undefined,
   subject: string | undefined,
 ): Bag => {
-  const written = inputOf(call);
+  const written = inputOf(call, subject);
   const meta: Bag = withToolCallDuration(toolMetaOf(call.name), durationMs) ?? {};
   const held: Bag = {
     toolCallId: call.callId,
@@ -289,7 +291,14 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
     });
   }
 
-  const turns: TranscriptTurn[] = [];
+  /** The turns read so far, sealed once the read is over, so a result read later still reaches its call. */
+  const closed: Building[] = [];
+  /**
+   * Every call read, by its id, so a result closes its call in whatever turn
+   * holds it, as VS Code's reader applies a completion to its call by id.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L570-L572
+   */
+  const everyCall = new Map<string, Bag>();
   let open: Building | undefined;
 
   /**
@@ -299,11 +308,17 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
    * parts, marked resumable, since a resume continues the run.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L499-L500
    */
+  /*
+   * A finished turn's calls end as the reducer ends them at the turn's end: a
+   * call with no result is cancelled as `skipped`, as the live settle holds
+   * it. A paused run's turn keeps the call it waits on, which a resume
+   * continues.
+   */
   const sealed = (turn: Building): TranscriptTurn => ({
     id: turn.id,
     startedAt: turn.startedAt,
     message: turn.message,
-    responseParts: interrupted.has(turn.id) ? [...turn.parts, { ...INTERRUPTED }] : turn.parts,
+    responseParts: interrupted.has(turn.id) ? [...turn.parts, { ...INTERRUPTED }] : endedParts(turn.parts),
     usage: turn.usage,
     state: turn.state,
     ...(turn.duration !== undefined ? { duration: turn.duration } : {}),
@@ -311,19 +326,26 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
 
   /** A finished turn into the read, and where it ended into `ends`, unless its run is paused. */
   const close = (turn: Building): void => {
-    turns.push(sealed(turn));
+    closed.push(turn);
     if (!interrupted.has(turn.id)) ends?.set(turn.id, turn.end);
   };
 
-  /** Open a turn for a message; the previous one is finished by definition. */
+  /**
+   * Open a turn for a message; the previous one is finished by definition.
+   *
+   * A person's message reads back as the words they typed, its first text part:
+   * the turn's message is built from that text and then the parts its
+   * attachments were read into, which the live turn said apart from it.
+   */
   const begin = (message: Message, origin: 'user' | 'agent'): void => {
     if (open !== undefined) close(open);
     const ran = model.get(message.id);
+    const typed = message.parts.find((part) => part.type === 'text');
     open = {
       id: message.id,
       startedAt: message.createdAt,
       message: {
-        text: textOf(message),
+        text: origin === 'user' ? (typed?.type === 'text' ? typed.text : '') : textOf(message),
         origin: { kind: origin },
         // The protocol's `Message.model`, which a client reopens the session on.
         ...(ran !== undefined ? { model: { id: ran } } : {}),
@@ -410,6 +432,7 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
           // Registered before the part is pushed, so the result that follows
           // finds the same object the snapshot holds.
           live.calls.set(part.callId, held);
+          everyCall.set(part.callId, held);
           live.parts.push({ kind: 'toolCall', toolCall: held });
         } else if (part.type === 'image') {
           /*
@@ -430,18 +453,15 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
     live.end = message.id;
     for (const part of message.parts) {
       if (part.type !== 'toolResult') continue;
-      const held = live.calls.get(part.callId);
-      if (held === undefined) {
-        // A result whose call is not in this turn, which a cancel can leave
-        // behind: kept as a notification rather than dropped silently.
-        live.parts.push({ kind: 'systemNotification', content: part.content });
-        continue;
-      }
+      // A result closes its call in whatever turn holds it, and one with no
+      // call is dropped, as VS Code's reader drops a completion it has no call for.
+      const held = everyCall.get(part.callId);
+      if (held === undefined) continue;
       // Worded as the live turn worded it.
       completeCall(held, part, pastTenseOf(String(held.toolName), String(held.displayName), subject.get(part.callId), !part.isError));
     }
   }
 
   if (open !== undefined) close(open);
-  return turns;
+  return closed.map(sealed);
 }
