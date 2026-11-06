@@ -9,7 +9,6 @@ import { filePolicies } from '../src/access/policies.js';
 import { grantProblem, isGrant, OPERATIONS } from '../src/access/users.js';
 import type { HostEvent } from '../src/types/events.js';
 import type { HostOptions } from '../src/types/host.js';
-import type { Offered } from '../src/types/probe.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Grant, Users } from '../src/types/users.js';
 
@@ -112,43 +111,29 @@ const agentsOf = async (client: ReturnType<ReturnType<typeof createHost>['accept
 const resourceIn = (agents: Agentish[], id: string) =>
   (agents[0]?.protectedResources ?? []).find((one) => one.resource === id);
 
-/** Every `root/agentsChanged` one connection was sent, in the order it arrived. */
-const changedIn = (wire: ReturnType<typeof peer>): Agentish[][] => wire.notes
-  .filter((one) => one.method === 'action' && (one.params as { action?: { type?: string } }).action?.type === 'root/agentsChanged')
-  .map((one) => (one.params as { action: { agents: Agentish[] } }).action.agents);
-
-const until = async (check: () => boolean, times = 400): Promise<void> => {
-  for (let i = 0; i < times; i++) {
-    if (check()) return;
-    await new Promise((done) => { setTimeout(done, 5); });
-  }
-  throw new Error(`still waiting after ${times} tries`);
-};
-
-/**
- * A backend whose probe answers when the test says so.
- *
- * The root list is announced once at startup and once when a probe answers,
- * so a case about the live and replayed copies has to hold the answer rather
- * than race it.
+/*
+ * VS Code's host-level sign-in is on no agent, a VS Code client asking for a
+ * token for every resource an agent lists; its requirement is in the data of
+ * the request it refuses.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2634-L2642
  */
-const slowAgent = (gate: Promise<void>, offered: Offered): HostOptions['agents'][number] => ({
-  ...echo({ path: DIR, pace: 0 }),
-  // A backend's own resource, which is not the one that may be rewritten.
-  protectedResources: [{ resource: BACKEND, required: true }],
-  probe: async () => { await gate; return offered; },
-});
-
-it('advertises nothing new with no directory, and the sign-in resource with one', async () => {
+it('lists the sign-in on no agent, and says its requirement in a refused command\'s data, as VS Code\'s host-level sign-in', async () => {
   const plain = served();
   const first = plain.host.accept(peer());
   await hello(first);
   expect(await advertised(first)).toEqual([BACKEND]);
 
-  const withUsers = served({ users: directory() });
+  const withUsers = served({ users: directory('good-token', REQUIRED) });
   const second = withUsers.host.accept(peer());
   await hello(second);
-  expect(await advertised(second)).toEqual([BACKEND, RECORD.resource]);
+  expect(await advertised(second)).toEqual([BACKEND]);
+  const refused = await second.handle({ method: 'listSessions', params: { channel: ROOT } })
+    .then(() => 'served', (error: { code: number; data?: unknown }) => error);
+  expect(refused).toMatchObject({ code: -32007, data: { resources: [REQUIRED] } });
+  // And signs in all the same, the refusal having named it.
+  await expect(second.handle({
+    method: 'authenticate', params: { channel: ROOT, resource: RECORD.resource, token: 'good-token' },
+  })).resolves.toEqual({});
 });
 
 it('attaches a person for a token the directory knows, and fires authenticated', async () => {
@@ -218,13 +203,11 @@ it('takes the credential away when it runs out, and says so', async () => {
     });
 
     await vi.advanceTimersByTimeAsync(30_000);
+    // The identifier alone, as VS Code's host says its own identity's expiry.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/missionControl/missionControlProtocolServer.ts#L217
     expect(wire.notes.filter((one) => one.method === 'auth/required')).toEqual([{
       method: 'auth/required',
-      params: {
-        channel: ROOT,
-        resource: expect.objectContaining({ resource: RECORD.resource }),
-        reason: 'expired',
-      },
+      params: { channel: ROOT, resource: { resource: RECORD.resource }, reason: 'expired' },
     }]);
   }
   finally {
@@ -252,11 +235,7 @@ it('ends the sign-in at the token\'s own exp, when that comes first', async () =
     await vi.advanceTimersByTimeAsync(1_000);
     expect(wire.notes.filter((one) => one.method === 'auth/required')).toEqual([{
       method: 'auth/required',
-      params: {
-        channel: ROOT,
-        resource: expect.objectContaining({ resource: RECORD.resource }),
-        reason: 'expired',
-      },
+      params: { channel: ROOT, resource: { resource: RECORD.resource }, reason: 'expired' },
     }]);
   }
   finally {
@@ -285,90 +264,7 @@ it('keeps the client\'s expiry when the token is good for longer than it asked',
   }
 });
 
-/*
- * What a connection is told about the host's sign-in.
- *
- * The field is `required`, and a client reads it to decide whether to prompt
- * before it sends anything. It is `true` for a connection whose commands would
- * be refused without a credential, and `false` for one the host already treats
- * as somebody - root, or carrying a principal - because a prompt for a token
- * nothing needs is a client that never creates a session.
- */
-
-it('tells a root connection the host\'s sign-in is not required, and a personal one that it is', async () => {
-  const { host } = served({ users: directory('good-token', REQUIRED) });
-  const root = host.accept(peer(), undefined, true);
-  const personal = host.accept(peer());
-  await hello(root, 'root');
-  await hello(personal, 'personal');
-
-  expect(resourceIn(await agentsOf(root), RECORD.resource)?.required).toBe(false);
-  expect(resourceIn(await agentsOf(personal), RECORD.resource)?.required).toBe(true);
-
-  // Signing in changes the next delivery, without a fresh agentsChanged: the
-  // client only reads this at session creation, and it already has a token.
-  await personal.handle({ method: 'authenticate', params: { channel: ROOT, resource: RECORD.resource, token: 'good-token' } });
-  expect(resourceIn(await agentsOf(personal), RECORD.resource)?.required).toBe(false);
-});
-
-it('sends each connection its own required in a live root/agentsChanged', async () => {
-  let release = (): void => {};
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  const { host } = served({
-    users: directory('good-token', REQUIRED),
-    // A model the probe answers with, so its answer moves the agent list.
-    agents: [slowAgent(gate, { models: [{ id: 'later', name: 'Later' }], commands: [], customizations: [] })],
-  });
-  const rootWire = peer();
-  const personalWire = peer();
-  const root = host.accept(rootWire, undefined, true);
-  const personal = host.accept(personalWire);
-  await hello(root, 'root');
-  await hello(personal, 'personal');
-
-  release();
-  await until(() => changedIn(rootWire).length > 0 && changedIn(personalWire).length > 0);
-  expect(resourceIn(changedIn(rootWire).at(-1) ?? [], RECORD.resource)?.required).toBe(false);
-  expect(resourceIn(changedIn(personalWire).at(-1) ?? [], RECORD.resource)?.required).toBe(true);
-});
-
-it('replays root/agentsChanged to a root connection with its own required', async () => {
-  let release = (): void => {};
-  const gate = new Promise<void>((resolve) => { release = resolve; });
-  const { host } = served({
-    users: directory('good-token', REQUIRED),
-    // A model the probe answers with, so its answer moves the agent list.
-    agents: [slowAgent(gate, { models: [{ id: 'later', name: 'Later' }], commands: [], customizations: [] })],
-  });
-  // An action before the client arrives, so the oldest one held is behind
-  // where its cursor will stand.
-  const earlier = host.accept(peer(), undefined, true);
-  await hello(earlier, 'earlier');
-  await earlier.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config: { autoArchiveMergedSessionsAfterDays: 1 } } } });
-  const firstWire = peer();
-  const first = host.accept(firstWire);
-  const said = await hello(first, 'first') as { snapshots: { fromSeq: number }[] };
-  expect(said.snapshots[0]?.fromSeq).toBeGreaterThan(0);
-  release();
-  await until(() => changedIn(firstWire).length > 0);
-
-  // Back from where its root snapshot was taken, so the held envelope is
-  // replayed rather than a fresh snapshot taken - and it is rewritten for the
-  // connection it reaches.
-  const backWire = peer();
-  const back = host.accept(backWire, undefined, true);
-  const answer = await back.handle({
-    method: 'reconnect',
-    params: { clientId: 'first', subscriptions: [ROOT], lastSeenServerSeq: said.snapshots[0]?.fromSeq ?? 0 },
-  }) as { type: string; actions: { action: { type: string; agents: Agentish[] } }[] };
-
-  expect(answer.type).toBe('replay');
-  const held = answer.actions.find((one) => one.action.type === 'root/agentsChanged');
-  expect(held).toBeDefined();
-  expect(resourceIn(held?.action.agents ?? [], RECORD.resource)?.required).toBe(false);
-});
-
-it('rewrites only the host\'s own sign-in resource', async () => {
+it('lists a backend\'s own resource and GitHub\'s as given, and the sign-in on no agent, for any connection', async () => {
   const github = {
     resource: { resource: 'https://github.test', required: true },
     forBranch: async () => [],
@@ -379,15 +275,16 @@ it('rewrites only the host\'s own sign-in resource', async () => {
     github,
     agents: [{ ...echo({ path: DIR, pace: 0 }), protectedResources: [{ resource: BACKEND, required: true }] }],
   });
-  const client = host.accept(peer(), undefined, true);
-  await hello(client, 'root');
+  const root = host.accept(peer(), undefined, true);
+  const personal = host.accept(peer());
+  await hello(root, 'root');
+  await hello(personal, 'personal');
 
-  const list = await agentsOf(client);
-  // A backend's own resource and GitHub's are listed as the host was given
-  // them; only the resource whose identifier is the directory's changes.
-  expect(resourceIn(list, BACKEND)?.required).toBe(true);
-  expect(resourceIn(list, 'https://github.test')?.required).toBe(true);
-  expect(resourceIn(list, RECORD.resource)?.required).toBe(false);
+  for (const list of [await agentsOf(root), await agentsOf(personal)]) {
+    expect(resourceIn(list, BACKEND)?.required).toBe(true);
+    expect(resourceIn(list, 'https://github.test')?.required).toBe(true);
+    expect(resourceIn(list, RECORD.resource)).toBeUndefined();
+  }
 });
 
 it('sends the same list to every connection when there is no directory', async () => {
@@ -400,7 +297,6 @@ it('sends the same list to every connection when there is no directory', async (
   const one = await agentsOf(root);
   const two = await agentsOf(personal);
   expect(one).toEqual(two);
-  // There is no sign-in resource to rewrite when there is nobody to sign in.
   expect(resourceIn(one, RECORD.resource)).toBeUndefined();
 });
 

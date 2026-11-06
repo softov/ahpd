@@ -45,64 +45,31 @@ export function createAuth(ctx: HostContext): Auth {
   const resourcesOf = (agent: Agent): Bag[] => [
     ...(agent.protectedResources ?? []) as Bag[],
     ...(options.github ? [options.github.resource] : []),
-    // The host's own sign-in resource, listed here for the same reason GitHub's
-    // is: it is the host's, whichever backend the session runs on.
-    ...(options.users ? [options.users.resource as Bag] : []),
   ];
   /**
-   * The agent list as one connection is told it.
+   * The agent list as one connection is told it: only the agents this caller
+   * may use, decided by `mayUseAgent` from the owner its record names. An
+   * agent left out is not one this connection is told exists, which is why
+   * this is a filter and not a field it cannot use.
    *
-   * Two rewrites, and both are about one connection. The host's sign-in
-   * resource is advertised on every backend with `required: true`, because
-   * every command but the handshake and `authenticate` is refused until
-   * somebody signs in - and a client reads that field to decide whether to
-   * prompt before it ever sends a command. For a connection this host already
-   * treats as somebody, root or carrying a principal, the prompt would be for
-   * a token nothing needs, and a client that insists on it never creates a
-   * session at all. So that one resource is rewritten for that one connection,
-   * and a backend's own resources and GitHub's are listed as they are.
-   *
-   * And the list holds only the agents this caller may use, decided by
-   * `mayUseAgent` from the owner its record names. An agent left out is not
-   * one this connection is told exists, which is why this is a filter and not
-   * a field it cannot use.
-   *
-   * A copy rather than an edit, because `options.users.resource` is the
-   * directory's own record and `descriptors()` is rebuilt from it for every
-   * delivery. Never called on the canonical list: the replay buffer and
-   * `descriptors()` keep `required: true`, and the rewrite happens where an
-   * envelope or a snapshot is handed to one connection.
+   * The host's own sign-in is on no agent: its requirement is said in the
+   * `-32007` refusal's data, as VS Code's host says its host-level sign-in,
+   * since a VS Code client asks for a token for each resource an agent lists.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2634-L2642
    */
   const agentsFor = (connection: Connection, list: unknown): unknown => {
     if (options.users === undefined) return list;
     if (!Array.isArray(list)) return list;
-    const id = loginId();
     const owners = options.agentOwners;
-    /*
-     * Who this connection already is: root, or somebody signed in. Only such a
-     * connection is told the host's sign-in is not required, because only it
-     * has a credential nothing else needs.
-     */
-    const somebody = connection.root === true || connection.principal !== undefined;
-    return list.flatMap((agent) => {
-      if (typeof agent !== 'object' || agent === null) return [agent];
-      const held = agent as Bag;
+    return list.filter((agent) => {
+      if (typeof agent !== 'object' || agent === null) return true;
       /*
        * Whose the agent is, read from its record. An id the records do not
        * hold is the daemon's own or a plugin's, and takes the host rule.
        */
-      const provider = held.provider;
+      const provider = (agent as Bag).provider;
       const owned = typeof provider === 'string' ? ownershipOf(owners?.(), provider) : hostAgent;
-      if (!mayUseAgent(connection.principal, owned, { root: connection.root === true, hasDirectory: true })) return [];
-      if (!somebody || !Array.isArray(held.protectedResources)) return [agent];
-      const mine = held.protectedResources.some((one) => typeof one === 'object' && one !== null && (one as Bag).resource === id);
-      if (!mine) return [agent];
-      return [{
-        ...held,
-        protectedResources: held.protectedResources.map((one) => (typeof one === 'object' && one !== null && (one as Bag).resource === id
-          ? { ...(one as Bag), required: false }
-          : one)),
-      }];
+      return mayUseAgent(connection.principal, owned, { root: connection.root === true, hasDirectory: true });
     });
   };
   /** A token any connected client lent for a resource, and has not run out. */
@@ -117,7 +84,7 @@ export function createAuth(ctx: HostContext): Auth {
     return undefined;
   };
 
-  /** Every resource identifier any agent here advertised. */
+  /** Every resource identifier any agent here advertised, and the host's own sign-in, which its refusals name. */
   const advertised = (): Set<string> => {
     const out = new Set<string>();
     for (const agent of agents.values()) {
@@ -126,15 +93,18 @@ export function createAuth(ctx: HostContext): Auth {
         if (typeof id === 'string') out.add(id);
       }
     }
+    if (options.users !== undefined) out.add(loginId());
     return out;
   };
   /**
    * The whole RFC 9728 record for a resource, as a backend advertised it.
    *
    * `auth/required` carries the record rather than the identifier, so a
-   * client knows where to go and sign in. One this host never advertised -
-   * an MCP server's, named on a session's own state - is answered with the
-   * identifier alone, which is the record's one required field.
+   * client knows where to go and sign in. One no agent lists - the host's own
+   * sign-in, or an MCP server's, named on a session's own state - is answered
+   * with the identifier alone, which is the record's one required field, as
+   * VS Code's host says its own identity's expiry.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/missionControl/missionControlProtocolServer.ts#L217
    */
   const metadataFor = (resource: string): Bag => {
     for (const agent of agents.values()) {
