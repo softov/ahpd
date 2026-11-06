@@ -790,11 +790,6 @@ export interface UpdateOptions {
   fetch: Fetch;
   /** One line of this command's own output. */
   say(line: string): void;
-  /**
-   * Whether each package is its own npm call, so one npm cannot install does
-   * not stop the others; absent is one call for everything that moves.
-   */
-  force?: boolean;
 }
 
 /** A package `plugin update` moved, with its version on disk before and after npm; absent is not installed. */
@@ -805,26 +800,29 @@ export interface Moved {
 }
 
 /**
- * Move the packages installed in the plugin root, in one npm call: every one
- * for `all`, or only those named, each of which must be installed there.
+ * Move the packages installed in the plugin root, each in an npm call of its
+ * own: every one for `all`, or only those named, each of which must be
+ * installed there.
  *
  * Each package goes to the newest of its own versions whose `@ahpd/sdk` range
  * admits this daemon, `@ahpd/*` or not, or to `latest` when the registry cannot
  * be asked; a name that carries a version or a tag is passed as written. A
  * package with no version that admits this daemon cannot be installed at all,
- * so it ends the update before npm runs, or with `force` is said and left where
- * it is while the others move. A package installed from outside the registry is
- * left as it is. `config.json` is not touched. Says what each npm call is
- * given before it runs, then each package whose installed version changed,
- * from the version before npm to the one npm left, or `Nothing to update.`
- * when none did, and answers those packages. The sdk is
- * installed beside them by every call, so a version of it that changed is
- * answered as moved too, though it is no plugin to name.
+ * so it is said and left where it is while the others move. A package
+ * installed from outside the registry is left as it is. `config.json` is not
+ * touched. Says what each npm call is given before it runs, then each package
+ * whose installed version changed, from the version before npm to the one npm
+ * left, or `Nothing to update.` when none did, and answers those packages. The
+ * sdk is installed beside them by every call, so a version of it that changed
+ * is answered as moved too, though it is no plugin to name.
  *
- * One call makes npm resolve the packages against each other, so one it cannot
- * install fails every move in it, and that failure names `--force`. With
- * `force` each package is a call of its own: every one is attempted, what
- * moved is said, and the ones npm refused together end the command.
+ * Every package is attempted and answered on its own, as VS Code's update of
+ * every extension asks each for its compatible version and answers each, one
+ * that has none or fails taking no other with it
+ * (src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts
+ * L2088-L2105, src/vs/platform/extensionManagement/common/abstractExtensionManagementService.ts
+ * L193-L215 at 6b68d3fe): what moved is said, and the ones npm refused end the
+ * command together, with npm's words for the first.
  */
 export async function updatePlugins(names: 'all' | readonly string[], options: UpdateOptions): Promise<Moved[]> {
   const root = pluginRoot(options.configDir);
@@ -854,9 +852,10 @@ export async function updatePlugins(names: 'all' | readonly string[], options: U
     return [];
   }
   /*
-   * What each package moving is asked of npm, all of them at once. A package
-   * whose registry holds no version this daemon can load has nothing to be
-   * installed at, and is answered as the same refusal an install gives.
+   * What each package moving is asked of npm, the registry asked about all of
+   * them at once. A package whose registry holds no version this daemon can
+   * load has nothing to be installed at, and is said in the same words an
+   * install refuses it with.
    */
   const planned = await Promise.all(moving.map(async (name): Promise<{ name: string; target: string } | { name: string; why: string }> => {
     if (name !== packageOf(name)) return { name, target: name };
@@ -868,36 +867,25 @@ export async function updatePlugins(names: 'all' | readonly string[], options: U
       return { name, why: error instanceof Error ? error.message : String(error) };
     }
   }));
-  const unfit = planned.filter((one): one is { name: string; why: string } => 'why' in one);
-  const first = unfit[0];
-  if (first !== undefined && options.force !== true) throw new Error(first.why);
-  for (const one of unfit) options.say(one.why);
+  for (const one of planned) {
+    if ('why' in one) options.say(one.why);
+  }
   const kept = planned.filter((one): one is { name: string; target: string } => 'target' in one);
   if (kept.length === 0) {
     options.say('Nothing to update.');
     return [];
   }
-  const targets = kept.map((one) => one.target);
   const from = kept.map((one) => installedVersion(root, packageOf(one.name)));
   const sdkFrom = installedVersion(root, SDK);
   const refused: string[] = [];
   let reason: Ran | undefined;
-  if (options.force === true) {
-    for (const [at, one] of kept.entries()) {
-      options.say(`Updating ${targets[at] as string} with npm.`);
-      const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), targets[at] as string]);
-      if (done.code === 0) continue;
-      // Which package npm refused, and npm's own words for the first of them.
-      reason ??= done;
-      refused.push(packageOf(one.name));
-    }
-  }
-  else {
-    options.say(`Updating ${targets.join(', ')} with npm.`);
-    const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), ...targets]);
-    if (done.code !== 0) {
-      throw npmFailed(`npm could not update ${kept.map((one) => packageOf(one.name)).join(', ')}; rerun with --force to update only the plugins that can be updated`, done);
-    }
+  for (const one of kept) {
+    options.say(`Updating ${one.target} with npm.`);
+    const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), one.target]);
+    if (done.code === 0) continue;
+    // Which package npm refused, and npm's own words for the first of them.
+    reason ??= done;
+    refused.push(packageOf(one.name));
   }
   const moved: Moved[] = [];
   kept.forEach((one, at) => {

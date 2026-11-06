@@ -274,13 +274,13 @@ describe('plugin', () => {
   }, 30000);
 
   // The stand-in npm is a shell script, which Windows does not run.
-  it.skipIf(!posix)('update --force installs each package in its own npm call', async () => {
+  it.skipIf(!posix)('update all installs each package in its own npm call', async () => {
     const dir = join(home, 'ahpd');
     writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { 'some-plugin': '^1.0.0', 'another-plugin': '^1.0.0' } }));
     const log = join(home, 'npm.log');
     // Nothing lands, so no version moved; what the case pins is the calls the
-    // flag makes, one package each rather than the one `update all` makes.
-    const said = await cli(['plugin', 'update', 'all', '--force'], { env: { ...fakeNpm(0), FAKE_NPM_LOG: log } });
+    // update makes, one package each, as VS Code updates each extension.
+    const said = await cli(['plugin', 'update', 'all'], { env: { ...fakeNpm(0), FAKE_NPM_LOG: log } });
     expect(said.code).toBe(0);
     const starts = readFileSync(log, 'utf8').split('\n').filter((line) => line.startsWith('start install'));
     expect(starts).toEqual([

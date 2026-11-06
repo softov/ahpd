@@ -286,14 +286,13 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
   const update = registry.action({
     id: 'plugin.update',
     summary: 'Move the plugins named, or every installed one with all, to the version that fits this daemon',
-    description: 'Every registry package in the configuration directory to the newest of its own versions whose @ahpd/sdk range admits this daemon, in one npm call, or one call per package with --force; a package with no such version stops the update before npm runs, or with --force is named and left as it is; a package from a path, link, git or URL is left as installed.',
+    description: 'Every registry package in the configuration directory to the newest of its own versions whose @ahpd/sdk range admits this daemon, each in an npm call of its own, so one npm cannot install stops no other; a package with no such version is named and left as it is; a package from a path, link, git or URL is left as installed.',
     surfaces: { cli: { pattern: ['plugin', 'update', ':name...'] }, http: { method: 'POST', path: '/plugin/update' } },
     // What moves is the installed package the name points at, not a row.
     effect: 'change',
     resource: { kind: 'plugin', key: 'name' },
     input: {
       name: { type: 'array', items: { type: 'string' }, description: 'all, or a package name. One or more.' },
-      force: { type: 'boolean', description: 'Install each package on its own, so one npm cannot install does not stop the others.' },
     },
     scopes: ['config:write'],
     // An update runs code in this process as an install does, so over HTTP it
@@ -313,7 +312,7 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       let moved: Moved[] = [];
       try {
         moved = await updatePlugins(asked.length === 1 && asked[0] === 'all' ? 'all' : asked, {
-          configDir: configDir(), version: version(), run: runProgram, fetch, say, force: context.flag('force'),
+          configDir: configDir(), version: version(), run: runProgram, fetch, say,
         });
       }
       catch (error) {
