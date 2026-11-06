@@ -137,6 +137,11 @@ const RECORD_FIELDS: Record<string, Record<string, unknown>> = {
     enum: ['refreshed', 'preset'],
     description: "Where this agent's modes come from: refreshed lists the row's until a session hears its server's, then the modes the last session's server named; preset keeps the row's as declared, as VS Code's agents do. Defaults to refreshed.",
   },
+  unreportedClientCalls: {
+    type: 'string',
+    enum: ['row', 'error'],
+    description: "What a request for a client's tool that no reported call matched gets: row holds it in a row of its own and asks its owner, error answers it with an error result as VS Code's client tool server does. Defaults to row.",
+  },
   // Read by `machineOf` as well as described here, so a wrongly written block
   // is refused with a line naming the field and never a value. A variable's
   // value is read where the machine is made, so a `$secret` reaches this
@@ -371,6 +376,8 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
   const cutTurns = config['cutTurns'] === 'error' || config['cutTurns'] === 'complete' ? config['cutTurns'] : undefined;
   const stderrTail = config['stderrTail'] === 'sentence' || config['stderrTail'] === 'log' ? config['stderrTail'] : undefined;
   const modesFrom = config['modes'] === 'refreshed' || config['modes'] === 'preset' ? config['modes'] : undefined;
+  const unreported = config['unreportedClientCalls'];
+  const unreportedClientCalls = unreported === 'row' || unreported === 'error' ? unreported : undefined;
   const machine = machineUnder(row?.machine, config['machine'] === undefined ? undefined : machineOf(config['machine'], record.id));
   // A machine also has the block's variables, so a row's variable written
   // there signs a session in that machine in. Only the name is looked for.
@@ -395,6 +402,7 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
     ...(cutTurns === undefined ? {} : { cutTurns }),
     ...(stderrTail === undefined ? {} : { stderrTail }),
     ...(modesFrom === undefined ? {} : { modesFrom }),
+    ...(unreportedClientCalls === undefined ? {} : { unreportedClientCalls }),
     // The row's known modes, copied so each agent holds a list of its own.
     ...(row?.modes === undefined ? {} : { modes: row.modes.map((one) => ({ ...one })) }),
     ...(machine === undefined ? {} : { machine }),

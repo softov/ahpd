@@ -203,7 +203,8 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
    * Two or more calls and nothing to choose between them is answered with an
    * error result, as VS Code's client tool server answers a request it cannot
    * name a call for: a result never lands on another call, and the agent is
-   * told to make the call again.
+   * told to make the call again. A record whose `unreportedClientCalls` is
+   * `error` answers a request no reported call matched the same way.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L46-L55
    */
   const callFor = (owner: string, name: string, input: Bag, meta: Bag | undefined): string => {
@@ -216,7 +217,10 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
       .filter((entry) => String(entry.clientId) === owner)
       .map((entry) => bag(entry.toolCall))
       .filter((call) => String(call.toolName) === name);
-    if (open.length === 0) return openOwn(owner, name, JSON.stringify(input));
+    if (open.length === 0) {
+      if (ctx.options.unreportedClientCalls !== 'error') return openOwn(owner, name, JSON.stringify(input));
+      throw new Error(`Client tool "${name}" could not run: the agent reported no call it is for, and the request names none (expected at _meta["${TOOL_USE_ID}"]).`);
+    }
     // An agent that makes one call at a time, which is most of them, has
     // nothing else this request could be for.
     if (open.length === 1) return String(open[0]?.toolCallId);

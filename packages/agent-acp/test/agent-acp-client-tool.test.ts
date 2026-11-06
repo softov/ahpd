@@ -204,7 +204,11 @@ const serve = async (servers: ToolsServers): Promise<{
 };
 
 /** A connected client with one ACP session, watching both its channels. */
-async function talking(given: { clientToolTimeoutMs?: number; toolsChanged?: 'notify' | 'list' } = {}) {
+async function talking(given: {
+  clientToolTimeoutMs?: number;
+  toolsChanged?: 'notify' | 'list';
+  unreportedClientCalls?: 'row' | 'error';
+} = {}) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-acp-client-tool-'));
   /*
    * The file the fixture reads between the reports and the requests.
@@ -251,6 +255,7 @@ async function talking(given: { clientToolTimeoutMs?: number; toolsChanged?: 'no
       // says it asks about trust on its own and the host does not refuse it.
       honoursTrust: true,
       ...(given.toolsChanged === undefined ? {} : { toolsChanged: given.toolsChanged }),
+      ...(given.unreportedClientCalls === undefined ? {} : { unreportedClientCalls: given.unreportedClientCalls }),
     })],
     resources: fileResources(),
     toolsServers: servers,
@@ -682,6 +687,29 @@ it('opens a row of its own for a request the agent never reported', async () => 
   expect(results(p, chatUri)).toEqual([
     { isError: false, content: [{ type: 'text', text: 'opened /a.txt' }] },
   ]);
+});
+
+/*
+ * A record whose `unreportedClientCalls` is `error` answers such a request
+ * with an error result, as VS Code's client tool server answers a request it
+ * cannot name a call for, and asks no client to run anything.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L46-L55
+ */
+it('answers a request no reported call is for with an error result when the record says unreportedClientCalls error', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking({ unreportedClientCalls: 'error' });
+  await joining(host, uri, chatUri, 'a');
+  begin(client, chatUri, 't1', 'client tool mreq=a__openFile={"path":"/a.txt"}=-');
+  await until(() => ended(p, chatUri));
+
+  expect(results(p, chatUri)).toEqual([{
+    isError: true,
+    content: [{
+      type: 'text',
+      text: 'Client tool "openFile" could not run: the agent reported no call it is for, and the request names none (expected at _meta["claudecode/toolUseId"]).',
+    }],
+  }]);
+  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart')).toBe(false);
+  expect(asked(p, uri)).toEqual([]);
 });
 
 it("answers with the client's blocks as the MCP content an agent reads", async () => {
