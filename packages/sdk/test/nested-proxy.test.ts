@@ -1716,16 +1716,18 @@ it('a nested session whose folders change starts the host inside again, and disp
   port.done();
 });
 
-it('a truncate of a nested session is refused, and disposes nothing inside the machine', async () => {
+/*
+ * The proxy answers no `endPoint`, so this host cannot name the point in the
+ * machine's own conversation to cut back to: the truncation is said and the
+ * backend keeps its history, as the reference host's provider with no
+ * truncation of its own keeps it. What it must not do on the way is close the
+ * session as a removal: the turn it read back is the machine's, and a dispose
+ * there takes the whole conversation with it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1990
+ */
+it('a truncate of a nested session is said, its backend keeping its history, and disposes nothing inside the machine', async () => {
   const port = scriptedPort([PROVIDER], { turns: true });
   const dir = join(port.dir, 'sessions');
-  /*
-   * The proxy answers no `endPoint`, so this host cannot name the point in the
-   * machine's own conversation to cut back to, and the action is refused. What
-   * it must not do on the way to that answer is close the session as a removal:
-   * the turn it read back is the machine's, and a dispose there takes the whole
-   * conversation with it.
-   */
   const real: Agent = { ...backend(), runsNested: true };
   const host = createHost({
     path: REPO_ROOT,
@@ -1741,27 +1743,35 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
   await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
+  // A first message, which brings the session up in the machine, as VS Code's
+  // provider materializes a session at its first send.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
   await until(() => port.read().length > 0, 1000);
   /*
-   * And the turn, which this host reads off the snapshot the machine answers
-   * with. Waiting for it is what makes the refusal below the one this case is
-   * about: a truncate that arrives before the session is up is refused for
-   * having no such turn, which says nothing about what a rewind would do.
+   * And the turn the machine holds, which this host reads off the snapshot the
+   * machine answers with. Waiting for it is what makes the truncation below the
+   * one this case is about: one at a turn the chat does not hold yet cuts
+   * nothing, which says nothing about what a rewind would do.
    */
   const shown = async (): Promise<Bag[]> =>
     ((await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } })) as {
       snapshot: { state: { turns: Bag[] } };
     }).snapshot.state.turns;
-  for (let i = 0; i < 200 && (await shown()).length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 5); });
-  expect((await shown()).map((turn) => turn.id)).toEqual(['t1']);
+  for (let i = 0; i < 200 && !(await shown()).some((turn) => turn.id === 't1'); i++) await new Promise((resolve) => { setTimeout(resolve, 5); });
+  expect((await shown()).map((turn) => turn.id)).toContain('t1');
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/truncated', turnId: 't1' } },
+    params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/truncated', turnId: 't1' } },
   });
-  const refused = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action' && params?.rejectionReason !== undefined)?.params;
-  await until(() => refused() !== undefined, 1000);
-  expect(String(refused()?.rejectionReason)).toMatch(/rewind/);
+  const truncated = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action' && params?.action?.type === 'chat/truncated')?.params;
+  await until(() => truncated() !== undefined, 1000);
+  expect(truncated()).toMatchObject({ origin: { clientId: 'window', clientSeq: 2 } });
+  expect(truncated()?.rejectionReason).toBeUndefined();
   expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
   await host.close();
   port.done();
