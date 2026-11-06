@@ -270,7 +270,7 @@ When an edit changes whether a client may read the bot, that client gets `added`
 
 Each client gets only the actions about bots it may read, so it sees gaps in `serverSeq` on this channel. A client cannot dispatch an action to the channel.
 
-A subscribe needs `bot:read`. Without it, a reader who may read at least one bot is let in, and sees the bots it may read. `bot:get` reads every bot, so a holder of `bot:read` sees them all.
+The channel's grant is `bot:read`. A reader without it is let in all the same, as VS Code serves each client its own projection of a list: it sees the bots it may read, none at first for a reader who may read none, and an `added` for each that becomes readable to it. `bot:get` reads every bot, so a holder of `bot:read` sees them all.
 
 The channel is in `_meta['ahpd.channels']` on `initialize` and on the root state, as `{ scheme: 'x-ahpd-bots', title: 'Bots', description, grant: 'bot:read' }`. [PLUGINS.md](PLUGINS.md#a-channel-of-your-own) describes a plugin channel.
 

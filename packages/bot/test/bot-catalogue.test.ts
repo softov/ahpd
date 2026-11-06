@@ -338,13 +338,19 @@ it('replays to a reader only what it may read', async () => {
   expect(seen).toEqual(['x-ahpd-bots/added new', 'x-ahpd-bots/changed his', 'x-ahpd-bots/removed old']);
 });
 
-it('lets in a reader with no bot:read who may read a bot, and refuses one who may read none', async () => {
-  const { host } = made({ ana: PERSON, bo: PERSON }, {});
+it('lets in a reader with no bot:read, served the bots it may read, none at first and each a later add gives it', async () => {
+  const members: Record<string, string[]> = { ana: ['crew'], bo: [] };
+  const { host } = made({ ana: PERSON, bo: PERSON }, members);
   const ana = await as(host, 'ana');
   const bo = await as(host, 'bo');
   await write(ana, 'mine', { name: 'Mine' });
   expect(await subscribe(ana)).toEqual(['mine']);
-  expect(await call(bo, 'subscribe', { channel: CATALOGUE })).toMatchObject({ code: -32009 });
+  // VS Code serves each client its own projection of a list: an empty one here.
+  expect(await subscribe(bo)).toEqual([]);
+  members.bo = ['crew'];
+  await write(ana, 'ours', { name: 'Ours', owner: 'team:crew' });
+  await hears(bo, 'added ours');
+  expect(bo.heard()).toEqual(['added ours']);
 });
 
 it('advertises the catalogue on initialize', async () => {
