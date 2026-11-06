@@ -102,7 +102,8 @@ WHEN a project folder holds the transcript with an entry in it, the folder's own
 THEN the backend resumes it.
 WHEN the backend starts a new conversation under an id
 AND the project folder of the session's folder holds a transcript of that id with no entry of a conversation in it
-THEN the backend deletes that transcript before the CLI starts.
+THEN the backend waits until the CLI that could write that transcript has exited
+AND it deletes the transcript through the SDK's `deleteSession` before the new CLI starts.
 The reason: the CLI writes a conversation when its first message reaches it.
 A CLI closed after its prompt arrived and before it wrote the prompt's entry leaves a transcript of its other lines alone.
 The CLI ends at startup when it is told to resume an id with no entry.

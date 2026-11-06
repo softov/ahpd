@@ -225,6 +225,8 @@ export function claude(options: ClaudeOptions): Agent<Session> {
    * read of a conversation replaces what an earlier one named.
    */
   const readEnds = new Map<string, ReadonlyMap<string, string>>();
+  /** The CLIs of this agent's closed sessions still exiting, by the conversation each could write. */
+  const exits = new Map<string, Promise<unknown>>();
   /**
    * Whether a session of this harness has a credential beside the CLI's own
    * account: a login the record names that is open and its owner's or the
@@ -689,6 +691,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       const readBack = resumed === undefined || start.forkAt !== undefined ? undefined : readEnds.get(resumed);
       return createSession({
       ...(inside === undefined ? {} : { spawn: inside, spawnExecutable: executable, spawnConfigDir: configDir }),
+      exits,
       uri: start.uri,
       chatUri: start.chatUri,
       ...(chatId === undefined ? {} : { chatId }),

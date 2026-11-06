@@ -277,15 +277,10 @@ export function createQuery(ctx: SessionContext): Query {
    * client made up goes to the CLI instead, which invents one the host records
    * once the CLI says what it is.
    *
-   * The CLI takes the name only on a clean transcript, so a transcript of it
-   * that holds no conversation is cleared first. A session in a machine keeps
-   * its files there, out of this host's reach.
+   * The CLI takes the name only on a clean transcript, so `startQuery` clears
+   * a transcript of it that holds no conversation before the CLI starts.
    */
-  const namedUnder = (id: string): { sessionId: string } | Record<string, never> => {
-    if (!UUID.test(id)) return {};
-    if (ctx.options.spawn === undefined) clearFor(id, ctx.options.cwd);
-    return { sessionId: id };
-  };
+  const namedUnder = (id: string): { sessionId: string } | Record<string, never> => (UUID.test(id) ? { sessionId: id } : {});
 
   // The input stream. A query with a live stream stays open between turns,
   // which is what makes a session one conversation.
@@ -666,7 +661,22 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.parentSdkUuid = undefined;
     ctx.appliedEffort = undefined;
     ctx.gone = undefined;
-    const warm = await startup({ options: optionsFor(agent, first, cut), initializeTimeoutMs: ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS });
+    const options = optionsFor(agent, first, cut);
+    /*
+     * A CLI named under an id starts on a clean transcript, cleared once the
+     * CLIs that could write it have exited: this session's last, which the
+     * caller has closed, and a closed session's of the same conversation, as
+     * VS Code's Claude shuts the live query down before it deletes. A session
+     * in a machine keeps its files there, out of this host's reach.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
+     */
+    const under = (options as { sessionId?: string }).sessionId;
+    if (under !== undefined && ctx.options.spawn === undefined) {
+      await (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> } | undefined)?.[Symbol.asyncDispose]?.().catch(() => {});
+      await ctx.options.exits?.get(under);
+      await clearFor(under, ctx.options.cwd);
+    }
+    const warm = await startup({ options, initializeTimeoutMs: ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS });
     if (ctx.disposed || mine !== bound) {
       try { await warm[Symbol.asyncDispose](); }
       catch { /* A CLI already gone is disposed of all the same. */ }

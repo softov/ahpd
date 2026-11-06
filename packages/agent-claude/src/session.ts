@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { optionDefaults, storedSandbox } from './options.js';
-import { titleFrom, uriOf } from '@ahpd/sdk';
+import { idOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type { Bag, BoundTool, Session } from '@ahpd/sdk';
 import { bag, list, str } from './session/common.js';
 import { createAsking } from './session/asking.js';
@@ -355,7 +355,21 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * A session whose first send never came has no CLI to wait for.
        */
       const disposed = (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> } | undefined)?.[Symbol.asyncDispose]?.();
-      return Promise.resolve(disposed).catch(() => undefined);
+      const exited = Promise.resolve(disposed).catch(() => undefined);
+      /*
+       * Kept under each conversation id this CLI could write until it has
+       * exited, so a session that starts a conversation under one of them
+       * waits for it first (`startQuery`).
+       */
+      const exits = options.exits;
+      if (exits !== undefined && ctx.query !== undefined) {
+        for (const id of new Set([ctx.sdkSessionId, options.chatId ?? idOf(options.uri)])) {
+          if (id === undefined) continue;
+          exits.set(id, exited);
+          void exited.then(() => { if (exits.get(id) === exited) exits.delete(id); });
+        }
+      }
+      return exited;
     },
   };
   ctx.self = self;

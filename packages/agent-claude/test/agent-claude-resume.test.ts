@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, expect, it, vi } from 'vitest';
@@ -19,9 +19,18 @@ import { afterAll, expect, it, vi } from 'vitest';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
+  // The SDK's delete, as it deletes: the transcript of the id, which this
+  // case's every project holds at most one of.
+  deleteSession: async (id: string, options?: { dir?: string }) => {
+    sdk.deleted.push([id, options?.dir]);
+    const projects = join(home, 'config', 'projects');
+    for (const project of readdirSync(projects)) rmSync(join(projects, project, `${id}.jsonl`), { force: true });
+  },
   query: ({ options }: { options: Record<string, unknown> }) => {
     sdk.options.push(options);
     return {
+      // A CLI that exits once the case lets it, which is when its cleanup settles.
+      [Symbol.asyncDispose]: async () => { await sdk.exiting; },
       async *[Symbol.asyncIterator]() { /* nothing streamed */ },
       interrupt: async () => {},
       setPermissionMode: async () => {},
@@ -41,7 +50,13 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
   },
 }));
 
-const sdk = vi.hoisted(() => ({ options: [] as Record<string, unknown>[] }));
+const sdk = vi.hoisted(() => ({
+  options: [] as Record<string, unknown>[],
+  /** What the SDK was asked to delete, with the folder it was told. */
+  deleted: [] as [string, string | undefined][],
+  /** When a closed CLI has exited. */
+  exiting: Promise.resolve() as Promise<void>,
+}));
 
 const { claude } = await import('../src/claude.js');
 
@@ -129,6 +144,7 @@ const LEFT = '5433a783-2e55-4412-9afc-6b77ac92ac7b';
 const OWN = '0a0a0a0a-1111-4111-8111-000000000006';
 const KEPT = '0a0a0a0a-1111-4111-8111-000000000007';
 const LONG = '0a0a0a0a-1111-4111-8111-000000000008';
+const EXITING = '0a0a0a0a-1111-4111-8111-000000000009';
 
 it('starts a conversation the CLI never wrote under the id it was asked to resume', async () => {
   const options = await started({ resume: NEVER });
@@ -163,19 +179,63 @@ it('resumes a conversation the CLI wrote under another folder\'s project, which 
   expect(options).toMatchObject({ resume: THERE, forkSession: true, resumeSessionAt: 'entry' });
 });
 
-it('starts a conversation whose transcript holds no entry of one under its id, on a clean transcript', async () => {
+/*
+ * A transcript that holds no conversation goes through the SDK's own delete,
+ * as VS Code's Claude deletes one before it starts a conversation over.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
+ */
+it('starts a conversation whose transcript holds no entry of one under its id, on a transcript the SDK cleared', async () => {
   const file = leftBehind(LEFT, FOLDER);
+  sdk.deleted = [];
   const options = await started({ resume: LEFT });
   expect(options).not.toHaveProperty('resume');
   expect(options).toMatchObject({ sessionId: LEFT });
+  expect(sdk.deleted).toEqual([[LEFT, FOLDER]]);
   expect(existsSync(file)).toBe(false);
 });
 
-it('clears a transcript with no entry of a conversation under the id a session starts its own under', async () => {
+it('has the SDK clear a transcript with no entry of a conversation under the id a session starts its own under', async () => {
   const file = leftBehind(OWN, FOLDER);
+  sdk.deleted = [];
   const options = await started({ uri: `ahp-session:/${OWN}` });
   expect(options).toMatchObject({ sessionId: OWN });
+  expect(sdk.deleted).toEqual([[OWN, FOLDER]]);
   expect(existsSync(file)).toBe(false);
+});
+
+/*
+ * The CLI that could write the transcript has exited before it is cleared, as
+ * VS Code's Claude shuts the live query down before it deletes, so nothing
+ * writes it back under the new conversation.
+ */
+it('clears a transcript only once the CLI of a closed session of the same conversation has exited', async () => {
+  const agent = claude({ paths: [FOLDER] });
+  const start = {
+    uri: `ahp-session:/${EXITING}`,
+    chatUri: `ahp-chat:/${EXITING}`,
+    workingDirectory: FOLDER,
+    settings: {},
+    clientToolTimeoutMs: 0,
+    schema: () => ({ type: 'object', properties: {} }),
+    emit: () => {},
+  };
+  let exit: () => void = () => {};
+  sdk.exiting = new Promise<void>((done) => { exit = done; });
+  const first = agent.create(start);
+  first.sendMessage('t1', 'hello');
+  await settle();
+  const closed = first.close();
+  const file = leftBehind(EXITING, FOLDER);
+  sdk.deleted = [];
+  agent.create(start).sendMessage('t1', 'again');
+  await settle();
+  expect(sdk.deleted).toEqual([]);
+  exit();
+  await closed;
+  await settle();
+  expect(sdk.deleted).toEqual([[EXITING, FOLDER]]);
+  expect(existsSync(file)).toBe(false);
+  sdk.exiting = Promise.resolve();
 });
 
 /*

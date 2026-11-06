@@ -78,6 +78,14 @@ export interface ClaudeSessionOptions extends SessionOptions {
    * plugin's own option rather than by building a session by hand.
    */
   handshakeTimeoutMs?: number;
+  /**
+   * The CLIs of this agent's closed sessions that are still exiting, by each
+   * conversation id one could write: a conversation starts under an id once
+   * the CLI that could write its transcript has exited, as VS Code's Claude
+   * shuts the live query down before it deletes a transcript.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
+   */
+  exits?: Map<string, Promise<unknown>>;
   /** Start the CLI somewhere other than this host. */
   spawn?: (asked: Asked) => SpawnedProcess;
   /** Where the CLI is wherever `spawn` starts it. */

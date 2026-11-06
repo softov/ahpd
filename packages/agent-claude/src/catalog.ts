@@ -1,5 +1,5 @@
 import { deleteSession, getSessionInfo, listSessions } from '@anthropic-ai/claude-agent-sdk';
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
@@ -173,16 +173,18 @@ export function written(id: string, folder: string): boolean {
  * The CLI starts a conversation under a name only on a clean transcript: it
  * ends at startup with `Session ID <id> is already in use` when the project of
  * its folder holds a transcript for that id, whatever the transcript holds. So
- * a transcript there that holds no conversation is deleted first, as the
- * reference deletes a transcript before it starts a conversation over under the
- * same id. One that holds a conversation is never deleted.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1141-L1168
+ * a transcript there that holds no conversation is deleted first, through the
+ * SDK's `deleteSession`, as VS Code's Claude deletes a transcript through the
+ * SDK before it starts a conversation over under the same id; the caller has
+ * waited for the CLI that could write it to exit, as VS Code shuts the live
+ * query down first. One that holds a conversation is never deleted.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
  */
-export function clearFor(id: string, folder: string): void {
+export async function clearFor(id: string, folder: string): Promise<void> {
   if (!fileNamed(id)) return;
   const file = transcriptIn(projectOf(folder), id);
   if (!existsSync(file) || conversation(file)) return;
-  rmSync(file, { force: true });
+  await deleteSession(id, { dir: folder });
 }
 
 /**
