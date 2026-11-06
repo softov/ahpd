@@ -77,6 +77,15 @@ export interface LocalTurns {
    */
   withLocalTurns<T>(session: string, chat: string, turns: readonly T[], joined?: ReadonlyMap<string, string>): T[];
   /**
+   * A live chat's turns, as its backend holds them under the ids the chat began
+   * them by, with the chat's local turns put back after their anchors: an
+   * anchor kept under a transcript's own id for a turn is read as the id the
+   * chat began that turn by, as the reference reads a chat's turns with its
+   * local ones among them.
+   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentHostLocalTurns.ts#L202-L234
+   */
+  liveTurnsOf<T>(session: string, chat: string, turns: readonly T[]): T[];
+  /**
    * The id a backend cuts or forks at for the turn at `at`: that turn's, or the
    * nearest earlier one's that is not a local turn. Nothing when every turn up
    * to `at` is a local turn.
@@ -452,6 +461,12 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     return withLocalTurns(session, chat, begun.turns, begun.joined);
   };
 
+  const liveTurnsOf = <T>(session: string, chat: string, turns: readonly T[]): T[] => {
+    const joined = new Map(recordedIn(session, chat).map((one) => [one.transcriptId, one.turnId]));
+    for (const [turnId, transcriptId] of recordedAs.get(chat) ?? []) joined.set(transcriptId, turnId);
+    return withLocalTurns(session, chat, turns, joined);
+  };
+
   const concreteTurnOf = (session: string, chat: string, turns: readonly Bag[], at: number): string | undefined => {
     for (let before = at; before >= 0; before -= 1) {
       const id = str(turns[before]?.id);
@@ -543,7 +558,7 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
   };
 
   return {
-    turnRecordedAs, keepLocalTurn, keepFailedTurn, transcriptOf, withLocalTurns, concreteTurnOf,
+    turnRecordedAs, keepLocalTurn, keepFailedTurn, transcriptOf, withLocalTurns, liveTurnsOf, concreteTurnOf,
     forgetLocalTurns, copyLocalTurns, forgetChatLocalTurns, moveChatLocalTurns, keptTurnsOf,
   };
 }

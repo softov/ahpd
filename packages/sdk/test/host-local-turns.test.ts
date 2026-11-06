@@ -428,7 +428,14 @@ describe('a cut at a command\'s turn', () => {
     expect(keptIn(store, 'live')).toEqual([]);
   });
 
-  it('is refused at a command\'s turn with no turn before it', async () => {
+  /*
+   * A cut at a command's turn with no turn before it is a clear of the whole
+   * conversation for the backend, and a backend that cannot delete one keeps
+   * its history while the cut is said, as the reference host's provider with
+   * no truncation of its own keeps its history.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1990
+   */
+  it('says a cut at a command\'s turn with no turn before it, and starts nothing again for a backend that cannot delete', async () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client, p, chat } = await opened(k, store);
@@ -437,9 +444,8 @@ describe('a cut at a command\'s turn', () => {
     const starts = k.starts.length;
     void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/truncated', turnId: 't1' } } });
     await settle(10);
-    // Refused as a clear of the whole conversation, which it would be for the
-    // backend, and nothing restarted.
-    expect(actions(p).filter((e) => e.rejectionReason !== undefined).at(-1)?.rejectionReason).toContain('not a conversation entire');
+    expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
+    expect(actions(p, chat).some((e) => e.action.type === 'chat/truncated')).toBe(true);
     expect(k.starts.length).toBe(starts);
   });
 

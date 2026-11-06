@@ -1280,7 +1280,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           throw new RpcError(INVALID_PARAMS, `${String(source.chat ?? '')} is not a chat in ${uri}`);
         fromChat = from.chat.chatUri;
         const turnId = String(source.turnId ?? '');
-        const all = from.chat.allTurns();
+        // The backend's turns with this host's local turns in their places,
+        // as the reference reads a chat's turns, a local one among them.
+        const all = ctx.liveTurnsOf(uri, from.chat.chatUri, from.chat.allTurns() as Bag[]);
         const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);
         /*
          * A side chat's turn is a completed one or the one running, taken as

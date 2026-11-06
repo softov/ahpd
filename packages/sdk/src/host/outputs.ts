@@ -190,17 +190,19 @@ export function createOutputs(ctx: HostContext): Outputs {
   /**
    * A chat's turns and the session that holds it, read the way its snapshot is.
    *
-   * A live chat's are its session's, the running turn included. Otherwise the
-   * session is the record's for a recorded chat and the one a first chat's
-   * name carries, and the turns are a transcript: the session's own for its
-   * first chat, and a recorded chat's own for any other.
+   * A live chat's are its session's, its local turns among them and the
+   * running turn included. Otherwise the session is the record's for a
+   * recorded chat and the one a first chat's name carries, and the turns are a
+   * transcript: the session's own for its first chat, and a recorded chat's own
+   * for any other.
    * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L10647-L10685
    */
   const turnsOf = async (chat: string): Promise<{ session: string; turns: Bag[] } | undefined> => {
     const live = ctx.byChat.get(chat);
     if (live !== undefined) {
       const active = bag(live.chat.chatState()).activeTurn;
-      return { session: live.uri, turns: [...live.chat.allTurns() as Bag[], ...(isRecord(active) ? [active] : [])] };
+      const turns = ctx.liveTurnsOf(live.uri, chat, live.chat.allTurns() as Bag[]);
+      return { session: live.uri, turns: [...turns, ...(isRecord(active) ? [active] : [])] };
     }
     const owning = ctx.homeId(chat) === undefined ? ctx.sessionOfChat(chat) : ctx.sessionFor(chat);
     if (owning === undefined || !ctx.sessionChannel(owning)) return undefined;
