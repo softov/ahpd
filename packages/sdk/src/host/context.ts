@@ -315,6 +315,12 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   closedChats: 'hidden' | 'delete';
   /**
+   * What a turn naming a model its chat's agent does not offer does: `fail`
+   * ends it, `keep` keeps the chat's model, as VS Code's host does. A daemon
+   * key that takes hold while the daemon runs, read as each turn is sent.
+   */
+  unofferedModel: 'fail' | 'keep';
+  /**
    * What archiving a session does with a tree that has changes nobody
    * committed: `keep` it, or `commit` them and remove it. A daemon key that
    * takes hold while the daemon runs, read when a tree is given back.

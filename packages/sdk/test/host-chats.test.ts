@@ -2740,3 +2740,81 @@ describe('an action naming a chat or session nobody has', () => {
     expect(session.snapshot.state.chats.map((one) => one.resource)).not.toContain(gone);
   });
 });
+
+/*
+ * A turn naming a model its chat's agent does not offer is decided once, by
+ * the host, where VS Code's host decides it, before the turn reaches the
+ * backend: `fail`, the default, ends it, as upstream decided, and `keep` is
+ * VS Code's, a chat whose agent is not its session's keeping its model and any
+ * other chat's agent handed the model as it is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2226-L2231
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnTelemetryContext.ts#L44-L55
+ */
+describe('a turn naming a model its agent does not offer', () => {
+  /** What each backend was handed: the models it was switched to and the turns it was sent. */
+  interface Handed { models: string[]; sent: string[] }
+
+  /** The example backend under `provider`, offering `m1` alone. */
+  const offering = (provider: string, handed: Handed): Agent => {
+    const base = echo({ path: '/home/softov', pace: 0 });
+    return {
+      ...base,
+      provider,
+      displayName: provider,
+      create: (start: Start): Session => {
+        const session = base.create(start) as Session;
+        return {
+          ...session,
+          models: () => [{ id: 'm1', name: 'One' }],
+          changeModel: (model) => { handed.models.push(`${provider}:${model.id}`); return session.changeModel(model); },
+          sendMessage: (turnId, text, from, attachments, options) => {
+            handed.sent.push(`${provider}:${turnId}`);
+            return session.sendMessage(turnId, text, from, attachments, options);
+          },
+        };
+      },
+    };
+  };
+
+  /** A host with an `echo` session, and a client watching its chat. */
+  const started = async (over: Partial<HostOptions> = {}) => {
+    const handed: Handed = { models: [], sent: [] };
+    const host = createHost({ path: '/home/softov', agents: [offering('echo', handed)], ...over });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+    const chat = chatUriFor('ahp-session:/one');
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    const ask = async (turnId: string, model: string): Promise<void> => {
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' }, model: { id: model } } } },
+      });
+      await settle(8);
+    };
+    const failed = (turnId: string): unknown => (actions(p, chat)
+      .find((e) => e.action.type === 'chat/error' && e.action.turnId === turnId)?.action.part as Bag | undefined)?.error;
+    return { host, handed, ask, failed };
+  };
+
+  it('ends the turn by default, its backend never handed it', async () => {
+    const { host, handed, ask, failed } = await started();
+    await ask('t1', 'm2');
+    expect(failed('t1')).toEqual({ errorType: 'modelSelectionFailed', message: 'Its agent echo does not offer the turn\'s model m2' });
+    expect(handed).toEqual({ models: [], sent: [] });
+    // A model it offers is taken.
+    await ask('t2', 'm1');
+    expect(failed('t2')).toBeUndefined();
+    expect(handed).toEqual({ models: ['echo:m1'], sent: ['echo:t2'] });
+    await host.close();
+  });
+
+  it('hands the session\'s own agent the model as it is under keep, as VS Code\'s host does', async () => {
+    const { host, handed, ask, failed } = await started({ unofferedModel: 'keep' });
+    await ask('t1', 'm2');
+    expect(failed('t1')).toBeUndefined();
+    expect(handed).toEqual({ models: ['echo:m2'], sent: ['echo:t1'] });
+    await host.close();
+  });
+});

@@ -240,6 +240,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
 
   const respawning = new Map<string, Held>();
 
+  // What a turn naming a model its agent does not offer does, from the host's
+  // own option: read here because this is where a turn is sent.
+  ctx.unofferedModel = options.unofferedModel ?? 'fail';
+
   /** The folders linked into a session's tree, from the config it was made with. */
   const linkedOf = (uri: string): string[] => symlinkFolders(kept.config(idOf(uri)) ?? decided.get(uri) ?? {});
 
@@ -1582,11 +1586,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
 
   /**
    * A turn whose start was said, handed to its backend, as the reference host
-   * sends one: the model it names where the chat's backend offers it, and its
-   * agent, then its prompt. A model the backend does not offer is logged and
-   * the chat keeps its own; a model the backend will not take ends the turn in
-   * a `modelSelectionFailed` error, an agent it will not take is logged, and a
-   * send that fails ends the turn in a `sendFailed` one. A turn `stopped`
+   * sends one: the model it names, and its agent, then its prompt. A model the
+   * chat's agent does not offer is the daemon's `unofferedModel` to decide; a
+   * model the backend will not take ends the turn in a `modelSelectionFailed`
+   * error, an agent it will not take is logged, and a send that fails ends the
+   * turn in a `sendFailed` one. A turn `stopped`
    * meanwhile is never sent. A backend that answers the model and the agent at
    * once is sent the prompt in the same tick, which keeps the order its turns
    * were said in; one that answers later is waited on.
@@ -1615,15 +1619,26 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       });
     };
     /*
-     * The model applies on the chat's own backend, and on a chat that runs on
-     * another one where that backend offers it or has said nothing of its models.
+     * A model the chat's agent does not offer, decided here where VS Code's
+     * host decides it, before the turn reaches the backend, by the daemon's
+     * `unofferedModel`. `fail`, the default, ends the turn, as upstream
+     * decided. `keep` is VS Code's: a chat whose agent is not its session's
+     * keeps its model, logged in VS Code's words, and any other chat's agent is
+     * handed the model as it is. An agent that has said nothing of its models
+     * is handed it either way.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2226-L2231
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnTelemetryContext.ts#L44-L55
      */
     const held = sessions.get(session.uri);
     const offered = session.models();
-    const applicable = model !== undefined && (held?.backends.has(session.chatUri) !== true || offered.length === 0 || offered.some((one) => one.id === model.id))
-      ? model
-      : undefined;
-    if (model !== undefined && applicable === undefined) log(`${session.chatUri} keeps its model: its backend does not offer ${model.id}`);
+    const provider = held?.backends.get(session.chatUri)?.agent.provider ?? held?.agent.provider ?? 'This agent';
+    const unoffered = model !== undefined && offered.length > 0 && !offered.some((one) => one.id === model.id);
+    if (unoffered && ctx.unofferedModel === 'fail') {
+      ended('modelSelectionFailed', new Error(`Its agent ${provider} does not offer the turn's model ${model.id}`));
+      return undefined;
+    }
+    const applicable = model !== undefined && (!unoffered || held?.backends.has(session.chatUri) !== true) ? model : undefined;
+    if (model !== undefined && applicable === undefined) log(`Chat ${session.chatUri} keeps its model: its agent ${provider} does not offer the turn's model ${model.id}`);
     const { agent, ...sent } = from ?? {};
     const unchanged = (error: unknown): void => {
       log(`${session.chatUri}: the agent was not changed: ${error instanceof Error ? error.message : String(error)}`);

@@ -96,6 +96,8 @@ export interface Options {
   sessionToolsProviders: string[];
   /** What closing one chat of a session does to that chat's conversation in the backend. */
   closedChats: 'hidden' | 'delete';
+  /** What a turn naming a model its chat's agent does not offer does. */
+  unofferedModel: 'fail' | 'keep';
   /** What archiving a session does with a working tree that has changes nobody committed. */
   archiveDirtyWorktree: 'keep' | 'commit';
   /** What a session on a joined node does when that node's `ahpd join` restarts. */
@@ -621,6 +623,11 @@ export const serverFields = {
     type: 'string',
     enum: ['hidden', 'delete'],
     description: 'What closing one chat of a session does to its conversation in the backend: hidden keeps it, delete removes it.',
+  },
+  unofferedModel: {
+    type: 'string',
+    enum: ['fail', 'keep'],
+    description: 'What a turn naming a model its chat\'s agent does not offer does: fail ends the turn, keep keeps the chat\'s model as VS Code does.',
   },
   archiveDirtyWorktree: {
     type: 'string',
@@ -1261,6 +1268,7 @@ const noCwd = input['noCwd'] === true;
     sessionTools: given('sessionTools') ?? true,
     sessionToolsProviders: given('sessionToolsProviders') ?? [],
     closedChats: given('closedChats') ?? 'hidden',
+    unofferedModel: given('unofferedModel') ?? 'fail',
     archiveDirtyWorktree: given('archiveDirtyWorktree') ?? 'keep',
     nodeRestart: given('nodeRestart') ?? 'end',
     pullRequestLookup: given('pullRequestLookup') ?? 'url',

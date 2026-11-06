@@ -704,6 +704,16 @@ export interface HostOptions {
    */
   closedChats?: 'hidden' | 'delete';
   /**
+   * What a turn naming a model its chat's agent does not offer does.
+   *
+   * `fail`, the default, ends the turn in a `modelSelectionFailed` error
+   * saying so. `keep` is VS Code's: a chat whose agent is not its session's
+   * keeps the model it has, the choice logged, and any other chat's agent is
+   * handed the model as it is. An agent that has said nothing of its models is
+   * handed it either way.
+   */
+  unofferedModel?: 'fail' | 'keep';
+  /**
    * What archiving a session does with a working tree that has changes
    * nobody committed.
    *

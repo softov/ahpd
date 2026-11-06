@@ -1360,6 +1360,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * a daemon setting, not a per-session one.
      */
     closedChats: options.closedChats,
+    unofferedModel: options.unofferedModel,
     archiveDirtyWorktree: options.archiveDirtyWorktree,
     pullRequestLookup: options.pullRequestLookup,
     // What a session on a joined node does when that node's join restarts.
