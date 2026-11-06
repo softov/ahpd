@@ -150,6 +150,17 @@ export interface AcpOptions {
    */
   toolsChanged?: ToolsChanged;
   /**
+   * How a turn the server stopped early ends: at `max_tokens`,
+   * `max_turn_requests` or by a refusal.
+   *
+   * `error`, the default, ends it in `chat/error` typed by the reason, since
+   * AHP has no field saying a completed turn was cut short (Softov 2026-10-02:
+   * "non-answer stops are errors"); `complete` completes it, as VS Code's
+   * agents complete a turn the model ended at a limit or by declining.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+   */
+  cutTurns?: 'error' | 'complete';
+  /**
    * Where a session says what it left out or had to invent.
    *
    * A server left out of its MCP list, and a `tools/call` the agent reported no

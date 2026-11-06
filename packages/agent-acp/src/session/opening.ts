@@ -50,6 +50,7 @@ const SPAWN_KEYS = [
 const LIVE_KEYS = [
   'command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model',
   'authenticate', 'authenticateInMachine', 'hostTools', 'honoursTrust', 'toolsChanged', 'machine', 'variant',
+  'cutTurns',
 ] as const;
 
 /** What a spawned server is built from, as one string to compare an edit by. */

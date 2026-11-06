@@ -77,11 +77,16 @@ const text = async (source: ChangesetSource, uri: string): Promise<string | unde
   (await source.read?.(uri))?.data;
 
 /** A connected client with one ACP session, watching both its channels. */
-async function talking(options: { changes?: ChangesetSource; tools?: HostTool[] } = {}) {
+async function talking(options: { changes?: ChangesetSource; tools?: HostTool[]; cutTurns?: 'error' | 'complete' } = {}) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-acp-'));
   const host = createHost({
     path,
-    agents: [acpAgent({ command: process.execPath, args: [FIXTURE], provider: 'acp' })],
+    agents: [acpAgent({
+      command: process.execPath,
+      args: [FIXTURE],
+      provider: 'acp',
+      ...(options.cutTurns === undefined ? {} : { cutTurns: options.cutTurns }),
+    })],
     // The composer's `!` prefix is the host's shell, so the host has to hold one.
     terminals: shellTerminals(),
     // And somebody for this window to be, without whom its session has no owner
@@ -1009,8 +1014,8 @@ it('announces the session idle with the turnComplete that ends a !command', asyn
  * `end_turn` is the answer and is in here as the case the others are read
  * against: one fixture case per stop reason the protocol names.
  */
-const stoppedWith = async (reason: string): Promise<{ type?: string | undefined; error?: Bag }> => {
-  const { client, peer: p, chatUri } = await talking();
+const stoppedWith = async (reason: string, cutTurns?: 'error' | 'complete'): Promise<{ type?: string | undefined; error?: Bag }> => {
+  const { client, peer: p, chatUri } = await talking(cutTurns === undefined ? {} : { cutTurns });
   begin(client, chatUri, 't1', `tell me something stop=${reason}`);
   await until(() => ended(p, chatUri) || types(p, chatUri).includes('chat/error'));
   const part = actions(p, chatUri).find((e) => e.action.type === 'chat/error')?.action.part as
@@ -1028,6 +1033,17 @@ it('ends a turn the server stopped for its own reasons as an error naming the re
     // without reading the sentence.
     expect(stopped.error?.errorType).toBe(reason);
     expect(String(stopped.error?.message)).not.toBe('');
+  }
+});
+
+/*
+ * A record whose `cutTurns` is `complete` completes them, as VS Code's agents
+ * complete a turn the model ended at a limit or by declining.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+ */
+it('completes a turn the server stopped at a limit or by declining when the record says cutTurns complete', async () => {
+  for (const reason of ['max_tokens', 'max_turn_requests', 'refusal']) {
+    expect((await stoppedWith(reason, 'complete')).type).toBe('chat/turnComplete');
   }
 });
 

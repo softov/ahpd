@@ -214,7 +214,10 @@ export function createTurn(ctx: SessionContext): Turn {
    * client tell a refusal from a ceiling reached without reading prose, with a
    * sentence saying what the agent did. A reason this bridge has not heard of
    * completes the turn, a stop this code cannot describe being better read as
-   * an answer than reported as a failure with no reason.
+   * an answer than reported as a failure with no reason. A record whose
+   * `cutTurns` is `complete` completes the three as well, as VS Code's agents
+   * complete a turn the model ended at a limit or by declining.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
    */
   const stopReasonFor = (turnId: string, reason: StopReason): void => {
     if (reason === 'cancelled') {
@@ -222,7 +225,7 @@ export function createTurn(ctx: SessionContext): Turn {
       return;
     }
     const said = NOT_AN_ANSWER[reason];
-    if (said === undefined) endTurn(turnId, 'complete');
+    if (said === undefined || ctx.options.cutTurns === 'complete') endTurn(turnId, 'complete');
     else endTurn(turnId, 'error', { errorType: reason, message: said });
   };
 

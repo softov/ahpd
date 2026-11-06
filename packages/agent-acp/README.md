@@ -68,6 +68,7 @@ The shipped rows are `codex`, `gemini`, `copilot`, `opencode`, `kilo`, `goose`, 
 | `hostTools` | the plugin-wide `hostTools` | Whether this agent's sessions are offered the host's own tools |
 | `honoursTrust` | the row's, else `false` | Whether this agent asks before it loads a project's own settings and hooks. Absent, a session in a folder the host did not vouch for is refused, because ACP carries no trust field |
 | `toolsChanged` | the plugin-wide `toolsChanged` | How this agent hears that the tools it listed have moved |
+| `cutTurns` | `error` | How a turn the server stopped at `max_tokens`, `max_turn_requests` or by a refusal ends: `error` ends it in `chat/error` typed by the reason, `complete` completes it, as VS Code's agents do |
 | `install` | the row's | How to install this agent, by system, as the vendor's own docs give it. **Host records only** |
 | `page` | the row's | The vendor's install page, for a system the install lines do not cover |
 | `machine` | the row's | What a machine needs to run this agent, laid over the row's by key. **Host records only** |

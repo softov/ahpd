@@ -122,6 +122,11 @@ const RECORD_FIELDS: Record<string, Record<string, unknown>> = {
     enum: ['notify', 'list'],
     description: "How this agent hears that the tools it listed have moved: notify holds a stream open and sends notifications/tools/list_changed down it, list says nothing and leaves it to the agent's next tools/list. Both serve the current list; defaults to notify.",
   },
+  cutTurns: {
+    type: 'string',
+    enum: ['error', 'complete'],
+    description: "How a turn the server stopped at max_tokens, max_turn_requests or by a refusal ends: error ends it in chat/error typed by the reason, complete completes it as VS Code's agents do. Defaults to error.",
+  },
   // Read by `machineOf` as well as described here, so a wrongly written block
   // is refused with a line naming the field and never a value. A variable's
   // value is read where the machine is made, so a `$secret` reaches this
@@ -353,6 +358,7 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
   const hostTools = typeof config['hostTools'] === 'boolean' ? config['hostTools'] : shared.hostTools;
   const toolsChanged = changedOf(config['toolsChanged']) ?? shared.toolsChanged;
   const honoursTrust = typeof config['honoursTrust'] === 'boolean' ? config['honoursTrust'] : row?.honoursTrust;
+  const cutTurns = config['cutTurns'] === 'error' || config['cutTurns'] === 'complete' ? config['cutTurns'] : undefined;
   const machine = machineUnder(row?.machine, config['machine'] === undefined ? undefined : machineOf(config['machine'], record.id));
   // A machine also has the block's variables, so a row's variable written
   // there signs a session in that machine in. Only the name is looked for.
@@ -374,6 +380,7 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
     ...(hostTools === undefined ? {} : { hostTools }),
     ...(honoursTrust === undefined ? {} : { honoursTrust }),
     ...(toolsChanged === undefined ? {} : { toolsChanged }),
+    ...(cutTurns === undefined ? {} : { cutTurns }),
     // The row's known modes, copied so each agent holds a list of its own.
     ...(row?.modes === undefined ? {} : { modes: row.modes.map((one) => ({ ...one })) }),
     ...(machine === undefined ? {} : { machine }),

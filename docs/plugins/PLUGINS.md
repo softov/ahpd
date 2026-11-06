@@ -2252,6 +2252,7 @@ A record of the engine, as `x-ahpd/agents/put` takes it:
 | `hostTools` | Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
 | `honoursTrust` | Whether this agent asks before it loads a project's own settings and hooks. Absent, a session of it in a folder the host did not vouch for is refused rather than started, because ACP carries no trust field |
 | `toolsChanged` | How this agent hears that the tools it listed have moved, over the plugin-wide setting: `notify` holds a stream open and sends `notifications/tools/list_changed` down it, and `list` says nothing |
+| `cutTurns` | How a turn the server stopped at `max_tokens`, `max_turn_requests` or by a refusal ends: `error`, the default, ends it in `chat/error` typed by the reason, and `complete` completes it, as VS Code's agents do |
 | `install` | How to install this agent, by system, as the vendor's own docs give it. **Host records only** |
 | `page` | The vendor's install page, for a system the install lines do not cover |
 | `machine` | What a machine needs to run this agent: `env`, variables set only inside the machine, and `copy`, host paths copied in. See below. **Host records only** |
