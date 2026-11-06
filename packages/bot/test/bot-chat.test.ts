@@ -754,10 +754,11 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
     { session: HELD, chat: CHAT, turnId: String(next['id']), text: 'and then this' },
   ]);
-  // And the client is told both ways a queued entry ends: taken out of its
-  // queue, and named on the turn it became.
-  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/pendingMessageRemoved'))
-    .toMatchObject([{ kind: 'queued', id: 'q1' }]);
+  // And the client is told of it by the turn it became, which names the entry
+  // its reducer takes out of the queue, as VS Code's queue drain says only the
+  // turn's start.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L288-L297
+  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/pendingMessageRemoved')).toEqual([]);
   expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted').map((one) => one['queuedMessageId']))
     .toEqual([undefined, 'q1']);
 
