@@ -175,8 +175,10 @@ describe('controlFor', () => {
     expect(controlFor('linux')).toBeUndefined();
     expect(controlFor('darwin')).toBeUndefined();
     const control = controlFor('win32') as Control;
-    // A random name under the pipe namespace, and a key of 32 bytes as hex.
-    expect(control.pipe).toMatch(/^\\\\\.\\pipe\\ahpd-[0-9a-f]{32}$/u);
+    // The application's name and a random UUID under the pipe namespace, as VS
+    // Code's CLI names its pipe (cli/src/async_pipe.rs L179-L188 at 6b68d3fe),
+    // and a key of 32 bytes as hex.
+    expect(control.pipe).toMatch(/^\\\\\.\\pipe\\ahpd-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
     expect(control.key).toMatch(/^[0-9a-f]{64}$/u);
   });
 

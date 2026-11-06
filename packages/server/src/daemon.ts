@@ -1,7 +1,7 @@
 /** Starting one of these in the background, and finding it again. */
 
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, fstatSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { connect } from 'node:net';
 import { basename, dirname, join } from 'node:path';
@@ -140,7 +140,7 @@ export const SERVICE_ENV = 'AHPD_SERVICE';
 export const serviceIn = (value: string | undefined): Running['service'] =>
   (value === 'systemd' || value === 'launchd' ? value : undefined);
 
-/** The name every control pipe starts with, before the random part. */
+/** The name every control pipe starts with, before its UUID. */
 const PIPE_PREFIX = '\\\\.\\pipe\\ahpd-';
 
 /**
@@ -161,7 +161,10 @@ export const requestLine = (control: Control, signal: ControlledSignal): string 
  *
  * Both are new for each start, and so for each successor of a restart, because
  * a name another process could predict is a name another process could take
- * first.
+ * first. The name is the application's and a random UUID, as VS Code's CLI
+ * names the pipe its lock file records
+ * (cli/src/async_pipe.rs L179-L188 at 6b68d3fe); the key is what a request is
+ * checked against.
  *
  * `pipe` is only for a test: the control path is `node:net` on both platforms,
  * so a case on Linux drives it over a unix socket path rather than a named
@@ -169,9 +172,7 @@ export const requestLine = (control: Control, signal: ControlledSignal): string 
  */
 export function controlFor(platform: NodeJS.Platform, pipe?: string): Control | undefined {
   if (platform !== 'win32') return undefined;
-  // 16 bytes of name, 32 of key: the name only has to be unguessable, and the
-  // key is what a request is checked against.
-  return { pipe: pipe ?? `${PIPE_PREFIX}${randomBytes(16).toString('hex')}`, key: randomBytes(32).toString('hex') };
+  return { pipe: pipe ?? `${PIPE_PREFIX}${randomUUID()}`, key: randomBytes(32).toString('hex') };
 }
 
 /** Is that process still there? A record outlives a crash, and says nothing about one. */
