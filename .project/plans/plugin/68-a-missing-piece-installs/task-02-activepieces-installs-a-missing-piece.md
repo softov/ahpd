@@ -1,6 +1,6 @@
 ---
 title: Activepieces installs a missing piece
-status: implemented
+status: done
 depends: [task-01-a-plugin-installs-a-package.md]
 layer: "activepieces, docs"
 refs:

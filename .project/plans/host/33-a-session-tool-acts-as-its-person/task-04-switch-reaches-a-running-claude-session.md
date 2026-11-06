@@ -1,6 +1,6 @@
 ---
 title: The switch is read from the file and reaches a running claude session
-status: implemented
+status: done
 depends: []
 layer: server
 refs:

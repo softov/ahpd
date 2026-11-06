@@ -1,6 +1,6 @@
 ---
 title: The cofold prefix names only an unowned endpoint
-status: implemented
+status: done
 depends: [task-01-list-every-provider-under-its-id.md]
 layer: "agent-cofold"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The site serves the scripts, and the docs lead with them
-status: implemented
+status: done
 depends: [task-01-install-sh-installs-ahpd.md, task-02-install-ps1-installs-ahpd.md]
 layer: docs
 refs:

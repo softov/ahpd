@@ -1,6 +1,6 @@
 ---
 title: The connector state is ready
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

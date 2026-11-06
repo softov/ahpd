@@ -1,7 +1,7 @@
 ---
 title: The host's own surfaces are advertised with their operations, and a role grants an operation
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -101,7 +101,7 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 | [02 - Every gated method and client action needs one operation](task-02-gated-methods-need-one-operation.md) | done | 01 |
 | [03 - The host advertises its subjects in `ahpd.grants`](task-03-the-host-advertises-its-subjects.md) | done | 01 |
 | [04 - Roles and the docs speak in operations](task-04-roles-and-docs-speak-in-operations.md) | done | 02, 03 |
-| [05 - session:write holds chat:write](task-05-session-write-holds-chat-write.md) | implemented | 01 |
+| [05 - session:write holds chat:write](task-05-session-write-holds-chat-write.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -113,7 +113,7 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 ## Resume state
 
 - **Done so far:** built 2026-10-04 in `6795e9b`; see [implemented.md](implemented.md). Task 05 was built 2026-10-13 and committed in `bee2b166`; see its Resume.
-- **Next action:** Softov reviews task 05, the last task that is `implemented`. Tasks 01 to 04 are `done`.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none; Softov's answers of 2026-10-04 are in the table above.
 - **Watch out for:** ahpapp must read `put` where it read `write` in `ahpd.resourceProviders` before the client-visible rename is relied on.
 

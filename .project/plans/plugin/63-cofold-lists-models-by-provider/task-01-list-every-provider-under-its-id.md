@@ -1,6 +1,6 @@
 ---
 title: List every provider under its own id
-status: implemented
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

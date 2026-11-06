@@ -1,6 +1,6 @@
 ---
 title: AHP calls the update
-status: implemented
+status: done
 depends:
   - task-03-update-installs-moves-plugins-and-restarts.md
 layer: server

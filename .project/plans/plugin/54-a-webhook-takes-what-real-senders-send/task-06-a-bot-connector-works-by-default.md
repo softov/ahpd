@@ -1,6 +1,6 @@
 ---
 title: A bot connector works with its defaults
-status: implemented
+status: done
 depends: [task-03-a-webhook-reads-any-body.md]
 layer: "webhook"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Service install writes a systemd unit
-status: implemented
+status: done
 depends:
   - task-01-a-supervised-daemon-writes-its-record.md
   - task-02-stop-and-restart-ask-the-manager.md

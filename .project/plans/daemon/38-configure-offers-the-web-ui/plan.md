@@ -1,7 +1,7 @@
 ---
 title: configure offers the web UI
 domain: daemon
-status: active
+status: built
 priority: medium
 created: 2026-10-21
 revalidated: 2026-10-21
@@ -55,7 +55,7 @@ install.sh -> ahpd configure -> Web UI? -> installPlugins(['@ahpd/web', ...]) ->
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - configure asks about the web UI](task-01-configure-asks-about-the-web-ui.md) | implemented | - |
+| [01 - configure asks about the web UI](task-01-configure-asks-about-the-web-ui.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -64,6 +64,6 @@ install.sh -> ahpd configure -> Web UI? -> installPlugins(['@ahpd/web', ...]) ->
 ## Resume state
 
 - **Done so far:** [task-01](task-01-configure-asks-about-the-web-ui.md) is implemented. `configure` asks `Web UI?` after the backends, and Enter takes it on a first run. A Yes installs `@ahpd/web`, and a No on an entry the file names switches it off. The docs name the question. `server-configure.test.ts` passed 38 of 38. From the repository root, `pnpm -s build`, `pnpm -s typecheck` and `pnpm -s boundary` passed. The full suite passed 6476 tests with 29 skipped (387 files passed, 1 skipped).
-- **Next action:** none. The plan is implemented and waits for a review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** [daemon 37](../37-configure-sets-up-one-pi/plan.md) changed the same file and is also implemented. The web UI is not a backend, so a daemon with only the web UI still refuses to start.

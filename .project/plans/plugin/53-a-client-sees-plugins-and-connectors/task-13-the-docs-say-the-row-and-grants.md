@@ -1,6 +1,6 @@
 ---
 title: The docs say the new row fields and the grants
-status: implemented
+status: done
 depends: [task-10-a-plugin-row-says-what-loaded.md, task-11-a-plugin-command-marks-a-restart.md, task-12-plugins-and-connectors-have-grants.md]
 layer: "docs"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Resume cuts back and runs again
-status: implemented
+status: done
 depends:
   - task-01-a-failed-model-call-is-resumable.md
 layer: agent-claude

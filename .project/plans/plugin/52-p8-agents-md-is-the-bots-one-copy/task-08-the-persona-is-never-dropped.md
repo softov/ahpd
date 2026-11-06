@@ -1,6 +1,6 @@
 ---
 title: The persona is never dropped
-status: implemented
+status: done
 depends: [task-02-the-persona-is-read-from-agents-md.md]
 layer: "packages/bot"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The hub lists a node as a computer
-status: implemented
+status: done
 depends: [task-02-a-joined-socket-is-a-nested-host.md]
 layer: "computer"
 refs:

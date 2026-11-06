@@ -1,6 +1,6 @@
 ---
 title: A plugin opens, updates and closes a canvas
-status: implemented
+status: done
 depends:
   - task-02-the-host-keeps-the-canvases-of-a-chat.md
 layer: "sdk"

@@ -1,6 +1,6 @@
 ---
 title: A plugin row says its version, its load and its options schema
-status: implemented
+status: done
 depends: [task-04-a-client-lists-the-plugins.md]
 layer: "server"
 refs:

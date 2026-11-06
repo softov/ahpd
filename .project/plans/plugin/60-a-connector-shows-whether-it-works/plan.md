@@ -1,7 +1,7 @@
 ---
 title: A connector shows whether it works
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-23
 revalidated: 2026-10-23
@@ -93,10 +93,10 @@ host part (the proxy, next plan) -> connectors.note -> last call in memory -> co
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The types carry a check and health](task-01-the-types-carry-a-check-and-health.md) | implemented | - |
-| [02 - A host secret can name an env variable](task-02-a-host-secret-can-name-an-env-variable.md) | implemented | 01 |
-| [03 - The channel keeps each connector's health](task-03-the-channel-keeps-health.md) | implemented | 01 |
-| [04 - The docs say how a connector shows health](task-04-the-docs-say-how-health-shows.md) | implemented | 02, 03 |
+| [01 - The types carry a check and health](task-01-the-types-carry-a-check-and-health.md) | done | - |
+| [02 - A host secret can name an env variable](task-02-a-host-secret-can-name-an-env-variable.md) | done | 01 |
+| [03 - The channel keeps each connector's health](task-03-the-channel-keeps-health.md) | done | 01 |
+| [04 - The docs say how a connector shows health](task-04-the-docs-say-how-health-shows.md) | done | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -107,6 +107,6 @@ host part (the proxy, next plan) -> connectors.note -> last call in memory -> co
 ## Resume state
 
 - **Done so far:** task-01, task-02, task-03 and task-04 are implemented. The sdk has `Adapter.check`, `CheckResult`, `CallOutcome` and `ConnectorHealth`. A host connector's `writeOnly` field may hold `{ "fromEnv": "<NAME>" }`, the form presets use, which the channel reads from the daemon's environment when it opens the connector. A team's or a person's connector that holds one is refused on a put and again at open. The channel keeps each open connector's health in memory. It runs the check after a put and after a start, and records each `run` and each `note`. It sends one refresh a second for them, and serves `x-ahpd/connectors/check`. `docs/plugins/PLUGINS.md` and `docs/sdk/HOST.md` describe all of it.
-- **Next action:** run the verification by hand against a running daemon, then write `implemented.md` and close the plan.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** `state` stays as it is, `open`, `invalid` or `unavailable`. `health` is a second key beside it, and does not change it.

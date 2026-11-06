@@ -1,6 +1,6 @@
 ---
 title: The row carries the view
-status: implemented
+status: done
 depends:
   - task-01-a-plugin-gives-a-view.md
 layer: server

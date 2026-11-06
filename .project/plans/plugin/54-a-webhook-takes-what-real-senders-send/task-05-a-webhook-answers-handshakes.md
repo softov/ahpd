@@ -1,6 +1,6 @@
 ---
 title: A webhook answers the senders' handshakes
-status: implemented
+status: done
 depends: [task-04-a-webhook-checks-each-senders-proof.md]
 layer: "webhook"
 refs:

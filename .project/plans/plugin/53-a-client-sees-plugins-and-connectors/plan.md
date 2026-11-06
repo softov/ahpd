@@ -1,7 +1,7 @@
 ---
 title: A client sees the plugins and the connectors
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-21
 revalidated: 2026-10-21
@@ -133,22 +133,22 @@ client -> x-ahpd-plugins -> PluginRow + manifest -> x-ahpd/plugins/enable | disa
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The manifest is read](task-01-the-manifest-is-read.md) | implemented | - |
-| [02 - A registration is checked against the contract](task-02-a-registration-is-checked.md) | implemented | 01 |
-| [03 - Every shipped plugin declares its contracts](task-03-shipped-plugins-declare-contracts.md) | implemented | 02 |
-| [04 - A client lists the plugins](task-04-a-client-lists-the-plugins.md) | implemented | 01 |
-| [05 - A plugin registers connector kinds](task-05-a-plugin-registers-connector-kinds.md) | implemented | 02 |
-| [06 - A collection keeps JSON records](task-06-a-collection-keeps-json-records.md) | implemented | - |
-| [07 - A client makes connectors](task-07-a-client-makes-connectors.md) | implemented | 05, 06 |
-| [08 - A webhook endpoint is a connector](task-08-a-webhook-endpoint-is-a-connector.md) | implemented | 07 |
-| [09 - The docs say how plugins and connectors are seen](task-09-the-docs-say-how-it-is-seen.md) | implemented | 03, 04, 08 |
-| [10 - A plugin row says its version, its load and its options schema](task-10-a-plugin-row-says-what-loaded.md) | implemented | 04 |
-| [11 - A plugin command marks a restart for every client](task-11-a-plugin-command-marks-a-restart.md) | implemented | 04 |
-| [12 - Plugins and connectors have their own grants](task-12-plugins-and-connectors-have-grants.md) | implemented | 04, 07 |
-| [13 - The docs say the new row fields and the grants](task-13-the-docs-say-the-row-and-grants.md) | implemented | 10, 11, 12 |
-| [14 - The restart mark is pushed to every client](task-14-a-restart-mark-is-pushed.md) | implemented | 11 |
-| [15 - Adapters and connectors are two channels](task-15-adapters-and-connectors-split.md) | implemented | 12 |
-| [16 - The docs say adapters, connectors and their grants](task-16-the-docs-say-adapters.md) | implemented | 15 |
+| [01 - The manifest is read](task-01-the-manifest-is-read.md) | done | - |
+| [02 - A registration is checked against the contract](task-02-a-registration-is-checked.md) | done | 01 |
+| [03 - Every shipped plugin declares its contracts](task-03-shipped-plugins-declare-contracts.md) | done | 02 |
+| [04 - A client lists the plugins](task-04-a-client-lists-the-plugins.md) | done | 01 |
+| [05 - A plugin registers connector kinds](task-05-a-plugin-registers-connector-kinds.md) | done | 02 |
+| [06 - A collection keeps JSON records](task-06-a-collection-keeps-json-records.md) | done | - |
+| [07 - A client makes connectors](task-07-a-client-makes-connectors.md) | done | 05, 06 |
+| [08 - A webhook endpoint is a connector](task-08-a-webhook-endpoint-is-a-connector.md) | done | 07 |
+| [09 - The docs say how plugins and connectors are seen](task-09-the-docs-say-how-it-is-seen.md) | done | 03, 04, 08 |
+| [10 - A plugin row says its version, its load and its options schema](task-10-a-plugin-row-says-what-loaded.md) | done | 04 |
+| [11 - A plugin command marks a restart for every client](task-11-a-plugin-command-marks-a-restart.md) | done | 04 |
+| [12 - Plugins and connectors have their own grants](task-12-plugins-and-connectors-have-grants.md) | done | 04, 07 |
+| [13 - The docs say the new row fields and the grants](task-13-the-docs-say-the-row-and-grants.md) | done | 10, 11, 12 |
+| [14 - The restart mark is pushed to every client](task-14-a-restart-mark-is-pushed.md) | done | 11 |
+| [15 - Adapters and connectors are two channels](task-15-adapters-and-connectors-split.md) | done | 12 |
+| [16 - The docs say adapters, connectors and their grants](task-16-the-docs-say-adapters.md) | done | 15 |
 
 ## Risks and tradeoffs
 
@@ -178,7 +178,7 @@ client -> x-ahpd-plugins -> PluginRow + manifest -> x-ahpd/plugins/enable | disa
   `x-ahpd-adapters` lists the adapters by name, and `x-ahpd-connectors` lists only connectors, each naming its `adapter`.
   No connector row is read without `connector:list` or `connector:all`. `put` and `remove` take their grants of any owner, beside `connector:host` for a host connector and a membership for a team's.
   Task 16 is implemented on the same day. `PLUGINS.md`, `USERS.md`, `HOST.md`, the changelog and the domain file say adapters, the two channels and the new grants.
-- **Next action:** every task is implemented. The close-out writes `implemented.md` and sets `status: built`.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
   The ahpw pages and the UI component tree are separate plans.
 - **Open questions:** none; the defaulted rows above are the ones to check.
 - **Watch out for:** "connector" is one configured account; "adapter" is what a plugin registers, called "connector kind" before task 15. "Channel" is always an AHP `x-` channel. `on` is not a registration and has no contract.

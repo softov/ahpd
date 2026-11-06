@@ -1,7 +1,7 @@
 ---
 title: Setup finds the runtimes and agents
 domain: daemon
-status: active
+status: built
 priority: medium
 created: 2026-10-15
 revalidated: 2026-10-19
@@ -79,7 +79,7 @@ Task 01 moves from agent-acp to the sdk, because `pnpm boundary` does not let `@
 ## Resume state
 
 - **Done so far:** the proposal, 2026-10-15. The tasks and the answers, 2026-10-19. Tasks 01 and 02 were implemented on 2026-10-19. The sdk lists the known agents with their install lines. Configure finds the runtimes and agents, asks about each agent it found, and lists the missing ones. Task 03 was implemented on 2026-10-19: both install scripts print the Node, Bun and Deno lines before the runtime check, and INSTALL.md names them.
-- **Next action:** none. The final checklist has the one by-hand check.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** [daemon/29](../29-ahpd-doctor-says-what-is-wrong/plan.md) uses the PATH lookup, so keep it a function of its own. `codex` has no ACP mode; its preset runs `codex-acp`. Look up the preset's command, not the product name. The version probe needs `Runner` to capture stdout and kill after 3 seconds; both are optional arguments on the runner, added in task 02.
 

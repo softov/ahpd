@@ -1,6 +1,6 @@
 ---
 title: The options schema is in the manifest
-status: implemented
+status: done
 depends: [task-03-a-disabled-row-carries-its-manifest.md]
 layer: "sdk, server, first-party plugins, docs"
 refs:

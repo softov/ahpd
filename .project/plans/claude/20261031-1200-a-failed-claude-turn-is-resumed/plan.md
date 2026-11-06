@@ -1,7 +1,7 @@
 ---
 title: A failed Claude turn is resumed
 domain: claude
-status: active
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -87,9 +87,9 @@ chat/turnResume -> chatactions.ts: last part is a resumable error? -> Claude ses
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A failed model call is resumable](task-01-a-failed-model-call-is-resumable.md) | implemented | - |
-| [02 - Resume cuts back and runs again](task-02-resume-cuts-back-and-runs-again.md) | implemented | 01 |
-| [03 - The host checks the last part](task-03-the-host-checks-the-last-part.md) | implemented | 01 |
+| [01 - A failed model call is resumable](task-01-a-failed-model-call-is-resumable.md) | done | - |
+| [02 - Resume cuts back and runs again](task-02-resume-cuts-back-and-runs-again.md) | done | 01 |
+| [03 - The host checks the last part](task-03-the-host-checks-the-last-part.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -101,7 +101,7 @@ chat/turnResume -> chatactions.ts: last part is a resumable error? -> Claude ses
 ## Resume state
 
 - **Done so far:** the three tasks are built on `build/agents/ec2bea86`. [implemented.md](implemented.md) says what exists now.
-- **Next action:** PR #174 merged. The hand checks of [task 02](task-02-resume-cuts-back-and-runs-again.md) wait in [pending/claude-resume-checks.md](../../../pending/claude-resume-checks.md). Then a review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** the cofold plan and the push build do not touch these files. Check `git log origin/main -- packages/agent-claude/src/session` before a later change here.
 

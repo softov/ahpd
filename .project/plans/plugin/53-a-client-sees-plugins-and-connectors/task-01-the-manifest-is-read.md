@@ -1,6 +1,6 @@
 ---
 title: The manifest is read
-status: implemented
+status: done
 depends: []
 layer: "sdk, server"
 refs:

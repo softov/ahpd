@@ -1,6 +1,6 @@
 ---
 title: install.sh installs ahpd
-status: implemented
+status: done
 depends: []
 layer: scripts
 refs:

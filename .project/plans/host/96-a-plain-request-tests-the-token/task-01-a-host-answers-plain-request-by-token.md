@@ -1,6 +1,6 @@
 ---
 title: A host answers a plain request by its token
-status: implemented
+status: done
 depends: []
 layer: "sdk, server"
 refs:

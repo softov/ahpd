@@ -1,6 +1,6 @@
 ---
 title: The tokensPerPerson key
-status: implemented
+status: done
 depends: [task-01-the-directory-keeps-tokens.md]
 layer: server
 refs:

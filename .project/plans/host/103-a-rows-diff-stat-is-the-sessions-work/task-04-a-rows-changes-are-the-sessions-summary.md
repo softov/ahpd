@@ -1,6 +1,6 @@
 ---
 title: A row's changes are the session's summary
-status: implemented
+status: done
 depends:
   - task-02-session-changes-come-from-checkpoints.md
   - task-03-a-worktree-session-has-branch-changes.md

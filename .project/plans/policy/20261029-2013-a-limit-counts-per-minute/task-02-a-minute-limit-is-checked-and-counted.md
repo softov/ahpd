@@ -1,6 +1,6 @@
 ---
 title: A minute limit is checked and counted
-status: implemented
+status: done
 depends: [task-01-a-minute-is-a-period-with-a-meter.md]
 layer: "sdk, server, docs"
 refs:

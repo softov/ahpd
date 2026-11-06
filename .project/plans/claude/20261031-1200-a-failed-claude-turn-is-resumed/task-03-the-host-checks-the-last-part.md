@@ -1,6 +1,6 @@
 ---
 title: The host checks the last part
-status: implemented
+status: done
 depends:
   - task-01-a-failed-model-call-is-resumable.md
 layer: sdk

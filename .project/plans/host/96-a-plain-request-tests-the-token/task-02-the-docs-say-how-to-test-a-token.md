@@ -1,6 +1,6 @@
 ---
 title: The docs say how to test a token
-status: implemented
+status: done
 depends:
   - task-01-a-host-answers-plain-request-by-token.md
 layer: "docs"

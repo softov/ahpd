@@ -1,6 +1,6 @@
 ---
 title: The spec says where a machine session's terminal runs
-status: implemented
+status: done
 depends: [task-01-a-terminal-in-a-machine-runs-in-the-machine.md]
 layer: docs
 refs:

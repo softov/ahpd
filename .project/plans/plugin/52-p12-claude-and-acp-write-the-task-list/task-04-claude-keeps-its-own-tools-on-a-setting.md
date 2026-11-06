@@ -1,6 +1,6 @@
 ---
 title: Claude keeps its own tools on a setting
-status: implemented
+status: done
 depends: [task-03-claude-uses-the-host-tools.md]
 layer: "agent-claude"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A standalone plugin has a manifest
-status: implemented
+status: done
 depends: [task-01-source-names-the-module.md]
 layer: "sdk, server, docs"
 refs:

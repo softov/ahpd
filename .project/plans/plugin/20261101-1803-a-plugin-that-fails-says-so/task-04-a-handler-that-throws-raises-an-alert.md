@@ -1,6 +1,6 @@
 ---
 title: A handler that throws raises an alert
-status: implemented
+status: done
 depends: []
 layer: "sdk, server"
 refs:

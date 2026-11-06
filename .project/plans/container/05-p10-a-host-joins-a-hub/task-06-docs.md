@@ -1,6 +1,6 @@
 ---
 title: The docs say how a host joins a hub
-status: implemented
+status: done
 depends: [task-05-a-restart-leaves-node-sessions-to-resume.md]
 layer: "docs"
 refs:

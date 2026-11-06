@@ -1,6 +1,6 @@
 ---
 title: An Activepieces piece has its logo
-status: implemented
+status: done
 depends: [task-02-the-host-sends-a-package-icon.md]
 layer: "activepieces"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: An admin installs and removes a plugin from the UI
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-25
 revalidated: 2026-10-25
@@ -80,9 +80,9 @@ client -> x-ahpd/plugins/install -> grant plugin:install -> install path (npm) -
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - One install path takes every source](task-01-one-install-path-takes-every-source.md) | implemented | - |
-| [02 - The plugins channel installs and removes](task-02-the-channel-installs-and-removes.md) | implemented | 01 |
-| [03 - An admin writes a plugin in the UI](task-03-an-admin-writes-a-plugin.md) | implemented | 02 |
+| [01 - One install path takes every source](task-01-one-install-path-takes-every-source.md) | done | - |
+| [02 - The plugins channel installs and removes](task-02-the-channel-installs-and-removes.md) | done | 01 |
+| [03 - An admin writes a plugin in the UI](task-03-an-admin-writes-a-plugin.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -94,6 +94,6 @@ client -> x-ahpd/plugins/install -> grant plugin:install -> install path (npm) -
 ## Resume state
 
 - **Done so far:** tasks 01, 02 and 03 are implemented. Typecheck, build and boundary pass. The tests pass except five timeouts that also fail on main: four in `packages/computer/test/` and one in `packages/sdk/test/nested-start.test.ts`. A review found six things, and each fix has its own test. A `--stdio` daemon writes every problem to stderr, and the plugins channel drops npm progress lines. A write stages into `<plugin root>/plugins/.<id>.new/` and swaps in only when npm succeeds. A source whose package landed no manifest is uninstalled and refused. A source or a removed name that starts with `-` is refused before npm runs, and npm gets every name after `--`. `x-ahpd/plugins/install` answers the row's own id after the apply.
-- **Next action:** none in this plan; the ahpw page for it is the next plan.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** a written plugin must never go under `node_modules`, because Node refuses to strip its types there.

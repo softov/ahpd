@@ -1,6 +1,6 @@
 ---
 title: The host fills the connector choices
-status: implemented
+status: done
 depends: [01]
 layer: "sdk connectors"
 refs:

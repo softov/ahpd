@@ -1,6 +1,6 @@
 ---
 title: The session's plan takes a harness list
-status: implemented
+status: done
 depends: [task-01-a-backend-hands-its-list-to-the-host.md]
 layer: "tasks"
 refs:

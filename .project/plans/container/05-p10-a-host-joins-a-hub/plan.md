@@ -1,7 +1,7 @@
 ---
 title: A host joins another, which lists it as a computer and relays its sessions
 domain: container
-status: implemented
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-10-30
@@ -100,12 +100,12 @@ hub: lists computer://<node> -> session there -> nestedAgent(start = node socket
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - `ahpd join` dials the hub and keeps the connection](task-01-ahpd-join-dials-the-hub.md) | implemented | 03 |
-| [02 - A joined socket is a nested host the proxy talks to](task-02-a-joined-socket-is-a-nested-host.md) | implemented | 01 |
-| [03 - A node has a token, and nodes are a grant subject](task-03-a-node-has-a-token.md) | implemented | - |
-| [04 - The hub lists a node as a computer](task-04-the-hub-lists-a-node.md) | implemented | 02 |
-| [05 - A restart of the hub or the node leaves its sessions to resume](task-05-a-restart-leaves-node-sessions-to-resume.md) | implemented | 04 |
-| [06 - Docs](task-06-docs.md) | implemented | 05 |
+| [01 - `ahpd join` dials the hub and keeps the connection](task-01-ahpd-join-dials-the-hub.md) | done | 03 |
+| [02 - A joined socket is a nested host the proxy talks to](task-02-a-joined-socket-is-a-nested-host.md) | done | 01 |
+| [03 - A node has a token, and nodes are a grant subject](task-03-a-node-has-a-token.md) | done | - |
+| [04 - The hub lists a node as a computer](task-04-the-hub-lists-a-node.md) | done | 02 |
+| [05 - A restart of the hub or the node leaves its sessions to resume](task-05-a-restart-leaves-node-sessions-to-resume.md) | done | 04 |
+| [06 - Docs](task-06-docs.md) | done | 05 |
 
 ## Risks and tradeoffs
 
@@ -116,7 +116,7 @@ hub: lists computer://<node> -> session there -> nestedAgent(start = node socket
 ## Resume state
 
 - **Done so far:** every task, 2026-10-30. task 03, a node's token is minted, shown once and kept as a hash beside the users file, and `node:read` and `node:write` gate `ahpd node list|add|rm`; task 01, `ahpd join` dials the hub, says its versions and workdir, and serves each session from an `ahpd --stdio` of its own; task 02, the hub admits a node's token at its join path, refuses an ahpd older than 0.14.1, and holds a session's data socket as the `NestedHost` the proxy reads; task 04, `@ahpd/computer` serves a `node` runtime that lists a connected node as `node.<name>`, starts a session in it through the registry's `connect`, and charges its up time to the host from the moments it joined and left; task 05, `nodeRestart` reaches the proxy and defaults to `end`, which shows the session failed with a sentence naming the node and reopens it on its next turn, `reconnect` reopens it through the node's next data socket, and `connect` waits ten seconds for a node that is dialling again; task 06, `docs/plugins/COMPUTERS.md` has a *Joined nodes* section with the worked example, and `docs/sdk/USERS.md` counts fifteen host subjects, which `users-host.test.ts` now asserts.
-- **Next action:** none: [implemented.md](implemented.md) says what exists.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none; the one asked before task 05 was answered 2026-10-13.
 - **Watch out for:** container/04 tasks 11 and 15 and p9 task 05 change how a nested session closes and resumes; a profile that names a node to make machines on is not planned, see [deferred.md](deferred.md).
 

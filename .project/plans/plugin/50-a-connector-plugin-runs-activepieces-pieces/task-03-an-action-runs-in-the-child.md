@@ -1,6 +1,6 @@
 ---
 title: An action runs in the child
-status: implemented
+status: done
 depends:
   - task-02-a-piece-is-an-adapter.md
 layer: "activepieces"

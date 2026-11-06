@@ -1,6 +1,6 @@
 ---
 title: A plugin command marks a restart for every client
-status: implemented
+status: done
 depends: [task-04-a-client-lists-the-plugins.md]
 layer: "sdk, server"
 refs:

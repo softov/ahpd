@@ -1,6 +1,6 @@
 ---
 title: The completions command answers a reader
-status: implemented
+status: done
 depends: [02]
 layer: "sdk connectors"
 refs:

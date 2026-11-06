@@ -1,6 +1,6 @@
 ---
 title: A failed run is resumable
-status: implemented
+status: done
 depends: []
 layer: agent-cofold
 refs:

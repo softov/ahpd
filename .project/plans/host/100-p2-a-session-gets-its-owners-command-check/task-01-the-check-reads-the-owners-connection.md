@@ -1,6 +1,6 @@
 ---
 title: The check reads the owner's connection
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

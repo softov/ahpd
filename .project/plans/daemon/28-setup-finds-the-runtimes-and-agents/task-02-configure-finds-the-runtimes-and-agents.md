@@ -1,6 +1,6 @@
 ---
 title: Configure finds the runtimes and agents
-status: implemented
+status: done
 depends: [task-01-the-sdk-lists-the-known-agents.md]
 layer: server
 refs:

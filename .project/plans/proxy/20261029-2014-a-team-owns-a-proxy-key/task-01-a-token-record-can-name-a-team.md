@@ -1,6 +1,6 @@
 ---
 title: A token record can name a team
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

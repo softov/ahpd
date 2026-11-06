@@ -1,7 +1,7 @@
 ---
 title: A client sees the agent account
 domain: host
-status: active
+status: built
 priority: low
 created: 2026-10-16
 revalidated: 2026-10-16
@@ -99,7 +99,7 @@ The shape follows VS Code's `vscode.codexAccount`, so VS Code's window can read 
 ## Resume state
 
 - **Done so far:** drafted 2026-10-16 from the idea `a-client-sees-which-account-an-agent-bills-to.md`. Planned 2026-10-16 with Softov's answers. Task 01 built 2026-10-16: `Offered.account` as `Account`, and the Claude probe maps `initializationResult().account` onto it. Task 02 built 2026-10-16: the host keeps one account per backend in `Learned.account`, publishes it on the root config under `accountKey`, keeps it off the schema so a client cannot push one, and filters it per connection with `seesAccount` - in the snapshot and in every `root/configChanged`. The `account` subject's one operation is `status`, not `read`, which is the group. Task 03 built 2026-10-16: the ACP connection reads `authStatus` off the handshake and takes `_auth/status_update`, mapping the five kinds codex-acp 1.13.1 sends onto task 01's states and handing the account to `start.onAccount`. `external`, which the task did not name, is mapped like VS Code maps a non-ChatGPT account. Task 04 built 2026-10-16: `AGENT.md`, `HOST.md` and `AUTHENTICATION.md` say what the account is, where it is published and which grant reads it, and the `account:read` row went to `HOST.md`'s Grants table because `REMOTE.md`'s table is one row per `ahpd` verb. Reviewed and merged in `e01ee998`.
-- **Next action:** Softov runs the host/99 check in `pending/vscode-checks.md`.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:**
   - Decision `a-role-refuses-at-the-dispatch-boundary.md` says the root state is never hidden, so the filter is an overlay as in `host.ts:570-593`.

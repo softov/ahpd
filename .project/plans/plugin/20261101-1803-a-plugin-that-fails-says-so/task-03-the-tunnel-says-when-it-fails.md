@@ -1,6 +1,6 @@
 ---
 title: The tunnel says when it fails
-status: implemented
+status: done
 depends:
   - task-01-the-anonymous-flag.md
   - task-02-a-plugin-loaded-late-hears-listening.md

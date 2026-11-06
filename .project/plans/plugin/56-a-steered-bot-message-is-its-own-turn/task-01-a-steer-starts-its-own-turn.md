@@ -1,6 +1,6 @@
 ---
 title: A steer starts its own turn
-status: implemented
+status: done
 depends: []
 layer: "bot"
 refs:

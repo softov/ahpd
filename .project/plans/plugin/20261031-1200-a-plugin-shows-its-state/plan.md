@@ -1,7 +1,7 @@
 ---
 title: A plugin shows its state
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -103,9 +103,9 @@ client: draws row.views.main on the plugin's page -> Button -> request { method:
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin gives a view](task-01-a-plugin-gives-a-view.md) | implemented | - |
-| [02 - The row carries the view](task-02-the-row-carries-the-view.md) | implemented | 01 |
-| [03 - Dev Tunnel shows its state](task-03-dev-tunnel-shows-its-state.md) | implemented | 02 |
+| [01 - A plugin gives a view](task-01-a-plugin-gives-a-view.md) | done | - |
+| [02 - The row carries the view](task-02-the-row-carries-the-view.md) | done | 01 |
+| [03 - Dev Tunnel shows its state](task-03-dev-tunnel-shows-its-state.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -117,7 +117,7 @@ client: draws row.views.main on the plugin's page -> Button -> request { method:
 ## Resume state
 
 - **Done so far:** the three tasks were implemented on 2026-10-31. [implemented.md](implemented.md) says what exists now.
-- **Next action:** PR #175 merged. The hand check of task 03 waits in [pending/plugin-view-checks.md](../../../pending/plugin-view-checks.md). Then a review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** the `devtunnel` CLI was not on this machine. So the fixtures of `show` are built from the field names, not from captured answers.
 

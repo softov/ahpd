@@ -1,6 +1,6 @@
 ---
 title: A listed row carries _meta
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

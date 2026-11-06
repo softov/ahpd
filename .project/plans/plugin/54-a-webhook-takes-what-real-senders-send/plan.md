@@ -1,7 +1,7 @@
 ---
 title: A webhook takes what real senders send
 domain: plugin
-status: implemented
+status: built
 priority: high
 created: 2026-10-22
 revalidated: 2026-10-22
@@ -115,13 +115,13 @@ POST /plugins/webhook/<id> -> route: find the open connector -> read the body, a
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin trigger is checked on save and at a fire](task-01-plugin-trigger-checked-on-save-and-fire.md) | implemented | - |
-| [02 - References and owners are checked, and a plugin runs one automation](task-02-references-owners-and-run-automation.md) | implemented | 01 |
-| [03 - A webhook reads any body and starts its target](task-03-a-webhook-reads-any-body.md) | implemented | 02 |
-| [04 - A webhook checks each sender's proof](task-04-a-webhook-checks-each-senders-proof.md) | implemented | 03 |
-| [05 - A webhook answers the senders' handshakes](task-05-a-webhook-answers-handshakes.md) | implemented | 04 |
-| [06 - A bot connector works with its defaults](task-06-a-bot-connector-works-by-default.md) | implemented | 03 |
-| [07 - The docs say what a webhook takes](task-07-the-docs-say-what-a-webhook-takes.md) | implemented | 04, 05, 06 |
+| [01 - A plugin trigger is checked on save and at a fire](task-01-plugin-trigger-checked-on-save-and-fire.md) | done | - |
+| [02 - References and owners are checked, and a plugin runs one automation](task-02-references-owners-and-run-automation.md) | done | 01 |
+| [03 - A webhook reads any body and starts its target](task-03-a-webhook-reads-any-body.md) | done | 02 |
+| [04 - A webhook checks each sender's proof](task-04-a-webhook-checks-each-senders-proof.md) | done | 03 |
+| [05 - A webhook answers the senders' handshakes](task-05-a-webhook-answers-handshakes.md) | done | 04 |
+| [06 - A bot connector works with its defaults](task-06-a-bot-connector-works-by-default.md) | done | 03 |
+| [07 - The docs say what a webhook takes](task-07-the-docs-say-what-a-webhook-takes.md) | done | 04, 05, 06 |
 
 ## Risks and tradeoffs
 
@@ -134,7 +134,7 @@ POST /plugins/webhook/<id> -> route: find the open connector -> read the body, a
 ## Resume state
 
 - **Done so far:** tasks 01 to 07 implemented, awaiting review.
-- **Next action:** review the docs and the final verification checklist.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** plan 48's answers on the link direction, the default reply and the body shape are replaced by this plan's rows.
   The stored `hook-test` connector needs rewriting by hand after the merge.

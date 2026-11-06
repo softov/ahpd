@@ -1,6 +1,6 @@
 ---
 title: The cofold session resumes the turn
-status: implemented
+status: done
 depends:
   - task-01-a-failed-run-is-resumable.md
 layer: agent-cofold

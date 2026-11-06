@@ -1,6 +1,6 @@
 ---
 title: The docs say what a webhook takes
-status: implemented
+status: done
 depends: [task-04-a-webhook-checks-each-senders-proof.md, task-05-a-webhook-answers-handshakes.md, task-06-a-bot-connector-works-by-default.md]
 layer: "docs"
 refs:

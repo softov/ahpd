@@ -1,6 +1,6 @@
 ---
 title: The docs name ahpd doctor
-status: implemented
+status: done
 depends: [task-02-ahpd-doctor-prints-the-checks.md]
 layer: docs
 refs:

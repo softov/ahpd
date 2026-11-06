@@ -1,6 +1,6 @@
 ---
 title: A plugin loaded late hears listening
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

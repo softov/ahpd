@@ -1,7 +1,7 @@
 ---
 title: A new session is an `ahp-session:` URI
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -119,11 +119,11 @@ restart -> listing -> adopt(row) -> the name from the row -> listSessions and ro
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The store keeps a session's URI](task-01-the-store-keeps-a-sessions-uri.md) | implemented | - |
-| [02 - A new session is held as `ahp-session:`](task-02-a-new-session-is-held-as-ahp-session.md) | implemented | 01 |
-| [03 - A listed session is named from its row](task-03-a-listed-session-is-named-from-its-row.md) | implemented | 01 |
-| [04 - No provider is read from a scheme](task-04-no-provider-is-read-from-a-scheme.md) | implemented | 01 |
-| [05 - The docs name the protocol's URI](task-05-the-docs-name-the-protocols-uri.md) | implemented | 02, 03, 04 |
+| [01 - The store keeps a session's URI](task-01-the-store-keeps-a-sessions-uri.md) | done | - |
+| [02 - A new session is held as `ahp-session:`](task-02-a-new-session-is-held-as-ahp-session.md) | done | 01 |
+| [03 - A listed session is named from its row](task-03-a-listed-session-is-named-from-its-row.md) | done | 01 |
+| [04 - No provider is read from a scheme](task-04-no-provider-is-read-from-a-scheme.md) | done | 01 |
+| [05 - The docs name the protocol's URI](task-05-the-docs-name-the-protocols-uri.md) | done | 02, 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -135,7 +135,7 @@ restart -> listing -> adopt(row) -> the name from the row -> listSessions and ro
 ## Resume state
 
 - **Done so far:** tasks 01 to 05 implemented 2026-10-27. A new session is `ahp-session:/<id>`, and its name survives a restart. An old session keeps its name, and no provider is read from a URI. The docs and spec say so.
-- **Next action:** review and merge; nothing left to build in this plan.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** `keepProvider` also writes the provider under the backend's own id, and that id must not get the host's name. The aliases in `routing.ts` stay, because ahpc, ahpw and old names use them.
 

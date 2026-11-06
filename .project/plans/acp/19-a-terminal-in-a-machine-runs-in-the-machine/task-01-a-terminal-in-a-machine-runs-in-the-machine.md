@@ -1,6 +1,6 @@
 ---
 title: A terminal in a machine runs in the machine
-status: implemented
+status: done
 depends: []
 layer: agents
 refs:

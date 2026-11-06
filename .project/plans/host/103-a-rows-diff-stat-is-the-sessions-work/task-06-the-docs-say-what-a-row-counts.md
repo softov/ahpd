@@ -1,6 +1,6 @@
 ---
 title: The docs say what a row counts
-status: implemented
+status: done
 depends:
   - task-04-a-rows-changes-are-the-sessions-summary.md
 layer: docs

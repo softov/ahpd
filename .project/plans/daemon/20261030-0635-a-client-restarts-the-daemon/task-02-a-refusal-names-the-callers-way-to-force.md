@@ -1,6 +1,6 @@
 ---
 title: A refusal names the caller's way to force
-status: implemented
+status: done
 depends: [task-01-the-daemon-restarts-from-a-websocket-command.md]
 layer: server
 refs:

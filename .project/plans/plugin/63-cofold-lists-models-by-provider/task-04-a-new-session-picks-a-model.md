@@ -1,6 +1,6 @@
 ---
 title: A new Cofold session picks a model
-status: implemented
+status: done
 depends: []
 layer: "plugin"
 refs:

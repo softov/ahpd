@@ -1,6 +1,6 @@
 ---
 title: A disabled row carries its manifest
-status: implemented
+status: done
 depends: [task-02-a-standalone-plugin-has-a-manifest.md]
 layer: "server"
 refs:

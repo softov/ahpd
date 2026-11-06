@@ -1,6 +1,6 @@
 ---
 title: A session's _meta counts its open tasks
-status: implemented
+status: done
 depends: []
 layer: "sdk, tasks"
 refs:

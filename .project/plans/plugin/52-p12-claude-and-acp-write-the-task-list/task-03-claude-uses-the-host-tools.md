@@ -1,6 +1,6 @@
 ---
 title: Claude uses the host tools
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

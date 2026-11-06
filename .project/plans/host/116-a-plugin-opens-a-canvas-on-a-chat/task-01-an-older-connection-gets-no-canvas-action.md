@@ -1,6 +1,6 @@
 ---
 title: An older connection gets no canvas action
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

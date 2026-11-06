@@ -1,6 +1,6 @@
 ---
 title: "`ahpd join` dials the hub and keeps the connection"
-status: implemented
+status: done
 depends: [task-03-a-node-has-a-token.md]
 layer: "server"
 refs:

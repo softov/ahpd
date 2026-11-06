@@ -1,6 +1,6 @@
 ---
 title: Claude names the server and the subagent
-status: implemented
+status: done
 depends: [task-02-claude-asks-for-a-matched-tool.md]
 layer: agent-claude
 refs:

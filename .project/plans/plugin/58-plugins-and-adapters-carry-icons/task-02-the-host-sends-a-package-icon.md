@@ -1,6 +1,6 @@
 ---
 title: The host sends a package icon as data
-status: implemented
+status: done
 depends: [task-01-the-sdk-carries-icons.md]
 layer: "server, docs"
 refs:

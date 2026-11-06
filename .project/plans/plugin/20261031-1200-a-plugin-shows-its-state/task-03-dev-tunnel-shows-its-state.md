@@ -1,6 +1,6 @@
 ---
 title: Dev Tunnel shows its state
-status: implemented
+status: done
 depends:
   - task-02-the-row-carries-the-view.md
 layer: tunnel-devtunnel

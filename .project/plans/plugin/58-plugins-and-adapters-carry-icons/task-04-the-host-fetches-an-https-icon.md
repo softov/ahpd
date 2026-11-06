@@ -1,6 +1,6 @@
 ---
 title: The host fetches an https icon and sends it as data
-status: implemented
+status: done
 depends: [task-02-the-host-sends-a-package-icon.md]
 layer: "server"
 refs:

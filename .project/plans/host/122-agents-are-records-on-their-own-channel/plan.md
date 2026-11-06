@@ -1,7 +1,7 @@
 ---
 title: Agents are records on their own channel
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-10-24
 revalidated: 2026-10-24
@@ -110,7 +110,7 @@ edit -> live record updated -> the session reads it at its next turn
 
 - **Done so far:** task 01, the agents channel, with its tests; the connectors channel and its tests are unchanged. Task 02, the caller's own agent list, with its tests. Task 03, the `claude` kind in agent-claude, with an edit applying at the next turn. Task 04, the `acp` kind in agent-acp, with the shipped rows as templates, an edit applying at the next turn by another server on the same conversation. Task 05, the `cofold` kind in agent-cofold, with one store folder per record, a record's keyed search providers refused because the channel vaults top-level fields only. Task 06, the `pi` kind in agent-pi, with a record's variables resolved to pi's runtime key per provider each turn and never written to `process.env`, a record's model taking effect at the next turn; a variable pi uses as request headers rather than a key, `ANTHROPIC_AUTH_TOKEN`, is the one thing a record cannot set. Task 07, the migration: `config.json`'s presets and per-agent options become `owner: "host"` records at the first start, before any plugin loads, with a backup and a temp-file rename of the file and one line of ids; `ahpd configure` writes records; a bot whose agent is not served reads `unavailable`; the daemon starts on records alone; `presets` is gone from the plugins and their manifests. Task 08, the docs: PLUGINS.md registers `registerAgentKind`, documents every `AgentKind` field, and describes `x-ahpd-agents` with its grants, owners and vault names; the four agent READMEs state their kind, templates, host-only fields and key variables and carry record examples; both worked examples are off `presets`.
 - **Merged:** reviewed and merged in #89 as `2ecd2025` on 2026-10-24, with CI green on Windows. The review added six fixes. A preset's key moves to the vault. A removed `claude` record stays removed. Only the presets that became records leave the file. The migration plans the file's own presets, not the run's flags. The marker is next to the records. A record's resolved model key is sent with the models fetch. The `presets` references in `README.md`, `docs/plugins/COMPUTERS.md`, `docs/server/PLUGINS.md`, `docs/server/CONFIGURE.md` and `.project/specs/plugin-loading.md` were corrected in the same PR.
-- **Next action:** Softov runs the checks in `pending/host-122-agent-records-checks.md`. The plan closes after them.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** Softov's build sessions run on the agent `claude-deepseek-build`. A daemon with this plan must still offer it after the first start, with the same id.
 

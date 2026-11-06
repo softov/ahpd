@@ -1,6 +1,6 @@
 ---
 title: source names the module in a config entry
-status: implemented
+status: done
 depends: []
 layer: "sdk, server, docs"
 refs:

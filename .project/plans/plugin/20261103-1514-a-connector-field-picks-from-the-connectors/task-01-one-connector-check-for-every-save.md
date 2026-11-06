@@ -1,6 +1,6 @@
 ---
 title: One connector check for every save
-status: implemented
+status: done
 depends: []
 layer: "sdk connectors"
 refs:

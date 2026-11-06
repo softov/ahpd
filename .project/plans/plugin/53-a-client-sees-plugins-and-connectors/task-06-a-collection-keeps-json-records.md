@@ -1,6 +1,6 @@
 ---
 title: A collection keeps JSON records
-status: implemented
+status: done
 depends: []
 layer: "sdk, server"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Update checks and refuses
-status: implemented
+status: done
 depends:
   - task-01-the-update-finds-its-install-place.md
 layer: server

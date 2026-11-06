@@ -1,7 +1,7 @@
 ---
 title: A connector lists its models to a client
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-28
 revalidated: 2026-10-28
@@ -69,7 +69,7 @@ client -> x-ahpd/connectors/models { id } -> channel: record, mayRead, open, pro
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The connectors channel answers a connector's models](task-01-the-channel-answers-a-connectors-models.md) | implemented | - |
+| [01 - The connectors channel answers a connector's models](task-01-the-channel-answers-a-connectors-models.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -79,7 +79,7 @@ client -> x-ahpd/connectors/models { id } -> channel: record, mayRead, open, pro
 ## Resume state
 
 - **Done so far:** task 01, built on 2026-10-28 in `/github/ahpd.worktrees/connector-models`, branch `plugin/connector-models`, not committed.
-- **Next action:** Softov reviews the diff. Then a commit, a PR and CI.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** the ahpw plan reads this answer. A change of its shape changes ahpw's bridge.
 

@@ -1,6 +1,6 @@
 ---
 title: The docs say how plugins and connectors are seen
-status: implemented
+status: done
 depends: [task-03-shipped-plugins-declare-contracts.md, task-04-a-client-lists-the-plugins.md, task-08-a-webhook-endpoint-is-a-connector.md]
 layer: "docs"
 refs:

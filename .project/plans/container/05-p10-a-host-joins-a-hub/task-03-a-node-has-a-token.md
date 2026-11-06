@@ -1,6 +1,6 @@
 ---
 title: A node has a token, and nodes are a grant subject
-status: implemented
+status: done
 depends: []
 layer: "sdk | server"
 refs:

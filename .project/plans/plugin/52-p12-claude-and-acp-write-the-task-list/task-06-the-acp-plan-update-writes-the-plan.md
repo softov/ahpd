@@ -1,6 +1,6 @@
 ---
 title: The ACP plan update writes the plan
-status: implemented
+status: done
 depends: [task-02-the-sessions-plan-takes-a-harness-list.md]
 layer: "agent-acp"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: ahpd doctor says what is wrong
 domain: daemon
-status: active
+status: built
 priority: medium
 created: 2026-10-15
 revalidated: 2026-10-27
@@ -87,9 +87,9 @@ ahpd doctor -> runtime, config, daemon, service, plugins, agents, update -> one 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The checks say what is wrong](task-01-the-checks-say-what-is-wrong.md) | implemented | - |
-| [02 - ahpd doctor prints the checks](task-02-ahpd-doctor-prints-the-checks.md) | implemented | 01 |
-| [03 - The docs name ahpd doctor](task-03-the-docs-name-ahpd-doctor.md) | implemented | 02 |
+| [01 - The checks say what is wrong](task-01-the-checks-say-what-is-wrong.md) | done | - |
+| [02 - ahpd doctor prints the checks](task-02-ahpd-doctor-prints-the-checks.md) | done | 01 |
+| [03 - The docs name ahpd doctor](task-03-the-docs-name-ahpd-doctor.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -100,7 +100,7 @@ ahpd doctor -> runtime, config, daemon, service, plugins, agents, update -> one 
 ## Resume state
 
 - **Done so far:** the tasks are written, 2026-10-27. Task 01 was implemented on 2026-10-27. `packages/server/src/doctor.ts` holds the seven checks and `checks`, which runs them in order under a 5 s limit. `packages/server/test/doctor.test.ts` holds a case for each result. Task 02 was implemented on 2026-10-27. `packages/server/src/commands/doctor.ts` prints the lines and the count, exits 1 on a fail, and gives `--json` the array, and `packages/server/test/server-cli-doctor.test.ts` holds the cases. Task 03 was implemented on 2026-10-27, and `docs/server/RUN.md` and `CHANGELOG.md` name the command.
-- **Next action:** none. The three tasks are implemented, and the plan waits on its final verification checklist.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** plan 28 owns the PATH lookup in `found.ts`; doctor calls it and does not copy it.
 

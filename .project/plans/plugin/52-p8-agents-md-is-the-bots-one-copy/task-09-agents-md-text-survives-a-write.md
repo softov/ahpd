@@ -1,6 +1,6 @@
 ---
 title: AGENTS.md text survives a write
-status: implemented
+status: done
 depends: [task-01-agents-md-has-parts-the-ui-owns.md]
 layer: "packages/bot"
 refs:

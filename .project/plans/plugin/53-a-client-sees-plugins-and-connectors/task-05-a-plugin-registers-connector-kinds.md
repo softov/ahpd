@@ -1,6 +1,6 @@
 ---
 title: A plugin registers connector kinds
-status: implemented
+status: done
 depends: [task-02-a-registration-is-checked.md]
 layer: "sdk"
 refs:

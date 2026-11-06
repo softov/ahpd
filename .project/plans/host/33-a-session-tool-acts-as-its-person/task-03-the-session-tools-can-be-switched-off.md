@@ -1,6 +1,6 @@
 ---
 title: The session tools can be switched off
-status: implemented
+status: done
 depends: []
 layer: server
 refs:

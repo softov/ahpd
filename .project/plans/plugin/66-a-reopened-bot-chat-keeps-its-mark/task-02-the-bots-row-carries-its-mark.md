@@ -1,6 +1,6 @@
 ---
 title: The bot's row carries its mark
-status: implemented
+status: done
 depends: [task-01-a-listed-row-carries-meta.md]
 layer: "bot"
 refs:

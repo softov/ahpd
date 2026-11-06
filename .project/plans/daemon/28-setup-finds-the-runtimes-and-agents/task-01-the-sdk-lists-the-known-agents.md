@@ -1,6 +1,6 @@
 ---
 title: The sdk lists the known agents
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

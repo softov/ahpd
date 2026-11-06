@@ -1,6 +1,6 @@
 ---
 title: A host secret can name an env variable
-status: implemented
+status: done
 depends: [task-01-the-types-carry-a-check-and-health.md]
 layer: "sdk"
 refs:

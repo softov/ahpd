@@ -1,7 +1,7 @@
 ---
 title: A session switch on a built-in stays
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-16
 revalidated: 2026-10-16
@@ -97,7 +97,7 @@ The window's switch does not flicker back.
 ## Resume state
 
 - **Done so far:** planned 2026-10-16. All three tasks built and reviewed 2026-10-16, merged in `21d0c2ed`.
-- **Next action:** Softov runs the host/104 check in `pending/vscode-checks.md`.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** the id of a built-in plugin is `plugin:<name>`, and its `enabledPlugins` key is its `source`. Two readings from task 01 that task 02 rests on: a switched-off plugin is *absent* from `reloadPlugins`' answer, so agent-claude is the one keeping the row; and `applyFlagSettings` merges into the flag layer at the top level, so a switch sends every decision of the session and not only the one it is moving.
 

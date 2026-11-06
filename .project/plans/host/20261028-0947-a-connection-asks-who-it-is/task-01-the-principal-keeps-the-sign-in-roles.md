@@ -1,6 +1,6 @@
 ---
 title: The principal keeps the sign-in's roles
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

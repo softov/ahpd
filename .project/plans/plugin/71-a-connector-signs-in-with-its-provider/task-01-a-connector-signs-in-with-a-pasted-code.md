@@ -1,6 +1,6 @@
 ---
 title: A connector signs in with a pasted code
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

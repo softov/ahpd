@@ -1,7 +1,7 @@
 ---
 title: A failed cofold turn is resumed
 domain: cofold
-status: active
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -79,8 +79,8 @@ chat/turnResume -> host check (Claude plan) -> cofold session resume -> chat/tur
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A failed run is resumable](task-01-a-failed-run-is-resumable.md) | implemented | - |
-| [02 - The cofold session resumes the turn](task-02-the-cofold-session-resumes-the-turn.md) | implemented | 01 |
+| [01 - A failed run is resumable](task-01-a-failed-run-is-resumable.md) | done | - |
+| [02 - The cofold session resumes the turn](task-02-the-cofold-session-resumes-the-turn.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -91,7 +91,7 @@ chat/turnResume -> host check (Claude plan) -> cofold session resume -> chat/tur
 ## Resume state
 
 - **Done so far:** built 2026-10-31. Both tasks are `implemented`, and [implemented.md](implemented.md) says what was built.
-- **Next action:** merged in #177 as `fc63fd3f`. Softov reviews it, and runs the hand check in [pending/cofold-resume-checks.md](../../../pending/cofold-resume-checks.md).
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** `mapTurn` numbers a turn's parts by its step. A mapping on a reopened turn starts after the parts the turn kept, or a delta would append to the failed run's text.
 

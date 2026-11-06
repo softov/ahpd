@@ -1,6 +1,6 @@
 ---
 title: The first-party plugin schemas have no gap
-status: implemented
+status: done
 depends:
   - task-01-every-schema-entry-point-checks.md
 layer: "agent-acp, agent-cofold, computer, activepieces"

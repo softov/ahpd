@@ -1,6 +1,6 @@
 ---
 title: An unknown removal is refused
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

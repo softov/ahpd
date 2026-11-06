@@ -1,6 +1,6 @@
 ---
 title: Adapters and connectors are two channels
-status: implemented
+status: done
 depends: [task-12-plugins-and-connectors-have-grants.md]
 layer: "sdk, server, webhook"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A code reload imports a new URL
-status: implemented
+status: done
 depends: [task-02-a-plugin-change-applies-at-once.md]
 layer: "server, docs"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: A record names its key and its meta
 domain: usage
-status: implemented
+status: built
 priority: medium
 created: 2026-10-29
 revalidated: 2026-10-29
@@ -75,9 +75,9 @@ pi -> /v1 with the key, X-AHP-Meta: client=pi -> callerOf: metaOf(header) -> cal
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A proxy record names its key](task-01-a-proxy-record-names-its-key.md) | implemented | - |
-| [02 - A key is minted with meta](task-02-a-key-is-minted-with-meta.md) | implemented | - |
-| [03 - A call adds meta with a header](task-03-a-call-adds-meta-with-a-header.md) | implemented | 01, 02 |
+| [01 - A proxy record names its key](task-01-a-proxy-record-names-its-key.md) | done | - |
+| [02 - A key is minted with meta](task-02-a-key-is-minted-with-meta.md) | done | - |
+| [03 - A call adds meta with a header](task-03-a-call-adds-meta-with-a-header.md) | done | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -87,7 +87,7 @@ pi -> /v1 with the key, X-AHP-Meta: client=pi -> callerOf: metaOf(header) -> cal
 ## Resume state
 
 - **Done so far:** all three tasks are implemented: a proxy record names the key that made the call in `token` and carries the key's `meta` and the call's `X-AHP-Meta` entries, and a key is minted with `meta`.
-- **Next action:** none; `implemented.md` records what was verified.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** the plan `proxy/20261029-2010-a-key-carries-its-scope` also changes `TokenRecord`, `mintToken` and `ahpd token mint`. Rebase on it when it merges first.
 

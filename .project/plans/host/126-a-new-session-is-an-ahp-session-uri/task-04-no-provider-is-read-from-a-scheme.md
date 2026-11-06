@@ -1,6 +1,6 @@
 ---
 title: No provider is read from a scheme
-status: implemented
+status: done
 depends: [task-01-the-store-keeps-a-sessions-uri.md]
 layer: "sdk"
 refs:

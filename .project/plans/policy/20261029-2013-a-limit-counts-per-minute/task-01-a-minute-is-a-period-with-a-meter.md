@@ -1,6 +1,6 @@
 ---
 title: A minute is a period with a meter
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

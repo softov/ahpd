@@ -1,6 +1,6 @@
 ---
 title: Stop and restart ask the manager
-status: implemented
+status: done
 depends:
   - task-01-a-supervised-daemon-writes-its-record.md
 layer: server

@@ -1,6 +1,6 @@
 ---
 title: An agent unload ends its sessions
-status: implemented
+status: done
 depends: [task-02-a-plugin-change-applies-at-once.md]
 layer: "sdk, server"
 refs:

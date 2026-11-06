@@ -1,6 +1,6 @@
 ---
 title: Each of our plugins ships an icon
-status: implemented
+status: done
 depends: [task-02-the-host-sends-a-package-icon.md]
 layer: "packages"
 refs:

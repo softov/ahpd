@@ -1,6 +1,6 @@
 ---
 title: The login file gets the PATH line
-status: implemented
+status: done
 depends: []
 layer: scripts/install
 refs:

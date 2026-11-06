@@ -1,6 +1,6 @@
 ---
 title: The plugin loads pieces in a child
-status: implemented
+status: done
 depends: []
 layer: "activepieces"
 refs:

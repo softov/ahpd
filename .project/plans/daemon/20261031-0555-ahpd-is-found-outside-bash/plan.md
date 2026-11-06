@@ -1,7 +1,7 @@
 ---
 title: An installed ahpd is found outside bash
 domain: daemon
-status: implemented
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -85,9 +85,9 @@ daemon -> launch('npm') -> node npm-cli.js beside process.execPath -> npm instal
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The login file gets the PATH line](task-01-the-login-file-gets-the-path-line.md) | implemented | - |
-| [02 - The uninstall uses the prefix of the package](task-02-uninstall-uses-the-package-prefix.md) | implemented | - |
-| [03 - npm runs beside the daemon's Node](task-03-npm-runs-beside-the-node.md) | implemented | - |
+| [01 - The login file gets the PATH line](task-01-the-login-file-gets-the-path-line.md) | done | - |
+| [02 - The uninstall uses the prefix of the package](task-02-uninstall-uses-the-package-prefix.md) | done | - |
+| [03 - npm runs beside the daemon's Node](task-03-npm-runs-beside-the-node.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -99,7 +99,7 @@ daemon -> launch('npm') -> node npm-cli.js beside process.execPath -> npm instal
 ## Resume state
 
 - **Done so far:** planned 2026-10-31, and tasks 01 to 03 implemented on 2026-10-31. See [implemented.md](implemented.md).
-- **Next action:** review, and the checks by hand in [install-path-checks.md](../../../pending/install-path-checks.md).
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** the install tests run the real script with stub programs; give each new case its own `HOME`, as `makeBox` does.
 

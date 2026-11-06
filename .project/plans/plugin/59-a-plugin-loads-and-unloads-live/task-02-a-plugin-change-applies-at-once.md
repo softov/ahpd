@@ -1,6 +1,6 @@
 ---
 title: A plugin change applies at once
-status: implemented
+status: done
 depends: [task-01-the-host-takes-a-new-fold.md]
 layer: "server, docs"
 refs:

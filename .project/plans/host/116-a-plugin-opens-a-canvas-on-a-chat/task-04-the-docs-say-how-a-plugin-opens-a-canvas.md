@@ -1,6 +1,6 @@
 ---
 title: The docs say how a plugin opens a canvas
-status: implemented
+status: done
 depends:
   - task-03-a-plugin-opens-a-canvas.md
 layer: "docs"

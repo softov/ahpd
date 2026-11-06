@@ -1,7 +1,7 @@
 ---
 title: A plugin raises alerts, and its row carries them
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-25
 revalidated: 2026-10-25
@@ -78,7 +78,7 @@ host.alert / host.problem / a loader line -> plugin set, alerts by id -> x-ahpd/
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin row carries its alerts](task-01-a-plugin-row-carries-its-alerts.md) | implemented | - |
+| [01 - A plugin row carries its alerts](task-01-a-plugin-row-carries-its-alerts.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -88,7 +88,7 @@ host.alert / host.problem / a loader line -> plugin set, alerts by id -> x-ahpd/
 ## Resume state
 
 - **Done so far:** [task-01](task-01-a-plugin-row-carries-its-alerts.md) is implemented. The sdk has `Alert`, `alert` and `clearAlert`. The plugin set keeps the alerts by id. The row carries `alerts`, masked, and no `loadProblem`.
-- **Next action:** run the two by-hand checks below, and let session c7 draw the alerts in ahpw.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** `row.problem` is a different field, and it stays: it is the config problem of the spec. A plugin's `problem` line is still printed by `ahpd start` as `skipped:`, and it is also a `warning` alert on the row. One raised after `apply` returned is on the row and in the log.
 

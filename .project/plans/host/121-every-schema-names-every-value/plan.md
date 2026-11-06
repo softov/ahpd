@@ -1,7 +1,7 @@
 ---
 title: Every schema a client draws names every value
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-10-26
 revalidated: 2026-10-26
@@ -87,11 +87,11 @@ Only the check in task 01 and the test in task 05 can walk it.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Every schema entry point checks for gaps](task-01-every-schema-entry-point-checks.md) | implemented | - |
-| [02 - Claude lists models and model sources apart](task-02-claude-lists-models-and-sources.md) | implemented | 01 |
-| [03 - The first-party plugin schemas have no gap](task-03-plugin-schemas-have-no-gap.md) | implemented | 01 |
-| [04 - The host config names its maps](task-04-the-host-config-names-its-maps.md) | implemented | 01 |
-| [05 - A test walks every first-party schema](task-05-a-test-walks-every-schema.md) | implemented | 01, 02, 03, 04 |
+| [01 - Every schema entry point checks for gaps](task-01-every-schema-entry-point-checks.md) | done | - |
+| [02 - Claude lists models and model sources apart](task-02-claude-lists-models-and-sources.md) | done | 01 |
+| [03 - The first-party plugin schemas have no gap](task-03-plugin-schemas-have-no-gap.md) | done | 01 |
+| [04 - The host config names its maps](task-04-the-host-config-names-its-maps.md) | done | 01 |
+| [05 - A test walks every first-party schema](task-05-a-test-walks-every-schema.md) | done | 01, 02, 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -102,7 +102,7 @@ Only the check in task 01 and the test in task 05 can walk it.
 ## Resume state
 
 - **Done so far:** tasks 01 to 05 implemented on 2026-10-27. `schemaGaps` and `gapLine` are in the sdk, and every entry point walks what it is given. The first-party schemas and the host's maps name every value. `packages/server/test/schema-gaps.test.ts` walks all of them. After the review, a `writeOnly` value at any depth moves to the vault.
-- **Next action:** Softov reads the report, then probes by hand with ahpw: a Claude record, a computer profile and an activepieces action.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** a gap in a third-party plugin is a warning line only. Never refuse its load for a gap.
 

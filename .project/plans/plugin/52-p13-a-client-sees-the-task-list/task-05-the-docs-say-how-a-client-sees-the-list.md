@@ -1,6 +1,6 @@
 ---
 title: The docs say how a client sees the list
-status: implemented
+status: done
 depends: [task-01-the-plan-call-is-drawn-from-the-host.md, task-02-a-sessions-meta-counts-its-open-tasks.md, task-03-the-plan-channel-holds-a-plan.md]
 layer: "docs"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A team key is minted, listed and revoked
-status: implemented
+status: done
 depends: [task-01-a-token-record-can-name-a-team.md]
 layer: "sdk, server"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: OpenRouter signs in
-status: implemented
+status: done
 depends: [task-01-a-connector-signs-in-with-a-pasted-code.md]
 layer: server
 refs:

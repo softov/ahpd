@@ -1,7 +1,7 @@
 ---
 title: Every client action is answered
 domain: host
-status: implemented
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -90,8 +90,8 @@ dispatchAction chat/isReadChanged -> chatFlag -> dispatch to every client, or re
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An unknown removal is refused](task-01-an-unknown-removal-is-refused.md) | implemented | - |
-| [02 - A flag set again is echoed](task-02-a-flag-set-again-is-echoed.md) | implemented | - |
+| [01 - An unknown removal is refused](task-01-an-unknown-removal-is-refused.md) | done | - |
+| [02 - A flag set again is echoed](task-02-a-flag-set-again-is-echoed.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -102,7 +102,7 @@ dispatchAction chat/isReadChanged -> chatFlag -> dispatch to every client, or re
 ## Resume state
 
 - **Done so far:** both tasks built, see [implemented.md](implemented.md).
-- **Next action:** review.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** both tasks edit `chatactions.ts` and `AHP.md`, so build them in one branch, one after the other.
 

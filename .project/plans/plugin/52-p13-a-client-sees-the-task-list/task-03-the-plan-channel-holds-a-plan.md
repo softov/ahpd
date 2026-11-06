@@ -1,6 +1,6 @@
 ---
 title: The plan channel holds a plan
-status: implemented
+status: done
 depends: []
 layer: "tasks"
 refs:

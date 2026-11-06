@@ -1,6 +1,6 @@
 ---
 title: A token id never starts with a hyphen
-status: implemented
+status: done
 depends: [task-04-the-token-commands.md]
 layer: sdk
 refs:

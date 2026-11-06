@@ -1,6 +1,6 @@
 ---
 title: npm runs beside the daemon's Node
-status: implemented
+status: done
 depends: []
 layer: server
 refs:

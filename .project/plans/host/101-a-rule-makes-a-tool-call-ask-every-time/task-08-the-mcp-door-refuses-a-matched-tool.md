@@ -1,6 +1,6 @@
 ---
 title: The /mcp door refuses a matched tool
-status: implemented
+status: done
 depends: [task-01-the-rule-is-read-in-the-approval-check.md]
 layer: server
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A restart of the hub or the node leaves its sessions to resume
-status: implemented
+status: done
 depends: [task-04-the-hub-lists-a-node.md]
 layer: "sdk | server"
 refs:

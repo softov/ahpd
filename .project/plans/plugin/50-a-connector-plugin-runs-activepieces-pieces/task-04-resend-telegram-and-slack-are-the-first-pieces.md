@@ -1,6 +1,6 @@
 ---
 title: Resend, Telegram and Slack are the first pieces
-status: implemented
+status: done
 depends:
   - task-03-an-action-runs-in-the-child.md
 layer: "activepieces"

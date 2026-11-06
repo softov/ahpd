@@ -1,7 +1,7 @@
 ---
 title: A synced skill is named by its plugin
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-16
 revalidated: 2026-10-16
@@ -88,7 +88,7 @@ The skill is listed once.
 ## Resume state
 
 - **Done so far:** drafted 2026-10-16 from the Windows run in `pending/vscode-checks.md`. Planned 2026-10-16 with Softov's answers. Task 01 built 2026-10-16: `claudeManifestIn` in `packages/sdk/src/plugins/clientplugins.ts` writes `.claude-plugin/plugin.json` into a copy that brought only `.plugin/plugin.json`. The file has every field of that manifest, with its `name` in kebab case. A copy with its own Claude manifest, or with no manifest, stays as it is. Task 02 built 2026-10-16: `customizationsOf` in `packages/agent-claude/src/session/customizations.ts` keeps the handed plugins as a second list. It skips a skill and a command whose prefix names one, so only the host's own entry for the copy lists them. Task 03 built 2026-10-16: `.project/proposals/vscode-synced-plugin-has-no-claude-name.md`, with a row in the proposals index and `Filed` set to `no`. Reviewed and merged in `bd49a20d`.
-- **Next action:** Softov runs the host/105 check in `pending/vscode-checks.md`. Softov files the proposal if he wants it filed.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** One thing the tasks do not decide: an agent of a handed plugin is still listed twice. The written manifest carries every field, so a component that the manifest moves stays where it said.
 

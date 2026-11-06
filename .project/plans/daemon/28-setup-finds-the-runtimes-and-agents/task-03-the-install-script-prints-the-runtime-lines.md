@@ -1,6 +1,6 @@
 ---
 title: The install script prints the runtime lines
-status: implemented
+status: done
 depends: []
 layer: scripts
 refs:

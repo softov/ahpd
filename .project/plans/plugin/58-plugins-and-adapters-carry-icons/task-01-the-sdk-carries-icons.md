@@ -1,6 +1,6 @@
 ---
 title: The sdk carries icons
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

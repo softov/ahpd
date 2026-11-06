@@ -1,6 +1,6 @@
 ---
 title: A load removes only the data of a deleted bot
-status: implemented
+status: done
 depends: [task-05-a-bots-data-is-one-folder.md]
 layer: "packages/bot"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Claude's own task calls write the plan
-status: implemented
+status: done
 depends: [task-02-the-sessions-plan-takes-a-harness-list.md, task-04-claude-keeps-its-own-tools-on-a-setting.md]
 layer: "agent-claude"
 refs:

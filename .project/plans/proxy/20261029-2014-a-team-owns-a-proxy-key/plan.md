@@ -1,7 +1,7 @@
 ---
 title: A team owns a proxy key
 domain: proxy
-status: implemented
+status: built
 priority: medium
 created: 2026-10-29
 revalidated: 2026-10-29
@@ -79,9 +79,9 @@ the same key on /api or the websocket -> users.verify answers nothing -> 401
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A token record can name a team](task-01-a-token-record-can-name-a-team.md) | implemented | - |
-| [02 - A team key is minted, listed and revoked](task-02-a-team-key-is-minted-listed-revoked.md) | implemented | 01 |
-| [03 - The proxy charges a team key to its team](task-03-the-proxy-charges-a-team-key.md) | implemented | 01 |
+| [01 - A token record can name a team](task-01-a-token-record-can-name-a-team.md) | done | - |
+| [02 - A team key is minted, listed and revoked](task-02-a-team-key-is-minted-listed-revoked.md) | done | 01 |
+| [03 - The proxy charges a team key to its team](task-03-the-proxy-charges-a-team-key.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -94,7 +94,7 @@ the same key on /api or the websocket -> users.verify answers nothing -> 401
   A record names a user or a team, `verify` refuses a team key, and `verifyTeamKey` answers its team.
   The mint makes a team key, and the token commands and `--team` manage it.
   The proxy answers it as `team:<team>`, and `user:` rows hold it never.
-- **Next action:** none. [implemented.md](implemented.md) says what exists and where it departed.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** the plans of the scope, the meta and the limits change `TokenRecord` and `principalOf` first. A team principal reads `keyScope`, `keyMeta` and `keyLimits` the same way.
 

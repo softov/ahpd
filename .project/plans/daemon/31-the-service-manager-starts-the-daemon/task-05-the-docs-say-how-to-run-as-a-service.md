@@ -1,6 +1,6 @@
 ---
 title: The docs say how to run it as a service
-status: implemented
+status: done
 depends:
   - task-03-service-install-writes-a-systemd-unit.md
   - task-04-service-install-writes-a-launch-agent.md

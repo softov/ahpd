@@ -1,6 +1,6 @@
 ---
 title: A registration is checked against the contract
-status: implemented
+status: done
 depends: [task-01-the-manifest-is-read.md]
 layer: "sdk, server"
 refs:

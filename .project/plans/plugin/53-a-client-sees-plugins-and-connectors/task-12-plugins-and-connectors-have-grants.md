@@ -1,6 +1,6 @@
 ---
 title: Plugins and connectors have their own grants
-status: implemented
+status: done
 depends: [task-04-a-client-lists-the-plugins.md, task-07-a-client-makes-connectors.md]
 layer: "sdk, server"
 refs:

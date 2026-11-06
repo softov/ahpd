@@ -1,6 +1,6 @@
 ---
 title: The daemon restarts from a websocket command
-status: implemented
+status: done
 depends: []
 layer: server
 refs:

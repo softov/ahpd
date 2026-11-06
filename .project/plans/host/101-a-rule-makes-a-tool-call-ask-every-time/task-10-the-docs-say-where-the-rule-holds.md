@@ -1,6 +1,6 @@
 ---
 title: The docs say where the rule holds
-status: implemented
+status: done
 depends: [task-07-cofold-asks-in-every-mode.md, task-08-the-mcp-door-refuses-a-matched-tool.md, task-09-claude-names-the-server-and-subagent.md]
 layer: docs
 refs:

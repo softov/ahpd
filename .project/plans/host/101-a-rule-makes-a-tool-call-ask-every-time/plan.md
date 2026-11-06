@@ -1,7 +1,7 @@
 ---
 title: A rule makes a tool call ask every time
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-16
 revalidated: 2026-10-16
@@ -104,16 +104,16 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The rule is read in the approval check](task-01-the-rule-is-read-in-the-approval-check.md) | implemented | host/100 p2 task 01 |
-| [02 - Claude asks for a matched tool](task-02-claude-asks-for-a-matched-tool.md) | implemented | 01 |
-| [03 - ACP asks for a matched tool](task-03-acp-asks-for-a-matched-tool.md) | implemented | 01 |
-| [04 - pi asks for a matched tool](task-04-pi-asks-for-a-matched-tool.md) | implemented | 01 |
-| [05 - cofold asks for a matched tool](task-05-cofold-asks-for-a-matched-tool.md) | implemented | 01 |
-| [06 - The docs name the rule](task-06-the-docs-name-the-rule.md) | implemented | 02, 03, 04, 05 |
-| [07 - cofold asks for a matched tool in every mode](task-07-cofold-asks-in-every-mode.md) | implemented | 05 |
-| [08 - The /mcp door refuses a matched tool](task-08-the-mcp-door-refuses-a-matched-tool.md) | implemented | 01 |
-| [09 - Claude names the server and the subagent](task-09-claude-names-the-server-and-subagent.md) | implemented | 02 |
-| [10 - The docs say where the rule holds](task-10-the-docs-say-where-the-rule-holds.md) | implemented | 07, 08, 09 |
+| [01 - The rule is read in the approval check](task-01-the-rule-is-read-in-the-approval-check.md) | done | host/100 p2 task 01 |
+| [02 - Claude asks for a matched tool](task-02-claude-asks-for-a-matched-tool.md) | done | 01 |
+| [03 - ACP asks for a matched tool](task-03-acp-asks-for-a-matched-tool.md) | done | 01 |
+| [04 - pi asks for a matched tool](task-04-pi-asks-for-a-matched-tool.md) | done | 01 |
+| [05 - cofold asks for a matched tool](task-05-cofold-asks-for-a-matched-tool.md) | done | 01 |
+| [06 - The docs name the rule](task-06-the-docs-name-the-rule.md) | done | 02, 03, 04, 05 |
+| [07 - cofold asks for a matched tool in every mode](task-07-cofold-asks-in-every-mode.md) | done | 05 |
+| [08 - The /mcp door refuses a matched tool](task-08-the-mcp-door-refuses-a-matched-tool.md) | done | 01 |
+| [09 - Claude names the server and the subagent](task-09-claude-names-the-server-and-subagent.md) | done | 02 |
+| [10 - The docs say where the rule holds](task-10-the-docs-say-where-the-rule-holds.md) | done | 07, 08, 09 |
 
 ## Risks and tradeoffs
 
@@ -126,7 +126,7 @@ operator sets the rule -> root config -> Start.<check> (host/100) -> backend ask
 ## Resume state
 
 - **Done so far:** drafted 2026-10-16 from `ideas/a-rule-makes-a-tool-call-ask-every-time.md`. Softov answered the five questions 2026-10-16. The decision is written. Task 02 changed 2026-10-16: the hook answers `allow` or `deny`. Task 01 implemented 2026-10-19: the root key, its matcher and the `'ask'` answer in the check. Task 02 implemented 2026-10-19: the Claude hook that asks for a matched tool in every mode. Task 03 implemented 2026-10-19: the ACP question offers only the once options, and the host's MCP server asks before it runs a matched tool. Task 04 implemented 2026-10-19: pi reads the rule first in `decide`, in every mode. Task 05 implemented 2026-10-19: cofold offers no session choice for a matched tool, and a restart consults no rules. Task 06 implemented 2026-10-19: `docs/sdk/AHP.md` names the rule, its reach and its limits. Task 07 implemented 2026-11-03: cofold answers `approval` for a matched call in every mode but `dontAsk`, which denies it. It deletes the remembered approval first. Task 09 implemented 2026-11-03: the Claude hook names a server by `mcp_server.name` and asks a subagent's call on its chat by `agent_id`. Task 08 implemented 2026-11-03: a sessionless tool's `run` refuses a call the rule names, so `/mcp` refuses it too. Task 10 implemented 2026-11-03: `docs/sdk/AHP.md` says where the rule holds, and the plan's refs point at the current lines. Task 01 Step 2 names the host-wide key.
-- **Next action:** run the by-hand checks in *Final verification checklist* on a test daemon.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** in VS Code a terminal deny rule also means "ask". It is not this rule: it is a match on the command line and it still offers "always".
 

@@ -1,6 +1,6 @@
 ---
 title: The docs say how to update
-status: implemented
+status: done
 depends:
   - task-03-update-installs-moves-plugins-and-restarts.md
   - task-04-ahp-calls-the-update.md

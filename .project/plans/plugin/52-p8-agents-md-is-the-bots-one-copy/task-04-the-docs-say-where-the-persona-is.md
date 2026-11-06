@@ -1,6 +1,6 @@
 ---
 title: The docs say where a bot's persona is
-status: implemented
+status: done
 depends: [task-02-the-persona-is-read-from-agents-md.md, task-05-a-bots-data-is-one-folder.md]
 layer: "docs"
 refs:

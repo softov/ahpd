@@ -1,6 +1,6 @@
 ---
 title: Session Changes come from the checkpoints
-status: implemented
+status: done
 depends:
   - task-01-a-turn-leaves-a-checkpoint.md
 layer: sdk

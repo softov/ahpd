@@ -1,6 +1,6 @@
 ---
 title: The host keeps the canvases of a chat
-status: implemented
+status: done
 depends:
   - task-01-an-older-connection-gets-no-canvas-action.md
 layer: "sdk"

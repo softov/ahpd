@@ -1,6 +1,6 @@
 ---
 title: A turn leaves a checkpoint
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

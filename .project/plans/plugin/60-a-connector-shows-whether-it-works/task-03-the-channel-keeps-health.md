@@ -1,6 +1,6 @@
 ---
 title: The channel keeps each connector's health
-status: implemented
+status: done
 depends: [task-01-the-types-carry-a-check-and-health.md]
 layer: "sdk"
 refs:

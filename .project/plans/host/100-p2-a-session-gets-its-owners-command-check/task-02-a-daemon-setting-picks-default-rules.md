@@ -1,6 +1,6 @@
 ---
 title: The daemon setting picks the default rules
-status: implemented
+status: done
 depends: [task-01-the-check-reads-the-owners-connection.md]
 layer: sdk, server
 refs:

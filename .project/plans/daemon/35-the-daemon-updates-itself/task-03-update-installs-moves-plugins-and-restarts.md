@@ -1,6 +1,6 @@
 ---
 title: Update installs, moves the plugins and restarts
-status: implemented
+status: done
 depends:
   - task-02-update-checks-and-refuses.md
 layer: server

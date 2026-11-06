@@ -1,6 +1,6 @@
 ---
 title: The restart mark is pushed to every client
-status: implemented
+status: done
 depends: [task-11-a-plugin-command-marks-a-restart.md]
 layer: "sdk, docs"
 refs:

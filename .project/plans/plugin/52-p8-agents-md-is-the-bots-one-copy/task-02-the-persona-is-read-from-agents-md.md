@@ -1,6 +1,6 @@
 ---
 title: A bot's persona is read from and written to its AGENTS.md
-status: implemented
+status: done
 depends: [task-01-agents-md-has-parts-the-ui-owns.md, task-06-agents-md-uses-the-hosts-yaml.md]
 layer: "packages/bot"
 refs:

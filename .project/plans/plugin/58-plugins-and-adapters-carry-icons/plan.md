@@ -1,7 +1,7 @@
 ---
 title: Plugins and adapters carry icons
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-23
 revalidated: 2026-10-23
@@ -91,11 +91,11 @@ activepieces apply -> piece logoUrl -> one fetch, cached on disk -> Adapter.icon
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The sdk carries icons](task-01-the-sdk-carries-icons.md) | implemented | - |
-| [02 - The host sends a package icon as data](task-02-the-host-sends-a-package-icon.md) | implemented | 01 |
-| [03 - An Activepieces piece has its logo](task-03-a-piece-has-its-logo.md) | implemented | 02 |
-| [04 - The host fetches an https icon](task-04-the-host-fetches-an-https-icon.md) | implemented | 02 |
-| [05 - Our plugins ship an icon](task-05-our-plugins-ship-an-icon.md) | implemented | 02 |
+| [01 - The sdk carries icons](task-01-the-sdk-carries-icons.md) | done | - |
+| [02 - The host sends a package icon as data](task-02-the-host-sends-a-package-icon.md) | done | 01 |
+| [03 - An Activepieces piece has its logo](task-03-a-piece-has-its-logo.md) | done | 02 |
+| [04 - The host fetches an https icon](task-04-the-host-fetches-an-https-icon.md) | done | 02 |
+| [05 - Our plugins ship an icon](task-05-our-plugins-ship-an-icon.md) | done | 02 |
 | [06 - A piece with a large logo has a shipped SVG](task-06-a-large-logo-has-a-shipped-svg.md) | dropped | 03 |
 
 ## Risks and tradeoffs
@@ -109,7 +109,7 @@ activepieces apply -> piece logoUrl -> one fetch, cached on disk -> Adapter.icon
 - **Done so far:** all five tasks are implemented. The sdk types carry `icons?: Icon[]` with AHP's `Icon`, `checkIcons` checks the shape and the adapters channel row sends the list. `packages/server/src/icons.ts` turns a package file, an `https:` URL or a `data:` URI into a `data:` icon. It drops a file whose real path is outside the package. The loader resolves a manifest's icons, and each adapter's icons, against the plugin's package. An `https:` icon is fetched at load with a 5 second timeout, a 32 KB limit and an `image/` check. The fetcher is injected, so no test reaches the network. The Activepieces plugin fetches each piece's `logoUrl` once, and caches it at `<configDir>/activepieces/icons/<piece>.<extension>`, with the type in the name. The adapter gets the logo as a `data:` icon. Each of the eleven packages ships an `icon.svg`, names it in `ahpd.icons` and lists it in `files`, and the webhook adapter uses the same file. The docs have an Icons section in `PLUGINS.md` and a logo section in `activepieces.md`.
 - **Reopened:** no plugin declared an icon, so tasks 04 and 05 were added. Tasks 01 to 03 are merged in #80.
 - **Reopened again:** the Jira, Linear, Resend and WhatsApp logos are 48 to 77 KB on the CDN, so they show no icon. Plan 69 task 03 replaced task 06: the four marks are host marks in `packages/server/icons/`, and `logoOf` answers a `mark:` source for them.
-- **Next action:** Softov curates each candidate in `.project/pending/plugin-58-icon-curation.md`, and the plan closes.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** which icons Softov keeps, and whether Cofold takes a vendor mark.
 - **Watch out for:** an adapter icon path is relative to the package of the plugin that registered it. It is not relative to the daemon's working folder.
 

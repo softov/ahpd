@@ -1,7 +1,7 @@
 ---
 title: A secret field says secret
 domain: plugin
-status: implemented
+status: built
 priority: medium
 created: 2026-10-29
 revalidated: 2026-10-29
@@ -73,9 +73,9 @@ ahpd config / plugin list -> `<set>` for a `writeOnly` or a `secret` value
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host reads secret](task-01-the-host-reads-secret.md) | implemented | - |
-| [02 - The masks read both keywords](task-02-the-masks-read-both-keywords.md) | implemented | 01 |
-| [03 - First-party schemas say secret](task-03-first-party-schemas-say-secret.md) | implemented | 01 |
+| [01 - The host reads secret](task-01-the-host-reads-secret.md) | done | - |
+| [02 - The masks read both keywords](task-02-the-masks-read-both-keywords.md) | done | 01 |
+| [03 - First-party schemas say secret](task-03-first-party-schemas-say-secret.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -85,7 +85,7 @@ ahpd config / plugin list -> `<set>` for a `writeOnly` or a `secret` value
 ## Resume state
 
 - **Done so far:** all three tasks are implemented on `build/agents/7355891b`, and `implemented.md` says what was built and where it departed from the plan. The keywords, the fallback, the load-time problem line, the two masks, the first-party schemas, the docs and the tests are all in place.
-- **Next action:** review, then set each task to done.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** the cofold engine schema overrides `apiKey` with `secret: true` in `kindSchema`, because its `package.json` options stay `writeOnly` and the engine spreads them; task 03's Files list does not name that file. Task 03's Files list is also missing six test files that assert a vault field: the acp presets, the claude options schema, the pi engine, the openrouter sign-in, the activepieces pieces and the cofold engine. `packages/sdk/test/fixtures/wire.jsonl` is rewritten by the suite on every run and is left dirty in the worktree.
 

@@ -1,6 +1,6 @@
 ---
 title: Every shipped plugin declares its contracts
-status: implemented
+status: done
 depends: [task-02-a-registration-is-checked.md]
 layer: "every plugin package"
 refs:

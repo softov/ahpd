@@ -1,6 +1,6 @@
 ---
 title: A test walks every first-party schema
-status: implemented
+status: done
 depends:
   - task-01-every-schema-entry-point-checks.md
   - task-02-claude-lists-models-and-sources.md

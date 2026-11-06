@@ -1,6 +1,6 @@
 ---
 title: Responses are served
-status: implemented
+status: done
 depends: [task-01-tokens-are-counted.md]
 layer: "server"
 refs:

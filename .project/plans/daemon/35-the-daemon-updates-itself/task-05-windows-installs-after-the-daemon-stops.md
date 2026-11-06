@@ -1,6 +1,6 @@
 ---
 title: Windows installs after the daemon stops
-status: implemented
+status: done
 depends:
   - task-03-update-installs-moves-plugins-and-restarts.md
 layer: server

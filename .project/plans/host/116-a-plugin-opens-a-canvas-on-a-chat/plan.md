@@ -1,7 +1,7 @@
 ---
 title: A plugin opens a canvas on a chat
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-22
 revalidated: 2026-10-28
@@ -129,10 +129,10 @@ plugin: closeCanvas(resource) or the chat goes -> chat/canvasesChanged without i
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An older connection gets no canvas action](task-01-an-older-connection-gets-no-canvas-action.md) | implemented | - |
-| [02 - The host keeps the canvases of a chat](task-02-the-host-keeps-the-canvases-of-a-chat.md) | implemented | 01 |
-| [03 - A plugin opens, updates and closes a canvas](task-03-a-plugin-opens-a-canvas.md) | implemented | 02 |
-| [04 - The docs say how a plugin opens a canvas](task-04-the-docs-say-how-a-plugin-opens-a-canvas.md) | implemented | 03 |
+| [01 - An older connection gets no canvas action](task-01-an-older-connection-gets-no-canvas-action.md) | done | - |
+| [02 - The host keeps the canvases of a chat](task-02-the-host-keeps-the-canvases-of-a-chat.md) | done | 01 |
+| [03 - A plugin opens, updates and closes a canvas](task-03-a-plugin-opens-a-canvas.md) | done | 02 |
+| [04 - The docs say how a plugin opens a canvas](task-04-the-docs-say-how-a-plugin-opens-a-canvas.md) | done | 03 |
 
 ## Risks and tradeoffs
 
@@ -146,7 +146,7 @@ plugin: closeCanvas(resource) or the chat goes -> chat/canvasesChanged without i
 ## Resume state
 
 - **Done so far:** planned 2026-10-22, and the open questions answered the same day. The refs were checked against main `343ca825` on 2026-10-28. Plugins now load and unload while the daemon runs, so task 03 closes a plugin's canvases at unload. VS Code main `2398c3f7c7c` was checked on 2026-10-28: the canvas URI, the state manager, the `NotFound` answer and the Copilot projection rules are the same. Task 01 is implemented: each connection keeps its agreed version, and `seenBy` holds back a protocol action the version does not know. Task 02 is implemented: `host/canvases.ts` holds the store, the snapshot answers an `ahp-canvas:` channel, the chat lists its canvases, and the move, the removed chat and `teardown` forget them. Task 03 is implemented: a plugin opens, draws and closes a canvas through its `PluginHost`, the store refuses a bad state or a bad `url`, and the first open adds the closer that takes a plugin's canvases away when it unloads. Task 04 is implemented: the plugin docs, the AHP canvas section, the chat's canvases and the upstream box all say what the code does.
-- **Next action:** none. Every task is implemented. Softov reviews, then sets each task `done` and the plan `built`.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none. Softov answered all five on 2026-10-22.
 - **Watch out for:** `respelledIn` rewrites every `resource` and `url` value for a connection that knows a session by another name, and the canvas resource holds the chat in base64url. Both come out unchanged, and the last case of `host-canvases.test.ts` proves it.
   A canvas is served by its own branch in `snapshotOf`, before the session lookup, so an `ahp-canvas:` channel answers from the canvas store alone.

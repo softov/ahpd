@@ -1,6 +1,6 @@
 ---
 title: A bot's data is one folder
-status: implemented
+status: done
 depends: [task-02-the-persona-is-read-from-agents-md.md]
 layer: "packages/sdk, packages/server, packages/bot"
 refs:

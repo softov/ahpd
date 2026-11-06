@@ -1,7 +1,7 @@
 ---
 title: A person mints tokens of their own
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-18
 revalidated: 2026-10-19
@@ -77,13 +77,13 @@ person signs in -> token mint (grants, label) -> secret shown once -> hash in th
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the directory keeps tokens](task-01-the-directory-keeps-tokens.md) | implemented | - |
-| [02 - a token signs in narrowed](task-02-a-token-signs-in-narrowed.md) | implemented | 01 |
-| [03 - the tokens per person key](task-03-the-tokens-per-person-key.md) | implemented | 01 |
-| [04 - the token commands](task-04-the-token-commands.md) | implemented | 02, 03 |
-| [05 - the token methods over AHP](task-05-the-token-methods-over-ahp.md) | implemented | 02 |
-| [06 - the docs name tokens](task-06-the-docs-name-tokens.md) | implemented | 04, 05 |
-| [07 - a token id never starts with a hyphen](task-07-a-token-id-never-starts-with-a-hyphen.md) | implemented | 04 |
+| [01 - the directory keeps tokens](task-01-the-directory-keeps-tokens.md) | done | - |
+| [02 - a token signs in narrowed](task-02-a-token-signs-in-narrowed.md) | done | 01 |
+| [03 - the tokens per person key](task-03-the-tokens-per-person-key.md) | done | 01 |
+| [04 - the token commands](task-04-the-token-commands.md) | done | 02, 03 |
+| [05 - the token methods over AHP](task-05-the-token-methods-over-ahp.md) | done | 02 |
+| [06 - the docs name tokens](task-06-the-docs-name-tokens.md) | done | 04, 05 |
+| [07 - a token id never starts with a hyphen](task-07-a-token-id-never-starts-with-a-hyphen.md) | done | 04 |
 
 ## Risks and tradeoffs
 
@@ -94,7 +94,7 @@ person signs in -> token mint (grants, label) -> secret shown once -> hash in th
 ## Resume state
 
 - **Done so far:** draft written 2026-10-18. Questions answered and tasks written 2026-10-19. Task 01 implemented 2026-10-19: the tokens file, the three `Users` calls and their tests. Task 02 implemented 2026-10-19: a token signs in narrowed, and revoke and expiry land on the next call. Task 03 implemented 2026-10-19: the `tokensPerPerson` key. Task 04 implemented 2026-10-19: `token mint`, `token list` and `token rm`, at the terminal and over `/api`. Task 05 implemented 2026-10-19: `x-ahpd/tokens/mint`, `list` and `revoke`, with the same checks as the commands. Task 06 implemented 2026-10-19: the server and sdk docs name the commands, the methods and `tokensPerPerson`. Task 07 implemented 2026-10-20: a minted id never starts with `-`, so `token rm` takes every id a mint hands out.
-- **Next action:** the plan is ready for review and the tasks for `done`; the hand checks in `pending/host-108-token-checks.md` remain.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:**
   - A token's secret is shown once, and only its hash is kept, as `mint` does today.

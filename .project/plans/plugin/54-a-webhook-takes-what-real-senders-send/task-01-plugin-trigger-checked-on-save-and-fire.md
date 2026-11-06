@@ -1,6 +1,6 @@
 ---
 title: A plugin trigger is checked on save and at a fire
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: A session tool acts as the person it works for, within VS Code's limits, and can be switched off
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-09-30
 revalidated: 2026-10-13
@@ -58,7 +58,7 @@ agent calls list_sessions -> host tool run(input, toolContext(uri, chat)) -> eve
 | A tool call carries the grants of the person who sent the turn it runs in; a turn an automation started carries the automation's creator; under a users directory, a turn with no person gets no session tool that writes | Softov, 2026-09-30, asked "No session has an owner, so whose grants should a session tool call carry?": "Who sent the turn" | 01 |
 | A refusal for a count uses VS Code's words with "in this process" changed to "in this session tree", so it says what is true; the depth refusal is VS Code's as it is | Softov, 2026-10-13, to "What should a refusal say?" - "Same words, 'in this session tree'" | 02 |
 | A turn a session tool or a wake started carries the person of the turn that called the tool or set the wake, so a child acts as the same person and never as more | Softov, 2026-10-13, to "Whose grants should such a turn carry?" - "The turn that started it" | 01 |
-| A live change of the session tools removes the `ahp` server, then adds it with the new tools, because the Claude Agent SDK registers a server name once and drops a later declaration of it | Softov, 2026-10-13, to "How should host/33 make a live change reach a running session?" - "Remove, then add again (Recommended)" | 04 |
+| A live change of the session tools removes Claude's in-process servers, `client` and `host`, then adds them with the new tools, because the Claude Agent SDK registers a server name once and drops a later declaration of it | Softov, 2026-10-13, to "How should host/33 make a live change reach a running session?" - "Remove, then add again (Recommended)" | 04 |
 | No confirmation is forced host-side: whether a session tool asks is the backend's permission mode, so a person who lets an agent work can let it `send_message` without being asked each time | same answer, on host-side confirmation "whatever the permissions": "not ideal for a get to working agent. if desired by the user... so whatever the permissions ask was not accepted as written" | - |
 
 ## Proposed architecture
@@ -74,8 +74,8 @@ agent calls list_sessions -> host tool run(input, toolContext(uri, chat)) -> eve
 | --- | --- | --- |
 | [01 - A session tool acts as the person it works for](task-01-session-tool-acts-as-its-person.md) | done | - |
 | [02 - VS Code's limits on spawning and messaging](task-02-vscode-limits-on-spawning-and-messaging.md) | done | - |
-| [03 - The session tools can be switched off](task-03-the-session-tools-can-be-switched-off.md) | implemented | - |
-| [04 - The switch is read from the file and reaches a running claude session](task-04-switch-reaches-a-running-claude-session.md) | implemented | 03 |
+| [03 - The session tools can be switched off](task-03-the-session-tools-can-be-switched-off.md) | done | - |
+| [04 - The switch is read from the file and reaches a running claude session](task-04-switch-reaches-a-running-claude-session.md) | done | 03 |
 
 ## Risks and tradeoffs
 
@@ -85,6 +85,6 @@ agent calls list_sessions -> host tool run(input, toolContext(uri, chat)) -> eve
 ## Resume state
 
 - **Done so far:** planned 2026-09-30; task files written 2026-10-13; tasks 01 and 02 built and reviewed to done 2026-10-13; tasks 03 and 04 implemented and not set to done. Softov answered task 03's step 4 fork on 2026-10-13: split the option into two keys. The switch is a boolean and the provider list is an array, so the flag parser and the settings screen take one type each. Both parse from the command line: the switch as `--session-tools` with `--no-session-tools`, and the list as a repeatable `--session-tools-providers`. Task 04 built 2026-10-13, both live defects fixed. The file half: the two fields carry no `default`, so a value in `config.json` reaches the options with no flag. The live half: task 04's step 6 found that the Claude Agent SDK registers a server name once and drops a later declaration of it, so `setTools` now declares the set without `ahp` first and with the new `ahp` second - Softov's answer of 2026-10-13, "Remove, then add again". A review of task 04 the same day narrowed it: a session that has no `ahp` yet declares the new one alone, and a removal the SDK took is held even when the add that follows is refused.
-- **Next action:** Softov sets tasks 03 and 04 to done. The review of 2026-10-18 found one defect in task 03, and the fix is in. A push of any other daemon key retooled from the file alone, which undid a `--no-session-tools` the line set. The retool now runs only when the push names either session tool key.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** the artifact tools and `ahp_terminals` are not session tools; this plan leaves them as they are. Also the gap the two declarations leave: between them the CLI holds no `ahp` server at all, so a session tool called in that moment fails. And that `setTools` answered `true` over the SDK's silent drop before task 04's step 8, which is why the log line step 5 added never fired for it.

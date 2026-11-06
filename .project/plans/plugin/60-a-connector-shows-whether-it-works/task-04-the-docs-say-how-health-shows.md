@@ -1,6 +1,6 @@
 ---
 title: The docs say how a connector shows health
-status: implemented
+status: done
 depends: [task-02-a-host-secret-can-name-an-env-variable.md, task-03-the-channel-keeps-health.md]
 layer: "docs"
 refs:

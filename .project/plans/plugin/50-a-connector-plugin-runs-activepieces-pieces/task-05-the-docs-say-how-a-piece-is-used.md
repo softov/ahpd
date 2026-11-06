@@ -1,6 +1,6 @@
 ---
 title: The docs say how a piece is used
-status: implemented
+status: done
 depends:
   - task-04-resend-telegram-and-slack-are-the-first-pieces.md
 layer: "docs"

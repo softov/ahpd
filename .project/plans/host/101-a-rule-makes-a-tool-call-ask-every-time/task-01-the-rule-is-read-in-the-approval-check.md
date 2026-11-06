@@ -1,6 +1,6 @@
 ---
 title: The rule is read in the approval check
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

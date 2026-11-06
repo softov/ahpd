@@ -1,6 +1,6 @@
 ---
 title: A plugin row carries its alerts
-status: implemented
+status: done
 depends: []
 layer: "sdk, server, docs"
 refs:

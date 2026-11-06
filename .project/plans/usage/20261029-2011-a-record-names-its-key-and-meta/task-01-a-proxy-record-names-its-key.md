@@ -1,6 +1,6 @@
 ---
 title: A proxy record names its key
-status: implemented
+status: done
 depends: []
 layer: "sdk, server"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: The service manager starts the daemon
 domain: daemon
-status: active
+status: built
 priority: medium
 created: 2026-10-16
 revalidated: 2026-10-16
@@ -92,11 +92,11 @@ ahpd service install -> unit file from the config -> systemctl --user enable --n
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A supervised daemon writes its record](task-01-a-supervised-daemon-writes-its-record.md) | implemented | - |
-| [02 - Stop and restart ask the manager](task-02-stop-and-restart-ask-the-manager.md) | implemented | 01 |
-| [03 - Service install writes a systemd unit](task-03-service-install-writes-a-systemd-unit.md) | implemented | 01, 02 |
-| [04 - Service install writes a LaunchAgent](task-04-service-install-writes-a-launch-agent.md) | implemented | 01, 02 |
-| [05 - The docs say how to run it as a service](task-05-the-docs-say-how-to-run-as-a-service.md) | implemented | 03, 04 |
+| [01 - A supervised daemon writes its record](task-01-a-supervised-daemon-writes-its-record.md) | done | - |
+| [02 - Stop and restart ask the manager](task-02-stop-and-restart-ask-the-manager.md) | done | 01 |
+| [03 - Service install writes a systemd unit](task-03-service-install-writes-a-systemd-unit.md) | done | 01, 02 |
+| [04 - Service install writes a LaunchAgent](task-04-service-install-writes-a-launch-agent.md) | done | 01, 02 |
+| [05 - The docs say how to run it as a service](task-05-the-docs-say-how-to-run-as-a-service.md) | done | 03, 04 |
 
 ## Relations
 
@@ -115,7 +115,7 @@ ahpd service install -> unit file from the config -> systemctl --user enable --n
 ## Resume state
 
 - **Done so far:** the plan, 2026-10-16, and every task built and passing on 2026-10-16: 01, 02 and 03, then 04 and 05. Softov answered the open questions on 2026-10-16. On review (2026-10-18) `service install` now resolves a relative `--config-file` to a full path, with a test.
-- **Next action:** Softov reviews the tasks; then each task is `done`.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 The checks at the end of this file need a systemd user session and a Mac. Neither task could run them here.
 On Debian, every check by hand passed on 2026-10-20. The macOS checks are in [pending/daemon-31-service-checks.md](../../../pending/daemon-31-service-checks.md).
 - **Open questions:** none.

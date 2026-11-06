@@ -1,7 +1,7 @@
 ---
 title: A plugin loads, unloads and reloads while the daemon runs
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-23
 revalidated: 2026-10-23
@@ -90,10 +90,10 @@ enable, disable, options, install -> config.json written -> daemon applyPlugins
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host takes a new fold](task-01-the-host-takes-a-new-fold.md) | implemented | - |
-| [02 - A plugin change applies at once](task-02-a-plugin-change-applies-at-once.md) | implemented | 01 |
-| [03 - An agent unload ends its sessions](task-03-an-agent-unload-ends-its-sessions.md) | implemented | 02 |
-| [04 - A code reload imports a new URL](task-04-a-code-reload-imports-a-new-url.md) | implemented | 02 |
+| [01 - The host takes a new fold](task-01-the-host-takes-a-new-fold.md) | done | - |
+| [02 - A plugin change applies at once](task-02-a-plugin-change-applies-at-once.md) | done | 01 |
+| [03 - An agent unload ends its sessions](task-03-an-agent-unload-ends-its-sessions.md) | done | 02 |
+| [04 - A code reload imports a new URL](task-04-a-code-reload-imports-a-new-url.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -104,7 +104,7 @@ enable, disable, options, install -> config.json written -> daemon applyPlugins
 ## Resume state
 
 - **Done so far:** task-01, task-02, task-03 and task-04 are implemented. `host.replace(folded)` takes a live fold and refuses one that moves a port or a resource scheme. It keeps an agent that still has a session, and retools every open session. `host.endSessionsOf(agent)` is beside it. `applyPlugins` reads the file, unloads, loads and applies again what differs, folds every contribution from the same base, and gives the fold to the host. The channel, root config and the terminal all apply at once, and only a plugin with a port or a URI scheme answers `restart: true`. An unload ends the sessions on the plugin's agents before its closers run. `x-ahpd/plugins/reload` and `ahpd plugin reload` import a plugin again from `<url>?reload=<count>`, and `ahpd plugin update` reloads what it moved. `wirePlugins` sets every function the host writes on a plugin's entry, at start and again from `replace`, so a live plugin fires, starts and announces. A trigger entry is kept per contribution across folds, so the host's `deliver` survives a second fold.
-- **Next action:** run the final verification checklist against a running daemon, then write `implemented.md` and close the plan.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** `foldHostOptions` copies the base with its property descriptors, so `mcpServers` stays a getter. A second fold must start from the same base object, not from the first fold. Each reload keeps the module it replaced in memory until a restart.
 

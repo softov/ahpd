@@ -1,6 +1,6 @@
 ---
 title: A client makes connectors
-status: implemented
+status: done
 depends: [task-05-a-plugin-registers-connector-kinds.md, task-06-a-collection-keeps-json-records.md]
 layer: "sdk, server"
 refs:

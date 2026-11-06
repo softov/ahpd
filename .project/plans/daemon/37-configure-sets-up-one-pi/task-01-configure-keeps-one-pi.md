@@ -1,6 +1,6 @@
 ---
 title: configure keeps one pi
-status: implemented
+status: done
 depends: []
 layer: server
 refs:

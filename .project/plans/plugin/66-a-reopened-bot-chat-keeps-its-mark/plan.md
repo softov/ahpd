@@ -1,7 +1,7 @@
 ---
 title: A reopened bot chat keeps its mark
 domain: plugin
-status: active
+status: built
 priority: high
 created: 2026-10-25
 revalidated: 2026-10-25
@@ -63,8 +63,8 @@ bot rowOf -> Listed -> host adopt -> describes -> agentMeta -> summary and brows
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A listed row carries `_meta`](task-01-a-listed-row-carries-meta.md) | implemented | - |
-| [02 - The bot's row carries its mark](task-02-the-bots-row-carries-its-mark.md) | implemented | 01 |
+| [01 - A listed row carries `_meta`](task-01-a-listed-row-carries-meta.md) | done | - |
+| [02 - The bot's row carries its mark](task-02-the-bots-row-carries-its-mark.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -74,7 +74,7 @@ bot rowOf -> Listed -> host adopt -> describes -> agentMeta -> summary and brows
 ## Resume state
 
 - **Done so far:** both tasks are implemented. `Listed` carries an optional `_meta`; the host answers it while nothing runs, and `rowOf` sends the bot's mark.
-- **Next action:** nothing; review, then commit.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** `_meta` is replaced whole, never merged. Compose the listed keys and the host keys in `describes`, as the running agent's keys are.
 

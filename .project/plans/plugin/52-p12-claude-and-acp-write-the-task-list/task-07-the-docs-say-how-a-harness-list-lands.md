@@ -1,6 +1,6 @@
 ---
 title: The docs say how a harness list lands
-status: implemented
+status: done
 depends: [task-05-claudes-own-task-calls-write-the-plan.md, task-06-the-acp-plan-update-writes-the-plan.md]
 layer: "docs"
 refs:

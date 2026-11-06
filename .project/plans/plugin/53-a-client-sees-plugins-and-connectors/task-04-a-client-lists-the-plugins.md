@@ -1,6 +1,6 @@
 ---
 title: A client lists the plugins
-status: implemented
+status: done
 depends: [task-01-the-manifest-is-read.md]
 layer: "server"
 refs:

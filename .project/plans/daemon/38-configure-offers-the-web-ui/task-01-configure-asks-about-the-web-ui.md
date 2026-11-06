@@ -1,6 +1,6 @@
 ---
 title: configure asks about the web UI
-status: implemented
+status: done
 depends: []
 layer: server
 refs:

@@ -1,6 +1,6 @@
 ---
 title: cofold asks for a matched tool in every mode
-status: implemented
+status: done
 depends: [task-05-cofold-asks-for-a-matched-tool.md]
 layer: agent-cofold
 refs:

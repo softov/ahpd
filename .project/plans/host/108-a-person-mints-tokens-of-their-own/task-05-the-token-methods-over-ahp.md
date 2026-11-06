@@ -1,6 +1,6 @@
 ---
 title: The token methods over AHP
-status: implemented
+status: done
 depends: [task-02-a-token-signs-in-narrowed.md]
 layer: sdk
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The docs name the rule
-status: implemented
+status: done
 depends: [task-02-claude-asks-for-a-matched-tool.md, task-03-acp-asks-for-a-matched-tool.md, task-04-pi-asks-for-a-matched-tool.md, task-05-cofold-asks-for-a-matched-tool.md]
 layer: docs
 refs:

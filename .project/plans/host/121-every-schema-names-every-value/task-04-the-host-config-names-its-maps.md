@@ -1,6 +1,6 @@
 ---
 title: The host config names its maps
-status: implemented
+status: done
 depends:
   - task-01-every-schema-entry-point-checks.md
 layer: server

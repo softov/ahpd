@@ -1,6 +1,6 @@
 ---
 title: A steered turn carries its sender
-status: implemented
+status: done
 depends: [task-01-a-steer-starts-its-own-turn.md]
 layer: "sdk, bot"
 refs:

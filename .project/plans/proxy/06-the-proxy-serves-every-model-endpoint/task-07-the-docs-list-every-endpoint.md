@@ -1,6 +1,6 @@
 ---
 title: The docs list every endpoint
-status: implemented
+status: done
 depends: [task-01-tokens-are-counted.md, task-02-embeddings-are-served.md, task-03-responses-are-served.md, task-04-images-are-served.md, task-05-audio-is-served.md, task-06-rerank-is-served.md]
 layer: "docs"
 refs:

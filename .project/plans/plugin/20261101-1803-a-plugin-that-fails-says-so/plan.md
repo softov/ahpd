@@ -1,7 +1,7 @@
 ---
 title: A plugin that fails says so
 domain: plugin
-status: implemented
+status: built
 priority: medium
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -94,10 +94,10 @@ daemon start -> raise(listening) -> devtunnel listening handler -> find/create, 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the anonymous flag](task-01-the-anonymous-flag.md) | implemented | - |
-| [02 - a plugin loaded late hears listening](task-02-a-plugin-loaded-late-hears-listening.md) | implemented | - |
-| [03 - the tunnel says when it fails](task-03-the-tunnel-says-when-it-fails.md) | implemented | 01, 02 |
-| [04 - a handler that throws raises an alert](task-04-a-handler-that-throws-raises-an-alert.md) | implemented | - |
+| [01 - the anonymous flag](task-01-the-anonymous-flag.md) | done | - |
+| [02 - a plugin loaded late hears listening](task-02-a-plugin-loaded-late-hears-listening.md) | done | - |
+| [03 - the tunnel says when it fails](task-03-the-tunnel-says-when-it-fails.md) | done | 01, 02 |
+| [04 - a handler that throws raises an alert](task-04-a-handler-that-throws-raises-an-alert.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -109,7 +109,7 @@ daemon start -> raise(listening) -> devtunnel listening handler -> find/create, 
 ## Resume state
 
 - **Done so far:** all four tasks are implemented, and the suites pass. See [implemented.md](implemented.md).
-- **Next action:** Softov reviews the PR, and does the by-hand checks in *Final verification checklist*.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** a slow `listening` handler of a plugin enabled late holds the `x-ahpd/plugins` answer until it returns, as it holds the start.
 

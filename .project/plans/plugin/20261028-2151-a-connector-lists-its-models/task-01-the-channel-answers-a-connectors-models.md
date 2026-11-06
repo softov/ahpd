@@ -1,6 +1,6 @@
 ---
 title: The connectors channel answers a connector's models
-status: implemented
+status: done
 depends: []
 layer: "sdk, server, docs"
 refs:

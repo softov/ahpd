@@ -1,6 +1,6 @@
 ---
 title: session:write holds chat:write
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

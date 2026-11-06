@@ -1,7 +1,7 @@
 ---
 title: A connector plugin runs Activepieces pieces as tools
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-13
 revalidated: 2026-10-23
@@ -111,11 +111,11 @@ tool call (host/118) -> adapter.run(connector, action, input) -> child -> action
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The plugin loads pieces in a child](task-01-the-plugin-loads-pieces-in-a-child.md) | implemented | - |
-| [02 - A piece is an adapter](task-02-a-piece-is-an-adapter.md) | implemented | 01 |
-| [03 - An action runs in the child](task-03-an-action-runs-in-the-child.md) | implemented | 02 |
-| [04 - Resend, Telegram and Slack are the first pieces](task-04-resend-telegram-and-slack-are-the-first-pieces.md) | implemented | 03 |
-| [05 - The docs say how a piece is used](task-05-the-docs-say-how-a-piece-is-used.md) | implemented | 04 |
+| [01 - The plugin loads pieces in a child](task-01-the-plugin-loads-pieces-in-a-child.md) | done | - |
+| [02 - A piece is an adapter](task-02-a-piece-is-an-adapter.md) | done | 01 |
+| [03 - An action runs in the child](task-03-an-action-runs-in-the-child.md) | done | 02 |
+| [04 - Resend, Telegram and Slack are the first pieces](task-04-resend-telegram-and-slack-are-the-first-pieces.md) | done | 03 |
+| [05 - The docs say how a piece is used](task-05-the-docs-say-how-a-piece-is-used.md) | done | 04 |
 
 ## Risks and tradeoffs
 
@@ -127,7 +127,7 @@ tool call (host/118) -> adapter.run(connector, action, input) -> child -> action
 ## Resume state
 
 - **Done so far:** the plan, 2026-10-13. Rewritten on 2026-10-23 for the adapter model of plan 53 and host/118. Tasks 01 to 05 implemented 2026-10-23: the package, its child, the mapping, `run`, the three first pieces and the docs page. `pnpm -s build`, `pnpm -s typecheck`, `pnpm -s boundary`, `pnpm -s docs:build` and `packages/activepieces`'s 21 cases pass.
-- **Next action:** none; every task is implemented and merged in #75, and waits for Softov's review. The checks by hand are in [.project/pending/plugin-50-first-pieces.md](../../../pending/plugin-50-first-pieces.md), and the license rows rest on the idea of 2026-10-06 until that file's license check runs.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** the run request carries `connector` beside the fields of task 03's step 3, because the child keeps one store for each connector. `nameOf` also names an adapter from a piece named by a file URL, which is how a test names a fixture.
 - **Watch out for:** a piece bundles its own copy of the framework, so find it by its `_actions` member, not by `instanceof`.
 

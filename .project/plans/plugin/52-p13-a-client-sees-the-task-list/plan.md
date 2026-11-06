@@ -1,7 +1,7 @@
 ---
 title: A client sees the task list
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-18
 revalidated: 2026-10-18
@@ -86,11 +86,11 @@ tasks records -> tasks plugin -> Plan call in the turn / `_meta` on the session 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the-plan-call-is-drawn-from-the-host](task-01-the-plan-call-is-drawn-from-the-host.md) | implemented | - |
-| [02 - a-sessions-meta-counts-its-open-tasks](task-02-a-sessions-meta-counts-its-open-tasks.md) | implemented | - |
-| [03 - the-plan-channel-holds-a-plan](task-03-the-plan-channel-holds-a-plan.md) | implemented | - |
+| [01 - the-plan-call-is-drawn-from-the-host](task-01-the-plan-call-is-drawn-from-the-host.md) | done | - |
+| [02 - a-sessions-meta-counts-its-open-tasks](task-02-a-sessions-meta-counts-its-open-tasks.md) | done | - |
+| [03 - the-plan-channel-holds-a-plan](task-03-the-plan-channel-holds-a-plan.md) | done | - |
 | [04 - the-upstream-text-is-shown-to-softov](task-04-the-upstream-text-is-shown-to-softov.md) | done | 03 |
-| [05 - the-docs-say-how-a-client-sees-the-list](task-05-the-docs-say-how-a-client-sees-the-list.md) | implemented | 01, 02, 03 |
+| [05 - the-docs-say-how-a-client-sees-the-list](task-05-the-docs-say-how-a-client-sees-the-list.md) | done | 01, 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -102,7 +102,7 @@ tasks records -> tasks plugin -> Plan call in the turn / `_meta` on the session 
 ## Resume state
 
 - **Done so far:** plan and tasks written 2026-10-18, with the rows moved from p1. Open questions answered 2026-10-18: the seam, the `sessionMetaChanged` announcement, the channel action names, "Host holds turn end" for a plan change that lands as the turn ends, and `x-ahpd-plans/taskRemoved` for a task taken out of the store. Tasks 01, 02, 03 and 05 are implemented and their tests pass. Task 01 holds a turn end behind a plan update in flight, capped at two seconds, and announces the sessions of session-scoped plans. Task 03 publishes a removal with the task id. Softov read task 04's proposal on 2026-10-19, and it is not filed.
-- **Next action:** the review of tasks 01, 02, 03 and 05.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none. The in-flight detection is the builder default in the answers table.
 - **Watch out for:** the records are the one source. Nothing in the Plan call, the count or the channel is written back. A removal's plan is the one the channel last saw the task on, not one read at removal time.
 

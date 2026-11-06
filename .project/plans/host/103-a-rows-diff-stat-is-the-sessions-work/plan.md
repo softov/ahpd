@@ -1,7 +1,7 @@
 ---
 title: A row's diff stat is the session's own work
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-16
 revalidated: 2026-10-16
@@ -96,12 +96,12 @@ turn ends -> checkpoint -> Session Changes (or Branch Changes) -> summary.change
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn leaves a checkpoint](task-01-a-turn-leaves-a-checkpoint.md) | implemented | - |
-| [02 - Session Changes come from the checkpoints](task-02-session-changes-come-from-checkpoints.md) | implemented | 01 |
-| [03 - A worktree session has Branch Changes](task-03-a-worktree-session-has-branch-changes.md) | implemented | - |
-| [04 - A row's changes are the session's summary](task-04-a-rows-changes-are-the-sessions-summary.md) | implemented | 02, 03 |
-| [05 - A failed turn moves the counts](task-05-a-failed-turn-moves-the-counts.md) | implemented | 04 |
-| [06 - The docs say what a row counts](task-06-the-docs-say-what-a-row-counts.md) | implemented | 04 |
+| [01 - A turn leaves a checkpoint](task-01-a-turn-leaves-a-checkpoint.md) | done | - |
+| [02 - Session Changes come from the checkpoints](task-02-session-changes-come-from-checkpoints.md) | done | 01 |
+| [03 - A worktree session has Branch Changes](task-03-a-worktree-session-has-branch-changes.md) | done | - |
+| [04 - A row's changes are the session's summary](task-04-a-rows-changes-are-the-sessions-summary.md) | done | 02, 03 |
+| [05 - A failed turn moves the counts](task-05-a-failed-turn-moves-the-counts.md) | done | 04 |
+| [06 - The docs say what a row counts](task-06-the-docs-say-what-a-row-counts.md) | done | 04 |
 
 ## Risks and tradeoffs
 
@@ -121,7 +121,7 @@ turn ends -> checkpoint -> Session Changes (or Branch Changes) -> summary.change
   Task 06 made `docs/sdk/SESSIONS.md` say what a row's `changes` counts, for both kinds, the checkpoint refs and the fallback.
   The gates and the sdk suite pass with 2999 tests.
   On review (2026-10-18), `commit-tree` got a fixed `ahpd` identity, so a checkpoint is written where git has no identity, with a test.
-- **Next action:** None - every task is implemented.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
   Nothing is set to `done`.
   The work is committed in `06596413` and waits for Softov's review.
 - **Open questions:** none.

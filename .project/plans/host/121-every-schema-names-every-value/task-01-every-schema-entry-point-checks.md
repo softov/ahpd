@@ -1,6 +1,6 @@
 ---
 title: Every schema entry point checks for gaps
-status: implemented
+status: done
 depends: []
 layer: "sdk, server, docs"
 refs:

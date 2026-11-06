@@ -1,6 +1,6 @@
 ---
 title: The directory keeps a person's tokens
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A failed model call is resumable
-status: implemented
+status: done
 depends: []
 layer: agent-pi
 refs:

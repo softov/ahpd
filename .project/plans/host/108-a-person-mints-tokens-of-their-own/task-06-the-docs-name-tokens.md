@@ -1,6 +1,6 @@
 ---
 title: The docs name a person's tokens
-status: implemented
+status: done
 depends: [task-04-the-token-commands.md, task-05-the-token-methods-over-ahp.md]
 layer: docs
 refs:

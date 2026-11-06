@@ -1,6 +1,6 @@
 ---
 title: References and owners are checked, and a plugin runs one automation
-status: implemented
+status: done
 depends: [task-01-plugin-trigger-checked-on-save-and-fire.md]
 layer: "sdk, server"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A joined socket is a nested host the proxy talks to
-status: implemented
+status: done
 depends: [task-01-ahpd-join-dials-the-hub.md]
 layer: "sdk"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A token signs in as its person, narrowed
-status: implemented
+status: done
 depends: [task-01-the-directory-keeps-tokens.md]
 layer: sdk
 refs:

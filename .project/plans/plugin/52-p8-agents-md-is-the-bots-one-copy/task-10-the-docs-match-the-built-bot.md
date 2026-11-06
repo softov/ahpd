@@ -1,6 +1,6 @@
 ---
 title: The docs match the built bot
-status: implemented
+status: done
 depends: [task-04-the-docs-say-where-the-persona-is.md, task-07-a-load-removes-only-dead-bots.md, task-08-the-persona-is-never-dropped.md, task-09-agents-md-text-survives-a-write.md]
 layer: "docs"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A worktree session has Branch Changes
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

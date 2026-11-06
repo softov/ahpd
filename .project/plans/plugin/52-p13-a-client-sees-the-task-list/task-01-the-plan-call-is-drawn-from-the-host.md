@@ -1,6 +1,6 @@
 ---
 title: The Plan call is drawn from the host
-status: implemented
+status: done
 depends: []
 layer: "sdk, tasks"
 refs:

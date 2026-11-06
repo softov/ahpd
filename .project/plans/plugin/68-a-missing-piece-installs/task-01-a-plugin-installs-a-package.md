@@ -1,6 +1,6 @@
 ---
 title: A plugin installs a package into its folder
-status: implemented
+status: done
 depends: []
 layer: "sdk, server, docs"
 refs:

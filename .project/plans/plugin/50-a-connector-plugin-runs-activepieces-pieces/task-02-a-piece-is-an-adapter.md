@@ -1,6 +1,6 @@
 ---
 title: A piece is an adapter
-status: implemented
+status: done
 depends:
   - task-01-the-plugin-loads-pieces-in-a-child.md
 layer: "activepieces"

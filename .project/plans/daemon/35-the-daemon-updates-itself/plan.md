@@ -1,7 +1,7 @@
 ---
 title: The daemon updates itself
 domain: daemon
-status: active
+status: built
 priority: medium
 created: 2026-10-18
 revalidated: 2026-10-18
@@ -107,12 +107,12 @@ ahpd update / POST /api/update / x-ahpd/update
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The update finds its install place](task-01-the-update-finds-its-install-place.md) | implemented | - |
-| [02 - Update checks and refuses](task-02-update-checks-and-refuses.md) | implemented | 01 |
-| [03 - Update installs, moves the plugins and restarts](task-03-update-installs-moves-plugins-and-restarts.md) | implemented | 02 |
-| [04 - AHP calls the update](task-04-ahp-calls-the-update.md) | implemented | 03 |
-| [05 - Windows installs after the daemon stops](task-05-windows-installs-after-the-daemon-stops.md) | implemented | 03 |
-| [06 - The docs say how to update](task-06-the-docs-say-how-to-update.md) | implemented | 03, 04, 05 |
+| [01 - The update finds its install place](task-01-the-update-finds-its-install-place.md) | done | - |
+| [02 - Update checks and refuses](task-02-update-checks-and-refuses.md) | done | 01 |
+| [03 - Update installs, moves the plugins and restarts](task-03-update-installs-moves-plugins-and-restarts.md) | done | 02 |
+| [04 - AHP calls the update](task-04-ahp-calls-the-update.md) | done | 03 |
+| [05 - Windows installs after the daemon stops](task-05-windows-installs-after-the-daemon-stops.md) | done | 03 |
+| [06 - The docs say how to update](task-06-the-docs-say-how-to-update.md) | done | 03, 04, 05 |
 
 ## Relations
 
@@ -132,7 +132,7 @@ ahpd update / POST /api/update / x-ahpd/update
 ## Resume state
 
 - **Done so far:** the plan, 2026-10-18, with Softov's five answers; tasks 01 through 06, 2026-10-19. Every task is implemented and none is reviewed.
-- **Next action:** a review of tasks 01 through 06, then the final verification checklist below.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:**
 `checkScopes` returns early for the `cli` surface, so the deployment token check applies over HTTP only.

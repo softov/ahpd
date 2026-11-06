@@ -1,6 +1,6 @@
 ---
 title: The docs say adapters, connectors and their grants
-status: implemented
+status: done
 depends: [task-15-adapters-and-connectors-split.md]
 layer: "docs"
 refs:

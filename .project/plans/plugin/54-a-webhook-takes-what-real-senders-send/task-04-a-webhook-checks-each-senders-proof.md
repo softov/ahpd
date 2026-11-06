@@ -1,6 +1,6 @@
 ---
 title: A webhook checks each sender's proof
-status: implemented
+status: done
 depends: [task-03-a-webhook-reads-any-body.md]
 layer: "webhook"
 refs:

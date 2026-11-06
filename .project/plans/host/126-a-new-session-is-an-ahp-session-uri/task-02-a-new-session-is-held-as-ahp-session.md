@@ -1,6 +1,6 @@
 ---
 title: A new session is held as `ahp-session:`
-status: implemented
+status: done
 depends: [task-01-the-store-keeps-a-sessions-uri.md]
 layer: "sdk"
 refs:

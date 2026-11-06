@@ -1,6 +1,6 @@
 ---
 title: A webhook endpoint is a connector
-status: implemented
+status: done
 depends: [task-07-a-client-makes-connectors.md]
 layer: "webhook"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Claude lists models and model sources apart
-status: implemented
+status: done
 depends:
   - task-01-every-schema-entry-point-checks.md
 layer: "agent-claude, server, docs"

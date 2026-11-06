@@ -1,7 +1,7 @@
 ---
 title: A session gets its owner's command check
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-16
 revalidated: 2026-10-16
@@ -72,9 +72,9 @@ owner's connection -> rules, edit rules, enabled -> Start.getAutoApproval(kind, 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The check reads the owner's connection](task-01-the-check-reads-the-owners-connection.md) | implemented | - |
-| [02 - The daemon setting picks the default rules](task-02-a-daemon-setting-picks-default-rules.md) | implemented | 01 |
-| [03 - A pushed regex rule needs config:change](task-03-a-pushed-regex-rule-needs-config-change.md) | implemented | 01 |
+| [01 - The check reads the owner's connection](task-01-the-check-reads-the-owners-connection.md) | done | - |
+| [02 - The daemon setting picks the default rules](task-02-a-daemon-setting-picks-default-rules.md) | done | 01 |
+| [03 - A pushed regex rule needs config:change](task-03-a-pushed-regex-rule-needs-config-change.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -83,7 +83,7 @@ owner's connection -> rules, edit rules, enabled -> Start.getAutoApproval(kind, 
 ## Resume state
 
 - **Done so far:** planned 2026-10-16; tasks 01 and 02 implemented 2026-10-18; task 03 implemented 2026-10-20. Tests in `autoapproval.test.ts`, `root-config.test.ts`, `config-check.test.ts` and `users-gate-dispatch.test.ts`.
-- **Next action:** Softov runs the checks by hand in [pending/host-100-p2-review.md](../../../pending/host-100-p2-review.md).
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** host/101 task 01 builds on `getAutoApproval`; keep its answer open for a second kind of result.
 

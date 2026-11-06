@@ -1,6 +1,6 @@
 ---
 title: A supervised daemon writes its record
-status: implemented
+status: done
 depends: []
 layer: server
 refs:

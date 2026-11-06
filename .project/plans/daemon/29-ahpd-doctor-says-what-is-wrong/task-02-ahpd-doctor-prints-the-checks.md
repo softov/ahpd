@@ -1,6 +1,6 @@
 ---
 title: ahpd doctor prints the checks
-status: implemented
+status: done
 depends: [task-01-the-checks-say-what-is-wrong.md]
 layer: server
 refs:

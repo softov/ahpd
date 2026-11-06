@@ -1,6 +1,6 @@
 ---
 title: The docs name the protocol's URI
-status: implemented
+status: done
 depends: [task-02-a-new-session-is-held-as-ahp-session.md, task-03-a-listed-session-is-named-from-its-row.md, task-04-no-provider-is-read-from-a-scheme.md]
 layer: "docs"
 refs:

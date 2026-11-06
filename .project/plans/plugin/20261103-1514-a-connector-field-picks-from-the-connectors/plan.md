@@ -1,7 +1,7 @@
 ---
 title: A connector field picks from the connectors
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -77,9 +77,9 @@ client reads x-ahpd-engines:// or listAutomationTriggerDefinitions -> marked fie
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - One connector check for every save](task-01-one-connector-check-for-every-save.md) | implemented | - |
-| [02 - The host fills the connector choices](task-02-the-host-fills-the-connector-choices.md) | implemented | 01 |
-| [03 - The completions command answers a reader](task-03-the-completions-command-answers-a-reader.md) | implemented | 02 |
+| [01 - One connector check for every save](task-01-one-connector-check-for-every-save.md) | done | - |
+| [02 - The host fills the connector choices](task-02-the-host-fills-the-connector-choices.md) | done | 01 |
+| [03 - The completions command answers a reader](task-03-the-completions-command-answers-a-reader.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -89,7 +89,7 @@ client reads x-ahpd-engines:// or listAutomationTriggerDefinitions -> marked fie
 ## Resume state
 
 - **Done so far:** tasks 01, 02 and 03 are implemented. The docs in `docs/plugins/PLUGINS.md`, `docs/sdk/AUTOMATIONS.md`, `docs/sdk/HOST.md` and `docs/updates/v0_14.md` describe the check, the choices and the command.
-- **Next action:** review the PR.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none.
 - **Watch out for:** a system tunnel and a record read back at a start are not checked, because the connectors can open after the tunnels.
 

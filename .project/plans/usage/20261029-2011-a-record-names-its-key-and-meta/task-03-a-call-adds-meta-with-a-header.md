@@ -1,6 +1,6 @@
 ---
 title: A call adds meta with a header
-status: implemented
+status: done
 depends: [task-01-a-proxy-record-names-its-key.md, task-02-a-key-is-minted-with-meta.md]
 layer: "sdk, server, docs"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: ahpd installs with one line
 domain: daemon
-status: active
+status: built
 priority: medium
 created: 2026-10-15
 revalidated: 2026-10-15
@@ -88,10 +88,10 @@ curl | bash -> install.sh -> node >= 22 -> npm prefix -> npm install -g @ahpd/se
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - install.sh installs ahpd](task-01-install-sh-installs-ahpd.md) | implemented | - |
-| [02 - install.ps1 installs ahpd](task-02-install-ps1-installs-ahpd.md) | implemented | 01 |
-| [03 - The site serves the scripts, and the docs lead with them](task-03-the-site-serves-the-scripts-and-the-docs-lead-with-them.md) | implemented | 01, 02 |
-| [04 - The install script uninstalls](task-04-the-install-script-uninstalls.md) | implemented | 01, 02 |
+| [01 - install.sh installs ahpd](task-01-install-sh-installs-ahpd.md) | done | - |
+| [02 - install.ps1 installs ahpd](task-02-install-ps1-installs-ahpd.md) | done | 01 |
+| [03 - The site serves the scripts, and the docs lead with them](task-03-the-site-serves-the-scripts-and-the-docs-lead-with-them.md) | done | 01, 02 |
+| [04 - The install script uninstalls](task-04-the-install-script-uninstalls.md) | done | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -102,7 +102,7 @@ curl | bash -> install.sh -> node >= 22 -> npm prefix -> npm install -g @ahpd/se
 ## Resume state
 
 - **Done so far:** the proposal and the research, 2026-10-15. Task 04 and its answers, 2026-10-16. Tasks 01 to 04 written 2026-10-19. Tasks 01, 02 and 04 implemented 2026-10-19: `scripts/install/install.sh`, `scripts/install/install.ps1`, their tests in `scripts/install/test/`, the `install` and `install-windows` CI jobs, and the Uninstall section of `docs/server/INSTALL.md`. Task 03 implemented 2026-10-19 in the ahpio-site worktree `/github/ahpio-site.worktrees/ahpd-27-install-scripts`, branch `ahpd/27-install-scripts`. The build step writes `public/ahpd/install.sh` and `install.ps1` from the newest `v*` tag. The three language catalogues show the one line, and INSTALL.md and GET-STARTED.md lead with it.
-- **Next action:** the clean installs in *Final verification checklist*. The site checks passed on 2026-11-03. No task in this plan is `todo`.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Open questions:** none. The tag `v0.14.0` contains `scripts/install/`.
 - **Note:** `NVM_INSTALL_URL` is pinned to `v0.40.8`, the latest nvm release on 2026-10-19. The task files say `ahpd service` reports a service, and the CLI has no such verb. The uninstall reads the daemon/31 service file, or the `service` field in `ahpd status --json`, and then runs `ahpd service uninstall`.
 - **Watch out for:** `irm | iex` cannot pass parameters, so each flag needs an environment twin. Under `iex`, `exit` closes the person's window; use `throw`. A container often has no `SHELL`, so the shell name falls back to `~/.profile`.

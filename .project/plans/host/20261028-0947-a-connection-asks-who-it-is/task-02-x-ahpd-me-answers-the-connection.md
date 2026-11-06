@@ -1,6 +1,6 @@
 ---
 title: x-ahpd/me answers who the connection is
-status: implemented
+status: done
 depends: [task-01-the-principal-keeps-the-sign-in-roles.md]
 layer: sdk
 refs:

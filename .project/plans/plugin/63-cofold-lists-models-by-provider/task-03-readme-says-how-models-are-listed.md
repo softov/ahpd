@@ -1,6 +1,6 @@
 ---
 title: The README says how models are listed
-status: implemented
+status: done
 depends: [task-02-cofold-prefix-only-unowned-endpoint.md]
 layer: "docs"
 refs:

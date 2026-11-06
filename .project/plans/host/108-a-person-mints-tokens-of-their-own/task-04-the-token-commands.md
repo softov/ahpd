@@ -1,6 +1,6 @@
 ---
 title: The token commands
-status: implemented
+status: done
 depends: [task-02-a-token-signs-in-narrowed.md, task-03-the-tokens-per-person-key.md]
 layer: server
 refs:
