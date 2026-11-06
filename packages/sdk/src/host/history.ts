@@ -77,7 +77,7 @@ export function createHistory(ctx: HostContext): History {
     if (held !== undefined) return held;
     if (owner.subagents === undefined) return [];
     let found: Awaited<ReturnType<NonNullable<Agent['subagents']>>>;
-    try { found = await owner.subagents(id, turns, sessionAt(id)); }
+    try { found = await owner.subagents(ctx.sessionBackendId(id), turns, sessionAt(id)); }
     catch { return []; }
     const built = (found ?? []).map((one) => ({ ...one } as unknown as Bag));
     subHistory.set(id, built);
@@ -287,8 +287,8 @@ export function createHistory(ctx: HostContext): History {
       : [...asked.filter((agent) => agent.provider === recorded), ...asked.filter((agent) => agent.provider !== recorded)];
     const at = sessionAt(id);
     for (const agent of order) {
-      const row = await agent.find?.(id, at).catch(() => undefined);
-      if (row !== undefined) return { agent, row };
+      const row = await agent.find?.(ctx.sessionBackendId(id), at).catch(() => undefined);
+      if (row !== undefined) return { agent, row: { ...row, id } };
     }
     return undefined;
   };
@@ -387,7 +387,7 @@ export function createHistory(ctx: HostContext): History {
       titles.set(id, row.title);
       // The session's own transcript is its first chat's, and the outputs
       // handed with it and the local turns put back in it are that chat's.
-      const built = await ctx.transcriptOf(owner, id, sessionAt(id), nameOf(id), chatUriFor(nameOf(id)));
+      const built = await ctx.transcriptOf(owner, ctx.sessionBackendId(id), sessionAt(id), nameOf(id), chatUriFor(nameOf(id)));
       if (!built)
         return undefined;
       /*

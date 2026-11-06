@@ -23,6 +23,8 @@ The host announces `session/ready` once the backend is up and before the session
 
 The session is stored under the id the client named and the backend is told that name, so its transcript is written where this host can find it again. Left to itself the backend invents an id, and a host that did not pass the client's own down answers to two names while it runs and loses the client's the moment it restarts - `No agent for session`, about a session that is still there.
 
+An ACP server may assign its own conversation id rather than accept the client's. The host records that id on the chat and uses it to discover and read the conversation after a restart, while keeping the session and chat URIs the client already holds. A chat's backend conversation is not also listed as a separate session.
+
 `disposeSession` checks first, then tears the running half down, then asks the backend for its own copy, then drops the row and tells every client with `root/sessionRemoved`. A session this host only lists has nothing to tear down and goes straight to the same delete.
 
 Nothing about a session outlives the process except what a store was given. The sessions themselves come back either way, because they are read from the backend's own transcripts; what is this host's own is the read and archived bits, the settings chosen and the owner, and where those go is `--sessions`. `file`, the default, writes one file per session and reads them once at startup. `memory` forgets them, which a daemon started for one run wants and a daemon that restarts does not: a restart there returns every archived session to the catalogue and marks every read one unread.
