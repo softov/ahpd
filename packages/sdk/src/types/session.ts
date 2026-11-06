@@ -711,8 +711,17 @@ export interface Session {
   /**
    * Answer a tool call the agent is waiting on.
    *
-   * `optionId` is the `id` of the `ConfirmationOption` the person picked, when
-   * this backend offered options on the call and the client sent one as
+   * A backend asks with a `chat/toolCallReady` carrying a `confirmationTitle`,
+   * and the host puts the question: VS Code's options where the backend put
+   * none of its own, Allow Once and Skip for a tool the operator's
+   * `eligibleForAutoApproval` names, and an "Allow in this Session" answer
+   * kept in the session's `permissions`, which every backend is handed. A
+   * question about a tool those `permissions` allow or deny is answered by the
+   * host, here, with no `optionId`. A backend keeps no answer of its own for
+   * the host's options.
+   *
+   * `optionId` is the `id` of the `ConfirmationOption` the person picked, the
+   * host's or the backend's own, when the client sent one as
    * `selectedOptionId`; absent, the answer is a plain approve or deny.
    *
    * Handed over once the chat's state has the call pending a confirmation,

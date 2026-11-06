@@ -17,7 +17,7 @@ import { enablementKeyOf } from '../plugins/enablement.js';
 import { chatIdFor, chatUriFor, schemeOf } from './channels.js';
 import { AGENT_CLIENT_SCHEME } from './clienturi.js';
 import { need, noProvider } from './common.js';
-import { asksForTool } from './spawn.js';
+import { asksForTool } from './permissions.js';
 import { preambleOf } from './preamble.js';
 import { readAggregate, startsRead } from './chatactions.js';
 import { refusalReason } from './gate.js';

@@ -116,8 +116,28 @@ export const HOSTS_OWN = [
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L520-L528
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2273-L2286
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L774-L815
+ *
+ * `permissions` is the session's rules for its tool calls, VS Code's
+ * platform property with its lists and their titles, and a description of
+ * what this host reads of it: a question about a tool `deny` names is turned
+ * away, and one about a tool `allow` names, and `ask` does not, is answered
+ * without a person. An "Allow in this Session" answer is kept here.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L277-L310
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L378-L406
  */
 export const HOSTS_TAKEN: Record<string, Record<string, unknown>> = {
+  permissions: {
+    type: 'object',
+    title: 'Permissions',
+    description: 'Rules for this session\'s tool calls, each a tool\'s name. A question about a tool that deny names is refused, and one about a tool that allow names, and ask does not, is answered without asking. Updated when a tool is allowed in this session.',
+    properties: {
+      allow: { type: 'array', title: 'Allowed permission rules', items: { type: 'string', title: 'Permission rule' } },
+      deny: { type: 'array', title: 'Denied permission rules', items: { type: 'string', title: 'Permission rule' } },
+      ask: { type: 'array', title: 'Permission Rules Requiring Confirmation', items: { type: 'string', title: 'Permission rule' } },
+    },
+    default: { allow: [], deny: [] },
+    sessionMutable: true,
+  },
   sensitiveEditLocations: {
     type: 'array',
     title: 'Sensitive Edit Locations',

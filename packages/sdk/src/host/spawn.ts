@@ -17,6 +17,7 @@ import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
+import { alwaysAsks, answeredInSession, asksForTool, CONFIRMATION_OPTIONS, MANAGED_CONFIRMATION_OPTIONS } from './permissions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
@@ -124,31 +125,6 @@ export interface Spawn {
  */
 const clearsRead = (type: unknown): boolean =>
   type === 'chat/turnStarted' || type === 'chat/turnResume' || type === 'chat/inputRequested';
-
-/**
- * Whether the operator's rule makes a tool ask every time.
- *
- * `eligibleForAutoApproval` is VS Code's map of tool name to boolean, kept in
- * root config, and `false` is the one value that asks. An exact name is read
- * first and answers on its own: a `true` there keeps the tool eligible even
- * when its server is named with `false`. A name that is not there falls back
- * to `<server>/*`, one key for every tool of that server - the part of the
- * name before its first slash.
- *
- * A value that is not a boolean is not the `false` that asks, and a rule that
- * is not an object names nothing: both leave the call as it was. The rule is
- * read where it is kept on each call rather than remembered at a start, so a
- * push reaches a session already running.
- */
-export const asksForTool = (rootConfig: Record<string, unknown>, tool: string): boolean => {
-  const held = rootConfig.eligibleForAutoApproval;
-  if (held === null || typeof held !== 'object' || Array.isArray(held)) return false;
-  const rules = held as Record<string, unknown>;
-  if (Object.hasOwn(rules, tool)) return rules[tool] === false;
-  const slash = tool.indexOf('/');
-  if (slash <= 0) return false;
-  return rules[`${tool.slice(0, slash)}/*`] === false;
-};
 
 /**
  * The host's store, as one session's backend is handed it.
@@ -416,10 +392,77 @@ export function createSpawn(ctx: HostContext): Spawn {
     return call?.status !== 'pending-confirmation';
   };
 
+  /**
+   * A backend's question about a call, as this host puts it to a person, as
+   * VS Code's host handles its agent's pending confirmation.
+   *
+   * A question is a `chat/toolCallReady` with a `confirmationTitle` and no
+   * `confirmed`. The options are VS Code's where the backend put none of its
+   * own, and Allow Once and Skip, whatever the backend offered, for a tool the
+   * operator's rule names. A tool the session's `permissions` deny is turned
+   * away: the question is said with this host's refusal behind it, and the
+   * backend is handed the refusal. A tool they allow is answered here, unless
+   * the operator's rule names it: the call is said running with `confirmed:
+   * not-needed`, and the backend is handed the approval with no option. A
+   * client's tool keeps its question, marked `autoApproveBySetting`, which the
+   * client that runs it answers, as VS Code's host leaves that answer to the
+   * client. The backend is handed an answer once its own question is in place.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1684-L1766
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L610
+   */
+  const toolReady = (session: string, chat: string, action: Bag, backend: () => Session | undefined): Bag => {
+    if (action.type !== 'chat/toolCallReady' || typeof action.confirmationTitle !== 'string' || action.confirmed !== undefined) return action;
+    const toolCallId = String(action.toolCallId ?? '');
+    const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
+    const call = (Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [])
+      .map((part) => part.toolCall as Bag | undefined)
+      .find((one) => one !== undefined && one.toolCallId === toolCallId);
+    const toolName = typeof call?.toolName === 'string' ? call.toolName : undefined;
+    const owning = sessions.get(session);
+    // Read against the tools this host offered the chat, which a backend names to the rule as `ahp/<name>`.
+    const managed = toolName !== undefined && alwaysAsks(ctx.rootConfig, toolName,
+      ctx.boundTools(session, chat, owning?.backends.get(chat)?.agent.provider ?? owning?.agent.provider).map((one) => one.definition.name));
+    const options = managed ? MANAGED_CONFIRMATION_OPTIONS.slice() : Array.isArray(action.options) ? action.options : CONFIRMATION_OPTIONS.slice();
+    const answer = toolName === undefined ? undefined : answeredInSession(owning?.config.permissions, toolName);
+    if (answer === 'deny') {
+      queueMicrotask(() => {
+        const refusal = {
+          type: 'chat/toolCallConfirmed', turnId: action.turnId, toolCallId, approved: false,
+          reason: 'denied', reasonMessage: `${toolName} is denied for this session`,
+        };
+        if (subagents.has(chat)) sendSubagent(chat, refusal);
+        else dispatch(chat, refusal);
+        backend()?.confirm(toolCallId, false);
+      });
+      return { ...action, options };
+    }
+    if (answer !== 'allow' || managed) return { ...action, options };
+    const contributor = (action.contributor ?? call?.contributor) as Bag | undefined;
+    if (contributor?.kind === 'client') {
+      return { ...action, options, _meta: { ...(call?._meta as Bag | undefined), ...(action._meta as Bag | undefined), autoApproveBySetting: true } };
+    }
+    queueMicrotask(() => { backend()?.confirm(toolCallId, true); });
+    return {
+      type: 'chat/toolCallReady',
+      turnId: action.turnId,
+      toolCallId,
+      ...(action.contributor === undefined ? {} : { contributor: action.contributor }),
+      ...(action.intention === undefined ? {} : { intention: action.intention }),
+      invocationMessage: action.invocationMessage,
+      ...(action.toolInput === undefined ? {} : { toolInput: action.toolInput }),
+      confirmed: 'not-needed',
+      ...(action._meta === undefined ? {} : { _meta: action._meta }),
+    };
+  };
+
   const sendSubagent = (uri: string, given: Bag): void => {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
-    const action = withWorkerUri(uri, given);
+    // A question a worker's call puts is the lead chat's backend's to be answered, as a client's answer on the worker's chat is.
+    const action = toolReady(ref.session, uri, withWorkerUri(uri, given), () => {
+      const owning = sessions.get(ref.session);
+      return owning === undefined ? undefined : ctx.leadOf(owning);
+    });
     if (decidedAlready(uri, action)) return;
     const was = ctx.stateOf(uri)?.status;
     // Whether this ends the turn the worker's chat runs, whose end is then raised as every chat's is.
@@ -1363,6 +1406,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         }
         // A client's decision on a call is said once, as the client's.
         if (channel === 'chat' && decidedAlready(chatUri, action)) return;
+        if (channel === 'chat') action = toolReady(uri, chatUri, action, () => sessions.get(uri)?.chats.get(chatUri));
         // A turn the chat began, under its own id: the id a read after a
         // restart holds it by, unless the backend says it wrote it otherwise.
         if (channel === 'chat' && action.type === 'chat/turnStarted') ctx.turnRecordedAs(uri, chatUri, turn, turn);

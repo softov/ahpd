@@ -367,15 +367,24 @@ The token is the session's own. It names one path and no other, so a session hol
 
 The host side of this is `HostOptions.toolsServers`, one `ToolsServers` from `toolServers({ origin, name, version })` that both opens the endpoints and answers the requests: its `request` takes the paths under `/ahp-mcp` and answers `undefined` for anything else, so a host serving an API of its own tries one handler and then the other. `origin()` is read when an endpoint opens rather than held, because the host is built before the port is bound; that is what `run.ts` does and why the daemon mounts `toolsServers.request` beside its own answers.
 
-### A backend's approval options
+### A question about a tool call
 
-A backend that asks before a tool call may offer the choices its own agent has, as `options` on the call's `chat/toolCallReady` and on the `toolCall` of its `toolConfirmation` entry, each a `ConfirmationOption` with an `id`, a `label`, a `kind` of `approve` or `deny` and a `group`.
-The option a person picks arrives as the third argument of `Session.confirm(toolCallId, approved, optionId?)`, from the `selectedOptionId` a client sent, and the backend acts on it through its agent's own mechanism; the host keeps no approval itself.
-A client that sends no option gets a plain approve or deny, which is what every backend does with `optionId` absent.
-Claude offers Allow once, an "always" choice labelled by what the SDK's suggestions for the call do, and Deny, and only when the SDK suggested something; the "always" choice returns those suggestions as `updatedPermissions`.
+A backend that asks before a tool call sends `chat/toolCallReady` with a `confirmationTitle`, and the host puts the question as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L610) does.
+Each option is a `ConfirmationOption` with an `id`, a `label`, a `kind` of `approve` or `deny` and a `group`.
+Where the backend put no `options` of its own, the host offers VS Code's three, in its words: `allow-session` "Allow in this Session", `allow-once` "Allow Once" and `skip` "Skip".
+A tool the operator's `eligibleForAutoApproval` names is offered `allow-once` and `skip` alone, whatever the backend offered.
+An approval that picked "Allow in this Session" is kept in the session's `permissions`, VS Code's session property: the tool's name is added to `allow`.
+The host says that change as its own `session/configChanged`, keeps it with the session, and hands it to every backend of the session through `setConfig`.
+The host then answers a question about a tool that `allow` names, and `ask` does not, itself: the call is said running with `confirmed: not-needed`, and the backend is handed `confirm(toolCallId, true)` with no option.
+A question about a tool that `deny` names is said and then refused by the host, with the reason `denied`, and the backend is handed `confirm(toolCallId, false)`.
+A tool that `eligibleForAutoApproval` names is never answered from `permissions`.
+The option a person picks arrives as the third argument of `Session.confirm(toolCallId, approved, optionId?)`, from the `selectedOptionId` a client sent, and a client that sends no option gets a plain approve or deny.
+Claude offers Allow once, an "always" choice labelled by what the SDK's suggestions for the call do, and Deny, when the SDK suggested something; the "always" choice returns those suggestions as `updatedPermissions`.
+With no suggestion it offers nothing, and the host's three are put.
+Claude also reads the session's `permissions` itself, and a tool they allow runs without a question.
 An ACP server's own options are offered as it listed them, approvals first, and the one picked is the `optionId` the server receives.
 cofold offers Allow once, Allow the tool for this session, and Deny, and the session choice is sent as `alwaysApprove`, which cofold keeps for that session and tool.
-pi offers none, so a client draws approve and deny.
+pi offers none, so the host's three are put.
 
 ### A contributed setting can be a question
 

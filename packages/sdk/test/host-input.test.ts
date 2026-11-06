@@ -122,9 +122,33 @@ describe('driving a turn', () => {
       expect(options.find((one) => one.id === 'allow-always')?.label).toBe('Allow edits for the rest of the session');
     });
 
-    it('offers no options when the SDK suggested nothing', async () => {
+    /*
+     * An "Allow in this Session" answer is the host's, kept in the session's
+     * `permissions` and handed to Claude, whose next call to the tool runs
+     * without a question, as VS Code's host keeps one for its agents.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L619-L650
+     */
+    it('keeps an Allow in this Session answer, and the next call to the tool runs without a question', async () => {
+      const { p, decision, answer } = await asking();
+      await answer({ approved: true, confirmed: 'user-action', selectedOptionId: 'allow-session' });
+      expect(await decision).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
+      await settle();
+      const kept = p.notes.filter((n) => n.method === 'action' && actionOf(n)?.type === 'session/configChanged');
+      expect(kept.map((n) => actionOf(n)?.config)).toEqual([{ permissions: { allow: ['Bash'], deny: [] } }]);
+      const before = p.notes.length;
+      expect(await sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'c10' })).toMatchObject({ behavior: 'allow' });
+      expect(p.notes.slice(before).some((n) => n.method === 'action' && actionOf(n)?.type === 'chat/toolCallReady')).toBe(false);
+    });
+
+    // The host's options, in VS Code's words, where the backend offers none of its own.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L67-L76
+    it('offers VS Code\'s options when the SDK suggested nothing', async () => {
       const { ready } = await asking();
-      expect(actionOf(ready)?.options).toBeUndefined();
+      expect(actionOf(ready)?.options).toEqual([
+        { id: 'allow-session', label: 'Allow in this Session', kind: 'approve', group: 1 },
+        { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+        { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
+      ]);
     });
   });
 

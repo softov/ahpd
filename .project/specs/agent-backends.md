@@ -9,7 +9,7 @@ covers:
   - packages/sdk/src/types/terminals.ts
 decisions:
   - decisions/claude-approvals-keeps-dont-ask.md
-  - decisions/each-backend-offers-its-options-unless-a-rule-asks.md
+  - decisions/the-host-puts-each-tool-question-and-keeps-the-sessions-answer.md
   - decisions/pi-is-embedded-not-spawned.md
   - decisions/subagent-chats-are-restored-from-the-cli-meta-file.md
   - decisions/the-daemon-bundles-no-agent-and-starts-without-one.md
@@ -139,7 +139,9 @@ See [`code://packages/agent-claude/src/session/logins.ts`](../../packages/agent-
 WHEN a turn starts on a new CLI, for an agent the message picked, an edited record or another login
 THEN its prompt goes to the new CLI, however late the SDK starts reading that CLI's input
 AND the reader of the CLI it replaced takes nothing more and ends.
-The reason: the SDK reads a new CLI's input only after its initialize request is written, which waits on the manifests of the in-process MCP servers, and it drops what a closed CLI's reader is handed.
+The reason: the SDK reads a new CLI's input only after its initialize request is written.
+That request waits on the manifests of the in-process MCP servers.
+And the SDK drops what a closed CLI's reader is handed.
 See [`code://packages/agent-claude/src/session/query.ts`](../../packages/agent-claude/src/session/query.ts).
 
 ### A Claude steering message answered after the turn's last answer
@@ -201,7 +203,9 @@ THEN it is sent once the CLI has answered the one before it.
 WHEN a turn begins while a change is being taken
 THEN its prompt goes to the CLI once the CLI has answered that change
 AND a turn with no change in hand starts at once.
-The reason: the protocol applies a session's actions in one order, so a turn a client sends after announcing its tools is a turn of a session that has them, and the host hands the tools over without waiting for them to land.
+The reason: the protocol applies a session's actions in one order.
+So a turn a client sends after announcing its tools is a turn of a session that has them.
+The host hands the tools over without waiting for them to land.
 
 ### pi models come from the pi runtime
 
