@@ -324,6 +324,13 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   unofferedModel: 'fail' | 'keep';
   /**
+   * Whether a turn's sender is said on what clients read, `said`, or kept by
+   * the host alone, `kept`, as VS Code's host keeps it. A daemon key that
+   * takes hold while the daemon runs, read as each start is said and each
+   * turn read back.
+   */
+  turnSenders: 'said' | 'kept';
+  /**
    * What archiving a session does with a tree that has changes nobody
    * committed: `keep` it, or `commit` them and remove it. A daemon key that
    * takes hold while the daemon runs, read when a tree is given back.

@@ -4,7 +4,7 @@ import { localPath } from '../resources/fileuri.js';
 import { readMultiRoot } from '../sessions/remotesession.js';
 import { filesOf, needsAsyncRewrite, snapshot } from './attachments.js';
 import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
-import { HOSTS_OWN, HOSTS_TAKEN, withSenderOn } from './common.js';
+import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
@@ -256,12 +256,13 @@ export function chatAction(
   /*
    * A client's start as this host says it: as the client sent it, with who
    * sent it under `ahpd.sender` on the action and its message where somebody
-   * did, which every client's state and a turn read back then carry. A start
-   * carried to another host goes as the client sent it.
+   * did and the daemon's `turnSenders` says senders, which every client's
+   * state and a turn read back then carry. A start carried to another host
+   * goes as the client sent it.
    */
   const sent = action;
   const startedBy = type === 'chat/turnStarted' ? ownerFor(connection) : undefined;
-  if (startedBy !== undefined) action = withSenderOn(action, startedBy);
+  if (startedBy !== undefined) action = ctx.withSenderSaid(action, startedBy);
 
   /*
    * The two bits a chat carries of its own.

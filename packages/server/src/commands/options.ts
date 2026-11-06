@@ -98,6 +98,8 @@ export interface Options {
   closedChats: 'hidden' | 'delete';
   /** What a turn naming a model its chat's agent does not offer does. */
   unofferedModel: 'fail' | 'keep';
+  /** Whether a turn's sender is said on what clients read. */
+  turnSenders: 'said' | 'kept';
   /** What archiving a session does with a working tree that has changes nobody committed. */
   archiveDirtyWorktree: 'keep' | 'commit';
   /** What a session on a joined node does when that node's `ahpd join` restarts. */
@@ -632,6 +634,11 @@ export const serverFields = {
     type: 'string',
     enum: ['fail', 'keep'],
     description: 'What a turn naming a model its chat\'s agent does not offer does: fail ends the turn, keep keeps the chat\'s model as VS Code does.',
+  },
+  turnSenders: {
+    type: 'string',
+    enum: ['said', 'kept'],
+    description: 'Whether a turn\'s sender is said on what clients read: said puts it on each start and message, kept keeps it on the host alone as VS Code does.',
   },
   archiveDirtyWorktree: {
     type: 'string',
@@ -1287,6 +1294,7 @@ const noCwd = input['noCwd'] === true;
     sessionToolsProviders: given('sessionToolsProviders') ?? [],
     closedChats: given('closedChats') ?? 'hidden',
     unofferedModel: given('unofferedModel') ?? 'fail',
+    turnSenders: given('turnSenders') ?? 'said',
     archiveDirtyWorktree: given('archiveDirtyWorktree') ?? 'keep',
     nodeRestart: given('nodeRestart') ?? 'end',
     pullRequestLookup: given('pullRequestLookup') ?? 'url',

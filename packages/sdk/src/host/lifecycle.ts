@@ -12,7 +12,7 @@ import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
 import { readCreatedBy, readMultiRoot, readOrigin } from '../sessions/remotesession.js';
-import { HOSTS_OWN, bangCommand, noProvider, withSenderOn } from './common.js';
+import { HOSTS_OWN, bangCommand, noProvider } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -1586,7 +1586,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     };
     const sender = senders.get(turnId);
     if (sender !== undefined) kept.setSender(idOf(session.uri), turnId, sender);
-    dispatch(session.chatUri, sender === undefined ? start : withSenderOn(start, sender));
+    dispatch(session.chatUri, sender === undefined ? start : ctx.withSenderSaid(start, sender));
   };
 
   /**

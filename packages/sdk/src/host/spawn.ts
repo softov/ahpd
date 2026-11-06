@@ -22,6 +22,7 @@ import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
 import type { TurnEndEvent } from '../types/events.js';
+import type { Owner } from '../types/usage.js';
 import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
@@ -45,8 +46,10 @@ export interface Spawn {
   withWorkerUri(chat: string, action: Bag): Bag;
   /** Every turn's tool calls stamped with this session's name where a client reduced the stamp. */
   stampedCalls(session: string, chat: string, turns: Bag[]): Bag[];
-  /** Every turn marked with which client sent it. */
+  /** Every turn marked with which client sent it, where the daemon's `turnSenders` says senders. */
   withSender(session: string, turns: Bag[]): Bag[];
+  /** A turn's start carrying who sent it, where the daemon's `turnSenders` says senders. */
+  withSenderSaid(action: Bag, sender: Owner): Bag;
   /** A chat's state with the attachments its clients sent back on its messages. */
   asSentChat(state: Bag): Bag;
   /** Write one action on a worker's chat. */
@@ -192,6 +195,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     contributedDefaults, runningSchema, chatSummary, subagentSummary, markSummaryDirty, refreshSessionChangesSummary, setAgentModels,
     publishAccountInfo, updateChatMovability,
   } = ctx;
+  ctx.turnSenders = options.turnSenders ?? 'said';
 
   /*
    * A turn's end, raised where it ends, with its sender read from the turn
@@ -349,11 +353,19 @@ export function createSpawn(ctx: HostContext): Spawn {
    * and not a place this host writes into.
    */
   const withSender = (session: string, turns: Bag[]): Bag[] => turns.map((turn) => {
+    if (ctx.turnSenders === 'kept') return turn;
     const sender = kept.sender(idOf(session), String(turn.id ?? ''));
     const message = turn.message as Bag | undefined;
     if (sender === undefined || typeof message !== 'object' || message === null) return turn;
     return { ...turn, message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } } };
   });
+  /*
+   * A turn's start as this host says it: with its sender where the daemon's
+   * `turnSenders` is `said`, and as it is where it is `kept`, VS Code's, whose
+   * host keeps a turn's sender and says it in no action.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L183-L199
+   */
+  const withSenderSaid = (action: Bag, sender: Owner): Bag => (ctx.turnSenders === 'kept' ? action : withSenderOn(action, sender));
 
   /** Workers whose turn has been ended, so a second ending is not a second turn. */
   const endedWorkers = new Set<string>();
@@ -1346,7 +1358,7 @@ export function createSpawn(ctx: HostContext): Spawn {
          */
         if (sender !== undefined && channel === 'chat' && action.type === 'chat/turnStarted') {
           kept.setSender(idOf(uri), turn, sender);
-          if (answering === undefined) action = withSenderOn(action, sender);
+          if (answering === undefined) action = withSenderSaid(action, sender);
         }
         /*
          * The bits of a chat whose backend runs it on another host, as that
@@ -1960,7 +1972,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   };
 
   return {
-    unstamped, withWorkerUri, stampedCalls, withSender, asSentChat,
+    unstamped, withWorkerUri, stampedCalls, withSender, withSenderSaid, asSentChat,
     sendSubagent, endedWorkers, raiseTurnEnd,
     openSubagent, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
     spawn, wirePlan,

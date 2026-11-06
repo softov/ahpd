@@ -548,6 +548,32 @@ it('says a client\'s start on the wire with its sender, on a host with somebody 
   expect(of(named.seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-who', sender: 'user:ana' }]);
 });
 
+/*
+ * The daemon's `turnSenders` at `kept`, VS Code's: the host keeps who sent a
+ * turn, for its events and its store, and says it in no action and no turn a
+ * client reads back.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L183-L199
+ */
+it('keeps a turn\'s sender off the wire and in its events, where the daemon keeps senders', async () => {
+  const named = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory(), turnSenders: 'kept' });
+  const chat = chatUriFor('ahp-session:/kept');
+  const on = peer();
+  const ana = named.host.accept(on, PEOPLE.ana);
+  await hello(ana);
+  await ana.handle({ method: 'createSession', params: { channel: 'ahp-session:/kept', provider: 'echo' } });
+  await ana.handle({ method: 'subscribe', params: { channel: chat } });
+  const action = said('turn-kept', 'hello there', 'chat/turnStarted');
+  await ana.handle({ method: 'dispatchAction', params: { channel: chat, action } });
+  await wait(100);
+
+  const frames = on.notes.filter((note) => note.method === 'action').map((note) => (note.params as { action: Bag }).action);
+  expect(frames.find((one) => one.type === 'chat/turnStarted')).toEqual(action);
+  const read = await ana.handle({ method: 'subscribe', params: { channel: chat } }) as { snapshot: { state: { turns: Bag[] } } };
+  expect(read.snapshot.state.turns.map((turn) => (turn.message as Bag)._meta)).toEqual([undefined]);
+  expect(of(named.seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-kept', sender: 'user:ana' }]);
+  expect(of(named.seen, 'turn_end').map(asked)).toEqual([{ turn: 'turn-kept', sender: 'user:ana' }]);
+});
+
 it('names the maker of an automation as the sender of the turn it started', async () => {
   const store = memoryAutomations();
   const { seen, host } = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory(), automations: store });

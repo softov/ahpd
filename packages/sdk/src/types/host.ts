@@ -785,6 +785,15 @@ export interface HostOptions {
    */
   unofferedModel?: 'fail' | 'keep';
   /**
+   * Whether a turn's sender is said on what clients read.
+   *
+   * `said`, the default, puts who sent each turn under `_meta['ahpd.sender']`
+   * on its start and its message, live and in every turn read back. `kept` is
+   * VS Code's: the host keeps each turn's sender, for its store, its events
+   * and its usage, and says it in no action and no turn a client reads.
+   */
+  turnSenders?: 'said' | 'kept';
+  /**
    * What archiving a session does with a working tree that has changes
    * nobody committed.
    *

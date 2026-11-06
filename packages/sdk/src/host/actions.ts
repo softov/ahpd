@@ -522,6 +522,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         // And what a turn naming a model its agent does not offer does, read the same way: as the next turn is sent.
         const unoffered = theirs['unofferedModel'];
         if (unoffered === 'fail' || unoffered === 'keep') ctx.unofferedModel = unoffered;
+        // And whether a turn's sender is said, read the same way: as the next start is said or turn read back.
+        const senders = theirs['turnSenders'];
+        if (senders === 'said' || senders === 'kept') ctx.turnSenders = senders;
         // And what archive does with a dirty tree, read the same way: when a tree is given back.
         const dirtyTree = theirs['archiveDirtyWorktree'];
         if (dirtyTree === 'keep' || dirtyTree === 'commit') ctx.archiveDirtyWorktree = dirtyTree;

@@ -15,7 +15,6 @@
  */
 
 import { holdsTheQueue, idOf } from '../sessions/catalog.js';
-import { withSenderOn } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { MessageAttachment, MessageFrom } from '../types/session.js';
@@ -170,7 +169,7 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
       ctx.senders.set(turnId, by);
       ctx.kept.setSender(idOf(owner.uri), turnId, by);
     }
-    dispatch(chat, by === undefined ? start : withSenderOn(start, by));
+    dispatch(chat, by === undefined ? start : ctx.withSenderSaid(start, by));
     /*
      * Ended by this host, so nothing held against the turn is let go by
      * anything else, and its `turn_end` says how: `rejected` for a start
