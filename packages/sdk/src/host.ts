@@ -87,7 +87,7 @@ import { createAutomations } from './host/automations.js';
 import { createHistory } from './host/history.js';
 import { createSnapshots } from './host/snapshots.js';
 import { createSleep } from './host/sleep.js';
-import { createMerged } from './host/merged.js';
+import { createSessionLifecycle } from './host/sessionlifecycle.js';
 import { createWakes } from './host/wakes.js';
 import { createQueueDrain } from './host/queuedrain.js';
 import { createTelemetry } from './host/telemetry.js';
@@ -1535,7 +1535,7 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createHistory(ctx));
   Object.assign(ctx, createSnapshots(ctx));
   Object.assign(ctx, createSleep(ctx));
-  Object.assign(ctx, createMerged(ctx));
+  Object.assign(ctx, createSessionLifecycle(ctx));
   Object.assign(ctx, createWakes(ctx));
   Object.assign(ctx, createQueueDrain(ctx));
   /*
@@ -1569,12 +1569,12 @@ export function createHost(options: HostOptions): Host {
     answeredAs, visible, sessionVisible, chatShown, claimable, unheld, ownId, clients, clientResources, heard, clientGone,
     dirOf, catalogueOf, changesetAt, changesetOf, operationsOf, operationsMoved, contentMoved,
     changesetsOf, operationContext, opKey, shown,
-    describes, setArtifacts, captureBaseline, recordPullRequest, metaMoved, dirOfFile, wroteThrough,
+    describes, setArtifacts, captureBaseline, recordPullRequest, metaChanged, dirOfFile, wroteThrough,
     refreshWatched, startWatchingDir, stopUnwatched, refreshPullRequests, readFacts, refreshFacts,
     LOGS, TRACES, METRICS, log, fire, telemetered,
     loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting,
     charged, ownerFor, principals, principalFor, forWhom, senderOf,
-    charge, checked, scoping, settle,
+    charge, checked, scoping, resolveCreatedSessionConfig,
     sessionMachines, enteredIn, inMachine, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn,
     isolating, mergedConfig, propertyOf, sessionSchema, runningSchema, seeded,
     contributedDefaults, storedConfig,
@@ -1706,7 +1706,7 @@ export function createHost(options: HostOptions): Host {
 
   ctx.startSleep();
   ctx.startWakes();
-  ctx.startMerged();
+  ctx.startSessionLifecycle();
 
   options.automations?.onDue?.(due);
 
@@ -1975,7 +1975,7 @@ export function createHost(options: HostOptions): Host {
         ctx.flushPendingSessionSummaries();
         ctx.stopSleep();
         ctx.stopWakes();
-        ctx.stopMerged();
+        ctx.disposeSessionLifecycle();
         ctx.closed = true;
         ctx.stopLapses();
         unwatchProbes(true);
@@ -2073,7 +2073,7 @@ export function createHost(options: HostOptions): Host {
      * by `x-ahpd/restartNeeded`.
      */
     markRestartNeeded: () => { ctx.markRestart(); },
-    daemonValuesMoved: () => ctx.daemonValuesMoved(),
+    daemonValuesChanged: () => ctx.daemonValuesChanged(),
     accept(peer: Peer, principal?: Principal, root?: boolean, opened?: Opened) {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),

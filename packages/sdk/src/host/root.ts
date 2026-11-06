@@ -238,7 +238,7 @@ export interface Root {
    * made, which is what a plugin command and a served paths command do.
    * Nothing when the root is not held yet: its first snapshot reads the port.
    */
-  daemonValuesMoved(): Promise<void>;
+  daemonValuesChanged(): Promise<void>;
 }
 
 export function createRoot(ctx: HostContext): Root {
@@ -554,7 +554,7 @@ export function createRoot(ctx: HostContext): Root {
   const daemonKey = (key: string): boolean => Object.hasOwn(daemonProperties(), key);
   /**
    * Every key the daemon's port has declared or answered since the root
-   * opened, filled by `rootSeed` and `daemonValuesMoved`.
+   * opened, filled by `rootSeed` and `daemonValuesChanged`.
    *
    * A plugin removed while the daemon runs keeps its property in the root's
    * schema and its `null` in the values, and they are the daemon's still,
@@ -663,7 +663,7 @@ export function createRoot(ctx: HostContext): Root {
    * daemon's file is what they are, so the root's state opens with what the
    * port answers. A write a client pushes moves the state through its own
    * `root/configChanged`, and a write no client pushed through
-   * `daemonValuesMoved`.
+   * `daemonValuesChanged`.
    */
   const daemonValues = async (): Promise<Record<string, unknown>> =>
     (Object.keys(daemonProperties()).length === 0 || options.rootConfig === undefined
@@ -708,7 +708,7 @@ export function createRoot(ctx: HostContext): Root {
     return isDeepStrictEqual(replace ? config : { ...values, ...config }, values);
   };
 
-  const daemonValuesMoved = async (): Promise<void> => {
+  const daemonValuesChanged = async (): Promise<void> => {
     if (ctx.stateOf(ROOT) === undefined) return;
     const now = await daemonValues();
     for (const key of [...Object.keys(daemonProperties()), ...Object.keys(now)]) daemonSeen.add(key);
@@ -826,6 +826,6 @@ export function createRoot(ctx: HostContext): Root {
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
     daemonKey, daemonHeld, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
-    daemonValues, rootSeed, rootFor, keptOnReplace, changesNothing, daemonValuesMoved,
+    daemonValues, rootSeed, rootFor, keptOnReplace, changesNothing, daemonValuesChanged,
   };
 }

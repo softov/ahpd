@@ -953,7 +953,7 @@ it('takes back a daemon key the file no longer holds, by replacing the root\'s v
   expect(valuesOf(await rootOf(admin.client))['daemonPort']).toBe(9187);
 
   drop('daemonPort');
-  await host.daemonValuesMoved();
+  await host.daemonValuesChanged();
   await settle();
 
   const said = heardOnRoot(admin.heard).map((heard) => heard.action).filter((action) => action.type === 'root/configChanged');

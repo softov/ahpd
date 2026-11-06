@@ -409,7 +409,7 @@ export function createTooling(ctx: HostContext): Tooling {
     activeClientsOf, leadOf, clientResources, allRows, setArtifacts, forWhom,
     principalFor, senderOf, senders,
     chatSummary, keepTitle, summaryMoved, operationsMoved, dispatch, log, fire,
-    settle, openSession, backendsOwn, removeSession, spawn,
+    resolveCreatedSessionConfig, openSession, backendsOwn, removeSession, spawn,
   } = ctx;
   /**
    * Where a decision that outlives one session is kept, or nothing for a host
@@ -1949,7 +1949,7 @@ export function createTooling(ctx: HostContext): Tooling {
       // the host's keys kept apart from the backend's, and a worktree made at
       // the first send.
       const where = asked.workingDirectory;
-      await settle(made, asked.workingDirectory, config);
+      await resolveCreatedSessionConfig(made, asked.workingDirectory, config);
       // The owner of the session this one was made inside, which is what a
       // tool acting for somebody means: the work is theirs whichever session
       // it ends up running in. And the session, chat and turn it was made
@@ -2171,7 +2171,7 @@ export function createTooling(ctx: HostContext): Tooling {
           ...(asked.model !== undefined ? { model: asked.model } : {}),
         };
         const where = asked.workingDirectory;
-        await settle(made, asked.workingDirectory, config);
+        await resolveCreatedSessionConfig(made, asked.workingDirectory, config);
         openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
           sender === undefined ? undefined : forWhom(sender, caller.principal));
         ctx.oweTree(made, {}, undefined, () => ({}));

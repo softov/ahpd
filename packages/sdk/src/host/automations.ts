@@ -234,7 +234,7 @@ export function createAutomations(ctx: HostContext): Automations {
   const {
     options, sessions, byChat, senders, charged, origins, kept,
     dispatch, log, fire, statusOf, principalFor, admitted, placedIn,
-    settle, openSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
+    resolveCreatedSessionConfig, openSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
     turnInstructions,
   } = ctx;
 
@@ -762,7 +762,7 @@ export function createAutomations(ctx: HostContext): Automations {
     // are not the backend's to read, and a worktree is made at the first send,
     // which a run makes at once.
     const where = wanted.workingDirectory;
-    await settle(uri, wanted.workingDirectory, config);
+    await resolveCreatedSessionConfig(uri, wanted.workingDirectory, config);
     /*
      * The two checks a client's `createSession` makes, asked here too and before
      * anything runs in the machine - an automation is nobody at the keyboard to

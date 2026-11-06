@@ -50,7 +50,7 @@ export interface Owners {
   keepKeys(turn: string, keys: readonly string[]): void;
   forgetKeys(turn: string): void;
   scoping(principal: Principal | undefined): { properties: Bag; defaults: Record<string, string> };
-  settle(uri: string, where: string | undefined, config: Record<string, unknown>, principal?: Principal): Promise<void>;
+  resolveCreatedSessionConfig(uri: string, where: string | undefined, config: Record<string, unknown>, principal?: Principal): Promise<void>;
 }
 
 export function createOwners(ctx: HostContext): Owners {
@@ -277,7 +277,9 @@ export function createOwners(ctx: HostContext): Owners {
   };
 
   /**
-   * What a new session settled on, as this host's half of its config.
+   * A new session's config resolved before it exists, as this host's half of
+   * it, as VS Code's host resolves a created session's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10973
    *
    * The offer is made against the directory that was asked for - the
    * repository, not a worktree's own, which has one branch and is not where
@@ -289,7 +291,7 @@ export function createOwners(ctx: HostContext): Owners {
    * session's schema once a provisional session exists, and it sends
    * `{ isolation: 'folder' }` or nothing at all.
    */
-  const settle = async (
+  const resolveCreatedSessionConfig = async (
     uri: string,
     where: string | undefined,
     config: Record<string, unknown>,
@@ -312,12 +314,12 @@ export function createOwners(ctx: HostContext): Owners {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10662-L10714
      */
     const facts = ctx.options.directories;
-    if (where !== undefined && facts?.refreshProject !== undefined && await facts.refreshProject(where).catch(() => false)) ctx.metaMoved(where);
+    if (where !== undefined && facts?.refreshProject !== undefined && await facts.refreshProject(where).catch(() => false)) ctx.metaChanged(where);
   };
 
   return {
     charged, ownerFor, principals, principalFor, forWhom, senders, senderOf, sentBy,
-    forgetSender, forgetSendersIn, charge, checked, scoping, settle,
+    forgetSender, forgetSendersIn, charge, checked, scoping, resolveCreatedSessionConfig,
     keysOf, keepKeys, forgetKeys,
   };
 }

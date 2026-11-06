@@ -65,7 +65,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     isolating, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
     movable, movableMoved, openSession, openedBy, options, orderChats, oweTree,
     ownerFor, owners, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
-    seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionSchema, sessionVisible, sessions, settle,
+    seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
     snapshotOf, spawn, subagentSummary, subagents, summaryMoved, unheld, visible, waitingFor, wake,
   } = ctx;
 
@@ -1086,7 +1086,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
          */
         const running = where;
-        await settle(uri, where, config, connection.principal);
+        await resolveCreatedSessionConfig(uri, where, config, connection.principal);
         /*
          * Checked before the machine is made, so a refused session makes
          * none, against the computer the client asked for and the scope the

@@ -25,7 +25,7 @@ export interface Facts {
   /** Add to a session's pull request baseline what VS Code's host adds, from what its directory's branch lists. */
   captureBaseline(uri: string): void;
   recordPullRequest(uri: string, dir: string, pullRequest: { url: string; title: string; branch: string }): void;
-  metaMoved(dir: string): void;
+  metaChanged(dir: string): void;
   dirOfFile(uri: string): string | undefined;
   wroteThrough(uri: string): void;
   refreshWatched(dir: string): Promise<void>;
@@ -358,8 +358,8 @@ export function createFacts(ctx: HostContext): Facts {
 
   /** Every session in a directory, since a fact is the directory's. */
   const inThere = (dir: string): string[] => [...sessions.keys()].filter((uri) => dirOf(uri) === dir);
-  /** `_meta` moved: every session in the directory says so, and its row. */
-  const metaMoved = (dir: string): void => {
+  /** `_meta` changed: every session in the directory says so, and its row, as VS Code's producers dispatch `session/metaChanged`. */
+  const metaChanged = (dir: string): void => {
     for (const uri of inThere(dir)) {
       const meta = describes(uri)._meta as Bag | undefined;
       dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
@@ -602,7 +602,7 @@ export function createFacts(ctx: HostContext): Facts {
       now.pullRequestStateUrl = held.pullRequestStateUrl;
     }
     githubFacts.set(dir, now);
-    metaMoved(dir);
+    metaChanged(dir);
   };
 
   /**
@@ -620,8 +620,8 @@ export function createFacts(ctx: HostContext): Facts {
    */
   const readFacts = async (dir: string): Promise<boolean> => {
     const facts = (async () => {
-      if (await options.directories?.refresh?.(dir) === true) metaMoved(dir);
-      if (await refreshPullRequests(dir)) metaMoved(dir);
+      if (await options.directories?.refresh?.(dir) === true) metaChanged(dir);
+      if (await refreshPullRequests(dir)) metaChanged(dir);
     })().catch(() => {});
 
     /*
@@ -715,7 +715,7 @@ export function createFacts(ctx: HostContext): Facts {
   wireCanvases();
 
   return {
-    describes, setArtifacts, captureBaseline, recordPullRequest, metaMoved, dirOfFile, wroteThrough,
+    describes, setArtifacts, captureBaseline, recordPullRequest, metaChanged, dirOfFile, wroteThrough,
     refreshWatched, startWatchingDir, stopUnwatched, refreshPullRequests, readFacts, refreshFacts,
     sessionMetaChanged, wireSessionMeta, wireCanvases,
   };

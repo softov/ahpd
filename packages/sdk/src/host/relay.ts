@@ -93,7 +93,9 @@ export function createRelay(ctx: HostContext): Relay {
     return back;
   };
   /**
-   * One request to a client, with the channel every one of the ten declares.
+   * One request to a client, with the channel every one of the ten declares,
+   * as VS Code's host sends a reverse request to a client.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2574
    *
    * The client's refusal goes back as the client said it, and is written down
    * here: `-32009` from a client that published a directory read-only and
@@ -101,7 +103,7 @@ export function createRelay(ctx: HostContext): Relay {
    * same three digits to whoever asked, and the only place the method, the
    * URI and the client are visible together is this log.
    */
-  const ask = async (client: string, method: string, params: Record<string, unknown>): Promise<unknown> => {
+  const sendReverseRequest = async (client: string, method: string, params: Record<string, unknown>): Promise<unknown> => {
     const held = await connectionFor(client);
     const about = String(params.uri ?? params.source ?? '');
     return await held.peer.request(method, { ...params, channel: ROOT }).catch((error: unknown) => {
@@ -128,11 +130,11 @@ export function createRelay(ctx: HostContext): Relay {
   const clientResources: ClientResources = {
     read: async (uri, wanted) => {
       const at = addressed(uri);
-      return await ask(at.client, 'resourceRead', { uri: at.original, ...(wanted !== undefined ? { encoding: wanted } : {}) }) as Read;
+      return await sendReverseRequest(at.client, 'resourceRead', { uri: at.original, ...(wanted !== undefined ? { encoding: wanted } : {}) }) as Read;
     },
     list: async (uri) => {
       const at = addressed(uri);
-      const entries = bag(await ask(at.client, 'resourceList', { uri: at.original })).entries;
+      const entries = bag(await sendReverseRequest(at.client, 'resourceList', { uri: at.original })).entries;
       return Array.isArray(entries) ? entries as Entry[] : [];
     },
     /*
@@ -148,38 +150,38 @@ export function createRelay(ctx: HostContext): Relay {
         const epoch = new Date(0).toISOString();
         return { uri, type: 'directory', size: 0, mtime: epoch, ctime: epoch };
       }
-      const answer = await ask(at.client, 'resourceResolve', { uri: at.original, ...(followSymlinks !== undefined ? { followSymlinks } : {}) });
+      const answer = await sendReverseRequest(at.client, 'resourceResolve', { uri: at.original, ...(followSymlinks !== undefined ? { followSymlinks } : {}) });
       return { ...bag(answer), uri } as unknown as Metadata;
     },
     write: async (uri, content) => {
       const at = addressed(uri);
-      await ask(at.client, 'resourceWrite', { ...content, uri: at.original });
+      await sendReverseRequest(at.client, 'resourceWrite', { ...content, uri: at.original });
     },
     delete: async (uri, recursive) => {
       const at = addressed(uri);
-      await ask(at.client, 'resourceDelete', { uri: at.original, ...(recursive !== undefined ? { recursive } : {}) });
+      await sendReverseRequest(at.client, 'resourceDelete', { uri: at.original, ...(recursive !== undefined ? { recursive } : {}) });
     },
     mkdir: async (uri) => {
       const at = addressed(uri);
-      await ask(at.client, 'resourceMkdir', { uri: at.original });
+      await sendReverseRequest(at.client, 'resourceMkdir', { uri: at.original });
     },
     move: async (source, destination, failIfExists) => {
       const at = addressed(source);
-      await ask(at.client, 'resourceMove', {
+      await sendReverseRequest(at.client, 'resourceMove', {
         source: at.original, destination: fromAgentClientUri(destination)?.original ?? destination,
         ...(failIfExists !== undefined ? { failIfExists } : {}),
       });
     },
     copy: async (source, destination, failIfExists) => {
       const at = addressed(source);
-      await ask(at.client, 'resourceCopy', {
+      await sendReverseRequest(at.client, 'resourceCopy', {
         source: at.original, destination: fromAgentClientUri(destination)?.original ?? destination,
         ...(failIfExists !== undefined ? { failIfExists } : {}),
       });
     },
     request: async (uri, access) => {
       const at = addressed(uri);
-      return await ask(at.client, 'resourceRequest', { uri: at.original, ...access });
+      return await sendReverseRequest(at.client, 'resourceRequest', { uri: at.original, ...access });
     },
     /**
      * A watch on a client's resource, as the protocol runs one this host is
@@ -290,24 +292,24 @@ export function createRelay(ctx: HostContext): Relay {
       const client = fromAgentClientUri(uri)?.client;
       return client === undefined || connectedAs(client) === undefined ? undefined : client;
     },
-    read: async (client, uri, encoding) => await ask(client, 'resourceRead', {
+    read: async (client, uri, encoding) => await sendReverseRequest(client, 'resourceRead', {
       uri, ...(encoding !== undefined ? { encoding } : {}),
     }),
-    list: async (client, uri) => await ask(client, 'resourceList', { uri }),
-    resolve: async (client, uri) => await ask(client, 'resourceResolve', { uri }),
-    write: async (client, uri, content) => await ask(client, 'resourceWrite', { uri, ...content }),
-    delete: async (client, uri, recursive) => await ask(client, 'resourceDelete', {
+    list: async (client, uri) => await sendReverseRequest(client, 'resourceList', { uri }),
+    resolve: async (client, uri) => await sendReverseRequest(client, 'resourceResolve', { uri }),
+    write: async (client, uri, content) => await sendReverseRequest(client, 'resourceWrite', { uri, ...content }),
+    delete: async (client, uri, recursive) => await sendReverseRequest(client, 'resourceDelete', {
       uri, ...(recursive !== undefined ? { recursive } : {}),
     }),
-    move: async (client, source, destination, failIfExists) => await ask(client, 'resourceMove', {
+    move: async (client, source, destination, failIfExists) => await sendReverseRequest(client, 'resourceMove', {
       source, destination, ...(failIfExists !== undefined ? { failIfExists } : {}),
     }),
-    copy: async (client, source, destination, failIfExists) => await ask(client, 'resourceCopy', {
+    copy: async (client, source, destination, failIfExists) => await sendReverseRequest(client, 'resourceCopy', {
       source, destination, ...(failIfExists !== undefined ? { failIfExists } : {}),
     }),
-    mkdir: async (client, uri) => await ask(client, 'resourceMkdir', { uri }),
-    watch: async (client, uri, watching) => await ask(client, 'createResourceWatch', { uri, ...watching }),
-    request: async (client, uri, access) => await ask(client, 'resourceRequest', { uri, ...access }),
+    mkdir: async (client, uri) => await sendReverseRequest(client, 'resourceMkdir', { uri }),
+    watch: async (client, uri, watching) => await sendReverseRequest(client, 'createResourceWatch', { uri, ...watching }),
+    request: async (client, uri, access) => await sendReverseRequest(client, 'resourceRequest', { uri, ...access }),
   };
 
   return { clients, clientResources, ownId, claimsId, heard, clientGone, clientBack, stopLapses };

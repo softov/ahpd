@@ -39,7 +39,7 @@ import type { SessionEvents } from './sessionevents.js';
 import type { Sleep } from './sleep.js';
 import type { Wakes } from './wakes.js';
 import type { QueueDrain } from './queuedrain.js';
-import type { Merged } from './merged.js';
+import type { SessionLifecycle } from './sessionlifecycle.js';
 import type { Canvases } from './canvases.js';
 import type { Asking } from './asking.js';
 
@@ -72,7 +72,7 @@ export interface DetachedWorktree {
  * used rather than copied onto the factory's own scope at construction - so
  * the order the areas are built in never matters and nothing is frozen.
  */
-export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Outputs, LocalTurns, Automations, Sleep, Wakes, QueueDrain, Merged {
+export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Outputs, LocalTurns, Automations, Sleep, Wakes, QueueDrain, SessionLifecycle {
   /** The background tasks a backend reported, by chat. */
   background: Background;
   /** The canvases each chat shows, and the plugin that opened each one. */

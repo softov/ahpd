@@ -9,7 +9,7 @@ import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, o
 import { AUTOMATIONS, chatUriFor, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
-import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './merged.js';
+import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './sessionlifecycle.js';
 import { RESTART_KEY } from './root.js';
 import { claimOf } from './terminals.js';
 import type { HeldCopies, TemplatePlugin } from '../types/clientplugins.js';
@@ -399,7 +399,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         }
         into(rootConfig, ours);
         // A merged sessions key moved: the pass runs now, with the new days.
-        if (Object.prototype.hasOwnProperty.call(config, AUTO_ARCHIVE_KEY) || Object.prototype.hasOwnProperty.call(config, AUTO_DELETE_KEY)) ctx.mergedSoon();
+        if (Object.prototype.hasOwnProperty.call(config, AUTO_ARCHIVE_KEY) || Object.prototype.hasOwnProperty.call(config, AUTO_DELETE_KEY)) ctx.scheduleSessionLifecycle();
         /*
          * A `workspaceTrust` push answers for every folder at once, so the
          * folders this window said yes to one at a time are behind it: a window

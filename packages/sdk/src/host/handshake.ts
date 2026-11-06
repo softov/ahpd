@@ -94,7 +94,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
   const { connection } = conn;
   const {
     advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting,
-    clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaMoved,
+    clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaChanged,
     metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
     snapshotOf, TRACES, visible, watchedAs,
   } = ctx;
@@ -962,7 +962,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       // a server is not a token those lookups are ever given.
       if (target === undefined && resource === String(options.github?.resource.resource ?? '')) {
         for (const dir of browsable()) {
-          void refreshPullRequests(dir).then((moved) => { if (moved) metaMoved(dir); }).catch(() => {});
+          void refreshPullRequests(dir).then((moved) => { if (moved) metaChanged(dir); }).catch(() => {});
         }
       }
       return {};

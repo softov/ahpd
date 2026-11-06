@@ -1822,15 +1822,16 @@ export interface Host {
    */
   markRestartNeeded(): void;
   /**
-   * Say each daemon config value that moved under the root.
+   * Say each daemon config value that changed under the root.
    *
    * For a write to the daemon's file that no client's `root/configChanged`
    * made: a plugin command over the plugins channel or at the terminal, which
    * asks the daemon to apply what it wrote, or a paths command the daemon
-   * serves. Each moved value goes to the root as the host's own
-   * `root/configChanged`, and a key the file no longer holds as `null`.
+   * serves. Each changed value goes to the root as the host's own
+   * `root/configChanged`, and a key the file no longer holds as `null`, as
+   * VS Code says a host-side root value change.
    */
-  daemonValuesMoved(): Promise<void>;
+  daemonValuesChanged(): Promise<void>;
   /**
    * Stop what this host runs, once, while the process stays up.
    *

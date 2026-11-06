@@ -7,8 +7,9 @@ import type { PullRequest } from '../types/github.js';
 import type { HostContext } from './context.js';
 
 /**
- * Sessions whose pull requests are merged, archived and then deleted by the
- * host itself.
+ * The session lifecycle: sessions whose pull requests are merged, archived
+ * and then deleted by the host itself, under VS Code's names for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L50-L107
  *
  * A pass reads every row, and acts on two root config keys a window pushes:
  * `autoArchiveMergedSessionsAfterDays` archives an inactive session whose
@@ -17,13 +18,13 @@ import type { HostContext } from './context.js';
  * archived that way. Each is off at `0`, and at any value that is not a
  * positive whole number.
  */
-export interface Merged {
+export interface SessionLifecycle {
   /** Run a pass now, for a push of either key. */
-  mergedSoon(): void;
+  scheduleSessionLifecycle(): void;
   /** Run a pass now and start the hourly clock. */
-  startMerged(): void;
+  startSessionLifecycle(): void;
   /** Stop the clock, for a host that is closing. */
-  stopMerged(): void;
+  disposeSessionLifecycle(): void;
 }
 
 /** The root config key that archives a merged session, in days without activity. */
@@ -43,7 +44,7 @@ const urlKey = (url: string): string => url.trim().replace(/\/+$/, '').toLowerCa
 const complete = (related: PullRequest[]): boolean =>
   related.length > 0 && related.every((one) => one.state !== 'open') && related.some((one) => one.state === 'merged');
 
-export function createMerged(ctx: HostContext): Merged {
+export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
   const { options, sessions, kept, restarting, githubFacts, worktreeOf, dirOf, lent, log, running } = ctx;
 
   // How the pass learns the state of a pull request, from the host's own
@@ -57,12 +58,12 @@ export function createMerged(ctx: HostContext): Merged {
     return { cancel: () => { clearTimeout(handle); } };
   });
 
-  /** The armed timer, while the clock runs. */
-  let timer: { cancel(): void } | undefined;
-  /** The pass under way, so a second ask waits for it and runs once more. */
-  let passing: Promise<void> | undefined;
-  /** Whether a pass was asked for while one ran. */
-  let again = false;
+  /** The armed clock, while it runs: VS Code's scheduler. */
+  let scheduler: { cancel(): void } | undefined;
+  /** The pass under way, so a second ask waits for it and runs once more, as VS Code chains its runs. */
+  let runPromise: Promise<void> | undefined;
+  /** Whether a pass was asked for while one ran, to be chained behind it. */
+  let chained = false;
   /** Whether the log has said that the port cannot look a pull request up by its URL. */
   let saidNoUrl = false;
 
@@ -247,8 +248,8 @@ export function createMerged(ctx: HostContext): Merged {
     return true;
   };
 
-  /** One pass over every row. */
-  const pass = async (): Promise<void> => {
+  /** One pass over every row: VS Code's `run`. */
+  const run = async (): Promise<void> => {
     const archiveDays = daysOf(AUTO_ARCHIVE_KEY);
     const deleteDays = daysOf(AUTO_DELETE_KEY);
     if ((archiveDays === 0 && deleteDays === 0) || options.github === undefined) return;
@@ -274,48 +275,49 @@ export function createMerged(ctx: HostContext): Merged {
     if (looked > 0) log(`merged sessions: looked at ${looked}, archived ${archivedCount}, deleted ${deletedCount}`);
   };
 
-  /** Run a pass, or one more after the pass under way. */
-  const run = (): Promise<void> => {
-    if (passing !== undefined) {
-      again = true;
-      return passing;
+  /** Run a pass, or one more chained after the pass under way: VS Code's `_runScheduled`. */
+  const runScheduled = (): Promise<void> => {
+    if (runPromise !== undefined) {
+      chained = true;
+      return runPromise;
     }
     const going = (async () => {
       do {
-        again = false;
-        await pass().catch((error: unknown) => {
+        chained = false;
+        await run().catch((error: unknown) => {
           log(`merged sessions: ${error instanceof Error ? error.message : String(error)}`);
         });
-      } while (again && !ctx.closed);
+      } while (chained && !ctx.closed);
     })();
-    passing = going;
-    void going.then(() => { if (passing === going) passing = undefined; });
+    runPromise = going;
+    void going.then(() => { if (runPromise === going) runPromise = undefined; });
     return going;
   };
 
-  const rearm = (): void => {
-    timer = arm(() => {
-      timer = undefined;
+  /** Arm the clock for the next pass: VS Code's `_schedule` of its interval. */
+  const schedule = (): void => {
+    scheduler = arm(() => {
+      scheduler = undefined;
       if (ctx.closed) return;
-      void run();
-      rearm();
+      void runScheduled();
+      schedule();
     }, PASS_MS);
   };
 
-  const mergedSoon = (): void => {
-    if (!ctx.closed) void run();
+  const scheduleSessionLifecycle = (): void => {
+    if (!ctx.closed) void runScheduled();
   };
 
-  const startMerged = (): void => {
-    if (timer !== undefined) return;
-    void run();
-    rearm();
+  const startSessionLifecycle = (): void => {
+    if (scheduler !== undefined) return;
+    void runScheduled();
+    schedule();
   };
 
-  const stopMerged = (): void => {
-    timer?.cancel();
-    timer = undefined;
+  const disposeSessionLifecycle = (): void => {
+    scheduler?.cancel();
+    scheduler = undefined;
   };
 
-  return { mergedSoon, startMerged, stopMerged };
+  return { scheduleSessionLifecycle, startSessionLifecycle, disposeSessionLifecycle };
 }

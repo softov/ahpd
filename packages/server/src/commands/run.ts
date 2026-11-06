@@ -1928,7 +1928,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   });
   // The plugin channel's marks reach the host that now serves it.
   markRestart = () => { host.markRestartNeeded(); };
-  valuesMoved = () => host.daemonValuesMoved();
+  valuesMoved = () => host.daemonValuesChanged();
   /*
    * The host the plugins were loaded for, handed over now that it exists.
    *
