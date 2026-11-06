@@ -234,7 +234,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     isolating, charged, senders, sentBy, forgetSender, forgetSendersIn, forgetKeys, keepKeys,
     checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
-    spawn, keepProvider, forgetChats,
+    spawn, recordSessionProvider, forgetChats,
     markSessionProvisional, provisional, removeNotifiedSummary, activeSessionsChanged,
   } = ctx;
 
@@ -2329,13 +2329,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       const lead = spawn(agent, uri, chatUriFor(uri), chatIdFor(uri, chatUriFor(uri)), backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
       // Written down for the same reason a rename is: a first name outlives a
       // restart too.
-      if (title !== undefined) ctx.keepSessionTitle(uri, title);
+      if (title !== undefined) ctx.persistSessionTitle(uri, title);
       // What it was made with, so a resume after a restart starts from the
       // same place rather than from the defaults.
       if (Object.keys(config).length > 0) kept.setConfig(idOf(uri), { ...config });
       // Which harness this one runs on, so a catalogue two agents both list
       // can say whose row it is.
-      keepProvider(uri, agent, lead);
+      recordSessionProvider(uri, agent, lead);
     }
     catch (error) {
       // The session never existed, so what was written for it before its

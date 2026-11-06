@@ -54,16 +54,16 @@ export interface Spawn {
   endedWorkers: Set<string>;
   /** The worker chat for one tool call of a backend's, made on first ask. */
   openSubagent(session: string, lead: string, toolCallId: string, request: SubagentRequest): SubagentChat;
-  /** A chat of a session in the session's `ahp-session:/<id>` spelling, when it has one. */
-  formerChatUri(uri: string, chatUri: string): string | undefined;
+  /** A chat of a session held as `<provider>:/<id>`, in the `ahp-session:/<id>` spelling it was built for, when it has one. */
+  legacyChatUri(uri: string, chatUri: string): string | undefined;
   /** A chat's stored title. */
   titleOf(uri: string, chatUri: string): string | undefined;
-  /** Store a chat's title under its name. */
-  keepTitle(uri: string, chatUri: string, title: string): void;
-  /** Store the title a session was given, beside its chats' own. */
-  keepSessionTitle(uri: string, title: string): void;
-  /** Write down which harness a session runs on, under every id it answers to. */
-  keepProvider(uri: string, agent: Agent, session: Session): void;
+  /** Persist a chat's title under its name. */
+  persistChatTitle(uri: string, chatUri: string, title: string): void;
+  /** Persist the title a session was given, beside its chats' own. */
+  persistSessionTitle(uri: string, title: string): void;
+  /** Record which harness a session runs on, under every id it answers to. */
+  recordSessionProvider(uri: string, agent: Agent, session: Session): void;
   /**
    * Start one backend's session, and the worker chats it goes on to ask for.
    *
@@ -514,22 +514,24 @@ export function createSpawn(ctx: HostContext): Spawn {
 
   /**
    * A default or worker chat of a session held as `<provider>:/<id>`, built
-   * for `ahp-session:/<id>`, or nothing for any other chat.
+   * for `ahp-session:/<id>`, or nothing for any other chat: the chat's legacy
+   * URI, as VS Code derives a legacy default chat from a session's identity.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostLegacyDefaultChat.ts#L25
    *
    * A default or worker chat's URI embeds its session's, and a session store
    * may hold a chat's title under that URI of it, so a title is looked for
    * there too.
    */
-  const formerChatUri = (uri: string, chatUri: string): string | undefined => {
+  const legacyChatUri = (uri: string, chatUri: string): string | undefined => {
     const former = uriFor(idOf(uri));
     if (former === uri) return undefined;
     if (chatUri === chatUriFor(uri)) return chatUriFor(former);
     const callId = toolCallOfSubagentChat(chatUri);
     return callId !== undefined && chatUri === subagentChatUri(uri, callId) ? subagentChatUri(former, callId) : undefined;
   };
-  /** A chat's stored title: under its URI, or else under `formerChatUri`. */
+  /** A chat's stored title: under its URI, or else under `legacyChatUri`. */
   const titleOf = (uri: string, chatUri: string): string | undefined => {
-    const former = formerChatUri(uri, chatUri);
+    const former = legacyChatUri(uri, chatUri);
     return kept.chatTitle(idOf(uri), chatUri) ?? (former === undefined ? undefined : kept.chatTitle(idOf(uri), former));
   };
   /** A nested session's record with a new title or a new time, where it has one. */
@@ -538,22 +540,26 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (was === undefined) return;
     kept.setNested?.(id, { ...was, ...change, modifiedAt: new Date().toISOString() });
   };
-  /** Store a chat's title under its URI, and clear one kept under `formerChatUri`. */
-  const keepTitle = (uri: string, chatUri: string, title: string): void => {
+  /**
+   * Persist a chat's title under its URI, and clear one kept under
+   * `legacyChatUri`, as VS Code persists a chat's custom title under its chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/persistSessionMetadata.ts#L36
+   */
+  const persistChatTitle = (uri: string, chatUri: string, title: string): void => {
     kept.setChatTitle(idOf(uri), chatUri, title);
-    const former = formerChatUri(uri, chatUri);
+    const former = legacyChatUri(uri, chatUri);
     if (former !== undefined && kept.chatTitle(idOf(uri), former) !== undefined) kept.setChatTitle(idOf(uri), former, '');
     // And on the session's own list of chats, so a session served read-only
     // after a restart lists this one under the name it was given.
     ctx.keepChat(uri, chatUri, undefined, false);
   };
   /**
-   * Store the title a session was given, beside its chats' own: the name its
-   * backend is handed as its default chat starts, and the title a nested
+   * Persist the title a session was given, beside its chats' own: the name
+   * its backend is handed as its default chat starts, and the title a nested
    * session's record lists it by. An empty one is kept as the session having
    * none, and its backend's own title stands.
    */
-  const keepSessionTitle = (uri: string, title: string): void => {
+  const persistSessionTitle = (uri: string, title: string): void => {
     kept.setCustomTitle?.(idOf(uri), title);
     moveNested(idOf(uri), { title });
   };
@@ -569,14 +575,18 @@ export function createSpawn(ctx: HostContext): Spawn {
   };
 
   /**
-   * Which harness a session runs on, written down under every id it answers to.
+   * Which harness a session runs on, recorded under every id it answers to,
+   * as VS Code records a chat's agent provider and persists its default chat's
+   * backing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10038
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L15573
    *
    * The host's own and the agent's, which are one name unless the backend chose
-   * a different id for the transcript it writes. Written when a session starts
-   * rather than when it is listed: two agents can read the same transcripts, a
-   * listing is a read, and a session that was never recorded still has to open
-   * somewhere. A backend that names its own id only once a turn has run is
-   * recorded at the end of that turn instead, in the chat's own emit.
+   * a different id for the transcript it writes. Recorded when a session
+   * starts: two agents can read the same transcripts, a listing is a read and
+   * writes nothing, and a session that was never recorded still has to open
+   * somewhere. A backend that names its own id once a turn has run is recorded
+   * at the end of that turn, in the chat's own emit.
    *
    * The working folder goes under the agent's id as well, so a backend that
    * finds the session by that id is told where it ran.
@@ -587,7 +597,7 @@ export function createSpawn(ctx: HostContext): Spawn {
    * id it is written under is the host's, because that is what `names` is
    * keyed by and what a listed session is found again by.
    */
-  const keepProvider = (uri: string, agent: Agent, session: Session): void => {
+  const recordSessionProvider = (uri: string, agent: Agent, session: Session): void => {
     kept.setProvider(idOf(uri), agent.provider);
     if (kept.uri?.(idOf(uri)) === undefined) kept.setUri?.(idOf(uri), uri);
     const own = session.agentId();
@@ -1442,7 +1452,7 @@ export function createSpawn(ctx: HostContext): Spawn {
          * Claude names the transcript from the stream, so a fork, and a
          * session whose id the host chose and the backend did not, have no id
          * of their own until a turn has run - and a fork has none at all,
-         * because `keepProvider` is called before anything is said. Only when
+         * because `recordSessionProvider` is called before anything is said. Only when
          * the store does not already say it: a row rewritten on every turn is
          * a store written to for nothing.
          *
@@ -1908,7 +1918,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   return {
     unstamped, withWorkerUri, stampedCalls, withSender, asSentChat,
     sendSubagent, endedWorkers,
-    openSubagent, formerChatUri, titleOf, keepTitle, keepSessionTitle, keepProvider,
+    openSubagent, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
     spawn, wirePlan,
   };
 }

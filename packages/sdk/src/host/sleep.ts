@@ -87,7 +87,7 @@ export function createSleep(ctx: HostContext): Sleep {
   const {
     options, sessions, byChat, connections, restarting, kept, owners, wheres, moves,
     running, log, activeSessionsChanged, markSummaryDirty, liveRows, dirOf, stopUnwatched, sessionFor, sessionHolding,
-    unavailableProvider, restoreSession, nameOf, storedConfig, charged, charge, recordedChats, spawn, keepProvider, dispatch, leadOf,
+    unavailableProvider, restoreSession, nameOf, storedConfig, charged, charge, recordedChats, spawn, recordSessionProvider, dispatch, leadOf,
     heldStates,
   } = ctx;
 
@@ -465,7 +465,7 @@ export function createSleep(ctx: HostContext): Sleep {
      * nothing about the session: its transcript is that backend's, and the
      * session's provider is not written under it.
      */
-    if (other === undefined || other.agent === owner) keepProvider(named, owner, session);
+    if (other === undefined || other.agent === owner) recordSessionProvider(named, owner, session);
     // And every other chat the store recorded for it, each a conversation of
     // its own, resumed the way a chat restarted on its own is.
     for (const { one, agent } of served) {

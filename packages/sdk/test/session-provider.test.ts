@@ -503,7 +503,7 @@ describe('a row two harnesses both list', () => {
 
     // The row belongs to `two`, so creating a session over `one:/shared` would
     // be a second conversation under an id that already has one, and
-    // `keepProvider` would write `one` over the record on the way out.
+    // `recordSessionProvider` would write `one` over the record on the way out.
     await expect(client.handle({ method: 'createSession', params: { channel: 'one:/shared', provider: 'one' } }))
       .rejects.toMatchObject({ code: -32001, message: 'No agent for session: two:/shared' });
     expect(store.provider('shared')).toBe('two');

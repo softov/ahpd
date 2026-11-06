@@ -62,7 +62,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     charged, chatAgent, chatConfig, chatIdOf, chatShown,
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
-    isolating, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
+    isolating, keepChat, recordSessionProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
     movable, updateChatMovability, openSession, openedBy, options, orderChats, oweTree,
     ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
@@ -227,7 +227,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * chat's state, changesets, canvases and in-progress turn: a canvas's
      * resource names the chat, and the chat keeps its URI.
      */
-    if (to === undefined) keepProvider(into, held.agent, found.chat);
+    if (to === undefined) recordSessionProvider(into, held.agent, found.chat);
     /*
      * And every worker chat the moved chat carries, which the protocol says
      * goes with it: a worker is a conversation inside a call of this chat, and
@@ -1435,7 +1435,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (title !== undefined) kept.setChatTitle(idOf(uri), chatUri, title);
       const chat = spawn(agent, uri, chatUri, chatIdFor(uri, chatUri), backendsOwn(config), made, held.workingDirectory, undefined, peers, connection);
       log(`opened ${chatUri} in ${uri}`);
-      if (title !== undefined) ctx.keepTitle(uri, chatUri, title);
+      if (title !== undefined) ctx.persistChatTitle(uri, chatUri, title);
       /*
        * The default chat takes its own title from here, before the new chat
        * is said, as the reference host's addChat snapshots it.

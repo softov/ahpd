@@ -1585,7 +1585,7 @@ export function createHost(options: HostOptions): Host {
     listing, unavailableProvider, readStored,
     unstamped, withWorkerUri, stampedCalls, withSender,
     sendSubagent, endedWorkers, openSubagent,
-    formerChatUri, titleOf, keepTitle, keepProvider, spawn,
+    legacyChatUri, titleOf, persistChatTitle, recordSessionProvider, spawn,
     removeSession, restart, restartChat, backendsOwn, isolated,
     beginOrRun, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
     permitted, toolDefinitions, retool, renameChat,

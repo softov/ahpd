@@ -408,7 +408,7 @@ export function createTooling(ctx: HostContext): Tooling {
     options, sessions, byChat, kept, terminals, learned, rootConfig, sentBy, about,
     activeClientsOf, leadOf, clientResources, allRows, setArtifacts, forWhom,
     principalFor, senderOf, senders,
-    chatSummary, keepTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
+    chatSummary, persistChatTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
     resolveCreatedSessionConfig, openSession, backendsOwn, removeSession, spawn,
   } = ctx;
   /**
@@ -1420,10 +1420,10 @@ export function createTooling(ctx: HostContext): Tooling {
     found.setTitle?.(title);
     // Written down here rather than at either caller, because a client's
     // `session/titleChanged` and the `rename_chat` tool both come through.
-    keepTitle(uri, chatUri, title);
+    persistChatTitle(uri, chatUri, title);
     updateChatTitle(uri, chatUri, title);
     if (chatUri === held.defaultChat) {
-      ctx.keepSessionTitle(uri, title);
+      ctx.persistSessionTitle(uri, title);
       dispatch(uri, { type: 'session/titleChanged', title });
     }
     markSummaryDirty(uri);
@@ -1451,10 +1451,10 @@ export function createTooling(ctx: HostContext): Tooling {
     const found = held?.chats.get(held.defaultChat);
     if (held === undefined || found === undefined) throw new Error(`${uri} is not a session this host is running`);
     found.setTitle?.(title);
-    ctx.keepSessionTitle(uri, title);
+    ctx.persistSessionTitle(uri, title);
     if (!said) dispatch(uri, { type: 'session/titleChanged', title });
     if (readAggregate(ctx, uri).length <= 1) {
-      keepTitle(uri, held.defaultChat, title);
+      persistChatTitle(uri, held.defaultChat, title);
       updateChatTitle(uri, held.defaultChat, title);
     }
     markSummaryDirty(uri);
@@ -1475,7 +1475,7 @@ export function createTooling(ctx: HostContext): Tooling {
     if (held === undefined || lead === undefined || ctx.titleOf(uri, held.defaultChat) !== undefined) return;
     const title = String(ctx.stateOf(uri)?.title ?? lead.title());
     if (title === '') return;
-    keepTitle(uri, held.defaultChat, title);
+    persistChatTitle(uri, held.defaultChat, title);
     // The session's own title kept beside it, an empty one where it has none:
     // a record holding one hands its backend that, and the chat's stays the
     // chat's.
@@ -1762,7 +1762,7 @@ export function createTooling(ctx: HostContext): Tooling {
     if (asked.title !== undefined) kept.setChatTitle(idOf(at), chatUri, asked.title);
     const chat = spawn(agent, at, chatUri, chatIdFor(at, chatUri), config, preamble === undefined ? undefined : { context: preamble }, held.workingDirectory, undefined, held.additional);
     log(`opened ${chatUri} in ${at}`);
-    if (asked.title !== undefined) keepTitle(at, chatUri, asked.title);
+    if (asked.title !== undefined) persistChatTitle(at, chatUri, asked.title);
     // The default chat takes its own title from here, before the new chat is said.
     snapshotDefaultChatTitle(at);
     dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
