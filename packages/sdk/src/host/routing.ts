@@ -24,7 +24,7 @@ export interface Routing {
   channelKind(channel: string): ChannelKind;
   sessionChannel(channel: string): boolean;
   homeOf(channel: string): Home | undefined;
-  answeredAs(connection: Connection, channel: string, snapshot: Record<string, unknown>): string;
+  projectSnapshot(connection: Connection, channel: string, snapshot: Record<string, unknown>): string;
   visible(connection: Connection, channel: string): boolean;
   sessionVisible(connection: Connection, session: string, defaultChat?: string): boolean;
   chatShown(connection: Connection, chat: unknown, session: string): boolean;
@@ -51,7 +51,7 @@ export function createRouting(ctx: HostContext): Routing {
    * id nothing has named. One name per session, which is the `resource` its
    * row and every notification about it carry; a client that names the
    * session another way watches it through `meantBy`, and its subscribe is
-   * answered under the name it used, through `answeredAs`.
+   * answered under the name it used, through `projectSnapshot`.
    */
   const nameOf = (id: string): string => names.get(id) ?? ctx.kept.uri?.(id) ?? uriFor(id);
 
@@ -207,7 +207,10 @@ export function createRouting(ctx: HostContext): Routing {
     connection.legacyChatUris !== true || shownToOlder(chat, session);
 
   /**
-   * A snapshot taken for a channel a client named, answered to that client.
+   * A snapshot taken for a channel a client named, projected for that client,
+   * as VS Code's host projects a snapshot and its chats for the client it
+   * answers.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3102-L3103
    *
    * The channel the snapshot was taken of is the one this host dispatches
    * under, and the one the connection watches. The snapshot names the channel
@@ -219,7 +222,7 @@ export function createRouting(ctx: HostContext): Routing {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1079-L1097
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4403-L4409
    */
-  const answeredAs = (connection: Connection, channel: string, snapshot: Record<string, unknown>): string => {
+  const projectSnapshot = (connection: Connection, channel: string, snapshot: Record<string, unknown>): string => {
     const meant = meantBy(channel);
     if (meant !== ROOT) snapshot.resource = channel;
     const state = snapshot.state;
@@ -350,6 +353,6 @@ export function createRouting(ctx: HostContext): Routing {
 
   return {
     spaceHere, nameOf, keepName, sessionOfChat, sessionFor, meantBy, sessionHolding, channelKind, sessionChannel, homeOf,
-    answeredAs, visible, sessionVisible, chatShown, claimable, unheld, openedBy,
+    projectSnapshot, visible, sessionVisible, chatShown, claimable, unheld, openedBy,
   };
 }

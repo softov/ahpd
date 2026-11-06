@@ -58,7 +58,7 @@ export interface SessionMethods {
 export function createSessionMethods(ctx: HostContext, conn: ConnectionContext): SessionMethods {
   const { connection } = conn;
   const {
-    about, activeSessionsChanged, admitted, agents, answeredAs, backendsOwn, beginOrRun, beginTurn, beside, byChat,
+    about, activeSessionsChanged, admitted, agents, projectSnapshot, backendsOwn, beginOrRun, beginTurn, beside, byChat,
     charged, chatAgent, chatConfig, chatIdOf, chatShown,
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
@@ -499,7 +499,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       }
       // Answered to this connection after the snapshot is taken: a session's
       // chats the ones it may see.
-      answeredAs(connection, channel, snapshot);
+      projectSnapshot(connection, channel, snapshot);
       connection.watching.add(meant);
       // Given a baseline, so it owes this client none.
       ctx.clearBaselineDebt(connection.clientId, meant);

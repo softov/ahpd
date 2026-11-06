@@ -1566,7 +1566,7 @@ export function createHost(options: HostOptions): Host {
   const {
     spaceHere, nameOf, sessionOfChat, sessionFor, meantBy,
     sessionHolding, channelKind, sessionChannel, homeOf,
-    answeredAs, visible, sessionVisible, chatShown, claimable, unheld, ownId, clients, clientResources, heard, clientGone,
+    projectSnapshot, visible, sessionVisible, chatShown, claimable, unheld, ownId, clients, clientResources, heard, clientGone,
     dirOf, catalogueOf, changesetAt, changesetOf, operationsOf, operationsMoved, contentMoved,
     changesetsOf, operationContext, opKey, shown,
     describes, setArtifacts, captureBaseline, recordPullRequest, metaChanged, dirOfFile, wroteThrough,

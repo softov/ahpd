@@ -93,7 +93,7 @@ const CLIENT_RECORD_RETENTION = 30_000 * 10;
 export function createHandshake(ctx: HostContext, conn: ConnectionContext): Handshake {
   const { connection } = conn;
   const {
-    advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting,
+    advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, projectSnapshot, browsable, channelAwaiting,
     clientNames, clientPluginsOf, clientsChanged, clientVersions, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, authenticationResource, log, LOGS, METRICS, metaChanged,
     metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
     snapshotOf, TRACES, visible, watchedAs,
@@ -425,7 +425,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
             connection.watching.add(asked);
             continue;
           }
-          const meant = answeredAs(connection, channel, snapshot);
+          const meant = projectSnapshot(connection, channel, snapshot);
           snapshots.push(snapshot);
           connection.watching.add(meant);
           ctx.clearBaselineDebt(connection.clientId, meant);
@@ -755,7 +755,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       for (const channel of resumed.values()) {
         const snapshot = await snapshotOf(meantBy(channel), connection);
         if (snapshot === undefined) continue;
-        ctx.clearBaselineDebt(clientId, answeredAs(connection, channel, snapshot));
+        ctx.clearBaselineDebt(clientId, projectSnapshot(connection, channel, snapshot));
         snapshots.push(snapshot);
       }
       return { type: 'snapshot', snapshots };
