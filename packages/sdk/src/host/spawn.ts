@@ -1142,8 +1142,8 @@ export function createSpawn(ctx: HostContext): Spawn {
        * The background tasks this backend reports.
        *
        * Always offered, because a task is a record and needs no store: the
-       * host builds the row from what the backend says, and a backend that
-       * emitted `chat/backgroundWorkSet` itself has it dropped below.
+       * host builds the row from what the backend says, and a backend's own
+       * `chat/backgroundWorkSet` is said as the backend sent it, by `emit`.
        */
       backgroundTasks: ctx.background.heldTasks(),
       /*
