@@ -158,7 +158,6 @@ const senderOn = (turn: Bag | undefined): unknown =>
   ((turn?.message as Bag | undefined)?._meta as Bag | undefined)?.['ahpd.sender'];
 
 /**
-/**
  * Echo under a backend that says its own part of the session's `_meta`.
  *
  * `say` sets that part and sends `session/metaChanged` with it alone, as a
@@ -167,7 +166,7 @@ const senderOn = (turn: Bag | undefined): unknown =>
 const metering = (agent: Agent, handle: { say?: (meta: Bag) => void }): Agent => ({
   ...agent,
   create: (start) => {
-    const session = agent.create(start);
+    const session = startedNow(agent.create(start));
     let own: Bag = {};
     handle.say = (meta) => {
       own = meta;
