@@ -735,7 +735,10 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * session: a row that comes back changed is a client sent a
    * `root/sessionSummaryChanged` for a session that did not move. The store
    * keeps no title of its own, so the first thing the person said is the
-   * honest one, and a session that has said nothing is titled by its id.
+   * honest one, and a session nobody said anything in is listed with an empty
+   * title, which a client draws as an untitled session, as VS Code lists a
+   * session that has no summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6140-L6146
    *
    * The messages are read per record, because the store has no call that
    * answers the first user message alone - which is why `find` reads one
@@ -746,7 +749,7 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
     const first = messages.find((one) => one.role === 'user' && one.source === 'input');
     return {
       id: record.sessionId,
-      title: first === undefined ? record.sessionId : titleFrom(textOf(first), record.sessionId),
+      title: first === undefined ? '' : titleFrom(textOf(first), ''),
       createdAt: record.createdAt,
       modifiedAt: record.updatedAt,
       workingDirectories: record.workspace === undefined ? [] : [uriOf(record.workspace)],

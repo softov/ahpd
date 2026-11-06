@@ -251,6 +251,22 @@ it('finds a session written after the last listing, and nothing for one the stor
   expect(await agent.find?.('nobody')).toBeUndefined();
 });
 
+/*
+ * A session nobody said anything in is listed untitled, as VS Code lists a
+ * session that has no summary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6140-L6146
+ */
+it('lists a session nobody said anything in with an empty title', async () => {
+  const { root, sweep } = place();
+  const before = made.length;
+  const agent = backend(root, createFakeModel({ script: [] }), allowAll());
+  const store = made[before] as Store;
+  await store.sessions.create({ sessionId: 'quiet', agentId: 'cofold', workspace: sweep });
+
+  expect((await agent.list?.())?.find((row) => row.id === 'quiet')?.title).toBe('');
+  expect((await agent.find?.('quiet'))?.title).toBe('');
+});
+
 it('reads one record and never lists the store', async () => {
   const { root, sweep } = place();
   const before = made.length;
