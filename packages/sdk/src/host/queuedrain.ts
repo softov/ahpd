@@ -188,7 +188,7 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
         part: { kind: 'error', error: { errorType, message: why } },
       });
       ctx.raiseTurnEnd({
-        session: owner.uri, chat, turn: turnId, status: ending, error: why, errorType,
+        session: owner.uri, chat, turn: turnId, status: ending, error: why, errorType, queuedMessageId: id,
         ...(ending === 'rejected' ? { recoverable: true } : {}),
         ...(by === undefined ? {} : { sender: by }),
       });

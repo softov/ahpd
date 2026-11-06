@@ -6,7 +6,7 @@ import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { sdkVersion } from '../src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
-import type { Agent } from '../src/types/agent.js';
+import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { EventName, HostEvent } from '../src/types/events.js';
 import type { HostOptions, HostTool } from '../src/types/host.js';
@@ -442,7 +442,7 @@ it('fires turn_end rejected, with the refusal, for a start the host refuses befo
   })]);
 });
 
-it('fires turn_end rejected for a queued message the host will not run, whose sender still holds it', async () => {
+it('fires turn_end rejected for a queued message the host will not run, naming the message its sender still holds', async () => {
   const { seen, client, host } = watched();
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/stopping', provider: 'echo' } });
@@ -452,7 +452,30 @@ it('fires turn_end rejected for a queued message the host will not run, whose se
   await wait(100);
 
   expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
-    status: 'rejected', errorType: 'rejected', error: 'This host is stopping', recoverable: true,
+    status: 'rejected', errorType: 'rejected', error: 'This host is stopping', recoverable: true, queuedMessageId: 'q-1',
+  })]);
+});
+
+/*
+ * A worker's chat raises its turn's end as every chat does, on the worker's
+ * chat, as VS Code's host offers a subagent chat's turn end on the channel it
+ * ran on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L39-L49
+ */
+it('fires turn_end for a worker\'s turn, on the worker\'s chat', async () => {
+  let start: Start | undefined;
+  const inner = echo({ path: DIR, pace: 0 });
+  const agent: Agent = { ...inner, create: (given) => { start = given; return inner.create(given); } };
+  const { seen, client } = watched({ agents: [agent] });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/lead', provider: 'echo' } });
+  const worker = start?.subagent?.('call-1', { title: 'A worker', prompt: 'go' });
+  if (worker === undefined) throw new Error('the host offered no subagent seam');
+  worker.end('error', 'the worker gave up');
+  await wait(50);
+
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
+    session: 'ahp-session:/lead', chat: worker.uri, turn: worker.turnId, status: 'error', error: 'the worker gave up', errorType: 'subagentFailed',
   })]);
 });
 

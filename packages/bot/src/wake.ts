@@ -117,6 +117,12 @@ export interface Answering {
   handle: TurnHandle;
   /** The bot's name, which the notice is said in, where the option asks for one. */
   bot: string;
+  /**
+   * The back session's chat this turn waits on: a turn that ends there answers
+   * it, and one that ends in another chat of that session, a worker's, does
+   * not.
+   */
+  chat: string;
   /** True once the back session has posted into this turn. */
   posted?: boolean;
   /**
@@ -711,7 +717,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
         const waiting = same ? before.waiting : new Set<string>();
         waiting.add(String(action['id']));
         answering.set(session, {
-          session: message.session, turnId: message.turnId, handle, bot: bot.name, waiting,
+          session: message.session, turnId: message.turnId, handle, bot: bot.name, chat: looked.chat, waiting,
           ...(same && before.posted === true ? { posted: true } : {}),
         });
         /*
@@ -769,7 +775,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       const slug = started.get(backSession);
       const bot = slug === undefined ? undefined : seams.store.get(slug);
       const name = bot?.name ?? '';
-      answering.set(backSession, { session, turnId, handle, bot: name, waiting: new Set() });
+      answering.set(backSession, { session, turnId, handle, bot: name, chat, waiting: new Set() });
       begun.set(backSession, { turn: backTurn, at: Date.now() });
       handle.working?.(chat, name);
     },

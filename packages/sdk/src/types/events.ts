@@ -95,10 +95,11 @@ export interface SessionOpenedEvent {
 }
 
 /**
- * A turn its chat began: a start this host handed the chat's backend, one the
- * backend opened itself, or a `!` command this host runs as the turn. A start
- * this host ends before handing it over, refused or failed in its
- * preparation, ends with no start before it.
+ * A turn a session's chat began: a start this host handed the chat's
+ * backend, one the backend opened itself, or a `!` command this host runs as
+ * the turn. A start this host ends before handing it over, refused or failed
+ * in its preparation, ends with no start before it, and so does a worker's
+ * turn, which begins inside a call of its lead chat's turn.
  */
 export interface TurnStartEvent {
   type: 'turn_start';
@@ -118,12 +119,11 @@ export interface TurnStartEvent {
 }
 
 /**
- * A turn that ended on a session's default chat or another chat it holds, and
+ * A turn that ended, on any chat of a session, a worker's among them, and
  * how: every way one ends, its backend's ends and the ones this host says
  * itself, a start it refused before any backend ran it among them, as VS
- * Code's host offers its chat contributions every turn's end with the reason.
- * A worker's chat runs its turns inside a call of its lead chat's turn, which
- * ends on the lead chat.
+ * Code's host offers its chat contributions every turn's end with the reason
+ * and the channel it ran on. A plugin waiting on one chat's turn reads `chat`.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L19-L49
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L258-L270
  */
@@ -158,6 +158,12 @@ export interface TurnEndEvent {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L44-L49
    */
   recoverable?: boolean;
+  /**
+   * The queued message the turn took up, where the queue drain that began the
+   * turn ended it itself: a start refused there comes with no `turn_start` to
+   * name the message.
+   */
+  queuedMessageId?: string;
   /** Who sent it, as `TurnStartEvent.sender` says: the same name or nothing. */
   sender?: Owner;
 }

@@ -247,7 +247,8 @@ export function createTerminals(ctx: HostContext): Terminals {
    * start again, which the chat holds and which is not said twice, then the
    * call and the turn's end, which keeps it as a local turn and lets its
    * sender go. A worker's chat has no road of its own, so its command is said
-   * as this host's actions, kept as a local turn here and its sender let go.
+   * as this host's actions, kept as a local turn here, its `turn_end` raised
+   * here and its sender let go.
    */
   const bang = (session: Session, chat: string, turnId: string, command: string): void => {
     const road = byChat.get(chat);
@@ -316,6 +317,8 @@ export function createTerminals(ctx: HostContext): Terminals {
       say({ type: 'chat/turnComplete', turnId, duration: Math.max(0, ended - began) });
       if (road !== undefined) return;
       ctx.recordLocalTurn(session.uri, chat, (ctx.stateOf(chat)?.turns ?? []) as Bag[], turnId);
+      // The road raises its chat's turn end; a worker's chat, with none, has it raised here.
+      ctx.raiseTurnEnd({ session: session.uri, chat, turn: turnId, status: 'localCommand' });
       ctx.forgetSender(turnId);
     });
   };

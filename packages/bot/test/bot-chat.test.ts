@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import { createHost, ROOT } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
+import { chatUriFor, subagentChatUri } from '../../sdk/src/host/channels.js';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { foldHostOptions, pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
@@ -1258,6 +1258,70 @@ it('ends a main turn at once when its back turn ended while it opened', async ()
     { kind: 'toolCall', toolCall: { toolName: 'subagent', status: 'completed', _meta: { subagentChatUri: backChat } } },
     { kind: 'markdown', content: said },
   ]);
+});
+
+/**
+ * A main turn held open on a back turn that is still running: a back session
+ * whose agent answers slowly, a turn begun in its chat, and the plugin told of
+ * the turn's start. What the plugin is then told of turn ends is the case's.
+ */
+async function heldOnBack() {
+  const { host, records, contribution } = made({
+    agents: [{ ...echo({ path: tmpdir(), pace: 400 }), provider: 'base', displayName: 'Base' }],
+  });
+  const client = await anyone(host);
+  await talkTo(client);
+  const backSession = 'ahp-session:/back';
+  const backChat = chatUriFor(backSession);
+  await client.handle({ method: 'createSession', params: { channel: backSession, provider: 'base' } });
+  await client.handle({ method: 'subscribe', params: { channel: backChat } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: backChat, action: { type: 'chat/turnStarted', turnId: 'b1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'a slow answer of several words' } } },
+  });
+  await (await records.collection(sessionsOf('backer'))).put({
+    id: rowId(['backer', 'test', 'work']), bot: 'backer', user: 'test', name: 'work', session: backSession,
+  });
+  await (await records.collection(chatsOf('backer'))).put({ id: rowId(['backer', 'root:test']), chat: HELD });
+  const listeners = contribution.events as unknown as Record<string, { handle: (event: Bag) => unknown }[]>;
+  void listeners['turn_start']?.[0]?.handle({ type: 'turn_start', session: backSession, chat: backChat, turn: 'b1' });
+  await vi.waitFor(async () => { expect((await stateOf(client))['activeTurn']).toBeDefined(); });
+  const turnEnded = (event: Bag): unknown => listeners['turn_end']?.[0]?.handle({ type: 'turn_end', session: backSession, ...event });
+  return { client, backSession, backChat, turnEnded };
+}
+
+/*
+ * A worker's chat inside the back session raises its own `turn_end`, as every
+ * chat's turn does; its end is the worker's, not the back session's answer, so
+ * the main turn goes on waiting for the back chat's own turn.
+ */
+it('leaves a main turn waiting when a worker\'s turn in its back session ends', async () => {
+  const { client, backSession, backChat, turnEnded } = await heldOnBack();
+  void turnEnded({ chat: subagentChatUri(backSession, 'call-w'), turn: 'w1', status: 'complete' });
+  await new Promise((done) => { setTimeout(done, 200); });
+  expect((await stateOf(client))['activeTurn']).toBeDefined();
+
+  void turnEnded({ chat: backChat, turn: 'b1', status: 'complete' });
+  await vi.waitFor(async () => { expect((await stateOf(client))['activeTurn']).toBeUndefined(); });
+});
+
+/*
+ * A start the back session's host refused ends that turn `rejected`, with the
+ * refusal's words, and the main turn fails in them, as a turn that failed
+ * fails it.
+ */
+it('fails a main turn whose back start the host refused, in the refusal\'s words', async () => {
+  const { client, backChat, turnEnded } = await heldOnBack();
+  void turnEnded({
+    chat: backChat, turn: 'r1', status: 'rejected', errorType: 'rejected', error: 'This host is stopping', recoverable: true,
+  });
+  const failed = await vi.waitFor(async () => {
+    const state = await stateOf(client);
+    expect(state['activeTurn']).toBeUndefined();
+    return (state['turns'] as Bag[]).at(-1) as Bag;
+  });
+  expect(failed).toMatchObject({ state: 'error' });
+  expect((failed['responseParts'] as Bag[]).at(-1)).toMatchObject({ kind: 'error', error: { message: 'This host is stopping' } });
 });
 
 it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
