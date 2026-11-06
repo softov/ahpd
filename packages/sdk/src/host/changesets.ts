@@ -541,6 +541,13 @@ export function createChangesets(ctx: HostContext): Changesets {
    * The two reduce to the same state, which is what makes choosing between
    * them safe - `changesetReducer` applies `fileSet` and `fileRemoved` to the
    * same list `contentChanged` replaces wholesale.
+   *
+   * The content goes first and its status after, as VS Code's host publishes
+   * a recompute, so a client reading the changeset ready holds its files by
+   * then. A recompute that found no files is the whole set with none in it:
+   * the protocol keeps `changeset/cleared` for a changeset that goes away, on
+   * which a client lets go of what it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2323-L2339
    */
   const told = (channel: string, state: ChangesetState, operations: Bag[]): void => {
     const files = state.files;
@@ -557,29 +564,26 @@ export function createChangesets(ctx: HostContext): Changesets {
     // Nothing to diff against: this client's first word about the channel is
     // the whole of it, which is what a snapshot would have been.
     if (!was) { whole(); return; }
-    if (was.status !== status) dispatch(channel, { type: 'changeset/statusChanged', status });
     if (sameFiles(was.files, files)) {
-      // The status moved and the files did not, which is the ordinary shape of
-      // a changeset being recomputed. Re-sending the list would be the whole
-      // set to say nothing.
+      // The files are as they were, which is the ordinary shape of a
+      // changeset being recomputed: its operations and its status are what
+      // is said.
       if (operations.length > 0) dispatch(channel, { type: 'changeset/operationsChanged', operations });
-      return;
     }
-    // Everything gone is one action rather than one per file, which is what
-    // the protocol has `cleared` for.
-    if (files.length === 0) {
-      dispatch(channel, { type: 'changeset/cleared' });
-      if (operations.length > 0) dispatch(channel, { type: 'changeset/operationsChanged', operations });
-      return;
+    else if (files.length === 0) whole();
+    else {
+      const before = new Map(was.files.map((file) => [file.id, JSON.stringify(file)]));
+      const now = new Set(files.map((file) => file.id));
+      const gone = was.files.filter((file) => !now.has(file.id));
+      const moved = files.filter((file) => before.get(file.id) !== JSON.stringify(file));
+      if (gone.length + moved.length >= files.length) whole();
+      else {
+        for (const file of gone) dispatch(channel, { type: 'changeset/fileRemoved', fileId: file.id });
+        for (const file of moved) dispatch(channel, { type: 'changeset/fileSet', file });
+        if (operations.length > 0) dispatch(channel, { type: 'changeset/operationsChanged', operations });
+      }
     }
-    const before = new Map(was.files.map((file) => [file.id, JSON.stringify(file)]));
-    const now = new Set(files.map((file) => file.id));
-    const gone = was.files.filter((file) => !now.has(file.id));
-    const moved = files.filter((file) => before.get(file.id) !== JSON.stringify(file));
-    if (gone.length + moved.length >= files.length) { whole(); return; }
-    for (const file of gone) dispatch(channel, { type: 'changeset/fileRemoved', fileId: file.id });
-    for (const file of moved) dispatch(channel, { type: 'changeset/fileSet', file });
-    if (operations.length > 0) dispatch(channel, { type: 'changeset/operationsChanged', operations });
+    if (was.status !== status) dispatch(channel, { type: 'changeset/statusChanged', status });
   };
 
   /**

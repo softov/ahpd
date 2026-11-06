@@ -337,15 +337,21 @@ it('reduces to the same state either way, which is what makes the choice safe', 
   expect(state.files).toEqual(held.files);
 });
 
-it('says a changeset emptied with one action rather than one per file', async () => {
+/*
+ * An emptied changeset is its whole set with no files in it, as VS Code's host
+ * publishes a recompute: `changeset/cleared` is the protocol's word for a
+ * changeset going away.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2323-L2339
+ */
+it('says a changeset emptied as one content change with no files, as VS Code\'s host', async () => {
   const { source, held } = shifting([one('a.txt'), one('b.txt'), one('c.txt')]);
   const { client, peer: p, changeset } = await watching(source);
   const start = actions(p, changeset).length;
   held.files = [];
   await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look' } });
   const said = actions(p, changeset).slice(start);
-  expect(said.some((a) => a.type === 'changeset/cleared')).toBe(true);
-  expect(said.some((a) => a.type === 'changeset/fileRemoved')).toBe(false);
+  expect(said.filter((a) => a.type === 'changeset/contentChanged').map((a) => a.files)).toEqual([[]]);
+  expect(said.some((a) => a.type === 'changeset/cleared' || a.type === 'changeset/fileRemoved')).toBe(false);
 });
 
 it('says the status moved without re-sending a list that did not', async () => {

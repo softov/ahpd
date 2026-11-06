@@ -209,6 +209,10 @@ const FILE_ACTIONS = [
 const kindsOf = (actions: Record<string, unknown>[]): string[] => actions
   .map((one) => (one.type === 'changeset/statusChanged' ? `status:${String(one.status)}` : String(one.type)));
 
+/** A changeset said empty: its whole set, with no files in it. */
+const emptied = (one: Record<string, unknown>): boolean =>
+  one.type === 'changeset/contentChanged' && Array.isArray(one.files) && one.files.length === 0;
+
 /**
  * The git source with its watch the test fires, and a re-read that always says
  * something moved.
@@ -258,8 +262,10 @@ it('says recomputing before a re-read that finds the same files, and ready after
   await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:ready'));
 
   const after = channelActions(p, CHANGESET).slice(before);
-  // The status is the whole of what moved, so the two are all that arrives.
-  expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:ready']);
+  // The files are as they were, so the status and the operations are all that
+  // arrives, the status after the operations as VS Code's host says it after a
+  // recompute's content.
+  expect(kindsOf(after).slice(0, 3)).toEqual(['status:recomputing', 'changeset/operationsChanged', 'status:ready']);
   expect(after.filter((one) => FILE_ACTIONS.includes(String(one.type)))).toEqual([]);
 });
 
@@ -284,7 +290,12 @@ it('says no changeset list to the session for a re-read that finds the same file
   expect(channelActions(p, 'ahp-session:/s').slice(before).filter((one) => one.type === 'session/changesetsChanged')).toEqual([]);
 });
 
-it('says recomputing before a re-read that finds a file, and the old files stay until ready', async () => {
+/*
+ * The new files are said before the changeset is ready again, as VS Code's
+ * host publishes a recompute's content and then its status.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2323-L2339
+ */
+it('says recomputing before a re-read that finds a file, keeps the old files while it runs, and says ready after the new ones', async () => {
   const dir = repository();
   writeFileSync(join(dir, 'a.txt'), 'a\n');
   const { calls, source } = counting();
@@ -305,8 +316,9 @@ it('says recomputing before a re-read that finds a file, and the old files stay 
   const recomputing = kinds.indexOf('status:recomputing');
   const ready = kinds.indexOf('status:ready');
   const file = kinds.findIndex((one) => FILE_ACTIONS.includes(one));
-  expect(kinds.slice(recomputing, ready + 1)).toEqual(['status:recomputing', 'status:ready']);
-  expect(file).toBeGreaterThan(ready);
+  expect(recomputing).toBeGreaterThanOrEqual(0);
+  expect(file).toBeGreaterThan(recomputing);
+  expect(ready).toBeGreaterThan(file);
 
   // A client replaying these keeps the files it had while the read ran, which
   // is what `recomputing` is for.
@@ -615,7 +627,7 @@ it('moves the changeset when a terminal that committed in the directory exits', 
     params: { channel: terminal, action: { type: 'terminal/input', data: 'git commit -am x\nexit\n' } },
   });
   await waitFor(() => channelActions(p, terminal).some((one) => one.type === 'terminal/exited'), 8000);
-  await waitFor(() => channelActions(p, CHANGESET).some((one) => one.type === 'changeset/cleared'), 4000);
+  await waitFor(() => channelActions(p, CHANGESET).some(emptied), 4000);
 }, 20000);
 
 it('coalesces a burst of triggers into at most two re-reads', async () => {
@@ -750,7 +762,7 @@ it('sees a commit made right after the first read, before the watch is armed', a
   await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
 
   git(dir, 'commit', '-q', '-m', 'x');
-  await waitFor(() => channelActions(p, CHANGESET).some((one) => one.type === 'changeset/cleared'));
+  await waitFor(() => channelActions(p, CHANGESET).some(emptied));
 });
 
 it('moves the changeset when a branch moves with no index or HEAD write', async () => {
@@ -762,7 +774,7 @@ it('moves the changeset when a branch moves with no index or HEAD write', async 
 
   const seen = (): Record<string, unknown>[] => channelActions(p, CHANGESET);
   git(dir, 'commit', '-q', '-m', 'x');
-  await waitFor(() => seen().some((one) => one.type === 'changeset/cleared'));
+  await waitFor(() => seen().some(emptied));
 
   // `reset --soft` moves the branch and writes neither the index nor HEAD.
   const beforeReset = seen().length;
@@ -774,7 +786,7 @@ it('moves the changeset when a branch moves with no index or HEAD write', async 
   // with it, with the working tree untouched either way.
   const beforeCommit = seen().length;
   git(dir, 'commit', '--allow-empty', '-q', '-m', 'y');
-  await waitFor(() => seen().slice(beforeCommit).some((one) => one.type === 'changeset/cleared'));
+  await waitFor(() => seen().slice(beforeCommit).some(emptied));
 });
 
 it('ends quietly a re-read whose directory is removed while it runs', async () => {
@@ -1079,7 +1091,7 @@ it('tells a client watching a stored session\'s changeset that a commit cleared 
   expect(answer.snapshot.state.files).toHaveLength(1);
 
   git(dir, 'commit', '-q', '-m', 'x');
-  await waitFor(() => channelActions(p, changeset).some((one) => one.type === 'changeset/cleared'));
+  await waitFor(() => channelActions(p, changeset).some(emptied));
 });
 
 it('keeps a stored session\'s git watch while its changeset is watched, and closes it after', async () => {

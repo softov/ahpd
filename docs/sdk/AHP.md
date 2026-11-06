@@ -350,14 +350,14 @@ A canvas is opened, updated and closed by a plugin, through its own three calls
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
-| `changeset/statusChanged` | host | ✅ | When only the status moved and the files did not. `recomputing` goes out before a changeset is read again, so a client keeps the files it has. `ready` follows when the read comes back, and a read that gives nothing puts the previous status back. A read that fails keeps the earlier result and says its status again, and says `error` with `computeFailed` and the cause only where there is no earlier result, as VS Code's host ends a computation with no new result. |
+| `changeset/statusChanged` | host | ✅ | `recomputing` goes out before a changeset is read again, so a client keeps the files it has. `ready` follows when the read comes back, after the files and operations it brought, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2323-L2339) says a recompute's content and then its status, and a read that gives nothing puts the previous status back. A read that fails keeps the earlier result and says its status again, and says `error` with `computeFailed` and the cause only where there is no earlier result, as VS Code's host ends a computation with no new result. |
 | `changeset/fileSet` | host | ✅ | Chosen when fewer actions than files moved. |
 | `changeset/fileRemoved` | host | ✅ | The same choice, for a file that left the set. |
 | `changeset/filesReviewChanged` | client | ✅ | A client marking files reviewed. The one changeset action a client originates. Applied as the protocol's reducer applies it, to the files the changeset holds; a changeset that keeps no review, the working tree's among them, is refused. A turn that changes a file again takes the tick off its row in the session's changeset, the branch's and the turn's own. |
-| `changeset/contentChanged` | host | ✅ | Chosen when the whole set is the smaller thing to send. It reduces to the same state as the per-file pair, which is what makes choosing between them safe. |
+| `changeset/contentChanged` | host | ✅ | Chosen when the whole set is the smaller thing to send, and for a changeset whose files all went, which is the whole set with none in it. It reduces to the same state as the per-file pair, which is what makes choosing between them safe. |
 | `changeset/operationsChanged` | host | ✅ | The verbs the source advertises, with this host's own answer to whether each may be pressed now. Asked again whenever the session's running state flips, a turn that ended in `chat/error` included, and said only where the list differs from the one the channel holds, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L367-L375) dispatches it. |
 | `changeset/operationStatusChanged` | host | ✅ | While one runs, and when it finishes or fails. |
-| `changeset/cleared` | host | ✅ | When everything went. A changeset whose files did not move says nothing about them at all - re-sending a set a client already holds tells it nothing. |
+| `changeset/cleared` | host | ✅ | When the changeset goes away with its session, as VS Code's host disposes one, so a client lets go of what it holds. A changeset whose files did not move says nothing about them at all: a set a client already holds is not sent again. |
 
 ### `annotations/*` — 5 of 5
 
