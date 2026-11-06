@@ -36,8 +36,8 @@ export interface Catalogue {
   running(uri: string): boolean;
   /** Whether a chat may be moved: not the default, resumable, and running nothing. */
   movable(uri: string): boolean;
-  /** Say that a chat's answer moved, when it did, on the chat and on its session. */
-  movableMoved(uri: string): void;
+  /** Publish whether a chat may be moved, where that changed, on the chat and on its session. */
+  updateChatMovability(uri: string): void;
   /** Say a session's chats are in a new order, naming every one of them. */
   chatsReordered(uri: string): Promise<void>;
   subagentSummary(uri: string, ref: LiveSubagent): Bag;
@@ -50,19 +50,19 @@ export interface Catalogue {
   chatCatalogOf(session: string, held: Held, restored: RestoredWorker[]): Bag[];
   restoredSubagentSummary(session: string, uri: string, parentChat: string, ref: { toolCallId: string; title: string; turns: Bag[] }, modifiedAt: string): Bag;
   /**
-   * What a chat's action moved on the session holding it: the chat's row, the
-   * session's activity and its catalogue row.
+   * A chat's summary mirrored onto the session holding it after the chat's
+   * action: the chat's row, the session's activity and its catalogue row.
    */
-  chatMoved(chat: string): void;
+  onChatSummaryChanged(chat: string): void;
   /** The session's entries for what a chat's running turn waits on a person for, raised and taken down from the chat's state. */
   syncSessionInputNeeded(chat: string): void;
   /** The entries a chat's running turn holds open, under VS Code's ids. */
   inputNeededOf(chat: string, state: Record<string, unknown> | undefined): Record<string, unknown>[];
-  /** What a running session's state holds of its folder and its backend, said by action where it moved. */
-  factsMoved(uri: string): void;
+  /** A running session's changesets and `_meta`, read from its folder and its backend, said by their actions where they changed. */
+  changesetsAndMetaChanged(uri: string): void;
   activityOf(held: Held): string | undefined;
-  /** A session this host is making, which no client has a row for until `sessionAdded` says it. */
-  sessionComing(uri: string): void;
+  /** A session this host is making, provisional until `sessionAdded` announces it. */
+  markSessionProvisional(uri: string): void;
   sessionAdded(uri: string): void;
   /** Whether a session is made and not yet announced: a fresh one before its first message. */
   provisional(uri: string): boolean;
@@ -70,43 +70,46 @@ export interface Catalogue {
   materialized(uri: string): void;
   /** A turn that ended in an error before its backend had it, which fails a provisional session's creation. */
   failSessionCreationIfStillCreating(uri: string, error: Bag): void;
-  /** A session's row moved: said with the rest on the 100 ms debounce. */
-  summaryMoved(uri: string): void;
-  /** Every row that moved, said now, as the debounce would. */
+  /** A session's summary changed: marked dirty and said with the rest on the 100 ms debounce. */
+  markSummaryDirty(uri: string): void;
+  /** Every dirty summary, said now, as the debounce would. */
   flushPendingSessionSummaries(): void;
   /**
-   * Read what the session did, keep it, and say its row moved.
+   * Read the session's changes summary, keep it, and mark its summary dirty.
    *
    * Called where the session's tree is checkpointed - the start of a session
    * and the end of each of its turns - and at each finished tool call. The
    * calls are coalesced per session, so a burst runs at most two reads: one
    * running and one waiting behind it. `running` says a turn is in flight, so
-   * the session kind counts the baseline against the working tree rather than
-   * against a checkpoint that does not exist yet.
+   * the session kind counts the baseline against the working tree, the turn's
+   * own checkpoint being still to come.
    */
-  summaryKept(uri: string, running?: boolean): Promise<void>;
-  forgetSent(uri: string): void;
+  refreshSessionChangesSummary(uri: string, running?: boolean): Promise<void>;
+  /** A session whose row is gone: its last notified summary, its pending change and its provisional mark dropped. */
+  removeNotifiedSummary(uri: string): void;
   /** How many sessions are running a turn in any of their chats. */
   activeCount(): number;
-  activeSessionsMoved(): void;
-  learnModels(uri: string): void;
-  /** Say the root's agent list where it moved. */
-  agentsMoved(): void;
+  /** Say how many sessions are running a turn, where the root's clients hold another number. */
+  activeSessionsChanged(): void;
+  /** Set the models a running session's CLI answered for its provider, and publish the agent list where it changed. */
+  setAgentModels(uri: string): void;
+  /** Publish the root's agent list where it changed. */
+  publishAgentInfos(): void;
   /**
-   * Record one backend's account and tell the root channel, which publishes it
-   * as a root config value under `accountKey`.
+   * Record one backend's account and publish it as a root config value under
+   * `accountKey`.
    */
-  learnAccount(provider: string, account: Account): void;
+  publishAccountInfo(provider: string, account: Account): void;
   /** Every backend's rows, with what a refusing backend had last time carried over. */
   listing(before?: Summary[]): Promise<Summary[]>;
   /**
-   * Record one listed row and build it, as a listing does for every row it
-   * finds. `stored` says this host keeps a record for the row, which is what
-   * names an old row in its provider's scheme.
+   * Register one listed session and project its row, as a listing does for
+   * every row it finds. `stored` says this host keeps a record for the row,
+   * which is what names an old row in its provider's scheme.
    */
-  adopt(agent: Agent, row: Listed, waiting?: string, stored?: boolean): Summary;
-  /** Tell every client about a listed row this host did not have. */
-  rowAdded(summary: Summary): void;
+  registerListedSession(agent: Agent, row: Listed, waiting?: string, stored?: boolean): Summary;
+  /** Announce to every client a listed session this host did not have. */
+  announceSurfacedSession(summary: Summary): void;
   /**
    * The rows of the sessions this host is running, built now.
    *
@@ -117,9 +120,10 @@ export interface Catalogue {
   liveRows(): Summary[];
   /** The whole catalogue as a client is handed it: the live rows and the held ones. */
   allRows(): Promise<Summary[]>;
-  /** Tell every client what a refresh changed: added, removed, or moved. */
-  rowsMoved(before: Summary[], after: Summary[]): void;
-  waitingFor(id: string): string | undefined;
+  /** Tell every client what a refresh changed among the listed sessions: announced, updated, or retracted. */
+  publishSurfacedSessions(before: Summary[], after: Summary[]): void;
+  /** The provider a stored session recorded, where this host does not serve it. */
+  unavailableProvider(id: string): string | undefined;
   readStored(): Promise<void>;
 }
 
@@ -148,9 +152,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * One chat, as its session's catalogue lists it: the summary fields of the
    * state the chat holds.
    *
-   * A `ChatSummary` and not a name and a URI: `status` and `modifiedAt` are
-   * required of one, and a client reducing its list against a partial row
-   * gets one it cannot sort or draw a state for. Read off the chat's own state,
+   * A whole `ChatSummary`: `status` and `modifiedAt` are required of one, and
+   * a client reducing its list against a partial row gets one it cannot sort
+   * or draw a state for. Read off the chat's own state,
    * because the protocol has the catalogue kept consistent with the fields
    * that state inlines; a chat whose state is not held yet is read from its
    * backend, which is what its state opens with.
@@ -259,15 +263,19 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   /**
-   * What each chat's last `movable` answer was, so only a change is sent.
+   * Each chat's `movable` as last published, so only a change is sent.
    *
    * Per chat and for as long as this host holds it, which is the same span the
-   * answer covers: a chat the host is no longer running is one nothing can
-   * move, and its entry goes when this is next asked about it.
+   * answer covers: a chat the host does not run is one nothing can move, and
+   * its entry goes when this is next asked about it.
    */
-  const saidMovable = new Map<string, boolean>();
+  const publishedMovable = new Map<string, boolean>();
   /**
-   * Say that a chat's `movable` moved, if it did.
+   * Publish a chat's current eligibility to move, where it changed, as VS
+   * Code's movability update publishes it through `setChatMovable`, which
+   * says nothing for an unchanged value.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatMovability.ts#L251-L258
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2147-L2160
    *
    * Called at the moments the answer can change - a turn starting or ending, a
    * worker's starting or ending, the default chat moving to another - and
@@ -284,19 +292,19 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * change it - and a chat that can move from the day it is opened is not one
    * that has to be told so twice.
    */
-  const movableMoved = (uri: string): void => {
+  const updateChatMovability = (uri: string): void => {
     const session = sessionHolding(uri);
     const held = session === undefined ? undefined : sessions.get(session);
     const chat = held === undefined ? undefined : held.chats.get(uri);
     if (session === undefined || held === undefined || chat === undefined) {
       // Gone, so nothing is holding an answer for it any more.
-      saidMovable.delete(uri);
+      publishedMovable.delete(uri);
       return;
     }
     const now = movable(uri);
-    const was = saidMovable.get(uri);
+    const was = publishedMovable.get(uri);
     if (was === now) return;
-    saidMovable.set(uri, now);
+    publishedMovable.set(uri, now);
     if (was === undefined) return;
     ctx.dispatch(uri, { type: 'chat/movableChanged', movable: now });
   };
@@ -304,9 +312,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   /**
    * Say a session's chats are in a new order.
    *
-   * The action carries the whole catalogue rather than the one chat that
-   * moved, and the reducer ignores a list that is not exactly the one the
-   * session already holds - so every chat has to be named, once. The peers go
+   * The action carries the whole catalogue, every chat in its new place, and
+   * the reducer ignores a list that is not exactly the one the session
+   * already holds - so every chat has to be named, once. The peers go
    * in their new order, which is what `held.chats` holds, and the workers
    * after them, which is where the state puts them: a reorder moves a chat and
    * not the calls that ran inside it, so a worker keeps its place.
@@ -381,8 +389,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    *
    * The session's own chats first, then the workers: a worker is a chat of the
    * session even though no `Session` holds it, and a client that subscribes
-   * after one opened reads the list rather than finding the conversation
-   * nowhere.
+   * after one opened finds the conversation in the list.
    */
   const chatCatalogOf = (session: string, held: Held, restored: RestoredWorker[]): Bag[] => [
     ...[...held.chats].map(([uri, chat]) => chatSummary(session, uri, chat)),
@@ -391,8 +398,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     ...restored.map(({ uri, one }) => restoredSubagentSummary(
       session,
       uri,
-      // Read off `ctx` rather than destructured: this area is built before the
-      // one that owns the answer.
+      // Read off `ctx` at the call: this area is built before the one that
+      // owns the answer.
       ctx.restoredParentChat(session, held.defaultChat, one),
       one as unknown as { toolCallId: string; title: string; turns: Bag[] },
       // A worker that ran before this process held the session last moved no
@@ -405,8 +412,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    *
    * `summaryOf` answers in the same tick as the row it builds, and a backend's
    * record is not read in one, so the row reads the cache the session's own
-   * snapshot fills: both ends up listing the same workers rather than the row
-   * asking the disk again behind the state's back. Until something has looked
+   * snapshot fills: both list the same workers, and the row asks the disk
+   * nothing behind the state's back. Until something has looked
    * for them the row carries the chats this host is holding and no more, and
    * the next move of it carries them - a session nobody has subscribed to has
    * workers nobody has asked about.
@@ -419,11 +426,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * One session's chats, cut to the fields a catalogue row carries.
    *
    * `SessionChatSummary` is the protocol's compact chat - what a client draws
-   * a session's chats from without subscribing to any of them - and a
-   * `ChatSummary` is not it. `activity` and `modifiedAt` are the two it has
-   * and this one does not, and leaving either in would make the row move on
-   * its own: a worker read back from a record is stamped with the moment it
-   * was built, so a list carrying that is a list that differs on every read.
+   * a session's chats from without subscribing to any of them - and it
+   * carries neither of a `ChatSummary`'s `activity` and `modifiedAt`, either
+   * of which would make the row change on its own: a worker read back from a
+   * record is stamped with the moment it was built, so a list carrying that
+   * would differ on every read.
    */
   const compactChats = (chats: Bag[]): SummaryChat[] => chats.map((chat) => ({
     resource: String(chat.resource),
@@ -531,7 +538,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3162-L3188
    */
   let announced = -1;
-  const activeSessionsMoved = (): void => {
+  const activeSessionsChanged = (): void => {
     const now = activeCount();
     const held = ctx.stateOf(ROOT)?.activeSessions;
     if (now === (typeof held === 'number' ? held : announced)) return;
@@ -546,10 +553,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    *
    * The reference host's `getSummaryChangesetKind`: a session that works in a
    * tree of its own is counted by its branch, and one in a folder somebody
-   * chose is counted by its own checkpoints. Read from the worktree record
-   * rather than from the config that asked for one, because this is the value
-   * that outlives a restart: the record is written where the tree is made and
-   * the config is only ever said to a session while it runs.
+   * chose is counted by its own checkpoints. Read from the worktree record,
+   * the value that outlives a restart: the record is written where the tree
+   * is made, and the config that asked for one is said to a session while it
+   * runs.
    */
   const summaryKindOf = (uri: string): 'branch' | 'session' =>
     (ctx.worktreeOf(uri) === undefined ? 'session' : 'branch');
@@ -593,8 +600,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const lead = held && leadOf(held);
     if (!held || !lead) return undefined;
     // The state the session holds, or the one it would open with now: a
-    // session opens at its first action or its first subscribe, not when its
-    // row is read.
+    // session opens at its first action or its first subscribe, and reading
+    // its row opens nothing.
     const state = ctx.stateOf(uri) ?? ctx.sessionSeed(uri);
     const activity = activityOf(held);
     return {
@@ -614,14 +621,14 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        * names none.
        *
        * The catalogue is what a client draws a session list from, and a client
-       * listing twenty sessions reads their chats from the rows rather than
-       * subscribing to twenty sessions. Both fields are optional in the
-       * protocol, and both are read off the session's state.
+       * listing twenty sessions reads their chats from the rows, subscribed to
+       * none of them. Both fields are optional in the protocol, and both are
+       * read off the session's state.
        */
       chats: compactChats(Array.isArray(state.chats) ? state.chats as Bag[] : []),
       ...(state.defaultChat !== undefined ? { defaultChat: state.defaultChat } : {}),
       // A row's own field, and a row's alone: `SessionState` does not declare
-      // it, so it is added here rather than in the state.
+      // it, so it is added here, to the row.
       ...changesOf(uri),
       ...(state.project !== undefined ? { project: state.project } : {}),
       ...(state._meta !== undefined ? { _meta: state._meta } : {}),
@@ -639,17 +646,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * moves on the wire only once it has been added; what moved while it was
    * being made goes out in the row `root/sessionAdded` carries.
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/root-channel.md#L146
+   *
+   * Named as VS Code's agent service names the set it keeps them in.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1058
    */
-  const coming = new Set<string>();
-  const sessionComing = (uri: string): void => { coming.add(uri); };
+  const provisionalSessionKeys = new Set<string>();
+  const markSessionProvisional = (uri: string): void => { provisionalSessionKeys.add(uri); };
   /** A session appeared. Carries the whole row, because no client has one yet. */
   const sessionAdded = (uri: string): void => {
-    coming.delete(uri);
+    provisionalSessionKeys.delete(uri);
     const summary = summaryOf(uri);
     if (!summary) return;
     // The row every client now holds, which the next move is a change from.
     const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary;
-    lastSent.set(uri, mutable);
+    lastNotified.set(uri, mutable);
     ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
   };
   /**
@@ -662,7 +672,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    */
   const materialized = (uri: string): void => {
     if (!sessions.has(uri)) return;
-    if (coming.has(uri)) sessionAdded(uri);
+    if (provisionalSessionKeys.has(uri)) sessionAdded(uri);
     const lifecycle = ctx.stateOf(uri)?.lifecycle;
     if (lifecycle === 'creating' || lifecycle === 'failed') ctx.dispatch(uri, { type: 'session/ready' });
   };
@@ -675,68 +685,79 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2446-L2480
    */
   const failSessionCreationIfStillCreating = (uri: string, error: Bag): void => {
-    if (!coming.has(uri)) return;
+    if (!provisionalSessionKeys.has(uri)) return;
     ctx.dispatch(uri, { type: 'session/creationFailed', error });
     sessionAdded(uri);
   };
   /**
-   * What each session's row said last, as its mutable fields.
+   * The summary last announced to clients for each session, as its mutable
+   * fields, as VS Code's summary notifier keeps the last one notified.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L214-L215
    *
    * What a change is measured against, and it is bounded by the sessions this
-   * host is serving rather than by the catalogue: a row is only compared
-   * against what went out for it while it was being served. A row with no entry
-   * is one this host has said nothing about since it was added or listed, and
-   * its first move carries every mutable field.
+   * host is serving: a row is compared against what went out for it while it
+   * was being served. A row with no entry is one this host has said nothing
+   * about since it was added or listed, and its first change carries every
+   * mutable field.
    */
-  const lastSent = new Map<string, Bag>();
+  const lastNotified = new Map<string, Bag>();
   /**
-   * The sessions whose row moved since the last flush, said together once the
-   * moves have been quiet for 100 ms, as the reference host marks a session
-   * dirty and flushes on that debounce: a burst of moves is one notification.
+   * The sessions whose summary changed since the last flush, said together
+   * once the changes have been quiet for 100 ms, as the reference host marks a
+   * session dirty and flushes on that debounce: a burst of changes is one
+   * notification.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L212-L330
    */
   const dirty = new Set<string>();
-  /** Each row as it was when it was last marked, which a move is measured against. */
+  /** Each row as it was when it was last marked, which a change is measured against. */
   const marked = new Map<string, string>();
   let flushing: ReturnType<typeof setTimeout> | undefined;
-  /** A session's row is gone, so nothing it was sent can be compared to, and nothing of it is pending. */
-  const forgetSent = (uri: string): void => {
-    lastSent.delete(uri);
-    coming.delete(uri);
+  /**
+   * A session's row is gone: its notification bookkeeping dropped, as VS Code's
+   * summary notifier removes a session, so nothing it was sent is compared to
+   * and nothing of it is pending.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L287-L291
+   */
+  const removeNotifiedSummary = (uri: string): void => {
+    lastNotified.delete(uri);
+    provisionalSessionKeys.delete(uri);
     dirty.delete(uri);
     marked.delete(uri);
   };
   /**
-   * A session already in the catalogue moved.
+   * A session already in the catalogue changed: its summary marked dirty, as
+   * VS Code's summary notifier marks a session, and said on the debounce.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L272-L276
    *
    * `session` and `changes`, which are the names the protocol gives these.
    * `changes` carries the fields that changed and no other, and never the three
    * identity fields - `resource`, `provider`, `createdAt` - as the protocol has
-   * it. A field compared and found equal is not sent: the five callers of this
-   * are reached on every turn, every tool call and every re-read of a
-   * directory, and for most of those nothing about the row moved.
+   * it. A field compared and found equal is not sent: the callers of this are
+   * reached on every turn, every tool call and every re-read of a directory,
+   * and for most of those nothing about the row changed.
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/root-channel.md#L146
    *
    * A session with no agent running still has a status - read and archived are
-   * this host's bits and belong to the row rather than to any process - so its
+   * this host's bits and belong to the row, whatever process runs it - so its
    * row is that one field and its counts. Marking a row read is something
    * somebody does from the catalogue, to a session nobody has opened. Its diff
    * stat goes with it, which costs no process to read: it is the session's own
-   * where `summaryKept` has read one, and the directory's otherwise.
+   * where `refreshSessionChangesSummary` has read one, and the directory's
+   * otherwise.
    */
-  const summaryMoved = (uri: string): void => {
-    factsMoved(uri);
+  const markSummaryDirty = (uri: string): void => {
+    changesetsAndMetaChanged(uri);
     // A session nothing runs has its change said at once, as the reference
     // host applies a change to the summary it announced for a session with no
     // live state and emits it then.
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L234-L250
     if (!sessions.has(uri)) {
-      sayMoved(uri, rowOf(uri));
+      flushSessionSummary(uri, rowOf(uri));
       return;
     }
-    // Marked, and the flush put back, only when the row moved since it was
-    // last marked, as the reference host marks a session dirty only when its
-    // summary's fields moved.
+    // Marked, and the flush put back, where the row changed since it was last
+    // marked, as the reference host marks a session dirty where its summary's
+    // fields changed.
     const row = JSON.stringify(rowOf(uri));
     if (marked.get(uri) === row) return;
     marked.set(uri, row);
@@ -748,9 +769,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   /**
    * A row's mutable fields as a client holds them.
    *
-   * Zero counts when there are none, rather than no key: a row whose counts
-   * went to nothing after everything was committed says so, and a client then
-   * draws no counts rather than the last ones it was handed.
+   * Zero counts when there are none: a row whose counts went to nothing after
+   * everything was committed says so, and a client then draws no counts.
    */
   const rowOf = (uri: string): Bag => {
     const summary = summaryOf(uri);
@@ -765,22 +785,25 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     flushing = undefined;
     const due = [...dirty];
     dirty.clear();
-    for (const uri of due) sayMoved(uri, rowOf(uri));
+    for (const uri of due) flushSessionSummary(uri, rowOf(uri));
   };
   /**
    * What a running session's state holds of its folder and its backend, said
-   * by its own action when the two differ.
+   * by `session/changesetsChanged` and `session/metaChanged` where they
+   * changed, as VS Code's `setSessionChangesets` and `setSessionMeta` say a
+   * value that differs from the state's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2583-L2608
    *
    * The changesets a session offers are read off its folder's last read, and
    * its `_meta` off its backend, its folder, its plugins and its owner: each
    * read moves on its own clock, and the protocol has the producer say a
    * field as it changes. Asked where the session's row is, which is every
-   * move of the session or its chats. A session whose backend serves its
+   * change of the session or its chats. A session whose backend serves its
    * own changesets, as the proxy of a session in a machine does, has them
    * said by that backend.
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/actions.md#L3
    */
-  const factsMoved = (uri: string): void => {
+  const changesetsAndMetaChanged = (uri: string): void => {
     const state = ctx.stateOf(uri);
     if (state === undefined || !sessions.has(uri)) return;
     const { changesets } = ctx.changesetsOf(uri) as { changesets?: unknown[] };
@@ -793,12 +816,14 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     }
   };
   /**
-   * Say what moved on a row, unless nothing did.
+   * Say what changed on a row against the summary last notified, and advance
+   * it, as VS Code's summary notifier flushes a session.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L307-L339
    *
-   * The one place a `root/sessionSummaryChanged` leaves from, so that "does this
-   * say anything new" is decided once rather than by each caller remembering to
-   * ask. A live row and a listed row arrive here by different roads and are
-   * judged the same way, which is what lets a client keep one list against both.
+   * The one place a `root/sessionSummaryChanged` leaves from, so that "does
+   * this say anything new" is decided once, here. A live row and a listed row
+   * arrive here by different roads and are judged the same way, which is what
+   * lets a client keep one list against both.
    *
    * `activity` that went away is said as `null`, as the reference host says
    * it: a change is applied by spreading it over the row a client holds, and a
@@ -806,36 +831,40 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * keep saying what its last tool was doing.
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L319-L331
    */
-  const sayMoved = (uri: string, row: Bag): void => {
-    if (coming.has(uri)) return;
-    const before = lastSent.get(uri);
+  const flushSessionSummary = (uri: string, row: Bag): void => {
+    if (provisionalSessionKeys.has(uri)) return;
+    const before = lastNotified.get(uri);
     const changes: Bag = {};
     for (const [key, value] of Object.entries(row)) {
       if (before === undefined || JSON.stringify(before[key]) !== JSON.stringify(value)) changes[key] = value;
     }
     if (before?.activity !== undefined && row.activity === undefined) changes.activity = null;
-    lastSent.set(uri, { ...before, ...row, ...(row.activity === undefined ? { activity: undefined } : {}) });
+    lastNotified.set(uri, { ...before, ...row, ...(row.activity === undefined ? { activity: undefined } : {}) });
     if (Object.keys(changes).length === 0) return;
     ctx.broadcast(ROOT, 'root/sessionSummaryChanged', { channel: ROOT, session: uri, changes });
   };
   /**
-   * What `changesOf` reads, written where it can have changed.
+   * A session's changes summary, the counts `changesOf` reads, computed again
+   * and kept where it can have changed, as VS Code refreshes a chat's changes
+   * summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1713-L1722
    *
-   * Called where the checkpoint is taken rather than where a row is built,
-   * because reading it is a `git diff` and a catalogue of a hundred rows is
-   * asked a hundred times per listing. The session's own id, and not its URI:
-   * the checkpoints are commits under `refs/agents/<id>`, which is the name the
-   * session is checkpointed under.
+   * Called where the checkpoint is taken, because reading it is a `git diff`
+   * and a catalogue of a hundred rows is asked a hundred times per listing.
+   * The session's own id, which names its checkpoints: they are commits under
+   * `refs/agents/<id>`.
    *
-   * A source that cannot answer for a session is left as it was rather than
-   * written down as nothing, so a row nobody could read for keeps whatever it
-   * had. That is every source with no `sessionSummary`, and every directory
-   * that is not a repository.
+   * A source that cannot answer for a session leaves the counts as they were,
+   * so a row nobody could read for keeps whatever it had. That is every source
+   * with no `sessionSummary`, and every directory that is not a repository.
    *
-   * The calls are coalesced per session, as `refreshWatched` does: one read
-   * running and one waiting behind it. A turn of many tool calls asks on every
-   * one of them, and each is a `git diff`, so the later asks only record
-   * whether a turn is still running, and a burst of ten costs two reads.
+   * The calls are coalesced per session, as VS Code queues each computation
+   * per key and coalesces the requests that arrive before the queued run
+   * starts: one read running and one queued behind it. A turn of many tool
+   * calls asks on every one of them, and each is a `git diff`, so the later
+   * asks only record whether a turn is still running, and a burst of ten costs
+   * two reads.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1765-L1776
    *
    * A count is written only for a session this host is still running, the
    * sessions a respawn holds among them. A read takes a `git diff`'s time, and a
@@ -843,20 +872,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * after would make a row, and a file, of counts alone, which the next daemon
    * lists as a session nobody can open.
    */
-  const summarizing = new Set<string>();
-  const summaryWaiting = new Map<string, boolean>();
-  const summaryKept = async (uri: string, running = false): Promise<void> => {
+  const computingChangesSummaries = new Set<string>();
+  const queuedChangesSummaries = new Map<string, boolean>();
+  const refreshSessionChangesSummary = async (uri: string, running = false): Promise<void> => {
     const dir = ctx.dirOf(uri);
     if (dir === undefined) return;
-    if (summarizing.has(uri)) {
-      summaryWaiting.set(uri, running);
+    if (computingChangesSummaries.has(uri)) {
+      queuedChangesSummaries.set(uri, running);
       return;
     }
-    summarizing.add(uri);
+    computingChangesSummaries.add(uri);
     let whileRunning = running;
     try {
       for (;;) {
-        summaryWaiting.delete(uri);
+        queuedChangesSummaries.delete(uri);
         const source = options.changes;
         let read: ChangesSummary | undefined;
         try {
@@ -868,23 +897,24 @@ export function createCatalogue(ctx: HostContext): Catalogue {
         catch { /* a count that could not be read is the count that was there */ }
         if (read !== undefined && (sessions.has(uri) || ctx.respawning.has(uri))) {
           kept.setChanges(idOf(uri), read);
-          summaryMoved(uri);
+          markSummaryDirty(uri);
         }
-        if (!summaryWaiting.has(uri)) return;
-        whileRunning = summaryWaiting.get(uri) ?? false;
+        if (!queuedChangesSummaries.has(uri)) return;
+        whileRunning = queuedChangesSummaries.get(uri) ?? false;
       }
     }
-    finally { summarizing.delete(uri); }
+    finally { computingChangesSummaries.delete(uri); }
   };
   /**
-   * Fill in the models a CLI answered at its handshake, an empty list among
-   * them, and say the agent list when it differs whole from the one last
-   * said, as the reference host publishes its agents: a model renamed or
-   * given other limits under its id is a change, and the same list said again
-   * is none, so every handshake does not have every client re-read it.
+   * Set the models a CLI answered at its handshake as its provider's, an empty
+   * list among them, and publish the agent list when it differs whole from
+   * the one last published, as VS Code's agents set their models and its host
+   * publishes its agent infos: a model renamed or given other limits under
+   * its id is a change, and the same list published again is none, so a
+   * handshake does not have every client read it again.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L575-L606
    */
-  const learnModels = (uri: string): void => {
+  const setAgentModels = (uri: string): void => {
     const session = sessions.get(uri);
     const lead = session && leadOf(session);
     const owner = owners.get(uri);
@@ -900,46 +930,50 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   /*
-   * The root's agent list, said only where it moved, as VS Code's host says
-   * its agents only when they differ from the ones it said last.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L602-L606
+   * The root's agent list, published where it changed, as VS Code's host
+   * publishes its agent infos when they differ from the ones it published last.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L575-L606
    */
-  const agentsMoved = (): void => {
+  const publishAgentInfos = (): void => {
     const agents = ctx.descriptors();
     if (isDeepStrictEqual(agents, ctx.stateOf(ROOT)?.agents)) return;
     ctx.dispatch(ROOT, { type: 'root/agentsChanged', agents });
   };
 
   /**
-   * Record the account one backend's harness is signed in as, and say so.
+   * Record the account one backend's harness is signed in as, and publish it,
+   * as VS Code's Codex agent publishes its account info.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1489-L1491
    *
-   * The value is published as a root config value rather than on the agent
-   * list, under the key that backend's account belongs at, because that is
-   * where a client reads it - `vscode.codexAccount` for Codex, which is where
-   * VS Code's own window looks, and `ahpd.<provider>Account` for the rest. So
-   * a client watching the root is told the same way whether the account came
-   * from a probe at boot or from a session that has since signed in.
+   * The value is published as a root config value, under the key that
+   * backend's account belongs at, because that is where a client reads it -
+   * `vscode.codexAccount` for Codex, which is where VS Code's own window
+   * looks, and `ahpd.<provider>Account` for the rest. So a client watching the
+   * root is told the same way whether the account came from a probe at boot
+   * or from a session that has since signed in.
    *
-   * A partial `root/configChanged`, which merges: one key moves and the rest
+   * A partial `root/configChanged`, which merges: one key changes and the rest
    * of the config is left alone. The filter that decides which connections may
    * see it is per connection, in `seenBy`.
    */
-  const learnAccount = (provider: string, account: Account): void => {
+  const publishAccountInfo = (provider: string, account: Account): void => {
     about(provider).account = account;
     ctx.dispatch(ROOT, { type: 'root/configChanged', config: { [accountKey(provider)]: account } });
   };
 
   /**
-   * Every id a session this host is serving answers to.
+   * Every id a session this host is serving answers to: the session's own, as
+   * VS Code's registry holds a session, and its chats' backings, the backend's
+   * own id for each of its chats, which VS Code keeps out of its list.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L262
    *
-   * The session's own, and the backend's own id for each of its chats: the two
-   * can differ, and a row listed under either is a session this host runs
-   * rather than one a backend is offering. Asked by a listing, so a running
-   * session is not listed twice, and by a refresh, so the row this host built
-   * for it is not one it calls gone. A session a restart is bringing back is
-   * one this host serves too: until its backend starts, no listing offers it.
+   * The two can differ, and a row listed under either is a session this host
+   * runs. Asked by a listing, so a running session is listed once, and by a
+   * refresh, so the row this host built for it stays. A session a restart is
+   * bringing back is one this host serves too: until its backend starts, no
+   * listing offers it.
    */
-  const claimedIds = (): Set<string> => {
+  const registeredAndBackingIds = (): Set<string> => {
     const claimed = new Set<string>();
     for (const [uri, held] of [...sessions, ...ctx.respawning]) {
       claimed.add(idFor(uri));
@@ -956,14 +990,14 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * The ids this host is serving, and the backend ids the chats it recorded
      * answer to.
      *
-     * Read after the backends have answered rather than before, because the
-     * second half is what the store says about the sessions *they* offered -
+     * Read once the backends have answered, because the second half is what
+     * the store says about the sessions *they* offered -
      * and a peer chat's backend id is a conversation, not a session. A
      * listing that offered one would offer a session of its own for it, and
      * the row would open onto the chat's own transcript as though it were a
      * conversation somebody started.
      */
-    const claimed = claimedIds();
+    const claimed = registeredAndBackingIds();
     /**
      * Whether this listing can say what is gone, and where it looked.
      *
@@ -994,8 +1028,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * a host serving Claude and two variants of it read the same projects
      * directory three times, and on dev-01 that was fifty seconds of it.
      *
-     * `Promise.all` answers in the order it was given its work rather than the
-     * order that work finished, so the fold below is still the load order - and
+     * `Promise.all` answers in the order it was given its work, whatever order
+     * that work finished in, so the fold below is still the load order - and
      * that order is what decides whose row an id two backends both list is, so
      * it cannot be left to whichever store happened to be quicker.
      */
@@ -1040,8 +1074,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      *
      * A row is what makes a listed session the host's own: it is where the
      * name the session was made with lives, and a session with no row is one
-     * that only a backend knows. Asking the store once rather than once a row
-     * keeps a listing over a hundred transcripts from a hundred questions.
+     * that only a backend knows. The store is asked once per listing, so a
+     * listing over a hundred transcripts asks it one question.
      */
     const stored = new Set(kept.sessions());
     const found: Summary[] = [];
@@ -1053,12 +1087,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        * ran, and that is the one loaded agent it names.
        *
        * An agent this host recorded but is not serving is not the first one to
-       * read the transcript, and the row keeps its own provider rather than the
-       * reader's: listed under somebody else's id it would be opened by
-       * whichever agent answered, and a conversation would move to another
-       * endpoint on a daemon that merely failed to load one plugin. It waits
-       * for its agent instead, and no owner is recorded, so nothing can open
-       * it here. A session recorded before anything was has no agent to wait
+       * read the transcript, and the row keeps its own provider: listed under
+       * the reader's id it would be opened by whichever agent answered, and a
+       * conversation would move to another endpoint on a daemon that merely
+       * failed to load one plugin. It waits for its agent, and no owner is
+       * recorded, so nothing can open it here. A session recorded before anything was has no agent to wait
        * for and still goes to the first one that listed it.
        */
       const recorded = kept.provider(id);
@@ -1066,7 +1099,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       const one = waiting === undefined ? both.find((it) => it.agent.provider === recorded) ?? both[0] : both[0];
       // Never empty: an id is in the map only because an agent listed it.
       if (one === undefined) continue;
-      found.push(adopt(one.agent, one.row, waiting, stored.has(id)));
+      found.push(registerListedSession(one.agent, one.row, waiting, stored.has(id)));
     }
     /*
      * The nested sessions, from what this host recorded of them.
@@ -1082,7 +1115,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       const reader = agent ?? [...agents.values()][0];
       if (reader === undefined) continue;
       const { title, createdAt, modifiedAt, workingDirectories } = record;
-      found.push(adopt(reader, { id, title, createdAt, modifiedAt, workingDirectories }, agent === undefined ? record.provider : undefined, stored.has(id)));
+      found.push(registerListedSession(reader, { id, title, createdAt, modifiedAt, workingDirectories }, agent === undefined ? record.provider : undefined, stored.has(id)));
     }
     /*
      * The sessions the store recorded in a folder no backend read.
@@ -1122,7 +1155,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     for (const one of looked) {
       if (one === undefined) continue;
       const recorded = kept.provider(one.row.id);
-      found.push(adopt(one.agent, one.row, recorded !== undefined && !agents.has(recorded) ? recorded : undefined, stored.has(one.row.id)));
+      found.push(registerListedSession(one.agent, one.row, recorded !== undefined && !agents.has(recorded) ? recorded : undefined, stored.has(one.row.id)));
     }
     /*
      * The sessions whose turns are all this host's own: `!` commands, kept in
@@ -1142,14 +1175,14 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       const agent = recorded === undefined ? undefined : agents.get(recorded);
       const reader = agent ?? [...agents.values()][0];
       if (reader === undefined) continue;
-      found.push(adopt(reader, keptRow(id, folder, turns), agent === undefined ? recorded : undefined, stored.has(id)));
+      found.push(registerListedSession(reader, keptRow(id, folder, turns), agent === undefined ? recorded : undefined, stored.has(id)));
     }
     /*
      * What a refusing backend had last time, kept as it was.
      *
      * A backend that did not answer said nothing about its sessions, and this
-     * host reads that as what it is rather than as a store that was emptied
-     * between one pass and the next. So its rows carry over: they are still what
+     * host reads that as what it is: silence, its store as full as it was at
+     * the last pass. So its rows carry over: they are still what
      * that store offered, a client is answered with them, and nothing is said
      * about them - which is the part that matters, since a client told a session
      * is gone closes it, and this one never stopped being there.
@@ -1215,8 +1248,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * Remembered because opening a row asks its backend for the transcript, and
    * the URI says neither whose it is nor where it ran: the owner, the title and
    * the dates are all this map. A listing and an opening that finds a row are
-   * the same thing told twice, so they build it the same way here rather than
-   * in each.
+   * the same thing told twice, so both build it here, the same way.
    *
    * `waiting` is a provider the host recorded for this session and is not
    * serving, so the row keeps its own provider and no owner: nothing here can
@@ -1270,7 +1302,13 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     };
   };
 
-  const adopt = (agent: Agent, row: Listed, waiting?: string, stored = false): Summary => {
+  /**
+   * Register one listed session, its name, owner, folders, dates and `_meta`
+   * recorded, and project its row, as VS Code's registry registers a session
+   * its listing found and the listing projects its entry.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSessionRegistry.ts#L92-L99
+   */
+  const registerListedSession = (agent: Agent, row: Listed, waiting?: string, stored = false): Summary => {
     const provider = waiting ?? agent.provider;
     const keptName = kept.uri?.(row.id);
     const resource = keptName ?? (stored ? `${provider}:/${row.id}` : uriFor(row.id));
@@ -1309,38 +1347,38 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     };
   };
   /**
-   * A listed row this host did not have, said whole.
+   * A listed row this host did not have, announced whole, as VS Code announces
+   * a session its listing surfaced.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6053
    *
    * `sessionAdded` speaks for a session this host is running and builds the row
-   * from it; this one is a row a backend answered for a session that is not
-   * being run, which is what a client opening a link from another machine finds.
-   * The row every client now holds is the one the next move is a change from,
-   * as it is for that one.
+   * from it; this one is a row a backend answered for a session nobody runs,
+   * which is what a client opening a link from another machine finds. The row
+   * every client now holds is the one the next change is measured from, as it
+   * is for that one.
    */
-  const rowAdded = (summary: Summary): void => {
+  const announceSurfacedSession = (summary: Summary): void => {
     const { resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary as unknown as Bag;
-    lastSent.set(String(resource), mutable);
+    lastNotified.set(String(resource), mutable);
     ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
   };
 
   /**
-   * The rows of the sessions this host is running, built now.
+   * The rows of the sessions this host is running, built now, on each answer.
    *
-   * Not held, and that is the whole of the decision behind it: a live row
-   * moves every second and building one reads a handful of in-memory objects,
-   * while a backend row costs a pass over every transcript on the machine. The
-   * held catalogue keeps the expensive half and this is rebuilt on each answer,
-   * so a session somebody is looking at is never a second behind.
+   * A live row changes every second and building one reads a handful of
+   * in-memory objects, while a backend row costs a pass over every transcript
+   * on the machine. The held catalogue keeps the expensive half and this is
+   * built for each answer, so a session somebody is looking at is current.
    */
   const liveRows = (): Summary[] => {
-    // Sessions this host started are real and are not listed by a backend yet.
-    // A catalogue that dropped them would lose the one being looked at. One
-    // not yet announced is nobody's row, as VS Code's host lists no idle
-    // provisional session.
+    // Sessions this host started are real and are not listed by a backend yet,
+    // and the one being looked at is among them. One not yet announced is
+    // nobody's row, as VS Code's host lists no idle provisional session.
     const live: Summary[] = [];
     for (const [uri, held] of sessions) {
       const lead = leadOf(held);
-      if (!lead || coming.has(uri))
+      if (!lead || provisionalSessionKeys.has(uri))
         continue;
       const started = origins.get(uri);
       live.unshift({
@@ -1349,14 +1387,14 @@ export function createCatalogue(ctx: HostContext): Catalogue {
         title: lead.title(),
         status: statusOf(uri),
         // What it is doing, so a list of twenty sessions says which one is
-        // busy with what rather than only which one is busy.
+        // busy and with what.
         ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
         createdAt: held.createdAt,
         modifiedAt: modifiedOf(held),
         workingDirectories: lead.workingDirectories(),
         // The chats and the default one, as `summaryOf` carries them: a client
-        // that lists rather than subscribes reads a row's chats from here, and
-        // a row that left them out would disagree with the session it names.
+        // that lists without subscribing reads a row's chats from here, and
+        // the row agrees with the session it names.
         chats: compactChats(chatCatalogOf(uri, held, restoredOf(uri))),
         defaultChat: held.defaultChat,
         ...(started !== undefined ? { origin: started } : {}),
@@ -1379,8 +1417,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    */
   const allRows = async (): Promise<Summary[]> => {
     const running = liveRows();
-    const claimed = new Set([...running.map((row) => idFor(row.resource)), ...[...coming].map(idFor)]);
-    const listed = await ctx.held();
+    const claimed = new Set([...running.map((row) => idFor(row.resource)), ...[...provisionalSessionKeys].map(idFor)]);
+    const listed = await ctx.listedSessions();
     // The protocol says a server SHOULD order them most-recently-modified
     // first, and a client that has to sort a list it was handed is a client
     // doing the server's job.
@@ -1396,10 +1434,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * counts and facts of a directory read since, move on their own and cost
    * nothing to read.
    *
-   * Read here rather than at listing time, or a client that marked a row and
-   * listed again would be handed the flag it had just set one refresh late, and
-   * the list it was holding would disagree with the notification that told it
-   * about the change.
+   * Read here, as the answer is made, so a client that marked a row and
+   * listed again is handed the flag it has just set, and the list it holds
+   * agrees with the notification that told it about the change.
    */
   const hereNow = (row: Summary): Summary => ({
     resource: row.resource,
@@ -1416,24 +1453,26 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   });
 
   /**
-   * What a refresh found, told to every client.
+   * What a refresh found, told to every client, as VS Code announces, updates
+   * and retracts the sessions its listing surfaced.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1345-L1390
    *
    * The catalogue is held, so nobody has to ask for it to learn that a session
    * appeared or is gone: what changed since the last listing goes out as the
    * three protocol notifications a client already reduces its list against.
    *
-   * A row this host is running is left out entirely. `summaryMoved` speaks for
+   * A row this host is running is left out entirely. `markSummaryDirty` speaks for
    * it, every second or so, and a row listed here is built from a listing that
    * is already behind by the time it is answered.
    */
-  const rowsMoved = (before: Summary[], after: Summary[]): void => {
+  const publishSurfacedSessions = (before: Summary[], after: Summary[]): void => {
     /*
      * Nothing is said on the first fill.
      *
      * A host that has answered nobody has told nobody, so a listing's whole
      * contents are not an addition to an empty catalogue - and every client
      * connected while this was read gets its catalogue from the answer to its
-     * own `listSessions` rather than from a flood of additions.
+     * own `listSessions`.
      */
     if (before.length === 0) return;
     const was = new Map(before.map((row) => [row.resource, row]));
@@ -1443,26 +1482,26 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       if (sessions.has(row.resource))
         continue;
       if (had === undefined) {
-        rowAdded(row);
+        announceSurfacedSession(row);
         continue;
       }
-      if (!movedSince(had, row)) continue;
+      if (!surfacedSessionChanged(had, row)) continue;
       // Measured against the row the clients hold: what this listing read
       // before, when nothing was said about it since.
       const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = row;
-      if (!lastSent.has(row.resource)) {
+      if (!lastNotified.has(row.resource)) {
         const { resource: _was, provider: _p, createdAt: _c, ...held } = had;
-        lastSent.set(row.resource, held);
+        lastNotified.set(row.resource, held);
       }
-      sayMoved(row.resource, mutable);
+      flushSessionSummary(row.resource, mutable);
     }
-    const claimed = claimedIds();
+    const claimed = registeredAndBackingIds();
     for (const [resource] of was) {
       /*
        * A session this host is running is not one that went away.
        *
-       * A listing leaves out what a session claims - the row it would have
-       * offered is in the live half of the answer instead - so a refresh finds
+       * A listing leaves out what a session claims - its row is in the live
+       * half of the answer - so a refresh finds
        * it missing, and a row that was held and is not listed any more is
        * exactly what a session deleted outside this host looks like. It is
        * still here, its summary is the session's own, and what was last sent
@@ -1470,7 +1509,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        */
       if (sessions.has(resource) || claimed.has(idFor(resource)))
         continue;
-      forgetSent(resource);
+      removeNotifiedSummary(resource);
       ctx.broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: resource });
     }
   };
@@ -1478,11 +1517,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * Whether a listed row says anything a client does not already hold.
    *
    * The fields a listing can change and nothing else: `resource`, `provider`
-   * and `createdAt` are who the row is rather than what it says, and `_meta` is
-   * the session's own channel to change them on. Everything else on a row is
-   * read off the transcript, so it is one of these or it does not move.
+   * and `createdAt` say who the row is, and `_meta` has the session's own
+   * channel to change it on. Everything else on a row is read off the
+   * transcript, so it is one of these or it stays as it is.
    */
-  const movedSince = (was: Summary, now: Summary): boolean => {
+  const surfacedSessionChanged = (was: Summary, now: Summary): boolean => {
     // `changes` is a row's own field and not on `Summary`, the way `_meta` is
     // not either: both are spread onto the row by the module that owns them.
     const before = was as unknown as Bag;
@@ -1495,7 +1534,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   /**
-   * The agent a stored session is waiting for, or nothing.
+   * The provider a stored session recorded, where this host does not serve it,
+   * or nothing: the session's provider is unavailable, as VS Code calls it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L248
    *
    * Set when the host recorded a provider and is not serving it, which is not
    * the same as a session with no record: the first agent to read the
@@ -1506,7 +1547,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * recorded before anything was has no agent to wait for, and opens on the
    * first one that listed it.
    */
-  const waitingFor = (id: string): string | undefined => {
+  const unavailableProvider = (id: string): string | undefined => {
     const recorded = kept.provider(id);
     return recorded !== undefined && !agents.has(recorded) ? recorded : undefined;
   };
@@ -1539,13 +1580,16 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     for (const dir_ of dirs) {
       if (!await ctx.readFacts(dir_)) continue;
       for (const row of rows) {
-        if (!sessions.has(row.resource) && ctx.dirOf(row.resource) === dir_) summaryMoved(row.resource);
+        if (!sessions.has(row.resource) && ctx.dirOf(row.resource) === dir_) markSummaryDirty(row.resource);
       }
     }
   };
 
   /**
-   * What a chat's action moved on its session.
+   * A chat's summary mirrored onto its session after the chat's action, as VS
+   * Code's state manager mirrors a chat's summary onto its session's catalogue
+   * and derived summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3268-L3269
    *
    * The chat's row in the session's `chats` takes the fields of the chat's
    * state that changed, as `session/chatUpdated` - only those, its activity
@@ -1553,7 +1597,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * `activity` takes the activity of the chat
    * that now decides it, in place, as the reference host folds its chats into
    * the session's state with no action of its own. And the catalogue row
-   * moves with both. Each is done only when the session's state is held: a
+   * changes with both. Each is done only when the session's state is held: a
    * session nothing holds opens with what its chats say then. The root's count
    * of sessions running a turn is read again too, since a turn's start and end
    * are chat actions.
@@ -1564,7 +1608,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3280-L3334
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L91-L99
    */
-  const chatMoved = (chat: string): void => {
+  const onChatSummaryChanged = (chat: string): void => {
     const session = sessionHolding(chat);
     const held = session === undefined ? undefined : sessions.get(session);
     if (session === undefined || held === undefined) return;
@@ -1617,8 +1661,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
         }
       }
     }
-    summaryMoved(session);
-    activeSessionsMoved();
+    markSummaryDirty(session);
+    activeSessionsChanged();
   };
 
   /**
@@ -1661,8 +1705,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const raised = new Map<string, Bag[]>();
   /**
    * The session's entries for one chat, kept to what its running turn waits
-   * on: each raised with `session/inputNeededSet` where it is new or moved,
-   * and each the chat no longer holds open taken down with
+   * on: each raised with `session/inputNeededSet` where it is new or changed,
+   * and each one the chat has closed taken down with
    * `session/inputNeededRemoved`, after every action of the chat, so an entry
    * goes once its request resolves and every entry of the chat goes with its
    * turn, as the reference host keeps the session's entries.
@@ -1686,10 +1730,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   return {
-    statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
-    chatCatalogOf, chatMoved, syncSessionInputNeeded, inputNeededOf, factsMoved, activeCount,
-    activityOf, sessionComing, sessionAdded, provisional: (uri: string) => coming.has(uri), materialized, failSessionCreationIfStillCreating,
-    summaryMoved, flushPendingSessionSummaries, summaryKept, forgetSent, activeSessionsMoved, learnModels, agentsMoved, learnAccount,
-    listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
+    statusOf, startedBy, chatSummary, movable, running, updateChatMovability, chatsReordered, subagentSummary, restoredSubagentSummary,
+    chatCatalogOf, onChatSummaryChanged, syncSessionInputNeeded, inputNeededOf, changesetsAndMetaChanged, activeCount,
+    activityOf, markSessionProvisional, sessionAdded, provisional: (uri: string) => provisionalSessionKeys.has(uri), materialized, failSessionCreationIfStillCreating,
+    markSummaryDirty, flushPendingSessionSummaries, refreshSessionChangesSummary, removeNotifiedSummary, activeSessionsChanged, setAgentModels, publishAgentInfos, publishAccountInfo,
+    listing, registerListedSession, announceSurfacedSession, liveRows, allRows, publishSurfacedSessions, unavailableProvider, readStored,
   };
 }

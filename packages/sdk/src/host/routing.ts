@@ -344,7 +344,7 @@ export function createRouting(ctx: HostContext): Routing {
     const name = nameOf(idOf(uri));
     if (sessions.has(name) || owners.has(name))
       throw new RpcError(-32003, `${idOf(uri)} is already held as ${name}`);
-    if (ctx.waitingFor(idOf(uri)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${name}`);
+    if (ctx.unavailableProvider(idOf(uri)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${name}`);
     for (const one of new Set([name, uri])) claimable(one, 'session');
   };
 

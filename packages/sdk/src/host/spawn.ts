@@ -181,8 +181,8 @@ export function createSpawn(ctx: HostContext): Spawn {
     dispatch, log, described, links, resumedSessions,
     sessionHolding, dirOf, operationsMoved, refreshWatched, refreshFacts,
     fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, enteredIn, inMachine, bringBackOf,
-    contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, summaryKept, learnModels,
-    learnAccount, movableMoved,
+    contributedDefaults, runningSchema, chatSummary, subagentSummary, markSummaryDirty, refreshSessionChangesSummary, setAgentModels,
+    publishAccountInfo, updateChatMovability,
   } = ctx;
 
   /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
@@ -381,7 +381,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (ctx.stateOf(uri)?.status !== was) {
       let at = ref.parentChat;
       for (let up = subagents.get(at); up !== undefined && up.parentChat !== at; up = subagents.get(at)) at = up.parentChat;
-      movableMoved(at);
+      updateChatMovability(at);
     }
   };
 
@@ -440,7 +440,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       dispatch(session, { type: 'session/chatAdded', summary: subagentSummary(uri, ref) });
       // The session's row is where a client listing sessions reads its chats,
       // so a chat that has just appeared is said there too.
-      summaryMoved(session);
+      markSummaryDirty(session);
       sendSubagent(uri, {
         type: 'chat/turnStarted',
         turnId: ref.turnId,
@@ -1338,7 +1338,7 @@ export function createSpawn(ctx: HostContext): Spawn {
           const dir = dirOf(uri);
           if (dir !== undefined) {
             void refreshWatched(dir);
-            void summaryKept(uri, true);
+            void refreshSessionChangesSummary(uri, true);
           }
         }
         /*
@@ -1537,7 +1537,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         }
         // A turn starting or finishing moves the catalogue too, and a client
         // watching only the list is the one that most needs telling.
-        summaryMoved(uri);
+        markSummaryDirty(uri);
         /*
          * And a turn that ended is when the branch is worth asking about
          * again: the agent may have changed it, or somebody may have in a
@@ -1569,7 +1569,7 @@ export function createSpawn(ctx: HostContext): Spawn {
              * own, as VS Code's host keeps them, so the counts are read at once.
              */
             void (action.type === 'chat/turnCancelled' ? Promise.resolve() : checkpointOf(dir, uri, turn))
-              .then(() => summaryKept(uri))
+              .then(() => refreshSessionChangesSummary(uri))
               .then(() => {
                 if (enteredIn.get(uri) === undefined) refreshFacts(dir);
                 else void bringBackOf(uri).then(() => { refreshFacts(dir); });
@@ -1661,14 +1661,14 @@ export function createSpawn(ctx: HostContext): Spawn {
         const sender = senderOf(turnId) ?? kept.sender(idOf(uri), turnId);
         if (sender !== undefined) kept.setSender(idOf(uri), transcriptId, sender);
       },
-      onHandshake: () => { learnModels(uri); },
+      onHandshake: () => { setAgentModels(uri); },
       /*
        * The account the running CLI is signed in as, which is the only way this
        * host learns one for a backend that spawns nothing at boot. It is kept
        * and published the same way the probe's is, so a client sees one key
        * rather than two paths that could disagree about who is signed in.
        */
-      onAccount: (account) => { learnAccount(agent.provider, account); },
+      onAccount: (account) => { publishAccountInfo(agent.provider, account); },
     };
     /*
      * Whether this chat is one the session's own backend does not serve.
@@ -1768,7 +1768,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * of nothing and the right answer for a session that has done nothing yet.
      */
     if (held.workingDirectory !== undefined) {
-      void checkpointOf(held.workingDirectory, uri, BASELINE_TURN).then(() => summaryKept(uri));
+      void checkpointOf(held.workingDirectory, uri, BASELINE_TURN).then(() => refreshSessionChangesSummary(uri));
     }
     /*
      * The name it had before, when it is being created again.
@@ -1806,7 +1806,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * the one road every start of a backend goes through, so it is also the
      * only place the baseline can be set without a second one to keep in step.
      */
-    movableMoved(chatUri);
+    updateChatMovability(chatUri);
     /*
      * The draft the session's record keeps for this chat, handed to the chat
      * as it opens, as VS Code's host restores a chat's draft when it opens
@@ -1883,7 +1883,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         dispatch(chatUri, { type: 'chat/turnsLoaded', turns });
       }
     }
-    ctx.chatMoved(chatUri);
+    ctx.onChatSummaryChanged(chatUri);
     /*
      * A session whose state this host holds already - read from its record, or
      * kept across a sleep - is told the customizations of the backend that now

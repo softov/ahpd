@@ -235,7 +235,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
     spawn, keepProvider, forgetChats,
-    sessionComing, provisional, forgetSent, activeSessionsMoved,
+    markSessionProvisional, provisional, removeNotifiedSummary, activeSessionsChanged,
   } = ctx;
 
   const respawning = new Map<string, Held>();
@@ -475,7 +475,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     offered.delete(uri);
     owners.delete(uri);
     lives.delete(uri);
-    activeSessionsMoved();
+    activeSessionsChanged();
     return Promise.all(closing).then(() => undefined);
   };
 
@@ -733,8 +733,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2403-L2440
      */
     const announced = !provisional(uri);
-    ctx.drop(uri);
-    forgetSent(uri);
+    ctx.removeListedSession(uri);
+    removeNotifiedSummary(uri);
     /*
      * And the state each of its channels held, the session's and its chats',
      * which nothing reaches once the session is disposed, asleep or running.
@@ -742,7 +742,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     for (const [channel, open] of ctx.heldStates) {
       if (channel === uri || (open.kind === 'chat' && ctx.sessionFor(channel) === uri)) ctx.closeState(channel);
     }
-    activeSessionsMoved();
+    activeSessionsChanged();
     if (announced) broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
     log(`disposed ${uri}`);
     if (failure !== undefined) throw failure;
@@ -2314,7 +2314,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
     if (title !== undefined) kept.setCustomTitle?.(idOf(uri), title);
     // Its row goes out whole once it is added, and moves from then on.
-    sessionComing(uri);
+    markSessionProvisional(uri);
     try {
       /*
        * The backend is handed everything but this host's own keys, and the
@@ -2342,7 +2342,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       // backend started goes whole: its origin, and the flags and title kept.
       origins.delete(uri);
       kept.forget(idOf(uri));
-      forgetSent(uri);
+      removeNotifiedSummary(uri);
       // The backend's own words. It is the thing that knows which
       // directories it serves, and a refusal a client can read beats an
       // internal error it cannot.

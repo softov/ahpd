@@ -46,8 +46,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
     mergedConfig, sessionSchema, storedConfig, contributedDefaults,
-    waitingFor, startedBy, chatCatalogOf, movable, restoredSubagentSummary, activityOf,
-    past, restoredSubagents, restoredParentChat, linkedTurns, titles,
+    unavailableProvider, startedBy, chatCatalogOf, movable, restoredSubagentSummary, activityOf,
+    restoreSession, restoredSubagents, restoredParentChat, linkedTurns, titles,
     recordedChats, recordedChat, homeId,
   } = ctx;
 
@@ -389,7 +389,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       const owning = channel.slice(0, -MARKS.length);
       const id = idOf(owning);
       /*
-       * Asked of `past`, which consults the catalogue itself, rather than of
+       * Asked of `restoreSession`, which consults the catalogue itself, rather than of
        * the maps a listing fills: a client sends the three subscriptions that
        * open a session in one breath, before its own `listSessions` has come
        * back, and a test against those maps refuses on the race. The session
@@ -399,8 +399,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
        * a session's annotations without restoring its provider.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14267-L14278
        */
-      if (sessions.has(owning) || (waitingFor(id) !== undefined && nameOf(id) === owning)
-        || ((await past(id)) !== undefined && nameOf(id) === owning))
+      if (sessions.has(owning) || (unavailableProvider(id) !== undefined && nameOf(id) === owning)
+        || ((await restoreSession(id)) !== undefined && nameOf(id) === owning))
         return value({ resource: channel, state: marksOf(id), fromSeq: ctx.serverSeq });
     }
     /*
@@ -498,7 +498,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       const state = sessionStateOf(channel);
       // What it holds of its folder and backend, read now, since this is the
       // moment somebody reads it, and said by action where it moved.
-      ctx.factsMoved(channel);
+      ctx.changesetsAndMetaChanged(channel);
       if (state !== undefined) return served(channel, ctx.stateOf(channel) ?? state);
     }
     /*
@@ -601,9 +601,9 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * code a client takes as final.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
      */
-    if (waitingFor(id) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
-    const turns = await past(id);
-    // The chat's session read again, once `past` has named the row.
+    if (unavailableProvider(id) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
+    const turns = await restoreSession(id);
+    // The chat's session read again, once `restoreSession` has named the row.
     const owning = chat ? sessionFor(channel) : channel;
     const owner = owners.get(nameOf(id)) ?? ctx.first;
     if (owner === undefined || !turns || nameOf(id) !== owning) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${owning}`);
@@ -653,7 +653,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       : recordedChat(id, channel);
     const stamp = moves.get(owning) ?? new Date().toISOString();
     if (opened !== undefined && opened.uri !== chatUriFor(nameOf(id))) {
-      const own = await ctx.transcriptOf(owner, opened.backendId, ctx.sessionAt(id), nameOf(id), opened.uri);
+      const own = await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), nameOf(id), opened.uri);
       return {
         kind: 'chat',
         state: {

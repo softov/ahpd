@@ -49,9 +49,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
   const {
     agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided, declaresConfigKey,
     dir, dispatch, homeId, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
-    ownerFor, owners, past, permitted, presence, restart, retool,
-    rootConfig, served, sessionFor, sessions, shown, starting, subagents, summaryMoved, terminals, toolDefinitions,
-    value, waitingFor,
+    ownerFor, owners, restoreSession, permitted, presence, restart, retool,
+    rootConfig, served, sessionFor, sessions, shown, starting, subagents, markSummaryDirty, terminals, toolDefinitions,
+    value, unavailableProvider,
   } = ctx;
   /**
    * Whether this host knows a session: running, listed in the catalogue, or
@@ -240,13 +240,13 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         kept.setAnnotations?.(id, next as unknown as Bag);
         dispatch(channel, action, origin);
       };
-      const found = (): boolean => (sessions.has(owning) || owners.has(owning) || waitingFor(id) !== undefined)
+      const found = (): boolean => (sessions.has(owning) || owners.has(owning) || unavailableProvider(id) !== undefined)
         && ctx.nameOf(id) === owning;
       if (found()) {
         mark();
         return;
       }
-      return past(id).then(() => {
+      return restoreSession(id).then(() => {
         if (found()) mark();
         else no(`Session not found: ${owning}`);
       });
@@ -423,7 +423,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          */
         dispatch(ROOT, { ...action, config: echoed }, origin);
         // Moving chats turned on or off moves every chat's offer of a move.
-        if (Object.hasOwn(config, 'chatMoves.enabled')) for (const chat of byChat.keys()) ctx.movableMoved(chat);
+        if (Object.hasOwn(config, 'chatMoves.enabled')) for (const chat of byChat.keys()) ctx.updateChatMovability(chat);
       };
       /*
        * The daemon's keys, which are not this host's to keep.
@@ -820,7 +820,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     const knownChat = (): boolean => byChat.has(channel) || subagents.has(channel) || homeId(channel) !== undefined
       || knownSession(sessionFor(channel));
     if (spaceOf(asked) === 'chat' && !knownChat()) {
-      return past(idOf(sessionFor(channel))).then(() => {
+      return restoreSession(idOf(sessionFor(channel))).then(() => {
         if (knownChat()) return conn.applyNow(params, origin);
         const refusal = type === 'chat/isReadChanged' ? 'Only a known chat can change its read state.'
           : type === 'chat/isArchivedChanged' ? 'Only a known independently manageable non-default chat can be archived.'
@@ -930,7 +930,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
       if (!knownSession(sessionFor(channel))) {
-        return past(idOf(sessionFor(channel))).then(() => {
+        return restoreSession(idOf(sessionFor(channel))).then(() => {
           if (knownSession(sessionFor(channel))) return conn.applyNow(params, origin);
         });
       }
@@ -978,7 +978,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
-      return past(idOf(uri)).then(() => {
+      return restoreSession(idOf(uri)).then(() => {
         if (ctx.nameOf(idOf(uri)) === uri) flag();
       });
     }

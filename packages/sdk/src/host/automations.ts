@@ -1076,15 +1076,16 @@ export function createAutomations(ctx: HostContext): Automations {
    * behind, with no process here and nothing on disk, and a plugin reusing a
    * session has to be told it apart from one it still has.
    *
-   * `past` is what asks the catalogue, because it answers for a backend that
-   * can be asked about one id as well as for a listing already held, and it
-   * keeps a transcript it read. Nothing is asked of the store: the row that
-   * outlived the session is exactly the thing this question does not trust.
-   * The URI has to be the one the session is published under, which is the
-   * only one it opens by, and is read once `past` has named the row.
+   * `restoreSession` is what asks the catalogue, because it answers for a
+   * backend that can be asked about one id as well as for a listing already
+   * held, and it keeps a transcript it read. Nothing is asked of the store:
+   * the row that outlived the session is exactly the thing this question does
+   * not trust. The URI has to be the one the session is published under,
+   * which is the only one it opens by, and is read once `restoreSession` has
+   * named the row.
    */
   const opensSession = async (uri: string): Promise<boolean> =>
-    sessions.has(uri) || ((await ctx.past(idOf(uri))) !== undefined && ctx.nameOf(idOf(uri)) === uri);
+    sessions.has(uri) || ((await ctx.restoreSession(idOf(uri))) !== undefined && ctx.nameOf(idOf(uri)) === uri);
 
   /**
    * Every automation this host is watching, by resource.

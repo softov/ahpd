@@ -408,7 +408,7 @@ export function createTooling(ctx: HostContext): Tooling {
     options, sessions, byChat, kept, terminals, learned, rootConfig, sentBy, about,
     activeClientsOf, leadOf, clientResources, allRows, setArtifacts, forWhom,
     principalFor, senderOf, senders,
-    chatSummary, keepTitle, summaryMoved, operationsMoved, dispatch, log, fire,
+    chatSummary, keepTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
     resolveCreatedSessionConfig, openSession, backendsOwn, removeSession, spawn,
   } = ctx;
   /**
@@ -1426,7 +1426,7 @@ export function createTooling(ctx: HostContext): Tooling {
       ctx.keepSessionTitle(uri, title);
       dispatch(uri, { type: 'session/titleChanged', title });
     }
-    summaryMoved(uri);
+    markSummaryDirty(uri);
     // The session's title is the subject a commit would use, so the question
     // the changeset's commit asks names a different line now.
     operationsMoved(uri);
@@ -1457,7 +1457,7 @@ export function createTooling(ctx: HostContext): Tooling {
       keepTitle(uri, held.defaultChat, title);
       updateChatTitle(uri, held.defaultChat, title);
     }
-    summaryMoved(uri);
+    markSummaryDirty(uri);
     operationsMoved(uri);
   };
   /**
@@ -1767,7 +1767,7 @@ export function createTooling(ctx: HostContext): Tooling {
     snapshotDefaultChatTitle(at);
     dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
     // And the row: a client listing sessions reads a session's chats there.
-    summaryMoved(at);
+    markSummaryDirty(at);
     if (asked.prompt !== undefined) {
       const firstTurn = crypto.randomUUID();
       // Written down as the calling turn's, so it runs for whoever sent that

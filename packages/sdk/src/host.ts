@@ -1020,12 +1020,12 @@ export function createHost(options: HostOptions): Host {
     // action of another kind moves no chat state at all.
     if (states.get(channel)?.kind === 'chat' && String(action.type ?? '').startsWith('chat/')) {
       ctx.syncSessionInputNeeded(channel);
-      ctx.chatMoved(channel);
+      ctx.onChatSummaryChanged(channel);
       // And whether the chat may be moved, which a turn is the whole of: said
       // at its start and at each of the endings a turn has, `chat/error`
       // among them, whoever said it.
       if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
-        || action.type === 'chat/turnCancelled' || action.type === 'chat/error') ctx.movableMoved(channel);
+        || action.type === 'chat/turnCancelled' || action.type === 'chat/error') ctx.updateChatMovability(channel);
     }
     /*
      * A session's entry raised or taken down, told to the plugins as it is
@@ -1581,8 +1581,8 @@ export function createHost(options: HostOptions): Host {
     rootConfig, descriptors, daemonSchema, daemonProperties, daemonHeld,
     advertisedSchemes, advertisedChannels, advertisedMethods,
     statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary,
-    activityOf, sessionAdded, summaryMoved, activeSessionsMoved, learnModels, learnAccount,
-    listing, waitingFor, readStored,
+    activityOf, sessionAdded, markSummaryDirty, activeSessionsChanged, setAgentModels, publishAccountInfo,
+    listing, unavailableProvider, readStored,
     unstamped, withWorkerUri, stampedCalls, withSender,
     sendSubagent, endedWorkers, openSubagent,
     formerChatUri, titleOf, keepTitle, keepProvider, spawn,
@@ -1590,7 +1590,7 @@ export function createHost(options: HostOptions): Host {
     beginOrRun, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
     permitted, toolDefinitions, retool, renameChat,
     terminalInfo, heldTerminals, changed, due, startForAutomation,
-    past, history, subHistory, titles, refresh, held,
+    history, subHistory, titles, refresh,
     snapshotOf, value,
   } = ctx;
   /*
@@ -1679,9 +1679,9 @@ export function createHost(options: HostOptions): Host {
        * replaces it through the same call, so the probe's value is not kept
        * anywhere else and nothing has to tell the two apart.
        */
-      if (offered.account !== undefined) learnAccount(agent.provider, offered.account);
+      if (offered.account !== undefined) publishAccountInfo(agent.provider, offered.account);
       log(`${agent.provider}: ${held.models.length} model(s), ${held.commands.length} command(s), ${held.seeds.length} customization(s)`);
-      ctx.agentsMoved();
+      ctx.publishAgentInfos();
       watchProbe(agent);
     }).catch(() => { }).finally(() => {
       const again = probing.get(agent.provider) === true;
@@ -1943,7 +1943,7 @@ export function createHost(options: HostOptions): Host {
         retool(uri);
       }
       // One event, so a client reading the root lists the agents it holds now.
-      ctx.agentsMoved();
+      ctx.publishAgentInfos();
       return undefined;
     },
     endSessionsOf: async (agent) => {

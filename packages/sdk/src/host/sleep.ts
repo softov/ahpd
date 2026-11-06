@@ -86,8 +86,8 @@ const WAITING_CALL = new Set(['pending-confirmation', 'pending-result-confirmati
 export function createSleep(ctx: HostContext): Sleep {
   const {
     options, sessions, byChat, connections, restarting, kept, owners, wheres, moves,
-    running, log, activeSessionsMoved, summaryMoved, liveRows, dirOf, stopUnwatched, sessionFor, sessionHolding,
-    waitingFor, past, nameOf, storedConfig, charged, charge, recordedChats, spawn, keepProvider, dispatch, leadOf,
+    running, log, activeSessionsChanged, markSummaryDirty, liveRows, dirOf, stopUnwatched, sessionFor, sessionHolding,
+    unavailableProvider, restoreSession, nameOf, storedConfig, charged, charge, recordedChats, spawn, keepProvider, dispatch, leadOf,
     heldStates,
   } = ctx;
 
@@ -235,12 +235,12 @@ export function createSleep(ctx: HostContext): Sleep {
     if (row !== undefined) {
       wheres.set(uri, row.workingDirectories);
       moves.set(uri, row.modifiedAt);
-      ctx.keepRow(row);
+      ctx.evictSessionState(row);
     }
     if (dir !== undefined) stopUnwatched(dir);
     log(`slept ${uri}`);
-    activeSessionsMoved();
-    summaryMoved(uri);
+    activeSessionsChanged();
+    markSummaryDirty(uri);
     const closed = Promise.all(stopping).then(() => undefined);
     closing.set(id, closed);
     // An archived session gives its tree back once its agents have closed.
@@ -358,12 +358,12 @@ export function createSleep(ctx: HostContext): Sleep {
      * until that agent is loaded again.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
      */
-    const missing = waitingFor(id);
+    const missing = unavailableProvider(id);
     if (missing !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
-    const seed = await past(id);
+    const seed = await restoreSession(id);
     if (!seed) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
     /*
-     * Named again, because `past` is what learned whose session this is - and
+     * Named again, because `restoreSession` is what learned whose session this is - and
      * what this host will call it. Asking with the name computed beforehand
      * found nothing for a row no listing had reached yet. The session wakes
      * under that one name, and a waker that asked under any other spelling of
@@ -383,7 +383,7 @@ export function createSleep(ctx: HostContext): Sleep {
     const ran = first === undefined ? undefined : localPath(first);
     // Where its chats' transcripts are looked for: the folder its record
     // names, or else the one its row was listed in.
-    const at = ctx.sessionAt(id) ?? (ran === undefined ? undefined : { workingDirectory: ran });
+    const at = ctx.launchWorkingDirectory(id) ?? (ran === undefined ? undefined : { workingDirectory: ran });
     /*
      * What the work is charged to: the one this session was settled with, or
      * the one the asking connection resolves to. A session the store holds no
@@ -499,7 +499,7 @@ export function createSleep(ctx: HostContext): Sleep {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1596-L1602
      */
     log(`resumed ${named}`);
-    summaryMoved(named);
+    markSummaryDirty(named);
     return { uri: named, chat: picked(named, chat) ?? session };
   };
 

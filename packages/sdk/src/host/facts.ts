@@ -255,7 +255,7 @@ export function createFacts(ctx: HostContext): Facts {
     // merges every producer's keys into the one it publishes.
     const meta = describes(uri)._meta as Bag | undefined;
     dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
-    ctx.summaryMoved(uri);
+    ctx.markSummaryDirty(uri);
   };
   /**
    * What a session's `_meta` holds because of its agent.
@@ -263,7 +263,7 @@ export function createFacts(ctx: HostContext): Facts {
    * While something runs it, read off the backend's own state rather than kept
    * here, so a key it adds or drops is one this host follows without having to
    * know about it. While nothing runs it, the `_meta` the backend put on the
-   * row it listed - kept by `adopt`, which is where a browsed session is
+   * row it listed - kept by `registerListedSession`, which is where a browsed session is
    * remembered. A running agent's map replaces the listed one whole: the agent
    * knows the session as it is now, and the row knew it as the listing did.
    */
@@ -363,7 +363,7 @@ export function createFacts(ctx: HostContext): Facts {
     for (const uri of inThere(dir)) {
       const meta = describes(uri)._meta as Bag | undefined;
       dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
-      ctx.summaryMoved(uri);
+      ctx.markSummaryDirty(uri);
       // And the verbs, since a branch that gained a pull request offers
       // different ones from a branch that lacks it.
       operationsMoved(uri);
@@ -469,7 +469,7 @@ export function createFacts(ctx: HostContext): Facts {
               const changesets = catalogueOf(uri, dir);
               if (!ctx.relaysChangesets(uri) && !isDeepStrictEqual(ctx.stateOf(uri)?.changesets ?? [], changesets))
                 dispatch(uri, { type: 'session/changesetsChanged', changesets });
-              ctx.summaryMoved(uri);
+              ctx.markSummaryDirty(uri);
               await contentMoved(uri);
             }
           }
@@ -646,7 +646,7 @@ export function createFacts(ctx: HostContext): Facts {
         const changesets = catalogueOf(uri, dir);
         if (!ctx.relaysChangesets(uri) && !isDeepStrictEqual(ctx.stateOf(uri)?.changesets ?? [], changesets))
           dispatch(uri, { type: 'session/changesetsChanged', changesets });
-        ctx.summaryMoved(uri);
+        ctx.markSummaryDirty(uri);
       }
       /*
        * The files themselves, as `refreshWatched` sends them. A directory
@@ -679,7 +679,7 @@ export function createFacts(ctx: HostContext): Facts {
   const sessionMetaChanged = (uri: string): void => {
     const meta = describes(uri)._meta as Bag | undefined;
     dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
-    ctx.summaryMoved(uri);
+    ctx.markSummaryDirty(uri);
   };
   /*
    * A plugin announces a change through the host it was applied to, which is

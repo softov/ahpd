@@ -58,15 +58,15 @@ export interface SessionMethods {
 export function createSessionMethods(ctx: HostContext, conn: ConnectionContext): SessionMethods {
   const { connection } = conn;
   const {
-    about, activeSessionsMoved, admitted, agents, answeredAs, backendsOwn, beginOrRun, beginTurn, beside, byChat,
+    about, activeSessionsChanged, admitted, agents, answeredAs, backendsOwn, beginOrRun, beginTurn, beside, byChat,
     charged, chatAgent, chatConfig, chatIdOf, chatShown,
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
     isolating, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
-    movable, movableMoved, openSession, openedBy, options, orderChats, oweTree,
-    ownerFor, owners, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
-    seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
-    snapshotOf, spawn, subagentSummary, subagents, summaryMoved, unheld, visible, waitingFor, wake,
+    movable, updateChatMovability, openSession, openedBy, options, orderChats, oweTree,
+    ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
+    seenBy, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
+    snapshotOf, spawn, subagentSummary, subagents, markSummaryDirty, unheld, visible, unavailableProvider, wake,
   } = ctx;
 
   /**
@@ -161,7 +161,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       named(into, 'session');
       unheld(into);
       // Its row goes out whole once it is added, and moves from then on.
-      sessionComing(into);
+      markSessionProvisional(into);
       /*
        * The owner and the config are the source session's: a session made for
        * one of its chats is the same person's work under the same settings.
@@ -288,7 +288,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     for (const one of carried) dispatch(found.uri, { type: 'session/chatRemoved', chat: one });
     if (to === undefined) {
       sessionAdded(into);
-      activeSessionsMoved();
+      activeSessionsChanged();
     }
     else {
       dispatch(into, { type: 'session/chatAdded', summary: chatSummary(into, chatUri, found.chat) });
@@ -316,11 +316,11 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         sessionFlag(ctx, into, Status.IsRead, false, { type: 'session/isReadChanged', isRead: false });
       }
     }
-    summaryMoved(found.uri);
-    summaryMoved(into);
+    markSummaryDirty(found.uri);
+    markSummaryDirty(into);
     // Whether it may move again, which a chat that became its session's own
     // chat may not.
-    movableMoved(chatUri);
+    updateChatMovability(chatUri);
     log(`moved ${chatUri} from ${found.uri} to ${into}`);
     return { session: into };
   };
@@ -556,8 +556,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (!sessionChannel(channel)) throw notFound();
       const live = byChat.get(channel);
       const owning = live?.uri ?? sessionFor(channel);
-      if (spaceOf(owning) === 'chat' || waitingFor(idOf(owning)) !== undefined) throw notFound();
-      const all = live ? live.chat.allTurns() : await past(idOf(owning));
+      if (spaceOf(owning) === 'chat' || unavailableProvider(idOf(owning)) !== undefined) throw notFound();
+      const all = live ? live.chat.allTurns() : await restoreSession(idOf(owning));
       if (!all) throw notFound();
       const asked = typeof params.cursor === 'string' ? params.cursor : undefined;
       /*
@@ -1180,7 +1180,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2260-L2264
        */
       if (!held && owners.has(uri) && ctx.stateOf(uri) !== undefined) {
-        if (waitingFor(idOf(uri)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
+        if (unavailableProvider(idOf(uri)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
         const release = hold(uri);
         try {
           await wake(uri, undefined, connection);
@@ -1447,7 +1447,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       dispatch(uri, { type: 'session/chatAdded', summary: chatSummary(uri, chatUri, chat) });
       // And the row, which lists the session's chats: a client that is only
       // listing sessions reads the new chat from there.
-      summaryMoved(uri);
+      markSummaryDirty(uri);
       if (first_ !== undefined) await acceptInitialMessage(uri, chat, held.agent.provider, first_);
       return null;
     },
@@ -1562,7 +1562,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // The catalogue's own list, which names every chat the session lists -
         // the workers included, because they are chats of the session too.
         await chatsReordered(found.uri);
-        summaryMoved(found.uri);
+        markSummaryDirty(found.uri);
         log(`moved ${chatUri} in ${found.uri}`);
         return { session: found.uri };
       }
@@ -1652,14 +1652,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       log(`closed ${chatUri}`);
       dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
       // Last, and once: the row's chat list just moved.
-      summaryMoved(found.uri);
+      markSummaryDirty(found.uri);
       // A chat closed while its turn ran leaves the root's count of sessions
       // running a turn, as VS Code's host drops it there.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1881-L1887
-      activeSessionsMoved();
+      activeSessionsChanged();
       // Nothing is holding this chat's answer any more, so nothing is holding
       // the chat.
-      movableMoved(chatUri);
+      updateChatMovability(chatUri);
       return null;
     },
     disposeSession: async (params) => {

@@ -483,8 +483,8 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
         || parsed.search !== '' || parsed.hash !== '' || spaceOf(session) === 'chat') {
         throw new RpcError(INVALID_PARAMS, 'session must be an Agent Session URI');
       }
-      if (!sessions.has(session) && (ctx.waitingFor(idOf(session)) !== undefined
-        || await ctx.past(idOf(session)) === undefined || ctx.nameOf(idOf(session)) !== session)) {
+      if (!sessions.has(session) && (ctx.unavailableProvider(idOf(session)) !== undefined
+        || await ctx.restoreSession(idOf(session)) === undefined || ctx.nameOf(idOf(session)) !== session)) {
         throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${session}`);
       }
       const held = kept.artifacts(idOf(session)) ?? [];

@@ -53,7 +53,7 @@ export function sessionFlag(
   // the others have to see, which is what having a host for this buys over
   // each client keeping its own.
   ctx.dispatch(uri, action, origin);
-  ctx.summaryMoved(uri);
+  ctx.markSummaryDirty(uri);
   // Archived: asleep, or its tree given back where it is asleep already, and
   // let go by the residency where nothing holds it.
   // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L1457-L1464
@@ -110,7 +110,7 @@ export function chatFlag(
   if (ctx.sessionHolding(chat) === undefined) {
     const status = Number(ctx.stateOf(chat)?.status ?? (Status.Idle | after));
     ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes: { status } });
-    ctx.summaryMoved(session);
+    ctx.markSummaryDirty(session);
   }
   return true;
 }
@@ -245,9 +245,9 @@ export function chatAction(
     admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig,
     contributedDefaults, decided,
     described, dispatch, fire, kept, known, leadOf, lifeOf, lives, log, messageAttachments,
-    messageFrom, modelIn, names, ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, renameChat,
+    messageFrom, modelIn, names, ownerFor, owners, restoreSession, pluginsMoved, principalFor, propertyOf, putIn, renameChat,
     renameSession, restart, restartChat, restarting, rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting,
-    statusOf, subagents, summaryMoved, value, waitingFor, wake, hold,
+    statusOf, subagents, markSummaryDirty, value, unavailableProvider, wake, hold,
   } = ctx;
 
   /** The message an action carries, which its text and its attachments ride on. */
@@ -587,12 +587,12 @@ export function chatAction(
     const known = (): boolean => sessions.has(sessionFor(channel)) || owners.has(sessionFor(channel));
     /*
      * A session whose agent this host is not serving, and one the catalogue
-     * does not list once `past` has read it under the one name the session is
+     * does not list once `restoreSession` has read it under the one name the session is
      * published by, is refused as the reference host's restore refuses a
      * session it finds no agent for.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
      */
-    if (waitingFor(idOf(sessionFor(channel))) !== undefined) {
+    if (unavailableProvider(idOf(sessionFor(channel))) !== undefined) {
       no(`No agent for session: ${sessionFor(channel)}`);
       return;
     }
@@ -600,7 +600,7 @@ export function chatAction(
       keep();
       return;
     }
-    return past(idOf(sessionFor(channel))).then(() => {
+    return restoreSession(idOf(sessionFor(channel))).then(() => {
       if (known()) keep();
       else no(`No agent for session: ${sessionFor(channel)}`);
     });
@@ -666,13 +666,13 @@ export function chatAction(
     const uri = sessionFor(channel);
     const id = idOf(uri);
     return (async () => {
-      if (waitingFor(id) !== undefined) {
+      if (unavailableProvider(id) !== undefined) {
         refuse(connection.peer, channel, action, origin, `No agent for session: ${uri}`);
         return;
       }
       // The session the chat belongs to, under the name it is published by,
       // which the catalogue's read names.
-      const found = await past(id);
+      const found = await restoreSession(id);
       if (!found || ctx.nameOf(id) !== uri) {
         dispatch(channel, action, origin);
         return;

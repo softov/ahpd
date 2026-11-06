@@ -207,16 +207,16 @@ export function createOutputs(ctx: HostContext): Outputs {
     const owning = ctx.homeId(chat) === undefined ? ctx.sessionOfChat(chat) : ctx.sessionFor(chat);
     if (owning === undefined || !ctx.sessionChannel(owning)) return undefined;
     const id = idOf(owning);
-    if (ctx.waitingFor(id) !== undefined) return undefined;
+    if (ctx.unavailableProvider(id) !== undefined) return undefined;
     // A chat a client closed is gone, whatever its backend still holds of it.
     if (ctx.heldChats(id).some((one) => one.uri === chat && one.closed === true)) return undefined;
-    const own = await ctx.past(id);
+    const own = await ctx.restoreSession(id);
     if (own === undefined) return undefined;
     const session = ctx.nameOf(id);
     const opened = ctx.kept.nested?.(id) === undefined ? ctx.recordedChat(id, chat) : undefined;
     if (opened === undefined || opened.uri === chatUriFor(session)) return { session, turns: own };
     const owner = ctx.owners.get(session) ?? ctx.first;
-    const turns = owner === undefined ? undefined : await ctx.transcriptOf(owner, opened.backendId, ctx.sessionAt(id), session, chat);
+    const turns = owner === undefined ? undefined : await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), session, chat);
     return turns === undefined ? undefined : { session, turns: turns as unknown as Bag[] };
   };
 
