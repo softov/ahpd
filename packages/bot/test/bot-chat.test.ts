@@ -240,7 +240,7 @@ it('keeps a chat in a log, and answers it again after a restart', async () => {
    * cannot find is one it ends the turn of at once. That is the state this test
    * is about - it checks the log a chat leaves, not what a message wakes.
    */
-  turns(HELD).onMessage = () => { turns(HELD).end(); };
+  turns(HELD).onMessage = () => { turns(HELD).complete(); };
   for (const [turnId, text] of [['t1', 'hello'], ['t2', 'again']] as const) await said(client, turnId, text);
 
   /*
@@ -308,7 +308,7 @@ it('holds a turn open until the handle answers it', async () => {
   // And whoever answers this chat was told what was said, and in which turn.
   expect(heard).toEqual([{ session: HELD, chat: CHAT, turnId: 't1', text: 'hello' }]);
 
-  chat.reply('hello yourself');
+  chat.complete('hello yourself');
 
   // Over: the answer is the turn's one part, and the turn is the transcript's.
   const idle = await stateOf(client);
@@ -424,7 +424,7 @@ it('tells the chat\'s holder which turn a client stopped', async () => {
   const chat = turns(HELD);
   chat.onMessage = () => {};
   const stops: [string, string][] = [];
-  chat.onStop = (session, turnId) => { stops.push([session, turnId]); };
+  chat.onCancel = (session, turnId) => { stops.push([session, turnId]); };
 
   await said(client, 't1', 'hello');
   await client.handle({
@@ -532,7 +532,7 @@ it('steers a message into the open turn, which goes on', async () => {
     { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that' },
   ]);
 
-  chat.reply('done');
+  chat.complete('done');
   const state = await stateOf(client);
   expect(state['turns']).toMatchObject([{ id: 't1', state: 'complete', responseParts: [{ kind: 'markdown', content: 'done' }] }]);
   expect(state['steeringMessage']).toBeUndefined();
@@ -638,7 +638,7 @@ it('keeps a queued message behind the steered turn', async () => {
   expect(heard.map((one) => one.text)).toEqual(['hello', 'stop that']);
 
   // It starts when the steered turn ends, and not before.
-  chat.reply('done');
+  chat.complete('done');
   const after = await stateOf(client);
   expect(after['activeTurn']).toMatchObject({ message: { text: 'and then this' } });
   // The chat's reducer leaves the key out once its queue is empty.
@@ -748,7 +748,7 @@ it('reads a steering line back in the turn it went into', async () => {
   const chat = turns(HELD);
   chat.onMessage = () => {};
   await said(client, 't1', 'hello');
-  chat.reply('done');
+  chat.complete('done');
 
   // The line names the turn it went into, which is the turn it is read in.
   appendFileSync(
@@ -769,7 +769,7 @@ it('reads a turn its log shows begun and never ended back interrupted, as VS Cod
   const chat = turns(HELD);
   chat.onMessage = () => {};
   await said(client, 't1', 'hello');
-  chat.reply('done');
+  chat.complete('done');
   // Begun, and the daemon went before it ended: the log holds its first line alone.
   await said(client, 't2', 'and then');
 
@@ -806,7 +806,7 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   expect(heard).toEqual([{ session: HELD, chat: CHAT, turnId: 't1', text: 'hello' }]);
   expect(lines(configDir, 'one')).toHaveLength(1);
 
-  chat.reply('one');
+  chat.complete('one');
 
   // Started: the entry left the queue, and its message is the turn that began -
   // under a turn id of the chat's own, with the entry it was named on it.
@@ -826,7 +826,7 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted').map((one) => one['queuedMessageId']))
     .toEqual([undefined, 'q1']);
 
-  chat.reply('two');
+  chat.complete('two');
   // Two turns, and two lines each: the queued one is a turn of the chat's, kept
   // the same way as the one it waited behind.
   expect(lines(configDir, 'one').map((one) => (one['message'] as Bag)['text']))
@@ -852,15 +852,15 @@ it('starts what waited in the order the queue was left in', async () => {
   // client sends is the order the chat holds.
   expect((await stateOf(client))['queuedMessages']).toMatchObject([{ id: 'q2' }, { id: 'q1' }]);
 
-  chat.reply('one');
+  chat.complete('one');
   expect((await stateOf(client))['activeTurn']).toMatchObject({ message: { text: 'second asked' } });
-  chat.reply('two');
+  chat.complete('two');
   // And the one behind that, which is the rest of what the order said - the
   // queue emptying one turn at a time rather than all at once.
   const last = await stateOf(client);
   expect(last['activeTurn']).toMatchObject({ message: { text: 'first asked' } });
   expect(last['queuedMessages'] ?? []).toEqual([]);
-  chat.reply('three');
+  chat.complete('three');
 
   expect(lines(configDir, 'one').map((one) => (one['message'] as Bag)['text'])).toEqual([
     'hello', 'hello', 'second asked', 'second asked', 'first asked', 'first asked',
@@ -880,7 +880,7 @@ it('takes a queued message back, and it is never a turn', async () => {
   await taken(client, 'q1');
 
   expect((await stateOf(client))['queuedMessages'] ?? []).toEqual([]);
-  chat.reply('one');
+  chat.complete('one');
 
   // One turn in it, and nothing started behind it: what was taken back is a
   // message the chat never heard of, rather than one it says later.
@@ -919,9 +919,9 @@ it('takes a second message while the answer is still coming, said in the first o
   // The open turn is still the one being answered.
   expect(heard).toEqual(['t1']);
 
-  chat.reply('one');
+  chat.complete('one');
   expect(heard).toEqual(['t1', 't2']);
-  chat.reply('two');
+  chat.complete('two');
   const done = await stateOf(client);
   expect(done['activeTurn']).toBeUndefined();
   // The turn t2 took the place of is in no history.
@@ -972,7 +972,7 @@ it('hands a turn sent while another is open on once the open turn is answered, s
 
   // Handed on once the open turn is answered, under the id the client named,
   // and the turn it took the place of is in no history.
-  turns(solo).reply('one');
+  turns(solo).complete('one');
   const next = session.chatState();
   expect(next.turns).toEqual([]);
   expect(next.activeTurn).toMatchObject({ id: 't2', message: { text: 'and then this' } });
@@ -999,7 +999,7 @@ it('leaves the back session\'s call unfinished when its turn ends with a notice'
   await talkTo(client);
   const chat = turns(HELD);
   const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
-  chat.onMessage = () => { chat.working?.(back, 'Backer'); };
+  chat.onMessage = () => { chat.subagent?.(back, 'Backer'); };
 
   await said(client, 't1', 'hello');
   chat.notice('The back session would not take it');
@@ -1025,11 +1025,11 @@ it('adds each answer to the open turn, and completes the call when the turn ends
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: CHAT } }));
   const chat = turns(HELD);
   const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
-  chat.onMessage = () => { chat.working?.(back, 'Backer'); };
+  chat.onMessage = () => { chat.subagent?.(back, 'Backer'); };
 
   await said(client, 't1', 'hello');
-  chat.say('working on it');
-  chat.say('the answer');
+  chat.responsePart('working on it');
+  chat.responsePart('the answer');
 
   expect((await stateOf(client))['activeTurn']).toMatchObject({
     id: 't1',
@@ -1040,7 +1040,7 @@ it('adds each answer to the open turn, and completes the call when the turn ends
     ],
   });
 
-  chat.end();
+  chat.complete();
 
   const state = await stateOf(client);
   expect(state['activeTurn']).toBeUndefined();
@@ -1114,7 +1114,7 @@ it('takes a withdrawn call out of the open turn, which the reducer cancels', asy
     kind: 'toolCall',
     toolCall: { toolCallId: 'toolu_run', status: 'cancelled', reason: 'skipped' },
   }]);
-  chat.reply('done');
+  chat.complete('done');
 });
 
 /*
@@ -1154,7 +1154,7 @@ it('takes a withdrawn question out of the open turn, which the reducer cancels',
     request: { id: 'ask-1' },
     response: 'cancel',
   });
-  chat.reply('done');
+  chat.complete('done');
 });
 
 it('shows the back session as one subagent call in a turn a steer goes into', async () => {
@@ -1170,7 +1170,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
    * is waiting on. A steer goes into the open turn and wakes the same chat, so
    * the turn keeps the one call it shows.
    */
-  chat.onMessage = () => { chat.working?.(back, 'Backer'); };
+  chat.onMessage = () => { chat.subagent?.(back, 'Backer'); };
 
   await said(client, 't1', 'hello');
   await client.handle({
@@ -1202,7 +1202,7 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
   ]);
   expect(started[2]?.['content']).toEqual([{ type: 'subagent', resource: back, title: 'Backer' }]);
 
-  chat.reply('done');
+  chat.complete('done');
 
   /*
    * Over, and the call is a part of the finished turn: the one its start
@@ -1261,7 +1261,7 @@ it('begins a turn nobody here said, and tells no listener', async () => {
   // The turn already open is the one this chat runs.
   expect(chat.begin('and again')).toBeUndefined();
 
-  chat.reply('done');
+  chat.complete('done');
   expect((await stateOf(client))['activeTurn']).toBeUndefined();
   expect(heard).toEqual([]);
 });
@@ -1329,14 +1329,14 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: CHAT } }));
   const chat = turns(HELD);
   const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
-  chat.onMessage = () => { chat.working?.(back, 'Backer'); };
+  chat.onMessage = () => { chat.subagent?.(back, 'Backer'); };
 
   // A client's message as the protocol declares one, with its origin.
   await client.handle({
     method: 'dispatchAction',
     params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
   });
-  chat.reply('done');
+  chat.complete('done');
 
   const late = await client.handle({ method: 'subscribe', params: { channel: CHAT } });
   const calls = ((((late as Bag)['snapshot'] as Bag)['state'] as Bag)['turns'] as Bag[])

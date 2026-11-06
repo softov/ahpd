@@ -106,10 +106,13 @@ const turn = (): Recorded => {
       begun.push({ text, ...(from === undefined ? {} : { from }) });
       return `t${begun.length}`;
     },
-    reply: (text) => { open = false; replies.push(text); },
-    say: (text) => { posts.push(text); },
+    complete: (text) => {
+      open = false;
+      if (text === undefined) endings.push('ended');
+      else replies.push(text);
+    },
+    responsePart: (text) => { posts.push(text); },
     notice: (text) => { open = false; notices.push(text); },
-    end: () => { open = false; endings.push('ended'); },
     fail: (message) => { open = false; failures.push(message); },
   };
   return { handle, replies, posts, notices, endings, failures, begun };

@@ -67,7 +67,7 @@ interface OpenTurn {
   calls: WorkingCall[];
   /** The questions and approvals it shows while another session waits on a person. */
   asked: AskedCopy[];
-  /** How many answers `say` and `reply` have given it, which numbers the next one's id. */
+  /** How many answers `responsePart` and `complete` have given it, which numbers the next one's id. */
   answers: number;
 }
 
@@ -125,10 +125,13 @@ export interface ChatMessage {
  *
  * Held by whoever started the chat, which is the plugin: nothing in this
  * package knows what a bot's answer is, and nothing here would ever end a turn
- * by itself. `reply` is that answer, `notice` is something that happened
- * instead of one, and `end` is a turn that gets neither - each ends the turn it
- * finds open, and does nothing at all when there is none. `say` adds an answer
- * and leaves the turn open.
+ * by itself. The verbs are the protocol's words for what each says:
+ * `complete` ends the turn, with that answer where it is given one, `notice`
+ * ends it with something that happened instead of an answer, and `fail` ends
+ * it in an error - each ends the turn it finds open, and does nothing at all
+ * when there is none. `responsePart` adds an answer and leaves the turn open,
+ * `subagent` shows the chat of another session it waits on, and `onCancel`
+ * hears a client's `chat/turnCancelled`.
  *
  * `onMessage` is the other direction: each turn this chat begins, and each
  * message steered into the open one, is handed to it. That is how what a person
@@ -147,38 +150,41 @@ export interface TurnHandle {
    * turn with no turn to be shown in is one this chat does not show.
    */
   begin(text: string, from?: MessageFrom): string | undefined;
-  /** End the open turn with this as its answer. */
-  reply(text: string): void;
   /**
-   * Add this answer to the open turn, and keep the turn open.
+   * Complete the open turn, the protocol's `chat/turnComplete`: with this as its
+   * answer where one is given, and with what `responsePart` gave it otherwise.
+   */
+  complete(text?: string): void;
+  /**
+   * Add this answer to the open turn, the protocol's `chat/responsePart`, and
+   * keep the turn open.
    *
    * What a back session posts while its own turn runs: the main turn waits on
-   * that turn as on a subagent, and ends when it ends. `end` after it completes
-   * the turn as answered.
+   * that turn as on a subagent, and ends when it ends. `complete` after it
+   * completes the turn as answered.
    */
-  say(text: string): void;
+  responsePart(text: string): void;
   /** End the open turn with a notice rather than an answer. */
   notice(text: string): void;
-  /** End the open turn with no response at all. */
-  end(): void;
   /** End the open turn as failed, in the words of what failed. */
   fail?(message: string): void;
   /**
    * Say the open turn is waiting on a chat of another session, and link it.
    *
-   * The turn shows one tool call of kind `subagent` whose content names that
-   * chat, which is how a client opens it: the back session is not a worker
-   * this chat's backend opened, so nothing else would draw it. Optional
-   * because a handle over a chat with nothing behind it has nothing to show.
+   * The turn shows one tool call of kind `subagent`, VS Code's word for a call
+   * running another chat, whose content names that chat, which is how a
+   * client opens it: the back session is not a worker this chat's backend
+   * opened, so nothing else would draw it. Optional because a handle over a
+   * chat with nothing behind it has nothing to show.
    */
-  working?(chat: string, title: string): void;
+  subagent?(chat: string, title: string): void;
   /**
    * Show a request another session is waiting on, in the open turn.
    *
    * The entry is the back session's `session/inputNeeded` entry, whole: an
    * approval is drawn as a tool call in `pending-confirmation` with the back
    * session's own title, and a question as an `inputRequest` part with its
-   * fields. Optional for the same reason `working` is.
+   * fields. Optional for the same reason `subagent` is.
    */
   asking?(entry: Bag): void;
   /** Take a request's copy out of the open turn, because the back session no longer waits on it. */
@@ -195,8 +201,8 @@ export interface TurnHandle {
   onAnswer?: (requestId: string, accepted: boolean, answers: Bag, response?: 'accept' | 'decline' | 'cancel') => boolean;
   /** Who hears about each turn that begins and each message steered into one. */
   onMessage?: (message: ChatMessage) => void;
-  /** Who hears that a client stopped the open turn, to stop the work behind it. */
-  onStop?: (session: string, turnId: string) => void;
+  /** Who hears that a client cancelled the open turn, to stop the work behind it. */
+  onCancel?: (session: string, turnId: string) => void;
 }
 
 /** The provider id a chat is registered and named under. */
@@ -477,13 +483,13 @@ export function turns(session: string): TurnHandle {
  * has is refused there rather than opening a session nothing can answer.
  *
  * `heard` is set as the `onMessage` of every chat's handle, a new chat and a
- * resumed one alike, and `stopped` as its `onStop`.
+ * resumed one alike, and `cancelled` as its `onCancel`.
  */
 export function botChatAgent(
   configDir: string,
   store: BotStore,
   heard?: (message: ChatMessage, handle: TurnHandle) => void,
-  stopped?: (session: string, turnId: string) => void,
+  cancelled?: (session: string, turnId: string) => void,
 ): Agent {
   /**
    * One chat: the turns it holds and the bot it is a chat with.
@@ -815,9 +821,14 @@ export function botChatAgent(
         start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: held.startedAt, message: held.message });
         return turnId;
       },
-      reply: (text) => {
+      complete: (text) => {
         const held = open;
         if (held === undefined) return;
+        // A turn with an answer `responsePart` gave it was answered, and its calls complete.
+        if (text === undefined) {
+          finish(held, 'complete', [], held.answers > 0);
+          return;
+        }
         /*
          * One part, whole. Nothing streams into a chat that runs no model, so
          * there are no `chat/delta`s after it - and the id is the turn's, which
@@ -825,7 +836,7 @@ export function botChatAgent(
          */
         finish(held, 'complete', [answerPart(held, text)], true);
       },
-      say: (text) => {
+      responsePart: (text) => {
         const held = open;
         if (held === undefined) return;
         const part = answerPart(held, text);
@@ -839,12 +850,6 @@ export function botChatAgent(
         // reference harness writes for a notice of its own.
         finish(held, 'complete', [{ kind: 'systemNotification', content: text }]);
       },
-      end: () => {
-        const held = open;
-        if (held === undefined) return;
-        // A turn with an answer `say` gave it was answered, and its calls complete.
-        finish(held, 'complete', [], held.answers > 0);
-      },
       /*
        * A turn whose work failed ends as failed, with an error part, as the
        * reference host ends a failed send with `chat/error`, and the part's
@@ -857,7 +862,7 @@ export function botChatAgent(
         if (held === undefined) return;
         finish(held, 'error', [{ kind: 'error', error: { errorType: 'sendFailed', message } }]);
       },
-      working: (chat, title) => {
+      subagent: (chat, title) => {
         const held = open;
         if (held === undefined) return;
         showWorking(held, chat, title);
@@ -874,7 +879,7 @@ export function botChatAgent(
       },
     };
     if (heard !== undefined) handle.onMessage = (message) => { heard(message, handle); };
-    if (stopped !== undefined) handle.onStop = stopped;
+    if (cancelled !== undefined) handle.onCancel = cancelled;
     handles.set(start.uri, handle);
 
     /**
@@ -1108,7 +1113,7 @@ export function botChatAgent(
         for (const one of handed.splice(0)) finish(one.turn, 'cancelled', [], false);
         if (held === undefined) return;
         finish(held, 'cancelled', [], false);
-        handle.onStop?.(start.uri, held.id);
+        handle.onCancel?.(start.uri, held.id);
       },
 
       // The draft the host said, held for the chat's state.

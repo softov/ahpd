@@ -93,10 +93,12 @@ const turn = (): Recorded => {
   const handle: TurnHandle = {
     // The turn this handle is over is the open one: nothing begins a second.
     begin: () => undefined,
-    reply: (text) => { replies.push(text); },
-    say: (text) => { posts.push(text); },
+    complete: (text) => {
+      if (text === undefined) endings.push('ended');
+      else replies.push(text);
+    },
+    responsePart: (text) => { posts.push(text); },
     notice: (text) => { notices.push(text); },
-    end: () => { endings.push('ended'); },
     fail: (message) => { failures.push(message); },
   };
   return { handle, replies, posts, notices, endings, failures };

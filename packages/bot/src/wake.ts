@@ -612,7 +612,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       // The turn stays held: the back turn is still running, and its end is
       // what ends the main turn.
       held.posted = true;
-      held.handle.say(text);
+      held.handle.responsePart(text);
       return true;
     },
 
@@ -636,23 +636,23 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       }
       // What the session posted is the answer, and its last words are not added to it.
       if (held.posted === true) {
-        held.handle.end();
+        held.handle.complete();
         return;
       }
       /*
        * The table `mainTurnPostMessageAbsent` names. A turn that said nothing
-       * has nothing to post, so it is ended rather than given an empty reply;
-       * whether that ending is a notice is what `postNotice` is for.
+       * has nothing to post, so it is completed with no answer rather than an
+       * empty one; whether that ending is a notice is what `postNotice` is for.
        */
       if (text !== '' && (absent === 'post' || absent === 'postNotice')) {
-        held.handle.reply(text);
+        held.handle.complete(text);
         return;
       }
       if (absent === 'notice' || absent === 'postNotice') {
         held.handle.notice(`${held.bot} finished without a reply`);
         return;
       }
-      held.handle.end();
+      held.handle.complete();
     },
 
     woken: async (message, handle) => {
@@ -739,7 +739,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
          * the person is talking to; a steer into the open turn keeps the call it
          * already shows.
          */
-        handle.working?.(looked.chat, bot.name);
+        handle.subagent?.(looked.chat, bot.name);
         let refused: string | undefined;
         try {
           refused = await seams.send(looked.chat, action);
@@ -790,7 +790,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       const name = bot?.name ?? '';
       answering.set(backSession, { session, turnId, handle, bot: name, waiting: new Set() });
       startedTurns.set(backSession, { turn: backTurn, at: Date.now() });
-      handle.working?.(chat, name);
+      handle.subagent?.(chat, name);
     },
   };
 }
