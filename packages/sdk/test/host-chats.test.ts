@@ -1788,6 +1788,30 @@ describe('more than one chat in a session', () => {
     }
   });
 
+  it('makes a fork from its source alone, taking none of the folders it is asked for, as VS Code\'s host makes one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const starts: Start[] = [];
+      const agent = backend(starts);
+      const { client } = await apart(join(root, 'sessions'), { ...agent, chats: { ...agent.chats, fork: true } }, [EXTRA, MORE]);
+      await send(client, PEER, 't1', 'over here');
+      const before = starts.length;
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2302-L2310
+      await client.handle({
+        method: 'createChat',
+        params: {
+          channel: LIVE, chat: 'ahp-chat:/forked', source: { kind: 'fork', chat: PEER, turnId: 't1' },
+          workingDirectories: [`file://${DIR}`, `file://${EXTRA}`],
+        },
+      });
+      await settle(20);
+      expect(starts.slice(before).map((one) => one.additional)).toEqual([[EXTRA, MORE]]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('moves a chat into another session, with its turns and its own folders', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {

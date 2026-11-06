@@ -1173,25 +1173,28 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const chatUri = String(params.chat ?? '');
       const held = sessions.get(uri);
       /*
-       * A session asleep in the catalogue, woken for the chat and the call
-       * made again on the session that is live, as every other action on a
-       * sleeping session is. A fork needs it live: the point it is cut at is
-       * the source chat's to name. Held from before the wake until the chat
-       * is made, so the sweep cannot let it go in between.
+       * A session asleep whose state this host still holds, woken for the
+       * chat and the call made again on the session that is live, as every
+       * other action on a sleeping session is. A fork needs it live: the
+       * point it is cut at is the source chat's to name. Held from before the
+       * wake until the chat is made, so the sweep cannot let it go in between.
+       * A session with no state held here is refused as VS Code's host
+       * refuses one it has no state for.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2260-L2264
        */
-      if (!held && owners.has(uri)) {
+      if (!held && owners.has(uri) && ctx.stateOf(uri) !== undefined) {
         if (waitingFor(idOf(uri)) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
         const release = hold(uri);
         try {
           await wake(uri, undefined, connection);
           if (!sessions.has(uri))
-            throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
+            throw new RpcError(AhpErrorCodes.SessionNotFound, `Session not found: ${uri}`);
           return await methods.createChat(params);
         }
         finally { release(); }
       }
       if (!held)
-        throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${uri}`);
+        throw new RpcError(AhpErrorCodes.SessionNotFound, `Session not found: ${uri}`);
       /*
        * The default chat is made with its session, so asking for it again with
        * no first message makes nothing and is answered `null`, as the
@@ -1358,9 +1361,11 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * set: a chat cannot reach anywhere its session cannot, and one that
        * named somewhere else would be asking the host to widen a session
        * through a chat. The first entry is the process root and is the
-       * session's, so what a chat chooses among is the peers.
+       * session's, so what a chat chooses among is the peers. A fork is made
+       * from its source alone, and takes none, as the reference host makes one.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2302-L2310
        */
-      const asked = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
+      const asked = (origin?.['kind'] !== 'fork' && Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
         .filter((one): one is string => typeof one === 'string')
         .map((one) => localPath(one));
       const own = [held.workingDirectory, ...(held.additional ?? [])].filter((one) => one !== undefined);

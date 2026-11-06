@@ -401,6 +401,23 @@ it('replays to a client back from a drop onto what it holds, its session let go 
   expect(answer).toMatchObject({ type: 'replay', missing: [] });
 });
 
+it('refuses a chat on a session whose state it let go, in VS Code\'s words', async () => {
+  /*
+   * A session the residency let go has no state here, and VS Code's host
+   * refuses a chat on a session it has no state for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2260-L2264
+   */
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  await one.leave();
+  await open('two');
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+  await expect(client.handle({ method: 'createChat', params: { channel: one.channel, chat: 'ahp-chat:/another' } }))
+    .rejects.toMatchObject({ code: -32001, message: `Session not found: ${one.channel}` });
+});
+
 it('subscribes a client at initialize to a session whose state it does not hold with no snapshot, owing it the baseline its reconnect is answered with', async () => {
   /*
    * A state channel with nothing held for it is subscribed at initialize
