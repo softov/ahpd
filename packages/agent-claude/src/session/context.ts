@@ -220,8 +220,26 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   failed: string | undefined;
   /**
-   * The CLI a stop closed, that died or ended its stream without a result, or
-   * that a CLI meant to replace it did not start beside, while the next send
+   * Whether the last turn was stopped here and its result has not come yet.
+   *
+   * An interrupt ends with a result of its own, `error_during_execution` with
+   * `is_error`, after the stop has already ended the turn as cancelled, and it
+   * says the turn was stopped, which is no failure of the session.
+   */
+  interrupted: boolean;
+  /**
+   * The calls a stop answered itself and the CLI has not reported yet, while
+   * the stop's interrupt waits for them.
+   *
+   * The CLI keeps an answer only once it has recorded the call's result, and
+   * an interrupt that reaches it before that has it write its own text for
+   * the call instead: "The user doesn't want to proceed with this tool use".
+   * Nothing while no stop is waiting.
+   */
+  stopAnswers: Set<string> | undefined;
+  /**
+   * The CLI that died or ended its stream without a result, or that a CLI
+   * meant to replace it did not start beside, while the next send
    * has not yet started one that resumes the conversation, as the reference
    * marks its pipeline for a rebind. Its reader ends without failing the session.
    * Nothing while the CLI answering is the one reading.

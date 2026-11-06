@@ -287,7 +287,7 @@ async function liveStop() {
   const live = await opened();
   const [first, rest] = splitAfter(fixture('claude-cancelled-steer.jsonl'), isDelta);
   const [queued, afterStop] = splitAfter(rest, (frame) => frame.type === 'command_lifecycle' && frame.command_uuid === SURVIVOR);
-  const [, third] = splitAfter(afterStop, (frame) => frame.type === 'result'
+  const [answered, third] = splitAfter(afterStop, (frame) => frame.type === 'result'
     && (frame.user_message_uuids as string[]).includes(SURVIVOR));
   live.session.sendMessage(STOPPED, COUNT_TEXT);
   await settle();
@@ -300,11 +300,14 @@ async function liveStop() {
   await settle();
   live.session.abort();
   await settle();
+  // The CLI the stop kept runs the steering message it held, as the capture's did.
+  sdk.push(...renamed(answered, SURVIVOR, steered));
+  await settle();
   live.session.sendMessage(GAMMA, GAMMA_TEXT);
   await settle();
   sdk.push(...renamed(third, SURVIVOR, steered));
   await settle();
-  return { ...live, steered, conversation: String((first[0] as Bag).session_id) };
+  return { ...live, steered };
 }
 
 /** What the stop capture's turn had said when it was stopped: the count up to 25. */
@@ -403,18 +406,16 @@ it('ends the turn at its one result when the CLI folds the steering message into
 });
 
 /*
- * A stop closes the CLI, as the reference stop aborts its query: the steering
- * message the CLI held goes with it and no turn opens for it, and the next turn
- * goes to a CLI that resumes the conversation.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L415-L421
+ * A stop interrupts the turn through the SDK's own `interrupt()` and keeps the
+ * CLI: no turn opens for the steering message the CLI held, and the next turn
+ * goes to the same CLI once it has answered what it held.
+ * https://code.claude.com/docs/en/agent-sdk/typescript#query-object
  */
-it('opens no turn for steering after a stop, and sends the next turn to a CLI that resumes the conversation', async () => {
-  const { chat, before, conversation } = await liveStop();
+it('opens no turn for steering after a stop, and sends the next turn to the CLI it kept', async () => {
+  const { chat, before } = await liveStop();
 
   expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual([STOPPED, GAMMA]);
-  expect(sdk.started).toHaveLength(2);
-  expect(sdk.started[1]).toMatchObject({ resume: conversation });
+  expect(sdk.started).toHaveLength(1);
   const state = replayed(before, chat);
   expect(state.activeTurn).toBeUndefined();
   expect(history(state.turns as Bag[])).toEqual([

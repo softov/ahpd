@@ -76,6 +76,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
     resumedFrom: undefined,
     failed: undefined as string | undefined,
     rebind: undefined as unknown,
+    interrupted: false,
+    stopAnswers: undefined as Set<string> | undefined,
     ran: undefined as string | undefined,
     streaming: undefined as string | undefined,
     pendingPromptDeferred: undefined as (() => void) | undefined,

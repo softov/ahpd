@@ -587,17 +587,26 @@ export function createTurns(ctx: SessionContext): Turns {
     },
 
     /*
-     * A stop, which closes the CLI, as the reference stop aborts its query:
-     * every prompt and steering message the CLI has not answered goes with it,
-     * the turns handed behind the one running are sent to nobody, and the next
-     * send starts a CLI that resumes the conversation. The turn ends cancelled
-     * in this session's record and in what it says, which the host, having
-     * said the stop already, keeps the turn's end by.
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+     * A stop, which interrupts the turn through the SDK's own `interrupt()`
+     * and keeps the CLI and its conversation: the turns handed behind the one
+     * running are sent to nobody, the steering the CLI has not read goes with
+     * the stop, the workers the stopped turn spawned end with it, and the
+     * background workers and tasks of earlier turns keep running. The turn
+     * ends cancelled in this session's record and in what it says, which the
+     * host, having said the stop already, keeps the turn's end by.
+     * https://code.claude.com/docs/en/agent-sdk/typescript#query-object
      */
     abort: () => {
       stops += 1;
       handed.length = 0;
+      // Every call still open in the turn, before any of them is answered.
+      const open = ((ctx.active?.responseParts ?? []) as Bag[])
+        .filter((part) => part.kind === 'toolCall')
+        .map((part) => bag(part.toolCall))
+        .filter((call) => call.status !== 'completed' && call.status !== 'cancelled')
+        .map((call) => str(call.toolCallId))
+        .filter((id): id is string => id !== undefined);
+      const answered = new Set<string>();
       // A turn blocked on a person is stopped by answering no, not by leaving
       // a promise nobody will settle. All of them, not the last one. Their
       // entries follow the chat's state: the host said the stop that ended the
@@ -605,6 +614,7 @@ export function createTurns(ctx: SessionContext): Turns {
       for (const one of [...ctx.pending.values()]) {
         ctx.pending.delete(one.id);
         one.settle({ behavior: 'deny', message: 'The turn was stopped' });
+        answered.add(one.id);
       }
       // And the previews those questions were carrying. A call that will never
       // run leaves no file to show, so the text the host was holding goes with
@@ -612,36 +622,46 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.settleEdits();
       // And the calls a client is running for us, for the same reason: a
       // promise settled by somebody else is one a stopped turn still waits on.
+      for (const id of open) if (ctx.calls.owner(id) !== undefined) answered.add(id);
       ctx.releaseCalls('The turn was stopped');
       /*
-       * And every worker and task the CLI runs, foreground or background,
-       * since they go with the CLI the stop closes, as a background task ends
-       * with the reference's abort. A worker whose chat was never announced
-       * has nothing to end, and what it held goes with the CLI.
+       * The interrupt, once the CLI has recorded every answer above.
+       *
+       * The CLI keeps an answer only once it has recorded the call's result,
+       * and an interrupt that reaches it first has it write its own text for
+       * the call instead: "The user doesn't want to proceed with this tool use
+       * ... STOP what you are doing and wait for the user to tell you how to
+       * proceed". The model then takes a stop for a person refusing the call.
+       * So the reader sends the interrupt once the CLI reports those results.
+       * A call the CLI runs itself is stopped only by the interrupt, so with
+       * one open the interrupt goes now. A session with no CLI yet has nothing
+       * to interrupt, and the stop keeps its prompt from being sent.
        */
+      const running = ctx.query;
+      if (running !== undefined && ctx.active !== undefined) {
+        if (answered.size === 0 || open.some((id) => !answered.has(id))) void running.interrupt().catch(() => {});
+        else ctx.stopAnswers = answered;
+        ctx.interrupted = true;
+      }
+      /*
+       * And the workers that turn spawned, foreground or background.
+       *
+       * A worker's turn is a turn of its own, and a main turn stopped halfway
+       * leaves the workers it spawned with nothing left to answer them. A
+       * background worker spawned by an earlier turn is not this turn's, keeps
+       * running and ends on its own `task_notification`. A worker whose chat
+       * was never announced has nothing to end, and one whose spawn was never
+       * seen has no turn on record and ends with this one.
+       */
+      const stopping = str(ctx.active?.id);
       for (const scope of [...ctx.scopes.values()]) {
         if (scope.waiting !== undefined) ctx.scopes.delete(scope.parent);
-        else if (scope.parent !== '' && scope.chat !== undefined) ctx.endSubagent(scope.parent, 'cancelled');
-      }
-      ctx.noteBackgroundTasks({ tasks: [] });
-      // The files the turn's edit calls began changing, as the stop leaves them.
-      ctx.editsStopped();
-      /*
-       * A session with no CLI yet has none to close, as VS Code's abort of a
-       * chat it has not materialized reaches no SDK, and a CLI still starting
-       * is disposed of once it is up.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2470-L2473
-       */
-      ctx.abandonStart();
-      const was = ctx.query;
-      if (was !== undefined) {
-        ctx.rebind = was;
-        try { was.close(); }
-        catch { /* A CLI already closing is stopped all the same. */ }
+        else if (scope.parent !== '' && scope.chat !== undefined) {
+          const made = ctx.spawning.get(scope.parent)?.turn;
+          if (made === undefined || made === stopping) ctx.endSubagent(scope.parent, 'cancelled');
+        }
       }
       ctx.toYield.length = 0;
-      ctx.yielded.clear();
-      ctx.parentSdkUuid = undefined;
       ctx.steering = undefined;
       ctx.preparingTurn = undefined;
       const turn = ctx.active;

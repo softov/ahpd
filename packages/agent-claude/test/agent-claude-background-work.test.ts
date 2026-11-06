@@ -465,6 +465,10 @@ it('gives a turn the instructions the host asked for, and nothing once it ends',
   expect(await submitted()).toEqual([{}]);
   await session.abort();
   await settle();
+  // The interrupted CLI ends the stopped turn with a result of its own, as the
+  // real one does, and the next prompt goes out behind it.
+  sdk.push({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: [], duration_ms: 1 });
+  await settle();
 
   let asked = 0;
   session.sendMessage('t-told', 'and this', undefined, undefined, {

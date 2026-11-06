@@ -475,12 +475,12 @@ it('ends a cancelled turn\'s worker once, and a late frame does not reopen it', 
 });
 
 /*
- * A stop closes the CLI, as the reference stop aborts its query, and a
- * background worker an earlier turn spawned runs in that CLI, so it ends with
- * the stop; what the closed CLI says after is read by nobody.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
+ * A stop interrupts the turn and keeps the CLI, so a background worker an
+ * earlier turn spawned is not the stopped turn's: it keeps running in that CLI
+ * and ends on its own notification.
+ * https://code.claude.com/docs/en/agent-sdk/typescript#query-object
  */
-it('ends a background worker from an earlier turn when a later turn is stopped, with the CLI that runs it', async () => {
+it('leaves a background worker from an earlier turn running when a later turn is stopped', async () => {
   const lines = fixture('claude-subagent-background.jsonl');
   // Through the lead turn's result and the worker's first frame after it, so
   // the worker is open when the next turn begins.
@@ -491,10 +491,10 @@ it('ends a background worker from an earlier turn when a later turn is stopped, 
   await settle();
   session.abort();
   await settle();
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  expect(workers.get(call)?.ended ?? []).toEqual([]);
   sdk.push(...lines.slice(7));
   await settle();
-  expect(workers.get(call)?.ended).toEqual([{ state: 'cancelled' }]);
+  expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
 });
 
 it('ends a foreground worker on its notification, and its result ends nothing more', async () => {

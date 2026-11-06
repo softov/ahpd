@@ -23,6 +23,11 @@ export interface Spawning {
   description?: string;
   prompt?: string;
   parent: string;
+  /**
+   * The lead turn the call was made in, which is the turn whose stop ends the
+   * worker. For a nested call, the turn its spawning worker was made in.
+   */
+  turn?: string;
   /** The worker chat's URI, once the host has opened it. */
   chat?: string;
   /** Whether the call's own result has been emitted. */
@@ -302,6 +307,7 @@ export function createWorkers(ctx: SessionContext): Workers {
     const kind = was?.subagentType ?? str(given.subagent_type);
     const about = was?.description ?? str(given.description);
     const prompt = was?.prompt ?? str(given.prompt);
+    const made = was?.turn ?? (scope === mainScope ? str(ctx.active?.id) : spawning.get(scope.parent)?.turn);
     spawning.set(id, {
       ...was,
       ...(kind !== undefined ? { subagentType: kind } : {}),
@@ -309,6 +315,7 @@ export function createWorkers(ctx: SessionContext): Workers {
       ...(prompt !== undefined ? { prompt } : {}),
       parent: was?.parent ?? scope.parent,
       foreground: was?.foreground ?? true,
+      ...(made !== undefined ? { turn: made } : {}),
     });
     // A worker that spoke before its spawn was recorded: its chat opens now,
     // and what it held is delivered to it.

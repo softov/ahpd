@@ -59,8 +59,6 @@ export interface Query {
    * drops what came after it, as a rewind drops it.
    */
   startQuery: (agent: string | undefined, first: boolean, cut?: string) => Promise<void>;
-  /** Take the session off a CLI still starting, which a stop leaves nobody to answer. */
-  abandonStart: () => void;
   /** The backend's id for the *last* thing in each turn, by this host's turn id. */
   ends: Map<string, string>;
   /** Ask the CLI for a model, and say why it would not take it if it will not. */
@@ -643,8 +641,8 @@ export function createQuery(ctx: SessionContext): Query {
    * `startup`, which spawns the CLI and waits for its handshake under the
    * SDK's own bound: a CLI that does not answer within it rejects the start in
    * the SDK's words, which fail the turn that asked, and the next send starts
-   * one again. A start a stop or a close abandoned while it ran is disposed of
-   * once it is up, as VS Code disposes of a startup its abort overtook.
+   * one again. A start the session's close overtook while it ran is disposed
+   * of once it is up, as VS Code disposes of a startup its abort overtook.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L676-L681
    *
    * It is bound as the query this session talks to, as the reference binds
@@ -675,18 +673,6 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.query = handle;
     void consume(handle);
     void ctx.describe().catch(() => {});
-  };
-
-  /**
-   * Take the session off a CLI still starting, which a stop or a close leaves
-   * nobody to answer: the start is disposed of once it is up, and the reader of
-   * the CLI before it ends.
-   */
-  const abandonStart = (): void => {
-    bound += 1;
-    const replaced = ctx.pendingPromptDeferred;
-    ctx.pendingPromptDeferred = undefined;
-    replaced?.();
   };
 
   /**
@@ -776,13 +762,32 @@ export function createQuery(ctx: SessionContext): Query {
   const consume = async (mine: ReturnType<typeof query>): Promise<void> => {
     try {
       for await (const raw of mine) {
-        // A CLI a stop closed is read no further, as the reference's reader ends once its query is aborted.
+        // A CLI put away for the next send to start again is read no further,
+        // as the reference's reader ends once its query is aborted.
         if (ctx.rebind === mine) break;
         const message = bag(raw as unknown);
         const type = str(message.type);
         // Every message carries it, so this needs no particular one to arrive.
         const said = str(message.session_id);
         if (said) ctx.sdkSessionId = said;
+        /*
+         * A stop waiting to interrupt the CLI until it has recorded the
+         * answers the stop gave. Each result reported for one of them is one
+         * fewer to wait for; the CLI starting on anything else has moved past
+         * them, and a result ends the turn with no interrupt owed.
+         */
+        if (ctx.stopAnswers !== undefined) {
+          if (type === 'user') {
+            for (const block of list(bag(message.message).content) as Bag[]) {
+              if (block.type === 'tool_result') ctx.stopAnswers.delete(str(block.tool_use_id) ?? '');
+            }
+          }
+          if (type === 'result') ctx.stopAnswers = undefined;
+          else if (ctx.stopAnswers.size === 0 || type === 'assistant' || type === 'stream_event') {
+            ctx.stopAnswers = undefined;
+            void mine.interrupt().catch(() => {});
+          }
+        }
 
         // The message stream's own init. Capabilities come from the control
         // protocol instead (see `describe`), because those are needed before
@@ -1061,6 +1066,7 @@ export function createQuery(ctx: SessionContext): Query {
            * handed behind them is begun once no yielded entry is in front of it.
            */
           if (named.length > 0 && owners.every((owner) => owner !== undefined && owner !== running)) {
+            ctx.interrupted = false;
             ctx.sendNext();
             continue;
           }
@@ -1157,9 +1163,13 @@ export function createQuery(ctx: SessionContext): Query {
               ctx.emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: attempt });
             }
           }
+          // The result an interrupt ends with, for a turn the stop already
+          // ended: it says the turn was stopped, which is no failure.
+          const stopped = turn === undefined && ctx.interrupted;
+          ctx.interrupted = false;
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
-          if (message.is_error === true) ctx.failed = wrong ?? 'The turn failed';
+          if (message.is_error === true && !stopped) ctx.failed = wrong ?? 'The turn failed';
           /*
            * The turn handed behind it, however this one ended, as the
            * reference agent runs each send after the one before it: a failed
@@ -1172,7 +1182,7 @@ export function createQuery(ctx: SessionContext): Query {
     } catch (error) {
       // A query this host put away is not a CLI that died: the one that
       // replaced it is already running the same conversation, a turn moving
-      // to another login is about to start it, or a stop or a death closed it
+      // to another login is about to start it, or a death closed it
       // for the next send to start again, a close keeping the reason it was
       // put away for.
       if (ctx.disposed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
@@ -1240,5 +1250,5 @@ export function createQuery(ctx: SessionContext): Query {
     return undefined;
   };
 
-  return { toYield, startQuery, abandonStart, ends, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
+  return { toYield, startQuery, ends, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
 }

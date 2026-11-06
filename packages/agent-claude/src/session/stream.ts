@@ -41,8 +41,6 @@ export interface Stream {
   contributorOf: (toolName: string) => Contributor | undefined;
   /** The name a call's row is drawn under. */
   displayNameOf: (toolName: string) => string;
-  /** Every file an edit call began changing, recorded as it is now: a stop closes the CLI that would have ended the call. */
-  editsStopped: () => void;
 }
 
 /** A call's contributor, in the protocol's two kinds. */
@@ -725,9 +723,5 @@ export function createStream(ctx: SessionContext): Stream {
     }
   };
 
-  const editsStopped = (): void => {
-    for (const id of [...editing.keys()]) edited(id);
-  };
-
-  return { streamed, assistant, results, rounds, pastLines, contributorOf, displayNameOf, editsStopped };
+  return { streamed, assistant, results, rounds, pastLines, contributorOf, displayNameOf };
 }
