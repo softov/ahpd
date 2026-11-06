@@ -508,11 +508,9 @@ export function createTooling(ctx: HostContext): Tooling {
       && (sessionToolsFor(uri, provider) || !SESSION_TOOL_NAMES.includes(one.definition.name)));
   };
   /**
-   * The title strategy every session runs under, which is the deferred one.
-   *
-   * No root config key selects another strategy, as in VS Code's agent host.
-   * A session this host is only browsing answers the same, where VS Code
-   * answers `utility` for a session with no persisted strategy.
+   * The title strategy every session runs under, which is the deferred one: a
+   * chat is named from its first message, and the rename tool is offered for
+   * an explicit rename. A session this host is only browsing answers the same.
    */
   const strategyOf = (_uri: string): TitleStrategy => 'deferred';
   /**

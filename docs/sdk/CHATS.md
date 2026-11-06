@@ -78,7 +78,7 @@ The backend compacts its own context when the conversation outgrows the model's 
 
 `chat/truncated` is the other thing, and it is a rewind rather than a compaction. It drops the turns after a named one so an edited message can be resent, and the backend is started again resumed at the kept turn's last chain entry, so the agent does not go on answering the message that was edited away. The Claude backend names where each turn ended when it reads a chat back from its transcript, so a Claude chat resumed after a restart can be rewound or forked at any of its turns. The truncation is said first, and a backend that cannot cut keeps its history: a turn whose backend names no rewind point for it, which is a turn read back by a backend that names points only for the turns it watches run, drops from every client and stays in the backend. The action's `turnId` left off means "clear everything", which as a rewind is a cut before the first prompt that names no entry at all, so the chat starts over instead: the backend stops, its conversation is deleted through the backend's `delete`, and a new one starts for the same chat with nothing to resume. A backend with no `delete` keeps the conversation; a delete that fails is logged, and the chat comes back on the conversation it had. A truncation at a `!` command's turn rewinds the backend at the turn before it and keeps the command's turn; one with no turn before it starts the chat over the same way and keeps the command turns up to the one named. The command turns a truncation drops go with it.
 
-A client may rename a chat, and this host names one after its first message, because an untitled row is one nobody can find again. `deferredTitleGeneration` in root config is what turns that off, and renaming a chat then happens only when somebody asks - [HOST.md](HOST.md#root-config).
+A client may rename a chat, and this host names one after its first message, because an untitled row is one nobody can find again. Every session runs under the deferred title strategy, so the agent renames a chat when somebody asks it to - [TOOLS.md](TOOLS.md).
 
 ## Attachments
 
@@ -133,5 +133,5 @@ Reading a chat is `chat:turns`; subscribing to one is the same operation. Writin
 | --- | --- |
 | [SESSIONS.md](SESSIONS.md) | The session a chat lives in |
 | [AHP.md](AHP.md#chat--35-of-35) | The chat channel's actions, turn by turn |
-| [HOST.md](HOST.md#root-config) | `deferredTitleGeneration` and the other root config keys |
+| [HOST.md](HOST.md#root-config) | The root config keys |
 | [TOOLS.md](TOOLS.md) | What a tool call is |

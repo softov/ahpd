@@ -115,13 +115,11 @@ Both are daemon keys and apply while the daemon runs: a root config push to eith
 
 ## The wording a session is given
 
-Four things shape a tool per session, and none of them changes whether a tool that does not ask to be withheld is offered.
+Three things shape a tool per session, and none of them changes whether a tool that does not ask to be withheld is offered.
 
 Every tool may carry an `instruction`, which a backend that can add to its system prompt adds while the tool is offered. A description says what a tool does; an instruction says when a tool nothing asks for is worth calling. The artifact tools carry the reference host's.
 
-`compact` is the alternate wording a client's key selects: `artifactToolsCompactPrompts` replaces an artifact tool's `definition` and `instruction` and leaves the name, the position in the list and the count alone.
-
-`forSession` is the shape a session's title strategy asks for, and the strategy comes from `deferredTitleGeneration`: `activeAgent`, the default, is the agent naming its own chats, and `deferred` is this host naming them, with `rename_chat` then offered without its `automatic` property, because the case that property covers is exactly the one this host handles. The type carries a third, `utility`, under which a tool is withheld from the list entirely; nothing on this host selects it, so it is a shape a tool has to answer for rather than one a session runs under. A session resolves its strategy when it opens, so a root change reaches the sessions opened after it and not one mid-turn.
+`forSession` is the shape a session's title strategy asks for. Every session runs under `deferred`: this host names a chat after its first message, and `rename_chat` is offered without its `automatic` property, because the case that property covers is exactly the one this host handles. The type carries two more shapes a tool answers for, `activeAgent`, the agent naming its own chats, and `utility`, under which a tool is withheld from the list entirely.
 
 `deferLoading` is a host-side hint and never on the wire: it says the harness may hide this tool behind tool search. The artifact tools set it the way the reference does - `add_artifact_or_reference`, which the instruction names, is never deferred, and removing and listing one are, because the model reaches them through the discovery that instruction points at. A tool that says nothing leaves the harness's own default in force.
 
@@ -144,11 +142,9 @@ A backend that cannot - an ACP agent, which asks its client for tools - is hande
 | `sessionToolsProviders` | a list of provider ids | none | Offer the session tools to the sessions of these providers alone. Empty offers them to every provider. Applies live, and is worked out per session |
 | `mcpServers` | an object of server entries | none | The MCP servers every session is offered. Applies live, and is read again for each session opened |
 | `clientToolTimeoutMs` | integer, milliseconds | `600000` (ten minutes) | How long a tool call a client runs may wait for that client. `0` waits for ever |
-| `artifactToolsCompactPrompts` | `true` or `false` | `false` | Use the short artifact instruction and tool description. Root config, one setting for the host |
-| `deferredTitleGeneration` | `true` or `false` | `false` | Give a session a deferred title strategy, and reshape `rename_chat` with it. Root config |
 | `plugins.<name>.hostTools` | `true` or `false` | `true` | Whether a plugin's sessions are offered this host's own tools as one MCP server |
 
-The first four are the daemon's keys and apply while it runs; a root config push of any needs `config:write`. `clientToolTimeoutMs` is a daemon key and needs `ahpd restart`. The two root config keys are one setting for the whole host rather than a connection's own, so both need `config:write` - decision [The root config declares every key VS Code pushes, as the reference declares it, and refuses a key nobody declares](../../.project/decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md). Every key with its values and its default is [HOST.md](HOST.md#configuration-keys) and [HOST.md](HOST.md#root-config).
+The first four are the daemon's keys and apply while it runs; a root config push of any needs `config:write`. `clientToolTimeoutMs` is a daemon key and needs `ahpd restart`. Every key with its values and its default is [HOST.md](HOST.md#configuration-keys) and [HOST.md](HOST.md#root-config).
 
 ## Commands
 
