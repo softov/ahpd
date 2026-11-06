@@ -320,7 +320,7 @@ describe('a first-party plugin', () => {
     ['agent-acp', ['hostTools', 'toolsChanged']],
     ['agent-claude', [
       'paths', 'computerExecutable', 'computerCli', 'computerCliFallback', 'computerConfigDir',
-      'handshakeTimeoutMs',
+      'handshakeTimeoutMs', 'hostTools',
     ]],
     ['agent-cofold', [
       'model', 'baseUrl', 'instructions', 'computerConfigDir', 'store', 'memory', 'tools', 'strictTools', 'apiKey',

@@ -135,6 +135,10 @@
           "type": "integer",
           "minimum": 1,
           "description": "Maximum time in milliseconds to wait for the Claude CLI handshake before treating startup as failed. Defaults to 120000 (2 minutes). Increase for slower computers."
+        },
+        "hostTools": {
+          "type": "boolean",
+          "description": "Offer the host's tools to each session. On by default. Each agent can override it."
         }
       }
     }

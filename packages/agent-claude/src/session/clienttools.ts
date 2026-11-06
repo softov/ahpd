@@ -538,6 +538,20 @@ export function createClientTools(ctx: SessionContext): ClientTools {
   };
 
   /**
+   * The tools this session holds, out of the ones the host handed it.
+   *
+   * `takes` drops `ask_user`; a session whose `hostTools` is off drops the
+   * host's own as well, each tool with no owner, so `declaring` has no `host`
+   * server to carry while a client's tools still reach the CLI. `offering` is
+   * what `hostRunsShell` and `hostHoldsTasks` read, so the host also stops
+   * standing in for Claude's `Bash` and its task tools.
+   */
+  const taken = (tools: BoundTool[]): BoundTool[] => {
+    const offered = takes(tools);
+    return ctx.values?.['hostTools'] === false ? offered.filter((one) => one.owner !== undefined) : offered;
+  };
+
+  /**
    * The declared servers with the two in-process ones carrying `tools`: a
    * client's on the clients' server, the host's own on the host's, and either
    * left out when it carries none.
@@ -557,7 +571,7 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     const handed = ctx.toolDiff;
     if (handed === undefined) return;
     ctx.toolDiff = undefined;
-    ctx.offering = takes(handed);
+    ctx.offering = taken(handed);
     ctx.mcpServers = declaring(ctx.offering);
   };
 
@@ -565,7 +579,7 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     const handed = ctx.toolDiff;
     if (handed === undefined) return;
     ctx.toolDiff = undefined;
-    const next = takes(handed);
+    const next = taken(handed);
     if (same(ctx.offering, next)) return;
     // Without the in-process servers: the declaration the SDK disconnects the old ones on.
     const removed = declaring([]);
