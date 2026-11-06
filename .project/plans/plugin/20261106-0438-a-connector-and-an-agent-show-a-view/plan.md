@@ -138,6 +138,8 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | A close, a removal or an unload removes a record's views, and an old handle writes nothing | (defaulted: as #248 built it) | 02 |
 | A record's view text is sent as the plugin wrote it; a plugin's view stays in the reader's locale | (defaulted: no adapter or engine row is translated today; see `deferred.md`) | - |
 | The plan fields of the connector health go; plan usage travels in the view | (defaulted: one copy of a fact) | 04 |
+| A `claude-login` connector's view shows the account's email masked, as `so****@brbyte.com`; an agent's view does not show it, and `ahpd.account` keeps no email | Softov, 2026-11-06, chose "Masked, e.g. so****@brbyte.com" | 04 |
+| The plan line shows nothing when the account names no plan type; the provider is not a plan, and `firstParty` is not shown | Softov, 2026-11-06, chose "Nothing in the plan line" | 04 |
 
 ## Proposed architecture
 

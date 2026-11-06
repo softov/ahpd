@@ -5,7 +5,7 @@ import { expect, it, vi } from 'vitest';
 import type { Bag, ConnectorAccount, QuotaSnapshots } from '@ahpd/sdk';
 import type { Login, PlanNote } from '../src/logins.js';
 import type { SessionContext } from '../src/session/context.js';
-import { limitsOf, noteAccount, noteLimit, quotaSnapshotsOf, refreshLimits } from '../src/session/limits.js';
+import { accountOf, limitsOf, maskedEmail, noteAccount, noteLimit, quotaSnapshotsOf, refreshLimits } from '../src/session/limits.js';
 
 /*
  * A login says its plan limits.
@@ -239,6 +239,25 @@ it('keeps no map for a setup token, whose account names no plan type', async () 
   await refreshLimits(ctx, 1_000);
   expect(limitsOf(ctx)).toBeUndefined();
   expect(fake.noted).toEqual([{ id: 'limits-setup', account: { apiProvider: 'firstParty' } }]);
+});
+
+it('sends the email masked to the login, and keeps it out of the account a turn says', () => {
+  const login: Login = { id: 'limits-email', token: 'token-email' };
+  const fake = fakeOf(login, {});
+  const ctx = ctxOf(fake);
+  noteAccount(ctx, { tokenSource: 'CLAUDE_CODE_OAUTH_TOKEN', apiProvider: 'firstParty', email: 'softov@brbyte.com', organization: 'BrByte' });
+  expect(fake.noted).toEqual([{ id: 'limits-email', account: { apiProvider: 'firstParty' }, email: 'so****@brbyte.com' }]);
+  expect(accountOf(ctx)).toEqual({ apiProvider: 'firstParty' });
+});
+
+it('masks all of an email\'s name but its first letters, and answers nothing for what is not an email', () => {
+  expect(maskedEmail('softov@brbyte.com')).toBe('so****@brbyte.com');
+  expect(maskedEmail('lfs@softov.dev')).toBe('lf****@softov.dev');
+  expect(maskedEmail('ab@x.io')).toBe('a****@x.io');
+  expect(maskedEmail('a.very.long.name@x.io')).toBe('a.**************@x.io');
+  expect(maskedEmail('not an email')).toBeUndefined();
+  expect(maskedEmail('@x.io')).toBeUndefined();
+  expect(maskedEmail(undefined)).toBeUndefined();
 });
 
 it('keeps the events\' windows when the usage request has no limits to answer', async () => {

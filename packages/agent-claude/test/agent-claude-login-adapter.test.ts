@@ -206,7 +206,18 @@ describe('an open login', () => {
     logins.noted('first', 'sk-ant-oat01-old', { quotaSnapshots: { weekly: { remainingPercentage: 10 } } });
     expect(shown).toEqual([]);
 
+    // The provider is not a plan, so an account that names no plan type shows none.
     logins.noted('first', 'sk-ant-oat01-first', { quotaSnapshots: {}, account: { apiProvider: 'bedrock' } });
-    expect(shown).toEqual([{ plan: 'bedrock', windows: [] }]);
+    expect(shown).toEqual([{ windows: [] }]);
+  });
+
+  it('sets the masked email beside the plan', () => {
+    const logins = new OpenLogins();
+    const shown: Record<string, unknown>[] = [];
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    adapterOf(undefined, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+
+    logins.noted('first', 'sk-ant-oat01-first', { account: { subscriptionType: 'max' }, email: 'so****@brbyte.com' });
+    expect(shown).toEqual([{ email: 'so****@brbyte.com', plan: 'max', windows: [] }]);
   });
 });

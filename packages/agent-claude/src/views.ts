@@ -26,16 +26,27 @@ export type WindowData = {
   reset?: string;
 };
 
-/** What a login draws: the plan its account is on, and one row for each window. */
-export type LoginData = {
-  /** The plan type, or the provider when the account named no plan type. */
+/** What a login's plan draws: the plan type, and one row for each window. */
+export type PlanData = {
+  /** The plan type the account named. Absent when it named none: the provider is not a plan. */
   plan?: string;
   /** One row for each window the account reported. */
   windows: WindowData[];
 };
 
-/** One login of an agent, as the agent draws it. */
-export type AgentLoginData = LoginData & {
+/** What a login's connector draws: its plan, and the account's email, masked. */
+export type LoginData = PlanData & {
+  /** The account's email, masked: `so****@brbyte.com`. */
+  email?: string;
+};
+
+/**
+ * One login of an agent, as the agent draws it.
+ *
+ * Its plan and its name, and no email: the email is on the login's own view,
+ * which its connector's readers see.
+ */
+export type AgentLoginData = PlanData & {
   /** The login's name, which is its connector's id. */
   name: string;
 };
@@ -61,22 +72,24 @@ const windowsOf = (snapshots: QuotaSnapshots | undefined): WindowData[] =>
     ...(snapshot.resetDate === undefined ? {} : { reset: snapshot.resetDate }),
   }));
 
-/** The plan type a login's account named, or the provider when it named no plan. */
-const planOf = (said: PlanNote | undefined): string | undefined =>
-  said?.account?.subscriptionType ?? said?.account?.apiProvider;
-
-/** The data a login sends, from the last plan answer its account gave. */
-export const loginDataOf = (said: PlanNote | undefined): LoginData => {
-  const plan = planOf(said);
+/** The plan and the windows of a login, from the last plan answer its account gave. */
+const planDataOf = (said: PlanNote | undefined): PlanData => {
+  const plan = said?.account?.subscriptionType;
   return {
     ...(plan === undefined ? {} : { plan }),
     windows: windowsOf(said?.quotaSnapshots),
   };
 };
 
+/** The data a login's connector sends: its plan and its masked email. */
+export const loginDataOf = (said: PlanNote | undefined): LoginData => ({
+  ...(said?.email === undefined ? {} : { email: said.email }),
+  ...planDataOf(said),
+});
+
 /** The data an agent sends, from the logins its record names and their last answers. */
 export const agentDataOf = (logins: readonly { id: string; said?: PlanNote }[]): AgentData => ({
-  logins: logins.map((login) => ({ name: login.id, ...loginDataOf(login.said) })),
+  logins: logins.map((login) => ({ name: login.id, ...planDataOf(login.said) })),
 });
 
 /**
@@ -92,11 +105,12 @@ const windowRow = (prefix: string): PluginView['components'] => ({
   [`${prefix}Reset`]: { id: `${prefix}Reset`, component: 'Text', text: { path: 'reset' } },
 });
 
-/** A `claude-login` connector's view, with no data: the plan type, then one row for each window. */
+/** A `claude-login` connector's view, with no data: the masked email, the plan type, then one row for each window. */
 export const LOGIN_VIEW: PluginView = {
   root: 'login',
   components: {
-    login: { id: 'login', component: 'Column', children: ['plan', 'windows'] },
+    login: { id: 'login', component: 'Column', children: ['email', 'plan', 'windows'] },
+    email: { id: 'email', component: 'Text', text: { path: '/email' } },
     plan: { id: 'plan', component: 'Text', text: { path: '/plan' } },
     windows: { id: 'windows', component: 'List', children: { path: '/windows', componentId: 'window' } },
     ...windowRow('window'),

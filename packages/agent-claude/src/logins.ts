@@ -24,8 +24,10 @@ export type CallNote = Omit<CallOutcome, 'at'>;
 export interface PlanNote {
   /** The windows of its plan limits, or an empty map for an account with none. */
   quotaSnapshots?: QuotaSnapshots;
-  /** The plan type and the provider, and nothing else of the account. */
+  /** The plan type and the provider. */
   account?: ConnectorAccount;
+  /** The account's email, masked: `so****@brbyte.com`. The full email never leaves the host. */
+  email?: string;
 }
 
 /** The adapter whose connectors are Claude logins. */

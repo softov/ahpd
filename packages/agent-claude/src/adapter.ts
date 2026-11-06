@@ -94,7 +94,7 @@ export function loginAdapter(logins: OpenLogins, options: LoginAdapterOptions = 
       type: 'view',
       name: 'main',
       title: 'Plan usage',
-      description: 'The plan of the account this login signs in to, and what is left of each window.',
+      description: 'The account this login signs in to, its plan, and what is left of each window.',
     }],
     icons: [{ src: './icon.svg' }],
     open: (connector, view) => logins.opened(connector, view),

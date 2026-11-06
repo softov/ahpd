@@ -28,6 +28,8 @@ interface Plan {
   snapshots?: QuotaSnapshots | undefined;
   /** The plan type and the provider the account named. Absent until it answers. */
   account?: ConnectorAccount;
+  /** The account's email, masked by `maskedEmail`. Absent until it answers, or when it names none. */
+  email?: string;
   /** Whether the account's answer says it has no plan limits at all. */
   planless?: boolean;
   /** When the usage request last ran, or nought when only events have spoken. */
@@ -85,12 +87,14 @@ const windowsOf = (plan: Plan | undefined, planless: boolean | undefined): Quota
   planless === true && Object.keys(plan?.snapshots ?? {}).length === 0 ? {} : plan?.snapshots;
 
 /**
- * Keep the plan type and the provider of the account a session signs in to.
+ * Keep the plan type, the provider and the masked email of the account a
+ * session signs in to.
  *
- * `accountInfo()` also answers the email, the organization and where the
- * token came from. The two sources say whether the account has a plan, and
- * none of the four is kept, so none can leave the host. An answer with neither
- * kept field says nothing and changes nothing.
+ * `accountInfo()` also answers the organization and where the token came from.
+ * The two sources say whether the account has a plan, and none of the three is
+ * kept, so none can leave the host. The email is kept only masked, for the
+ * login's view, and never in `ahpd.account`. An answer with neither the plan
+ * type nor the provider says nothing and changes nothing.
  */
 export const noteAccount = (ctx: SessionContext, info: unknown): void => {
   const found = bag(info);
@@ -103,7 +107,30 @@ export const noteAccount = (ctx: SessionContext, info: unknown): void => {
   };
   const planless = planlessOf(found);
   const held = planOf(ctx);
-  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, account, planless, snapshots: windowsOf(held, planless) });
+  const email = maskedEmail(found.email);
+  publish(ctx, {
+    ...held,
+    askedAt: held?.askedAt ?? 0,
+    account,
+    ...(email === undefined ? {} : { email }),
+    planless,
+    snapshots: windowsOf(held, planless),
+  });
+};
+
+/**
+ * An email with all of its name but the first two letters as `*`, and its
+ * domain whole: `softov@brbyte.com` is `so****@brbyte.com`. A name of two
+ * letters or fewer keeps only its first. Anything that is not an email answers
+ * nothing, so nothing of it is shown.
+ */
+export const maskedEmail = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const at = value.lastIndexOf('@');
+  if (at <= 0 || at === value.length - 1) return undefined;
+  const name = value.slice(0, at);
+  const kept = name.length > 2 ? 2 : 1;
+  return `${name.slice(0, kept)}${'*'.repeat(Math.max(name.length - kept, 4))}${value.slice(at)}`;
 };
 
 /** A finite number, or nothing. A utilization of zero is a measurement. */
@@ -282,6 +309,7 @@ const publish = (ctx: SessionContext, plan: Plan): void => {
   const said: PlanNote = {
     ...(plan.snapshots === undefined ? {} : { quotaSnapshots: plan.snapshots }),
     ...(plan.account === undefined ? {} : { account: plan.account }),
+    ...(plan.email === undefined ? {} : { email: plan.email }),
   };
   const text = JSON.stringify(said);
   keep(ctx, { ...plan, sent: text });

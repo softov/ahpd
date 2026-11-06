@@ -131,6 +131,16 @@ it('sets a plan answer only on the agents that name the login', () => {
   expect(other.set).toEqual([]);
 });
 
+it('keeps the login\'s email off the agent\'s view', () => {
+  const logins = new OpenLogins();
+  logins.opened(connectorOf('work', 'token-work'));
+  const mine = viewOf();
+  logins.agentOpened(recordOf('mine', ['work']), mine.view);
+
+  logins.noted('work', 'token-work', { account: { subscriptionType: 'max' }, email: 'so****@brbyte.com' });
+  expect(mine.data()).toEqual({ logins: [{ name: 'work', plan: 'max', windows: [] }] });
+});
+
 it('reads a record\'s logins as they are now, not as they were when it opened', () => {
   const logins = new OpenLogins();
   logins.opened(connectorOf('work', 'token-work'));

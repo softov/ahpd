@@ -237,7 +237,7 @@ it('keeps no map for a plan the usage request cannot answer, and takes the event
   await session.close();
 });
 
-it('draws a login\'s plan with its limits, and nothing else of the account', async () => {
+it('draws a login\'s plan with its limits and its masked email, and nothing else of the account', async () => {
   sdk.reset();
   sdk.account = async () => maxAccount();
   sdk.usage = async () => usageAnswer();
@@ -255,6 +255,7 @@ it('draws a login\'s plan with its limits, and nothing else of the account', asy
   const windowsOf = (one: Bag | undefined): Bag[] => (one?.['windows'] as Bag[] | undefined) ?? [];
   await until(() => shown.some((one) => windowsOf(one).some((window) => window['name'] === 'Weekly')));
   expect(shown.at(-1)).toEqual({
+    email: 'so*****@example.com',
     plan: 'max',
     windows: [
       { name: 'Session', left: 60, reset: '2026-11-04T12:00:00.000Z' },
@@ -262,6 +263,7 @@ it('draws a login\'s plan with its limits, and nothing else of the account', asy
     ],
   });
   expect(JSON.stringify(shown)).not.toContain('someone@example.com');
+  expect(JSON.stringify(shown)).not.toContain('Example Org');
   await session.close();
 });
 

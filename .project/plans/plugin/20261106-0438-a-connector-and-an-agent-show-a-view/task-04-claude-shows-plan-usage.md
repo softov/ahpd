@@ -65,5 +65,9 @@ Verified: `pnpm exec vitest run packages/agent-claude/` passes 595 tests.
 
 Found: `agent-claude-limits.test.ts` and `agent-claude-session-usage.test.ts` changed, beside the task's *Files*, because their fake handle had `show`.
 
-Left: the checks by hand wait for Softov, because they need a daemon.
+After Softov's test on 2026-11-06, the login's view shows the account's email masked, and the plan line shows only a plan type.
+`maskedEmail` in `session/limits.ts` masks it, and the plan keeps it apart from `ahpd.account`.
+A setup token names no plan type, and its windows come from rate limit events, which may carry no utilization.
+
+Left: Softov checks the view again after this change, with a daemon.
 `OpenLogins` keeps a closed agent's entry, as `deferred.md` says.
