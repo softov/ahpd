@@ -125,7 +125,23 @@ it('leaves the output style to the flag settings, which the CLI takes live', () 
 });
 
 it('says what an option is when nothing named one', () => {
-  expect(optionDefaults()).toEqual({ thinking: 'adaptive', hostTasks: true, enableTasks: true, stopEnds: 'turn' });
+  expect(optionDefaults()).toEqual({ thinking: 'adaptive', hostTasks: true, enableTasks: true, stopEnds: 'turn', dontAsk: true });
+});
+
+/*
+ * The Approvals control offers the SDK's `dontAsk` beside VS Code's five, and
+ * a record whose `dontAsk` is off offers VS Code's five alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
+ */
+it('offers VS Code\'s five approval modes when the record turns dontAsk off', async () => {
+  const engine = await engineOf();
+  const modesOf = (held: Bag): unknown => ((engine.open(viewOf('claude', () => held)).schema() as Bag).properties as Bag)
+    .permissionMode as Bag;
+  expect((modesOf({}) as Bag).enum).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
+  expect(modesOf({ dontAsk: false })).toMatchObject({
+    enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'],
+    enumLabels: ['Ask Before Edits', 'Edit Automatically', 'Plan Mode', 'Auto Mode', 'Bypass Permissions'],
+  });
 });
 
 it('builds a session query from the declared values of its record', async () => {

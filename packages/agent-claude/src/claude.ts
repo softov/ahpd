@@ -275,6 +275,9 @@ export function claude(options: ClaudeOptions): Agent<Session> {
    * effort the model's own `configSchema`.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
    */
+  /** How many of the modes below are offered: six, or VS Code's five where the record's `dontAsk` is off. */
+  const offered = (): number => ((options.presetOf?.() ?? options.preset ?? {})['dontAsk'] === false ? 5 : 6);
+
   const schema = (): Bag => ({
     // A JSON Schema object, and it has to say so: `type` is required, and a
     // schema without it matches nothing a client validates.
@@ -285,7 +288,9 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * SDK's `dontAsk`, which denies what is not already allowed without
        * asking, so a session nobody watches can refuse rather than wait on a
        * person (decision claude-approvals-keeps-dont-ask, Softov 2026-09-29:
-       * "Move, but keep dontAsk").
+       * "Move, but keep dontAsk"). A record whose `dontAsk` is off offers VS
+       * Code's five alone.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
        *
        * The protocol's config schema is generic and a backend advertises what
        * it has - VS Code's own hosts advertise different properties for
@@ -303,7 +308,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
         type: 'string',
         title: 'Approvals',
         description: 'How Claude handles tool approvals.',
-        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'],
+        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'].slice(0, offered()),
         enumLabels: [
           'Ask Before Edits',
           'Edit Automatically',
@@ -311,7 +316,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
           'Auto Mode',
           'Bypass Permissions',
           "Don't Ask",
-        ],
+        ].slice(0, offered()),
         enumDescriptions: [
           'Claude asks before editing files.',
           'Claude edits files without asking, and asks before using other tools.',
@@ -319,7 +324,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
           'Claude decides whether to ask for each tool operation.',
           'Claude runs all tools without asking.',
           'Claude denies anything not already approved, without asking.',
-        ],
+        ].slice(0, offered()),
         default: 'default',
         sessionMutable: true,
         chatMutable: true,

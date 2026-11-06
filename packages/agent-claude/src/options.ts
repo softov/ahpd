@@ -141,6 +141,24 @@ export const enableTasks: Declaration = {
 };
 
 /**
+ * Whether the Approvals control offers the SDK's `dontAsk` beside VS Code's
+ * five modes.
+ *
+ * On by default, so a session nobody watches can refuse rather than wait on a
+ * person (decision claude-approvals-keeps-dont-ask: "`permissionMode` keeps
+ * its six values, `dontAsk` included"); off offers VS Code's five alone. Read
+ * by the schema and by the session's `setConfig`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
+ */
+export const dontAsk: Declaration = {
+  schema: {
+    type: 'boolean',
+    description: "Whether the Approvals control offers the SDK's dontAsk beside VS Code's five modes; off offers VS Code's five alone. On by default.",
+  },
+  default: true,
+};
+
+/**
  * What a stop ends.
  *
  * `turn`, the default, interrupts the turn through the SDK's `interrupt()`
@@ -275,7 +293,7 @@ export const extraArgs: Declaration = {
 };
 
 /** Every declared option, by the name a record gives it. */
-export const DECLARED: Record<string, Declaration> = { sandbox, thinking, hostTasks, enableTasks, stopEnds, outputStyle, env, logins, extraArgs };
+export const DECLARED: Record<string, Declaration> = { sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, outputStyle, env, logins, extraArgs };
 
 /** One model a record writes out: an id, and the name the picker draws. */
 const MODEL: Bag = {

@@ -169,9 +169,11 @@ export function createConfig(ctx: SessionContext): Config {
         ctx.config[key] = value;
         return true;
       }
-      // The schema's own property, whose six values are the CLI's.
+      // The schema's own property, whose values are the CLI's, `dontAsk` among
+      // them unless the record's `dontAsk` is off.
       const said = typeof value === 'string' ? value : '';
-      const modes = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'] as const;
+      const modes = (['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'] as const)
+        .slice(0, ctx.values['dontAsk'] === false ? 5 : 6);
       const found = modes.find((one) => one === said);
       if (!found) return `The harness has no permission mode called ${said}`;
       // The CLI running takes it now, and a session's first CLI starts on it.
