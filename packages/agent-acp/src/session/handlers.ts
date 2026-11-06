@@ -29,6 +29,7 @@ import type { Bag, BackgroundTask, BoundTool, OpenTerminal, Session } from '@ahp
 import { callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
 import type { PermissionAnswer } from '../types.js';
 import { TOOL_USE_ID } from './clientcalls.js';
+import { messageIdOf } from '../transcript.js';
 import { bag } from './common.js';
 import { HOST_TOOLS, machineIdOf } from './opening.js';
 import type { HeldTerminal, SessionContext } from './context.js';
@@ -293,6 +294,11 @@ export function createHandlers(ctx: SessionContext): Handlers {
       return;
     }
     if (current === undefined) return;
+    const messageId = messageIdOf(update);
+    if (current.prompted === true && current.recordedMessageId === undefined && messageId !== undefined) {
+      current.recordedMessageId = messageId;
+      start.onTurnRecorded?.(current.turnId, messageId);
+    }
     // Kept before it is mapped, so a transcript rebuilt later sees the same
     // notifications the live client did, in the same order.
     ctx.watchedTurn?.updates.push({ update, at });

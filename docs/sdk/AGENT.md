@@ -83,6 +83,7 @@ const host = createHost({ path, agents: [shout()] });
 | `list()` | Sessions somebody can browse | optional |
 | `find(id, at?)` | One of those, on its own, for an id the host has not got | optional |
 | `transcript(id, at?, outputs?)` | One of those, as turns - a read, with nothing started | optional |
+| `transcriptTurnIds` | Set to `'recorded'` to project explicitly recorded transcript ids back to caller turn ids; otherwise retain native transcript ids | optional |
 | `subagents(id, turns?, at?)` | The worker chats one of those holds - a read, with nothing started | optional |
 | `protectedResources` | RFC 9728 metadata for anything you can be given a token for | optional |
 | `stateFile(id, directory)` | Where your own record of a session is, for the window to open or pack into a bug report | optional |
@@ -163,6 +164,8 @@ whose transcript names turns its own way says what it wrote a turn down as with
 `start.onTurnRecorded(turnId, transcriptId)`, as Claude names a turn by the
 CLI's uuid and pi by its prompt's entry. One that keeps the id it was given, as
 cofold stores a prompt under the turn's id, says nothing.
+
+An agent may opt into `transcriptTurnIds: 'recorded'` when it accepts caller ids in restored seeds and fork points. The host then reads a transcript id matched by its existing per-chat records back under the caller id. Recorded native ids still anchor local command turns and are copied with a fork. Unmatched entries keep their native ids and remain separate; this mode only joins entries explicitly recorded as the same turn, rather than guessing that an unmatched entry is a steering message. Other backends keep their existing native-id and grouping behavior. This does not invent an identity when the backend omitted one or failed to retain it across loads.
 
 **A turn is read back as it began.** The host records, in the session's folder
 under the chat, the transcript id each turn began under: its own id as it

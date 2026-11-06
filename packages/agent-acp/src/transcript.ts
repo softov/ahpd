@@ -20,7 +20,7 @@
  * answers `undefined` for it rather than inventing a conversation.
  */
 
-import { endedParts } from '@ahpd/sdk';
+import { bag, endedParts } from '@ahpd/sdk';
 import type { Agent, Bag } from '@ahpd/sdk';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { mapUpdate } from './mapping.js';
@@ -36,6 +36,13 @@ import type { AcpTurn, WatchedSession, WatchedTurn } from './types.js';
  */
 type Transcript = NonNullable<Awaited<ReturnType<NonNullable<Agent['transcript']>>>>;
 export type TranscriptTurn = Transcript[number];
+
+/** A server's stable assistant-message identity, when it supplies one. */
+export function messageIdOf(update: SessionUpdate): string | undefined {
+  if (update.sessionUpdate !== 'agent_message_chunk') return undefined;
+  const id = bag(update).messageId;
+  return typeof id === 'string' && id.trim() !== '' ? id : undefined;
+}
 
 /**
  * One watched session's turns, in the order they ran.
@@ -114,14 +121,16 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
  *
  * The updates are kept raw and read back through `turnsOf` like any watched
  * turn, so a replayed turn and a live one are the same rendering. ACP carries
- * no turn ids and no times for a replay, so the id is this process's and the
- * time is when the replay was heard.
+ * no turn ids or times for a replay. A server's first assistant messageId,
+ * when present, is the same anchor a live turn records; otherwise the id is
+ * this process's. The time is when the replay was heard.
  */
 export function replayedTurns(updates: SessionUpdate[], at: string): WatchedTurn[] {
   const turns: WatchedTurn[] = [];
   let open: WatchedTurn | undefined;
   /** Whether anything the agent said has gone into the turn being built. */
   let answered = false;
+  let anchored = false;
   for (const update of updates) {
     const asked = update.sessionUpdate === 'user_message_chunk';
     if (open === undefined || (asked && answered)) {
@@ -134,9 +143,15 @@ export function replayedTurns(updates: SessionUpdate[], at: string): WatchedTurn
       };
       turns.push(open);
       answered = false;
+      anchored = false;
     }
     if (asked && update.content.type === 'text') {
       open.message.text = `${open.message.text}${update.content.text}`;
+    }
+    const messageId = messageIdOf(update);
+    if (!anchored && messageId !== undefined) {
+      open.turnId = messageId;
+      anchored = true;
     }
     open.updates.push({ update });
     answered = answered || !asked;

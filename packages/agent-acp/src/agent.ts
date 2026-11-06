@@ -116,6 +116,7 @@ export function acpAgent(options: AcpOptions): Agent<Session> {
   return {
     provider,
     displayName,
+    transcriptTurnIds: 'recorded',
     ...(options.variant === true ? { variant: true } : {}),
     ...(options.description !== undefined ? { description: options.description } : {}),
     /*

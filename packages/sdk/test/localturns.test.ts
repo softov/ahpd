@@ -117,6 +117,38 @@ describe('the local turns of a chat', () => {
 });
 
 describe('the turns a chat began', () => {
+  it('projects recorded caller ids only for an opted-in transcript and keeps local/fork anchors in each chat', async () => {
+    const { store, turns } = area();
+    turns.turnRecordedAs(LIVE, PEER, 'caller-one', 'native-one');
+    turns.turnRecordedAs(LIVE, PEER, 'caller-two', 'native-two');
+    turns.keepLocalTurn(LIVE, PEER, [said('caller-one', 'one'), said('local', '!echo kept')], 'local');
+    const held = [said('native-one', 'one'), said('native-two', 'two')];
+    const ordinary = await turns.transcriptOf(reading(held), 'live', undefined, LIVE, PEER);
+    expect(ordinary?.map((turn) => turn.id)).toEqual(['native-one', 'local', 'native-two']);
+    const optedIn = Object.assign(reading(held), { transcriptTurnIds: 'recorded' as const });
+    const restored = await turns.transcriptOf(optedIn, 'live', undefined, LIVE, PEER);
+    expect(restored?.map((turn) => turn.id)).toEqual(['caller-one', 'local', 'caller-two']);
+    expect(keptIn(store, 'live').map((one) => one.anchor)).toEqual(['native-one']);
+    expect(turns.concreteTurnOf(LIVE, PEER, restored as unknown as Bag[], 1)).toBe('caller-one');
+    turns.copyLocalTurns(LIVE, PEER, TAIL, restored as unknown as Bag[]);
+    expect(recordIn(store, 'live', TAIL)).toEqual({ 'native-one': 'caller-one', 'native-two': 'caller-two' });
+    const forked = await turns.transcriptOf(optedIn, 'live', undefined, LIVE, TAIL);
+    expect(forked?.map((turn) => turn.id)).toEqual(['caller-one', 'local', 'caller-two']);
+  });
+
+  it('does not guess that an unmatched opted-in replay turn is a steering message', async () => {
+    const { turns } = area();
+    turns.turnRecordedAs(LIVE, PEER, 'caller', 'native');
+    turns.turnRecordedAs(LIVE, PEER, 'caller', 'native-retry');
+    const agent = Object.assign(reading([
+      said('native', 'one'), said('native-retry', 'retried'),
+      said('unrecorded-one', 'no message id'), said('unrecorded-two', 'still no id'),
+    ]), { transcriptTurnIds: 'recorded' as const });
+    const back = await turns.transcriptOf(agent, 'live', undefined, LIVE, PEER);
+    expect(back?.map((turn) => turn.id)).toEqual(['caller', 'unrecorded-one', 'unrecorded-two']);
+    expect(back?.[0]?.responseParts.map((part) => part.content)).toEqual(['one', 'retried']);
+  });
+
   /** A chat's turns as a read gives them, from a backend whose transcript holds `held`. */
   const read = async (turns: ReturnType<typeof createLocalTurns>, held: Bag[], chat = PEER): Promise<Bag[]> =>
     (await turns.transcriptOf(reading(held), 'live', undefined, LIVE, chat) ?? []) as unknown as Bag[];
