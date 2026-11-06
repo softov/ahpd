@@ -143,10 +143,14 @@ it('carries extra usage on the window it is billed beside', () => {
   });
   expect(login.data()).toEqual({
     plan: 'max',
-    windows: [{
-      name: 'Weekly', left: 10, used: 90, reset: '2026-11-10T12:00:00.000Z', resetInSeconds: expect.any(Number),
-      extra: true, extraUsed: 12.5, extraCap: 50, extraText: 'Extra usage: 12.5 of 50 credits',
-    }],
+    windows: [
+      {
+        name: 'Weekly', left: 10, used: 90, reset: '2026-11-10T12:00:00.000Z', resetInSeconds: expect.any(Number),
+        extra: true, extraUsed: 12.5, extraCap: 50,
+      },
+      // The extra usage follows its window as a bar of its own, as /usage shows it.
+      { name: 'Extra usage', used: 25 },
+    ],
   });
 });
 

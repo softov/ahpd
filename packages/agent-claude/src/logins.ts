@@ -346,6 +346,20 @@ export class OpenLogins {
     this.shown(id);
   }
 
+  /**
+   * Say what a read of an open login's usage answered, without a session.
+   *
+   * The windows replace the ones the last answer held, and the rest of that
+   * answer stays: a session's account answer and its email are not the read's.
+   */
+  measured(id: string, token: string, snapshots: QuotaSnapshots): void {
+    if (this.open.get(id)?.token !== token) return;
+    const kept = this.saids.get(id);
+    const said = kept !== undefined && kept.token === token ? kept.said : {};
+    this.saids.set(id, { token, said: { ...said, quotaSnapshots: snapshots } });
+    this.shown(id);
+  }
+
   /** The scopes an open login's token has, when its profile answered: `PROFILE_SCOPES`. */
   scopesOf(id: string): string | undefined {
     const token = this.open.get(id)?.token;

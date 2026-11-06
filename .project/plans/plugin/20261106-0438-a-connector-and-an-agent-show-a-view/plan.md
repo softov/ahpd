@@ -148,6 +148,8 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | A `DateTime` kind shows an ISO time in the reader's zone, with `format` of `time`, `date`, `datetime` or `auto` | Softov, 2026-11-06, chose "One DateTime kind" | 08 |
 | A masked email keeps the first three letters of its name | Softov, 2026-11-06: "make it 3" | 08 |
 | Each window's data has `resetInSeconds`, counted when the data is made | Softov, 2026-11-06: "reset on dataModel windows need a resetInSeconds" | 08 |
+| A `KeyValue` kind draws a label and a value on one line; a `Progress` keeps its structure and adds its `child` as a footer | Softov, 2026-11-06: "The same Line Text can also be used to style Key values" and "The progress continue the same structure... just add the footer." | 08 |
+| A login reads its usage without a session, with one `/usage` query at open and at each check | Softov, 2026-11-06, chose "One-shot /usage query" | 09 |
 
 ## Proposed architecture
 
@@ -169,6 +171,7 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 | [06 - the docs say how a view is made](task-06-the-docs-say-how-a-view-is-made.md) | implemented | 03 |
 | [07 - a login asks the profile scope](task-07-a-login-asks-the-profile-scope.md) | implemented | 04 |
 | [08 - a view draws a gauge and a time](task-08-a-view-draws-a-gauge-and-a-time.md) | implemented | 07 |
+| [09 - a login reads its usage alone](task-09-a-login-reads-its-usage-alone.md) | implemented | 07 |
 
 ## Risks and tradeoffs
 
@@ -178,8 +181,8 @@ plugin: showView / setViewData / clearView, on its host or on a record's handle
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 08 are `implemented` on 2026-11-06, on #249's branch.
-- **Next action:** Softov signs in again and opens the login, as task 07's *Validation* says.
+- **Done so far:** tasks 01 to 09 are `implemented` on 2026-11-06, on #249's branch.
+- **Next action:** ahpw draws `Progress`, `DateTime` and `KeyValue`, in Softov's other session.
 - **Open questions:** none.
 - **Watch out for:** a plugin, a connector and an agent must stay one structure. A change to one needs the same change to the others.
 

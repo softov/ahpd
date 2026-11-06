@@ -22,10 +22,12 @@ export const VIEW_SURFACES: readonly ViewSurface[] = ['main'];
  * The component kinds a view may hold: a small set each client can draw.
  *
  * `Progress` is a bar: `value` out of `max`, 100 when absent, with an optional
- * `label` and `display`. `DateTime` is a time a client shows in its reader's
- * own zone: `value` is an ISO time, and `format` is one of `DATE_TIME_FORMATS`.
+ * `label` and `display`, and its `child` drawn small below it as a footer.
+ * `DateTime` is a time a client shows in its reader's own zone: `value` is an
+ * ISO time, `format` is one of `DATE_TIME_FORMATS`, and `label` goes before it.
+ * `KeyValue` is one line: its `label` at the start and its `value` at the end.
  */
-export const VIEW_KINDS: readonly string[] = ['Text', 'Link', 'Button', 'Card', 'Row', 'Column', 'List', 'Divider', 'Icon', 'Progress', 'DateTime'];
+export const VIEW_KINDS: readonly string[] = ['Text', 'Link', 'Button', 'Card', 'Row', 'Column', 'List', 'Divider', 'Icon', 'Progress', 'DateTime', 'KeyValue'];
 
 /**
  * How a `DateTime` shows its time: the hour, the day, both, or `auto`, which is

@@ -42,7 +42,7 @@ const HEADERS = (init: RequestInit | undefined): Headers => new Headers(init?.he
 /** The adapter over a record of logins of its own, with a `fetch` that is faked. */
 const adapterOf = (fetcher?: typeof fetch, logins = new OpenLogins()): Adapter =>
   // No case touches the network: one that hands no `fetch` gets one that fails, as an offline host's does.
-  loginAdapter(logins, { fetch: fetcher ?? fake(new Error('offline')).fetch });
+  loginAdapter(logins, { fetch: fetcher ?? fake(new Error('offline')).fetch, usage: async () => undefined });
 
 /** The pasted-code sign-in of an adapter, which is the one claude-login declares. */
 const signInOf = (adapter: Adapter): CodeSignIn => {
@@ -226,6 +226,25 @@ describe('an open login', () => {
     expect(logins.scopesOf('first')).toBe('user:profile user:inference');
     // The full email stays in the call: nothing a view holds has it.
     expect(JSON.stringify(shown)).not.toContain('someone@');
+  });
+
+  it('reads the usage once the profile answered, and shows each window before any session', async () => {
+    const logins = new OpenLogins();
+    const shown: Record<string, unknown>[] = [];
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    const asked: string[][] = [];
+    const probe = fake(json({ account: { uuid: 'a-1', email: 'someone@example.com' }, organization: { uuid: 'o-1', organization_type: 'claude_max' } }));
+    loginAdapter(logins, {
+      fetch: probe.fetch,
+      usage: async (token, scopes) => {
+        asked.push([token, scopes]);
+        return { rate_limits: { limits: [{ kind: 'session', group: 'session', percent: 23, resets_at: null, severity: 'normal', is_active: true }] } } as never;
+      },
+    }).open(connectorOf('first', 'sk-ant-oat01-first'), view);
+    await new Promise((done) => { setTimeout(done, 0); });
+
+    expect(asked).toEqual([['sk-ant-oat01-first', 'user:profile user:inference']]);
+    expect(shown.at(-1)).toEqual({ email: 'som****@example.com', plan: 'max', windows: [{ name: 'Session', left: 77, used: 23 }] });
   });
 
   it('takes a refused or empty profile as a token that reads none, and shows nothing of it', async () => {

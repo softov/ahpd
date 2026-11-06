@@ -260,6 +260,26 @@ it('masks all of an email\'s name but its first letters, and answers nothing for
   expect(maskedEmail(undefined)).toBeUndefined();
 });
 
+it('keeps the share the usage request answered when an event names only a reset', async () => {
+  const login: Login = { id: 'limits-reset-only', token: 'token-reset-only' };
+  const fake = fakeOf(login, {
+    usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => usageAnswer(),
+  });
+  const ctx = ctxOf(fake);
+  await refreshLimits(ctx, 1_000);
+  // The CLI's event during a turn often carries the reset and no utilization.
+  noteLimit(ctx, { rateLimitType: 'five_hour', resetsAt: 1_800_000_000 });
+  noteLimit(ctx, { rateLimitType: 'seven_day', resetsAt: 1_800_000_000 });
+  expect(limitsOf(ctx)?.['session']).toEqual({ remainingPercentage: 60, resetDate: new Date(1_800_000_000_000).toISOString() });
+  expect(limitsOf(ctx)?.['weekly']).toEqual({
+    remainingPercentage: 90,
+    resetDate: new Date(1_800_000_000_000).toISOString(),
+    overageAllowedWithExhaustedQuota: true,
+    overage: 250,
+    overageEntitlement: 1000,
+  });
+});
+
 it('keeps the events\' windows when the usage request has no limits to answer', async () => {
   const login: Login = { id: 'limits-unavailable', token: 'token-unavailable' };
   const fake = fakeOf(login, {
@@ -326,7 +346,7 @@ it('carries a login\'s windows on a turn, and draws them on the login', async ()
     { name: 'Session', left: 60, used: 40, reset: '2026-11-04T12:00:00.000Z', resetInSeconds: 0 },
     {
       name: 'Weekly', left: 90, used: 10, reset: '2026-11-10T12:00:00.000Z', resetInSeconds: expect.any(Number),
-      extra: true, extraUsed: 250, extraCap: 1000, extraText: 'Extra usage: 250 of 1000 credits',
+      extra: true, extraUsed: 250, extraCap: 1000,
     },
   ]);
 

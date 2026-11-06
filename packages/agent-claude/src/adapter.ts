@@ -9,7 +9,9 @@
 
 import { probe, PROBE_TIMEOUT_MS } from '@ahpd/sdk';
 import type { Adapter, Connector } from '@ahpd/sdk';
+import type { SDKUsageReport } from '@anthropic-ai/claude-agent-sdk';
 import { LOGIN_ADAPTER, PROFILE_SCOPES, type LoginProfile, type OpenLogins } from './logins.js';
+import { snapshotsOf, usageOf } from './usage.js';
 
 /*
  * Claude Code's own sign-in for a long-lived token, as the CLI 2.1.301 that
@@ -103,6 +105,8 @@ const OAUTH_BETA = 'oauth-2025-04-20';
 export interface LoginAdapterOptions {
   /** The `fetch` the exchange and the check go out through. The global one when absent. */
   fetch?: typeof fetch;
+  /** What reads a token's usage report without a session: a one-shot `/usage` query when absent. */
+  usage?: (token: string, scopes: string) => Promise<SDKUsageReport | undefined>;
 }
 
 /** The token a connector holds, which the form requires and a record written by hand may not. */
@@ -130,6 +134,19 @@ const pastedOf = (pasted: string): { code: string; state: string } => {
 /** The `claude-login` adapter, over the logins one load keeps. */
 export function loginAdapter(logins: OpenLogins, options: LoginAdapterOptions = {}): Adapter {
   const fetcher = options.fetch ?? globalThis.fetch;
+  const readUsage = options.usage ?? usageOf;
+  /**
+   * Read one open login's usage without a session, and set it on its view.
+   * Only a token whose profile answered has the scopes a report needs, and a
+   * read that gives nothing changes nothing.
+   */
+  const measure = async (id: string, token: string): Promise<void> => {
+    const scopes = logins.scopesOf(id);
+    if (scopes === undefined || logins.held(id)?.token !== token) return;
+    const report = await readUsage(token, scopes).catch(() => undefined);
+    const snapshots = report === undefined ? undefined : snapshotsOf(report);
+    if (snapshots !== undefined) logins.measured(id, token, snapshots);
+  };
   return {
     name: LOGIN_ADAPTER,
     title: 'Claude login',
@@ -161,8 +178,10 @@ export function loginAdapter(logins: OpenLogins, options: LoginAdapterOptions = 
     open: (connector, view) => {
       const stop = logins.opened(connector, view);
       const token = tokenOf(connector);
-      void profileOf(token, fetcher).then((profile) => {
-        if (profile !== undefined) logins.profiled(connector.id, token, profile);
+      void profileOf(token, fetcher).then(async (profile) => {
+        if (profile === undefined) return;
+        logins.profiled(connector.id, token, profile);
+        await measure(connector.id, token);
       });
       return stop;
     },
@@ -173,12 +192,17 @@ export function loginAdapter(logins: OpenLogins, options: LoginAdapterOptions = 
      * token, and the API refuses an invalid token there with 401.
      * https://code.claude.com/docs/en/authentication#generate-a-long-lived-token
      */
-    check: async (connector) => probe(
-      `${API}/v1/messages/count_tokens`,
-      { authorization: `Bearer ${tokenOf(connector)}`, 'anthropic-version': ANTHROPIC_VERSION, 'anthropic-beta': OAUTH_BETA },
-      fetcher,
-      { model: CHECK_MODEL, messages: [{ role: 'user', content: 'hi' }] },
-    ),
+    check: async (connector) => {
+      const token = tokenOf(connector);
+      // A check reads the plan again too, for a login whose profile answered.
+      void measure(connector.id, token);
+      return probe(
+        `${API}/v1/messages/count_tokens`,
+        { authorization: `Bearer ${token}`, 'anthropic-version': ANTHROPIC_VERSION, 'anthropic-beta': OAUTH_BETA },
+        fetcher,
+        { model: CHECK_MODEL, messages: [{ role: 'user', content: 'hi' }] },
+      );
+    },
     /*
      * The sign-in is the CLI's `setup-token` on the code page: a person signs
      * in on claude.ai, the page shows the code, and the host exchanges what

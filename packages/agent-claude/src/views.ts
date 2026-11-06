@@ -34,8 +34,6 @@ export type WindowData = {
   extraUsed?: number;
   /** The monthly cap on extra usage, in credits. */
   extraCap?: number;
-  /** The extra usage as a line a person reads, `Extra usage: 12.5 of 50 credits`. Absent with no extra usage. */
-  extraText?: string;
 };
 
 /** What a login's plan draws: the plan type, and one row for each window. */
@@ -77,9 +75,9 @@ const nameOf = (key: string): string => {
 };
 
 /**
- * One row for each window a plan holds. A window with no figure draws no row
- * cell. Extra usage rides the window it is billed beside, as the plan's
- * snapshots carry it.
+ * One entry for each window a plan holds. A window with no figure draws no
+ * share. Extra usage rides the window it is billed beside, as the plan's
+ * snapshots carry it, and also follows it as an `Extra usage` entry.
  */
 const windowsOf = (snapshots: QuotaSnapshots | undefined, now: number): WindowData[] =>
   Object.entries(snapshots ?? {}).map(([key, snapshot]) => {
@@ -96,11 +94,18 @@ const windowsOf = (snapshots: QuotaSnapshots | undefined, now: number): WindowDa
       ...(snapshot.overageAllowedWithExhaustedQuota === undefined ? {} : { extra: snapshot.overageAllowedWithExhaustedQuota }),
       ...(used === undefined ? {} : { extraUsed: used }),
       ...(cap === undefined ? {} : { extraCap: cap }),
-      ...(used === undefined && cap === undefined
-        ? {}
-        : { extraText: `Extra usage: ${used === undefined ? '-' : String(used)}${cap === undefined ? '' : ` of ${String(cap)}`} credits` }),
     };
-  });
+  }).flatMap((window) => [window, ...extraOf(window)]);
+
+/**
+ * The extra usage a window carries, as a window of its own after it, as the
+ * CLI's `/usage` shows it: what is spent of its monthly cap. Nothing when the
+ * window carries no spend or no cap.
+ */
+const extraOf = (window: WindowData): WindowData[] =>
+  window.extraUsed === undefined || window.extraCap === undefined || window.extraCap <= 0
+    ? []
+    : [{ name: 'Extra usage', used: Math.min(100, (window.extraUsed / window.extraCap) * 100) }];
 
 /** The plan and the windows of a login, from the last plan answer its account gave. */
 const planDataOf = (said: PlanNote | undefined, now: number): PlanData => {
@@ -125,27 +130,21 @@ export const agentDataOf = (logins: readonly { id: string; said?: PlanNote }[], 
 /**
  * The components one window draws, under the ids `prefix` names them.
  *
- * A window is a gauge of what is used of it, labelled with its name, then the
- * time it resets in the reader's own zone, then its extra usage. Each reads its
- * own item of the list the window is repeated over, and a component whose value
- * the window lacks draws nothing.
+ * A window is a bar of what is used of it, labelled with its name and its
+ * share, with the time it resets in the reader's own zone as its footer. Each
+ * reads its own item of the list the window is repeated over, and a value the
+ * window lacks draws nothing.
  */
 const windowOf = (prefix: string): PluginView['components'] => ({
-  [prefix]: { id: prefix, component: 'Column', children: [`${prefix}Gauge`, `${prefix}Reset`, `${prefix}Extra`] },
-  [`${prefix}Gauge`]: {
-    id: `${prefix}Gauge`, component: 'Progress', label: { path: 'name' }, value: { path: 'used' }, max: 100, display: 'percent',
+  [prefix]: {
+    id: prefix, component: 'Progress', label: { path: 'name' }, value: { path: 'used' }, max: 100, display: 'percent', child: `${prefix}Reset`,
   },
-  [`${prefix}Reset`]: { id: `${prefix}Reset`, component: 'Row', children: [`${prefix}ResetLabel`, `${prefix}ResetAt`] },
-  [`${prefix}ResetLabel`]: { id: `${prefix}ResetLabel`, component: 'Text', text: 'Reset at:' },
-  [`${prefix}ResetAt`]: { id: `${prefix}ResetAt`, component: 'DateTime', value: { path: 'reset' }, format: 'auto' },
-  [`${prefix}Extra`]: { id: `${prefix}Extra`, component: 'Text', text: { path: 'extraText' } },
+  [`${prefix}Reset`]: { id: `${prefix}Reset`, component: 'DateTime', label: 'Resets', value: { path: 'reset' }, format: 'auto' },
 });
 
-/** One labelled line: a label, then the value at `path`. */
+/** One line: a label at its start, and the value at `path` at its end. */
 const lineOf = (id: string, label: string, path: string): PluginView['components'] => ({
-  [id]: { id, component: 'Row', children: [`${id}Label`, `${id}Value`] },
-  [`${id}Label`]: { id: `${id}Label`, component: 'Text', text: label },
-  [`${id}Value`]: { id: `${id}Value`, component: 'Text', text: { path } },
+  [id]: { id, component: 'KeyValue', label, value: { path } },
 });
 
 /** A `claude-login` connector's view, with no data: the masked email, the plan type, then a gauge for each window. */

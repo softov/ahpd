@@ -43,4 +43,11 @@ A Claude login's view draws a gauge for each window, and the time it resets.
 Done. `Progress` and `DateTime` are view kinds, and the Claude views draw them.
 `resetInSeconds` is counted when the data is made, so it ages until the next answer sets it again.
 
-Left: ahpw registers a `Progress` and a `DateTime` component, which draw these kinds.
+After Softov's review on 2026-11-06, `KeyValue` is a kind too: a label at the start of a line and a value at its end.
+A `Progress` draws its `child` small below the bar as a footer, and a `DateTime` takes a `label`.
+The Claude view has a `KeyValue` line for the email and one for the plan.
+Then it has one `Progress` for each window, with `Resets` and the time as its footer.
+Extra usage follows its window as an `Extra usage` bar.
+`noteLimit` now merges an event into the window it names, so an event with only a reset keeps the share the usage request answered.
+
+Left: ahpw draws the three kinds. Its draft is on `/github/ahpw.worktrees/record-views`, not committed, and Softov adjusts it in another session.

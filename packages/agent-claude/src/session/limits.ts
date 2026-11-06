@@ -255,7 +255,9 @@ export const noteLimit = (ctx: SessionContext, info: unknown): void => {
   const snapshot = snapshotOf(utilization, reset);
   if (Object.keys(snapshot).length === 0) return;
   const held = planOf(ctx);
-  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, snapshots: { ...held?.snapshots, [key]: snapshot } });
+  // Merged into the window it names: an event with a reset and no utilization
+  // keeps the share the usage request answered, and the window's extra usage.
+  publish(ctx, { ...held, askedAt: held?.askedAt ?? 0, snapshots: { ...held?.snapshots, [key]: { ...held?.snapshots?.[key], ...snapshot } } });
 };
 
 /**
