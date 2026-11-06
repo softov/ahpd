@@ -1,7 +1,7 @@
 ---
 title: A turn says its context and its plan limits
 domain: claude
-status: implemented
+status: built
 priority: medium
 created: 2026-11-04
 revalidated: 2026-11-04
@@ -99,7 +99,7 @@ rate_limit_event + usage request -> plan limits by login -> turn usage _meta.quo
 ## Resume state
 
 - **Done so far:** tasks 01, 02 and 03: a turn says its context, a login its plan limits, and a session both before a turn.
-- **Next action:** none; the plan is `implemented`.
+- **Next action:** none. The plan is built, and `implemented.md` says what exists.
 - **Watch out for:** a turn must not wait on `getContextUsage`; put a short time limit on it.
 
 ## Final verification checklist
