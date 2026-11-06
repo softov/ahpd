@@ -343,10 +343,48 @@ export function dispatcher(conn: PluginPeer, clientId: string, waitMs: number = 
 }
 
 
-/** The plugin's connection to the host, and the dispatcher over it. */
+/** Reads and sends that hold a channel of the plugin's connection while they need it. */
+export interface Holders {
+  /** Hold `channel` for as long as `use` runs, handing it the channel's state as a subscribe answers it. */
+  hold<T>(channel: string, use: (state: Bag | undefined) => Promise<T> | T): Promise<T>;
+}
+
+/**
+ * The channels the plugin's connection subscribes to, held by count.
+ *
+ * VS Code's connection hands each holder of a subscription a counted reference
+ * and unsubscribes when the last one lets go. One unsubscribe ends the
+ * connection's whole subscription to a channel, so a read that let go of its
+ * own would end a send that is still waiting on the same channel's echo.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L1104-L1168
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L226-L233
+ */
+export function holders(conn: PluginPeer): Holders {
+  const held = new Map<string, number>();
+  return {
+    hold: async (channel, use) => {
+      held.set(channel, (held.get(channel) ?? 0) + 1);
+      try {
+        const answered = await conn.request('subscribe', { channel }) as { snapshot?: { state?: Bag } };
+        return await use(answered.snapshot?.state);
+      }
+      finally {
+        const left = (held.get(channel) ?? 1) - 1;
+        if (left > 0) held.set(channel, left);
+        else {
+          held.delete(channel);
+          conn.notify('unsubscribe', { channel });
+        }
+      }
+    },
+  };
+}
+
+/** The plugin's connection to the host, the dispatcher over it, and the channels it holds. */
 interface Opened {
   conn: PluginPeer;
   sender: Dispatcher;
+  channels: Holders;
 }
 
 /**
@@ -527,7 +565,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       const conn = host.connect();
       const sender = dispatcher(conn, CLIENT);
       await conn.request('initialize', { clientId: CLIENT, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
-      return { conn, sender };
+      return { conn, sender, channels: holders(conn) };
     })();
     const failed = (): void => { opened = undefined; };
     opened.catch(failed);
@@ -542,13 +580,12 @@ export const apply: Plugin['apply'] = (host, options) => {
    * One action sent on a chat of this host, as a client sends one.
    *
    * The host echoes a taken action only to the subscribers of its channel, so
-   * the chat is subscribed first. Shared by the wake, which sends a person's
-   * message, and the asking, which sends their answer back.
+   * the chat is held until the dispatch settles. Shared by the wake, which
+   * sends a person's message, and the asking, which sends their answer back.
    */
   const send = async (chat: string, action: Bag): Promise<string | undefined> => {
-    const { conn, sender } = await connection();
-    await conn.request('subscribe', { channel: chat });
-    return await sender.dispatch(chat, action);
+    const { sender, channels } = await connection();
+    return await channels.hold(chat, () => sender.dispatch(chat, action));
   };
   const catalogue = botCatalogue(store);
   catalogue.bind(host.registerChannel(CATALOGUE_SCHEME, catalogue.channel));
@@ -619,19 +656,20 @@ export const apply: Plugin['apply'] = (host, options) => {
      * working means it steers the one that is running.
      */
     look: async (session) => {
-      const { conn } = await connection();
-      const answered = await conn.request('subscribe', { channel: session }) as { snapshot?: { state?: Bag } };
-      const state = answered.snapshot?.state ?? {};
-      const chat = state['defaultChat'];
-      if (typeof chat !== 'string' || chat === '') {
-        throw new Error(`${session} names no chat to say a message in`);
-      }
-      const status = typeof state['status'] === 'number' ? state['status'] : Status.Idle;
-      if ((status & Status.InProgress) === 0) return { chat };
+      const { channels } = await connection();
+      const { chat, working } = await channels.hold(session, (held) => {
+        const state = held ?? {};
+        const named = state['defaultChat'];
+        if (typeof named !== 'string' || named === '') {
+          throw new Error(`${session} names no chat to say a message in`);
+        }
+        const status = typeof state['status'] === 'number' ? state['status'] : Status.Idle;
+        return { chat: named, working: (status & Status.InProgress) !== 0 };
+      });
+      if (!working) return { chat };
       // And the turn running there, off the chat's own state, which a stop
       // of the main turn cancels by its id.
-      const opened = await conn.request('subscribe', { channel: chat }) as { snapshot?: { state?: Bag } };
-      const active = opened.snapshot?.state?.['activeTurn'] as Bag | undefined;
+      const active = await channels.hold(chat, (held) => held?.['activeTurn'] as Bag | undefined);
       return { chat, ...(typeof active?.['id'] === 'string' ? { turn: active['id'] } : {}) };
     },
     send,
@@ -656,9 +694,8 @@ export const apply: Plugin['apply'] = (host, options) => {
   const ask = botAsk({
     main: (backSession) => wake.main(backSession),
     request: async (session, id) => {
-      const { conn } = await connection();
-      const answered = await conn.request('subscribe', { channel: session }) as { snapshot?: { state?: Bag } };
-      const list = answered.snapshot?.state?.['inputNeeded'];
+      const { channels } = await connection();
+      const list = await channels.hold(session, (state) => state?.['inputNeeded']);
       if (!Array.isArray(list)) return undefined;
       const found = list.find((one: unknown) => (
         typeof one === 'object' && one !== null && (one as Bag)['id'] === id
@@ -737,9 +774,8 @@ export const apply: Plugin['apply'] = (host, options) => {
           catch {
             return;
           }
-          const { conn } = await connection();
-          const answered = await conn.request('subscribe', { channel: event.chat }) as { snapshot?: { state?: unknown } };
-          const message = messageOfTurn(answered.snapshot?.state, event.turn);
+          const { channels } = await connection();
+          const message = await channels.hold(event.chat, (state) => messageOfTurn(state, event.turn));
           if (message === undefined) return;
           const text = typeof message['text'] === 'string' ? message['text'] : '';
           /*
@@ -792,9 +828,8 @@ export const apply: Plugin['apply'] = (host, options) => {
       return now !== undefined && now.handle === held.handle && now.turnId === held.turnId;
     };
     const read = (async (): Promise<string> => {
-      const { conn } = await connection();
-      const answered = await conn.request('subscribe', { channel: event.chat }) as { snapshot?: { state?: unknown } };
-      return textOf(answered.snapshot?.state, event.turn);
+      const { channels } = await connection();
+      return await channels.hold(event.chat, (state) => textOf(state, event.turn));
     })();
     read.then((text) => {
       if (!still()) return;

@@ -10,7 +10,7 @@
  */
 
 import { afterEach, expect, it, vi } from 'vitest';
-import { dispatcher } from '../src/plugin.js';
+import { dispatcher, holders } from '../src/plugin.js';
 import type { PluginPeer } from '@ahpd/sdk';
 
 afterEach(() => { vi.useRealTimers(); });
@@ -74,4 +74,43 @@ it('settles a dispatch the host took when its echo arrives, and not on another c
   answer({ channel: 'ahp-chat:/1', origin: { clientId: 'ahpd-bot', clientSeq: sent[0]?.clientSeq } });
   await Promise.resolve();
   expect(settled).toEqual({ refused: undefined });
+});
+
+/** A connection that says every subscribe and unsubscribe it is sent, in order, answering each subscribe with a state. */
+const told = () => {
+  const said: string[] = [];
+  const conn = {
+    send: () => {},
+    notify: (method: string, params: { channel: string }) => { said.push(`${method} ${params.channel}`); },
+    request: async (method: string, params: { channel: string }) => {
+      said.push(`${method} ${params.channel}`);
+      return { snapshot: { state: { resource: params.channel } } };
+    },
+    onMessage: () => {},
+  } as unknown as PluginPeer;
+  return { conn, said };
+};
+
+it('lets a channel go once the last of its holders is done, as VS Code counts the holders of one subscription', async () => {
+  const { conn, said } = told();
+  const channels = holders(conn);
+  let release = (): void => {};
+  const waiting = new Promise<void>((done) => { release = done; });
+  // A send still waiting on the chat's echo, and a read of the same chat.
+  const send = channels.hold('ahp-chat:/1', () => waiting);
+  const read = await channels.hold('ahp-chat:/1', (state) => state?.['resource']);
+  expect(read).toBe('ahp-chat:/1');
+  // The read is done and the send is not, so the chat is still held.
+  expect(said).toEqual(['subscribe ahp-chat:/1', 'subscribe ahp-chat:/1']);
+
+  release();
+  await send;
+  expect(said).toEqual(['subscribe ahp-chat:/1', 'subscribe ahp-chat:/1', 'unsubscribe ahp-chat:/1']);
+});
+
+it('lets go of a channel whose read failed', async () => {
+  const { conn, said } = told();
+  const channels = holders(conn);
+  await expect(channels.hold('ahp-session:/1', () => { throw new Error('names no chat'); })).rejects.toThrow('names no chat');
+  expect(said).toEqual(['subscribe ahp-session:/1', 'unsubscribe ahp-session:/1']);
 });
