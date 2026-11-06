@@ -1543,16 +1543,24 @@ export function createSpawn(ctx: HostContext): Spawn {
          */
         if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
           || action.type === 'chat/turnCancelled' || action.type === 'chat/error') movableMoved(chatUri);
-        // And a move the agent asked for is made now, once its turn is over:
-        // the one moment the backend can be started again without losing
-        // anything.
+        /*
+         * And a move the agent asked for is made now, once its turn completed:
+         * the one moment the backend can be started again without losing
+         * anything. A turn that was cancelled or failed drops the move it
+         * asked for, as VS Code's host carries out a workspace change only for
+         * a turn that succeeded.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionContribution.ts#L28-L37
+         */
         if ((action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')
           && ctx.moving.get(uri)?.chat === chatUri) {
           const move = ctx.moving.get(uri) as Move;
           ctx.moving.delete(uri);
-          void ctx.moveSession(uri, move).catch((error: unknown) => {
-            log(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
-          });
+          if (action.type === 'chat/turnComplete') {
+            void ctx.moveSession(uri, move).catch((error: unknown) => {
+              log(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
+            });
+          }
+          else log(`${uri} dropped its move to ${move.directory}: its turn did not complete`);
         }
       },
       /*

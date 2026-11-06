@@ -436,6 +436,41 @@ describe('tools the host contributes', () => {
     });
 
     /*
+     * A move whose turn was cancelled is dropped, as VS Code's host carries out
+     * a workspace change only for a turn that succeeded.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionContribution.ts#L28-L37
+     */
+    it('drops a move whose turn was cancelled, as VS Code\'s host', async () => {
+      const host = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+      });
+      const p = peer();
+      p.request = async () => ({ trusted: true });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0']));
+      const uri = 'ahp-session:/stopped';
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work in /tmp' } } },
+      });
+      await settle();
+      expect(await call('set_workspace', { workspaceFolder: 'file:///tmp', isolation: false }))
+        .toContain(`Workspace will be set to ${uriOf('/tmp')} after this turn ends`);
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+      });
+      await settle(8);
+      expect(actions(p, uri).some((one) => one.action.type === 'session/workingDirectoryReplaced')).toBe(false);
+      expect(sessionQueries().at(-1)?.options.cwd).not.toBe(resolve('/tmp'));
+    });
+
+    /*
      * The turn that continues it says the move failed and why, and the session
      * stays where it was, as VS Code's host continues a failed conversion's
      * turn with the failure under its label.
