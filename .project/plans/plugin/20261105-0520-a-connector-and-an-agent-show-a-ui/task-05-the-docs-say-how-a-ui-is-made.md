@@ -34,14 +34,36 @@ A plugin author reads how to give an adapter or an engine a ui: the schema, the 
 
 ## Resume
 
-Done. `PLUGINS.md` has a new section, *The ui a connector or an agent shows*, between *An adapter of your own* and *A tunnel kind of your own*. It says that a `ui` capability carries a `UiSchema`, that a plugin sends each record's data with the handle `open` is handed, and that an adapter's schema is drawn on each connector of it and an engine's on each agent of it. One example declares an `account` capability whose schema is a Column of two `Text`s bound to `account` and `refreshed`, and its `open` calls `ui.show` with that data.
+Done. `PLUGINS.md` has a new section, *The ui a connector or an agent shows*.
+It is between *An adapter of your own* and *A tunnel kind of your own*.
+It says that a `ui` capability carries a `UiSchema`, and that a plugin sends the data of each record with the handle of `open`.
+An adapter's schema is drawn on each of its connectors, and an engine's schema on each of its agents.
+One example declares an `account` capability, with a Column of two `Text`s bound to `account` and `refreshed`.
+Its `open` calls `ui.show` with that data.
 
-The rules are written beside it: the nine kinds; props as literals or `{ path }`; `children` as a list of ids or `{ path, componentId }` with each row's paths relative; no `action`; the data as a JSON object the plugin chooses for that one record, with `show` and `clear`; closing, removing or unloading takes the data away, and a stale handle writes nothing; 200 components and 64 KiB of data; and a path the data does not hold draws nothing, which the check cannot see.
+The section gives these rules:
 
-The adapter's capability list now names `ui` as a type, with a bullet that its schema is checked at registration by a view's rules, and `open` is written `open(connector, ui)` with the handle described. The engine section's example gains a `ui` capability and `open(record, ui)`, and a new bullet says `capabilities` works as an adapter's, with `ui` the one type the host reads there and a link to the section.
+- The nine kinds.
+- A prop is a literal or `{ path }`.
+- `children` is a list of ids or `{ path, componentId }`, and the paths of each row are relative.
+- No `action`.
+- The data is a JSON object that the plugin chooses for that one record, with `show` and `clear`.
+- A close, a removal or an unload removes the data, and a stale handle writes nothing.
+- 200 components and 64 KiB of data.
+- A path that the data does not hold draws nothing, and the check cannot see it.
 
-Verified: `node <do-spec>/scripts/lint-prose.mjs docs/plugins/PLUGINS.md` ran and reported no finding on any line this task wrote; the long-sentence findings it reports elsewhere were there before. The example's schema was checked by hand against `checkUi`'s rules: `root` names a component, every id matches its key, each kind is one of the nine, each `Text.text` is a one-member `{ path }`, the Column's `children` names existing components, there is no `action`, one parent each and no cycle, and it is far under 200 components and 64 KiB. `pnpm exec tsc -p tsconfig.json --noEmit` printed nothing, `pnpm boundary` reported every package with none undeclared, and `pnpm -s test:unit --maxWorkers=6` passed 483 files with 8109 tests and 31 skipped.
+The adapter's capability list names `ui` as a type now, and a bullet says that the schema is checked at registration by a view's rules.
+`open` is written `open(connector, ui)`, and the handle is described.
+The engine section's example has a `ui` capability and `open(record, ui)`.
+A new bullet says that `capabilities` works as an adapter's, and links to the section.
+It says that `ui` is the one type the host reads there.
 
-Found: the docs' other `open(connector)` example, the webhook one under *An adapter of your own*, declares no `ui` capability and still takes one argument, so it is left as it is. An adapter or an engine gets a handle whether or not it declares a `ui` capability, and the docs say so.
+Verified: `lint-prose.mjs` on `docs/plugins/PLUGINS.md` reported no finding on a line that this task wrote.
+The long-sentence findings that it reports on other lines were there before.
+The example's schema was checked by hand against the rules of `checkUi`, and it is far under 200 components and 64 KiB.
+`pnpm exec tsc -p tsconfig.json --noEmit` printed nothing, and `pnpm boundary` reported no undeclared package.
+`pnpm -s test:unit --maxWorkers=6` passed 483 files: 8109 tests and 31 skipped.
 
-Left: nothing this task asked for. An ahpw client that draws a ui is a plan of its own.
+Found: the other `open(connector)` example of the docs, the webhook one under *An adapter of your own*, declares no `ui` capability.
+It still takes one argument, so it stays as it is.
+An adapter or an engine gets a handle whether or not it declares a `ui` capability, and the docs say so.

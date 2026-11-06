@@ -35,14 +35,28 @@ The adapter declares the schema and sends the data from what it already holds, w
 
 ## Resume
 
-Done. `adapter.ts` holds `TUNNEL_UI`: a Column of the account and the time of the last refresh, each a `Text` bound to `account` and `refreshed`. The adapter declares it as its one capability, `{ type: 'ui', name: 'account' }`, and nothing else changed of its registration.
+Done. `adapter.ts` holds `TUNNEL_UI`: a Column of the account and the time of the last refresh.
+Each is a `Text` bound to `account` and `refreshed`.
+The adapter declares it as its one capability, `{ type: 'ui', name: 'account' }`, and no other part of its registration changed.
 
-`open` takes the handle beside the connector and keeps it in the open's own closure, where the timer and the running refresh already live. A `show` builds the data from the account the record holds and the last refresh this open stored, and leaves a field out until it has a value: at open that is the account alone, since the record has no time to draw, and a path with no data draws nothing. `show` runs once at open, immediately, and again after each successful refresh, after the pair is written to the vault and held, so the time drawn is of a pair already stored.
+`open` keeps the handle in its own closure, beside the timer and the running refresh.
+`show` builds the data from the account that the record holds and the last refresh that this open stored.
+A field stays out until it has a value, and a path with no data draws nothing.
+At open, the data is the account only, because the record holds no time.
+`show` runs once at open, and again after each successful refresh.
+It runs after the pair is written to the vault and held, so the time it draws is of a stored pair.
 
-`tunnelView` and the plugin's page are unchanged, and the plugin's `plugin.ts` is untouched: the capability travels with the adapter object it builds.
+`tunnelView`, the plugin's page and the plugin's `plugin.ts` are unchanged, because the capability travels with the adapter object.
 
-Verified: `pnpm exec tsc -p tsconfig.json --noEmit` printed nothing, `pnpm boundary` reported every package with none undeclared, and `pnpm exec vitest run packages/tunnel-devtunnel/` passed 5 files with 54 tests. The adapter test has three new cases: the capability at registration, the account at open with no call to the service, and the new time after a refresh.
+Verified: `pnpm exec tsc -p tsconfig.json --noEmit` printed nothing, and `pnpm boundary` reported no undeclared package.
+`pnpm exec vitest run packages/tunnel-devtunnel/` passed 5 files: 54 tests.
+The adapter test has three new cases:
 
-Found: the time of the last refresh is what this open stored, because the record keeps neither the time nor a plain token's age. An open draws no time until its own refresh answers, which happens at once for a record holding a refresh token and never for one holding none.
+- The capability at registration.
+- The account at open, with no call to the service.
+- The new time after a refresh.
 
-Left: nothing this task asked for. The by-hand check of a daemon's connector page belongs to task 03's Resume.
+Found: the time of the last refresh is the one that this open stored.
+The record keeps no time and no age of a plain token.
+An open draws no time until its own refresh answers.
+A record with a refresh token refreshes at once, and a record with none never refreshes.
