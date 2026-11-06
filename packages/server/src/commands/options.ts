@@ -753,7 +753,7 @@ export const serverFields = {
   modelProxy: {
     ...proxySchema,
     title: 'Model proxy',
-    description: 'The model names this proxy serves: each is written <maker>/<name> and lists the entries that serve it, by connector id or adapter name. A provider is a connector, so its endpoint and key are the connectors store\'s, never this file\'s. sessionCalls is record (the default) or skip: whether a call made with a session\'s own token is policy-checked and recorded by the proxy. Set in the configuration file only.',
+    description: 'The model names this proxy serves: each is written <maker>/<name> and lists the entries that serve it, by connector id or adapter name. A provider is a connector, so its endpoint and key are the connectors store\'s, never this file\'s. sessionCalls is record (the default) or skip: whether a call made with a session\'s own token is policy-checked and recorded by the proxy. keyRefusal is hostError (the default), this host\'s 502 when a provider refuses its key with a 401 or 403, or passthrough, the provider\'s status and error as they came, as VS Code\'s Claude proxy re-emits an upstream error. Set in the configuration file only.',
   },
   mcpServers: asJsonSchema(mcpServersField),
   plugins: {

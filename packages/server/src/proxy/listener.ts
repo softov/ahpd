@@ -854,8 +854,14 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
        * configuration, and the caller is told so with this host's error, not
        * sent to another provider to be refused again - the loop retries only
        * a connection that never arrived, a 429 and a 5xx.
+       *
+       * That is `modelProxy.keyRefusal` at `hostError`, the default. At
+       * `passthrough` the provider's status and error reach the caller as they
+       * came, as VS Code's Claude proxy re-emits an upstream error verbatim
+       * (src/vs/platform/agentHost/node/claude/anthropicErrors.ts L16-L18,
+       * L48-L61 at 6b68d3fe).
        */
-      if (response.status === 401 || response.status === 403) {
+      if ((response.status === 401 || response.status === 403) && proxy.keyRefusal === 'hostError') {
         const words = await refusalWords(response, candidate.key === undefined ? [] : [candidate.key]);
         left.push({
           connector: candidate.connector,
