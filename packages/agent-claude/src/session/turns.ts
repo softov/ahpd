@@ -1,5 +1,5 @@
 import type { ActiveTurn } from '@microsoft/agent-host-protocol';
-import { titleFrom } from '@ahpd/sdk';
+import { reason, titleFrom } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, SteeringMessage, TurnOptions, WireTurn } from '@ahpd/sdk';
 import { blocksFor } from './attachments.js';
 import { bag, str, UUID } from './common.js';
@@ -217,25 +217,49 @@ export function createTurns(ctx: SessionContext): Turns {
      * else, as VS Code's first send materializes its provisional session and
      * then sends: on the tools the session holds, the record's values and its
      * login read now, and the agent this message picked. A record whose logins
-     * are none of them ready refuses the turn, and the session stays as it was
-     * for the next send.
+     * are none of them ready, and a CLI that does not start, refuse the turn,
+     * the second in the SDK's words, and the session stays as it was for the
+     * next send, as VS Code's failed materialize keeps its provisional session.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1766-L1776
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1266-L1273
      */
     if (ctx.query === undefined) {
       ctx.buildClientMcpServers();
-      const unready = ctx.rebindForSyncedState();
+      const unready = await ctx.rebindForSyncedState();
+      if (ctx.disposed || stops !== stopped) return;
       if (unready !== undefined) {
         ctx.preparingTurn = undefined;
         refuseTurn(turnId, text, unready, began, from, attachments);
         return;
       }
-      ctx.rebindForRestart(from?.agent?.uri);
-      ctx.startQuery(ctx.appliedAgent, true);
+      await ctx.rebindForRestart(from?.agent?.uri);
+      let unstarted: string | undefined;
+      try { await ctx.startQuery(ctx.appliedAgent, true); }
+      catch (error: unknown) { unstarted = reason(error); }
+      if (ctx.disposed || stops !== stopped) return;
+      if (unstarted !== undefined) {
+        ctx.preparingTurn = undefined;
+        refuseTurn(turnId, text, unstarted, began, from, attachments);
+        return;
+      }
     }
+    // A CLI put away is started again, and one that does not start is held for the send after.
     if (ctx.rebind !== undefined) {
+      const was = ctx.rebind;
       ctx.rebind = undefined;
       ctx.buildClientMcpServers();
-      ctx.startQuery(ctx.appliedAgent, false);
+      let unstarted: string | undefined;
+      try { await ctx.startQuery(ctx.appliedAgent, false); }
+      catch (error: unknown) {
+        unstarted = reason(error);
+        ctx.rebind = was;
+      }
+      if (ctx.disposed || stops !== stopped) return;
+      if (unstarted !== undefined) {
+        ctx.preparingTurn = undefined;
+        refuseTurn(turnId, text, unstarted, began, from, attachments);
+        return;
+      }
     }
     /*
      * The tools the session was handed since the CLI was last given a set,
@@ -273,14 +297,24 @@ export function createTurns(ctx: SessionContext): Turns {
      * on the turn after it, with the conversation resumed onto the new CLI.
      * A record that cannot be run fails the turn.
      */
-    const unrunnable = ctx.rebindForSyncedState();
+    const unrunnable = await ctx.rebindForSyncedState();
+    if (ctx.disposed || stops !== stopped) return;
     if (unrunnable !== undefined) {
       ctx.preparingTurn = undefined;
       refuseTurn(turnId, text, unrunnable, began, from, attachments);
       return;
     }
     // The agent this message picked, which decides which CLI the model is switched on.
-    const unbound = ctx.rebindForRestart(from?.agent?.uri);
+    let unbound: string | undefined;
+    let unstarted: string | undefined;
+    try { unbound = await ctx.rebindForRestart(from?.agent?.uri); }
+    catch (error: unknown) { unstarted = reason(error); }
+    if (ctx.disposed || stops !== stopped) return;
+    if (unstarted !== undefined) {
+      ctx.preparingTurn = undefined;
+      refuseTurn(turnId, text, unstarted, began, from, attachments);
+      return;
+    }
     if (unbound !== undefined) console.warn(`@ahpd/agent-claude: ${unbound}; the turn runs on the agent it has`);
     /*
      * The servers the session switched, which a CLI is brought to before each
@@ -538,6 +572,11 @@ export function createTurns(ctx: SessionContext): Turns {
       const login = ctx.login;
       void (async () => {
         const restarted = await ctx.restartAt(turnId, cut, login);
+        // A CLI that did not start ends the turn in the SDK's words.
+        if (restarted.unstarted !== undefined && !ctx.disposed) {
+          ctx.failTurn(restarted.unstarted);
+          return;
+        }
         if (!restarted.started) return;
         if (restarted.failed === undefined) {
           await ctx.again([]);
@@ -589,9 +628,11 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.editsStopped();
       /*
        * A session with no CLI yet has none to close, as VS Code's abort of a
-       * chat it has not materialized reaches no SDK.
+       * chat it has not materialized reaches no SDK, and a CLI still starting
+       * is disposed of once it is up.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2470-L2473
        */
+      ctx.abandonStart();
       const was = ctx.query;
       if (was !== undefined) {
         ctx.rebind = was;

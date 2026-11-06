@@ -104,7 +104,7 @@
         "handshakeTimeoutMs": {
           "type": "integer",
           "minimum": 1,
-          "description": "How long the CLI has to answer its handshake before its session treats it as a CLI that died. Default 120000, and a slower machine raises it."
+          "description": "How long the CLI has to answer its handshake, the bound the SDK's startup is handed, past which the CLI did not start. Default 120000, and a slower machine raises it."
         }
       }
     }

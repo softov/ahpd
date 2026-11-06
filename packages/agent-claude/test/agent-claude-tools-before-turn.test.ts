@@ -44,7 +44,7 @@ const sdk = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: (given: { prompt: AsyncIterable<{ message: { content: unknown } }>; options: { mcpServers?: Record<string, { tools?: unknown[] }> } }) => {
     // The servers a CLI starts with, as it is handed them.

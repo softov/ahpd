@@ -294,6 +294,8 @@ describe('tools the host contributes', () => {
       const made = await call('create_chat', { prompt: 'look at the tests' }, 0);
       const link = /\((agent-host-session:[^)]+)\)/.exec(made)?.[1] as string;
       expect(link).toContain('?chat=');
+      // The chat's first turn under way, its CLI started.
+      await settle(8);
       p.notes.length = 0;
       expect(await call('rename_chat', { chat: link, title: 'Tests' }, 0)).toBe('Renamed chat to "Tests".');
       const updated = actions(p, uri).find((one) => one.action.type === 'session/chatUpdated');

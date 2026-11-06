@@ -1,7 +1,7 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { startup } from '@anthropic-ai/claude-agent-sdk';
 import { idOf, mergeLogicalTurnUsage, reason } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
-import type { HookCallback, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
+import type { HookCallback, Options, query, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { clearFor } from '../catalog.js';
 import { bag, list, str, UUID } from './common.js';
 import type { SessionContext } from './context.js';
@@ -29,7 +29,9 @@ const settingSourcesOf = (trusted: boolean, userSettings: boolean): SettingSourc
 };
 
 /**
- * How long the CLI has to answer its handshake before it is a CLI that died.
+ * How long the CLI has to answer its handshake before it is a CLI that died:
+ * the bound the SDK's `startup` is handed as its own, the 120 seconds decided
+ * in `.project/plans/claude/22-a-claude-session-fails-cleanly/plan.md`.
  *
  * A cold start with several MCP servers is slow, which is the whole reason the
  * bound is this generous; a deployment whose machines are slower still raises
@@ -50,12 +52,15 @@ export interface Query {
   toYield: SDKUserMessage[];
   /**
    * Start a CLI for this session on the agent named, and read it: the query
-   * this session reads from then on, asked what it has until one answers.
+   * this session reads from then on, asked what it has until one answers. A
+   * start that fails rejects with the SDK's words.
    *
    * `cut` is the chain entry a query that is not the first resumes at, which
    * drops what came after it, as a rewind drops it.
    */
-  startQuery: (agent: string | undefined, first: boolean, cut?: string) => void;
+  startQuery: (agent: string | undefined, first: boolean, cut?: string) => Promise<void>;
+  /** Take the session off a CLI still starting, which a stop leaves nobody to answer. */
+  abandonStart: () => void;
   /** The backend's id for the *last* thing in each turn, by this host's turn id. */
   ends: Map<string, string>;
   /** Ask the CLI for a model, and say why it would not take it if it will not. */
@@ -68,7 +73,7 @@ export interface Query {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L321-L323
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1141-L1145
    */
-  rebindForRestart: (uri: string | undefined) => string | undefined;
+  rebindForRestart: (uri: string | undefined) => Promise<string | undefined>;
   /**
    * Read a record's values again, find the turn's login, and start the CLI
    * again on them when either changed: VS Code's session's rebind for synced
@@ -79,7 +84,7 @@ export interface Query {
    * refusal is a sentence for the turn that asked.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1072-L1080
    */
-  rebindForSyncedState: () => string | undefined;
+  rebindForSyncedState: () => Promise<string | undefined>;
   /** End the turn now running as one that failed, and leave the session as it is. */
   failTurn: (why: string) => void;
   /**
@@ -347,8 +352,7 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   /**
-   * Put away a CLI that died, never answered its handshake or ended its stream
-   * without a result.
+   * Put away a CLI that died or ended its stream without a result.
    *
    * The turn it was answering fails for the reason given, what it was handed
    * goes with it, and the next send starts a CLI that resumes the
@@ -367,59 +371,6 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.sendNext();
   };
 
-  /**
-   * A CLI that has not answered its handshake is a CLI that died.
-   *
-   * `initializationResult` is the one call that says the process is up and
-   * talking: it is answered when the CLI takes the control request the SDK
-   * sends at startup, and rejected when there is nothing there to take it. A
-   * CLI that is there and silent - a machine whose `docker exec` never returns,
-   * a wrapper waiting on something that will not come - leaves the query alive
-   * and every turn after it unanswered, which is a session drawn as thinking
-   * for as long as anyone watches. The bound is what turns that into the
-   * ending a dead CLI gets.
-   *
-   * The timer is cleared by whichever answer comes, and a query this host has
-   * since put away fails nothing: it is not the CLI this session is reading.
-   *
-   * The query comes back out, so the builder reads as what it always was: the
-   * bound is put on the way through and not built into anything.
-   */
-  const bounded = (handle: ReturnType<typeof query>): ReturnType<typeof query> => {
-    const within = ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS;
-    const timer = setTimeout(() => {
-      if (ctx.query !== handle || ctx.rebind === handle) return;
-      putAway(handle, `Claude Code did not answer within ${within / 1000} seconds`);
-      /*
-       * Closed rather than left running: a CLI that answers ten minutes later
-       * would be a process nobody is reading, for a session that has already
-       * failed, and the turn it was going to answer is over.
-       */
-      try { handle.close(); }
-      catch { /* Closing something already closing is the same ending. */ }
-    }, within);
-    const answered = (): void => { clearTimeout(timer); };
-    void handle.initializationResult().then(answered, answered);
-    return handle;
-  };
-
-  /**
-   * A query for this session, on the agent named, carrying the conversation
-   * this session already has.
-   *
-   * A function rather than a single call because the agent a message picks is
-   * read after the CLI has already been started, and the SDK takes `agent` at
-   * startup: a send that picks a different one has to ask for a new CLI and
-   * resume the conversation into it. Only the agent and the conversation move;
-   * every other option is read from the same places in every call.
-   *
-   * `first` is how this conversation is picked up, which is a fact about the
-   * query that opened it. A rebuild asks again for nothing: it resumes the id
-   * the CLI gave this session, which is the whole of what carries it over.
-   *
-   * Every query built here goes out with the bound on its handshake, which is
-   * this one place rather than the two a session starts one from.
-   */
   /**
    * The operator's environment for the session's shells, handed to the CLI as
    * VS Code's Claude hands its own: a name set goes in the CLI's
@@ -446,9 +397,22 @@ export function createQuery(ctx: SessionContext): Query {
     return out;
   };
 
-  const buildQuery = (agent: string | undefined, first: boolean, cut?: string): ReturnType<typeof query> => bounded(query({
-    prompt: input(bound),
-    options: withShellEnv({
+  /**
+   * The options of a CLI for this session, on the agent named, carrying the
+   * conversation this session already has.
+   *
+   * A function rather than a single value because the agent a message picks is
+   * read after the CLI has already been started, and the SDK takes `agent` at
+   * startup: a send that picks a different one has to ask for a new CLI and
+   * resume the conversation into it. Only the agent and the conversation move;
+   * every other option is read from the same places in every call.
+   *
+   * `first` is how this conversation is picked up, which is a fact about the
+   * query that opened it. A rebuild asks again for nothing: it resumes the id
+   * the CLI gave this session, which is the whole of what carries it over.
+   */
+  const optionsFor = (agent: string | undefined, first: boolean, cut?: string): Options => withShellEnv(
+    {
       cwd: ctx.options.cwd,
       /*
        * Where the CLI runs, when it is not here.
@@ -647,8 +611,8 @@ export function createQuery(ctx: SessionContext): Query {
        */
       ...(agent === undefined ? {} : { agent }),
       canUseTool: ctx.canUseTool,
-    }),
-  } as Parameters<typeof query>[0]));
+    },
+  ) as Options;
 
   /**
    * What a CLI is started from, as the string `appliedValues` holds: the record's
@@ -674,14 +638,23 @@ export function createQuery(ctx: SessionContext): Query {
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L518-L522
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L626-L629
    *
+   * It is started as VS Code's Claude session starts one, through the SDK's
+   * `startup`, which spawns the CLI and waits for its handshake under the
+   * SDK's own bound: a CLI that does not answer within it rejects the start in
+   * the SDK's words, which fail the turn that asked, and the next send starts
+   * one again. A start a stop or a close abandoned while it ran is disposed of
+   * once it is up, as VS Code disposes of a startup its abort overtook.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L676-L681
+   *
    * It is bound as the query this session talks to, as the reference binds
    * the stream it builds, and read until it ends; and until a CLI has answered
    * what it has, this one is asked.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L175-L185
    */
-  const startQuery = (agent: string | undefined, first: boolean, cut?: string): void => {
+  const startQuery = async (agent: string | undefined, first: boolean, cut?: string): Promise<void> => {
     ctx.appliedValues = startedFrom(ctx.values, ctx.login);
     bound += 1;
+    const mine = bound;
     const replaced = ctx.pendingPromptDeferred;
     ctx.pendingPromptDeferred = undefined;
     replaced?.();
@@ -691,10 +664,28 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.parentSdkUuid = undefined;
     ctx.appliedEffort = undefined;
     ctx.gone = undefined;
-    const handle = buildQuery(agent, first, cut);
+    const warm = await startup({ options: optionsFor(agent, first, cut), initializeTimeoutMs: ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS });
+    if (ctx.disposed || mine !== bound) {
+      try { await warm[Symbol.asyncDispose](); }
+      catch { /* A CLI already gone is disposed of all the same. */ }
+      throw new Error('The CLI was stopped while it started');
+    }
+    const handle = warm.query(input(mine));
     ctx.query = handle;
     void consume(handle);
     void ctx.describe().catch(() => {});
+  };
+
+  /**
+   * Take the session off a CLI still starting, which a stop or a close leaves
+   * nobody to answer: the start is disposed of once it is up, and the reader of
+   * the CLI before it ends.
+   */
+  const abandonStart = (): void => {
+    bound += 1;
+    const replaced = ctx.pendingPromptDeferred;
+    ctx.pendingPromptDeferred = undefined;
+    replaced?.();
   };
 
   /**
@@ -747,8 +738,12 @@ export function createQuery(ctx: SessionContext): Query {
    * the agent picked, as VS Code's provisional session keeps the agent its
    * first send materializes with.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L645
+   *
+   * A CLI that will not stop is a sentence the turn runs on beside the agent
+   * it has; one that does not start rejects, the CLI it replaced held for the
+   * next send to start again.
    */
-  const rebindForRestart = (uri: string | undefined): string | undefined => {
+  const rebindForRestart = async (uri: string | undefined): Promise<string | undefined> => {
     const name = uri === undefined ? undefined : resolveClaudeAgentName(uri);
     if (name === ctx.appliedAgent) return undefined;
     const was = ctx.query;
@@ -759,7 +754,12 @@ export function createQuery(ctx: SessionContext): Query {
       }
     }
     ctx.appliedAgent = name;
-    if (was !== undefined) startQuery(name, false);
+    if (was === undefined) return undefined;
+    try { await startQuery(name, false); }
+    catch (error: unknown) {
+      ctx.rebind = was;
+      throw error;
+    }
     return undefined;
   };
 
@@ -1179,13 +1179,13 @@ export function createQuery(ctx: SessionContext): Query {
     } catch (error) {
       // A query this host put away is not a CLI that died: the one that
       // replaced it is already running the same conversation, a turn moving
-      // to another login is about to start it, or a stop, a death or the
-      // bound above closed it for the next send to start again, a close
-      // keeping the reason it was put away for.
+      // to another login is about to start it, or a stop or a death closed it
+      // for the next send to start again, a close keeping the reason it was
+      // put away for.
       if (ctx.disposed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
       /*
-       * The failure in its own words, a CLI that never started included, as
-       * VS Code's host ends a send that failed with the error's own message.
+       * The failure in its own words, as VS Code's host ends a send that
+       * failed with the error's own message.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2565
        */
       putAway(mine, reason(error));
@@ -1218,7 +1218,7 @@ export function createQuery(ctx: SessionContext): Query {
    * session stays for the next send when its sign-in fails.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1266-L1273
    */
-  const rebindForSyncedState = (): string | undefined => {
+  const rebindForSyncedState = async (): Promise<string | undefined> => {
     const live = ctx.options.presetOf;
     const now = live === undefined ? ctx.values : ctx.valuesOf(live());
     const unready = ctx.unready(now);
@@ -1234,9 +1234,16 @@ export function createQuery(ctx: SessionContext): Query {
     }
     ctx.values = now;
     ctx.login = login;
-    if (was !== undefined) startQuery(ctx.appliedAgent, false);
+    if (was === undefined) return undefined;
+    // A CLI that does not start is the turn's refusal, in the SDK's words; the
+    // CLI it replaced is held for the next send to start again.
+    try { await startQuery(ctx.appliedAgent, false); }
+    catch (error: unknown) {
+      ctx.rebind = was;
+      return reason(error);
+    }
     return undefined;
   };
 
-  return { toYield, startQuery, ends, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
+  return { toYield, startQuery, abandonStart, ends, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
 }

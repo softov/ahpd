@@ -20,7 +20,7 @@ import { expect, it, vi } from 'vitest';
 
 const sdk = vi.hoisted(() => ({ frames: [] as Record<string, unknown>[] }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: ({ prompt }: { prompt: AsyncIterable<unknown> }) => ({
     async *[Symbol.asyncIterator]() {

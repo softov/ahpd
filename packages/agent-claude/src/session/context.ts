@@ -70,7 +70,8 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   shellEnv?: ShellEnv;
   /**
-   * How long the CLI has to answer its handshake before it is a CLI that died.
+   * How long the CLI has to answer its handshake: the bound the SDK's
+   * `startup` is handed, past which the CLI did not start.
    *
    * Absent is the bound this backend ships with, which is the ordinary
    * install: a deployment whose machines are slower raises it through the
@@ -219,10 +220,10 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   failed: string | undefined;
   /**
-   * The CLI a stop closed, or that died, never answered its handshake or
-   * ended its stream without a result, while the next send has not yet
-   * started one that resumes the conversation, as the reference marks its
-   * pipeline for a rebind. Its reader ends without failing the session.
+   * The CLI a stop closed, that died or ended its stream without a result, or
+   * that a CLI meant to replace it did not start beside, while the next send
+   * has not yet started one that resumes the conversation, as the reference
+   * marks its pipeline for a rebind. Its reader ends without failing the session.
    * Nothing while the CLI answering is the one reading.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L696-L718

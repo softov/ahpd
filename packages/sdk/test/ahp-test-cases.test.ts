@@ -37,7 +37,7 @@ import type { Peer } from '../src/types/rpc.js';
 
 const sdk = vi.hoisted(() => ({ queries: [] as { frames: Record<string, unknown>[]; wake: (() => void) | undefined; closed: boolean }[] }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/warmed.js')).warmed({
   listSessions: async () => [],
   getSessionMessages: async () => [],
   query: ({ prompt }: { prompt: AsyncIterable<unknown> }) => {

@@ -49,7 +49,7 @@ const sdk = vi.hoisted(() => {
   return state;
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   deleteSession: async (id: string) => {
     if (sdk.undeletable.has(id)) throw new Error(`EACCES: permission denied, unlink '${id}.jsonl'`);
@@ -655,7 +655,7 @@ describe('a failed login', () => {
   });
 
   it('starts a conversation over when the CLI it stopped raises as it ends, and runs its next turn', async () => {
-    // A close may raise afterwards, as `consume` says of the handshake's bound.
+    // A close may raise afterwards, which `consume` reads as a CLI put away.
     sdk.raising = true;
     const id = randomUUID();
     const { session, chat } = open({ logins: ['work', 'personal'] }, twoLogins(), { uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` });

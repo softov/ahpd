@@ -22,7 +22,7 @@ const sdk = vi.hoisted(() => ({
   built: [] as (string | undefined)[],
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: (given: { options: { model?: string } }) => {
     sdk.built.push(given.options.model);
@@ -73,6 +73,7 @@ it('reopens on the model it was stored on, and says so before anybody has asked'
   expect(values.model).toBe('opus');
   // And the CLI its first send starts is given it at startup, which is the half a client cannot see.
   session.sendMessage('t1', 'hello');
+  await new Promise((done) => { setTimeout(done, 20); });
   expect(sdk.built).toEqual(['opus']);
 });
 
@@ -85,6 +86,7 @@ it('leaves the model empty for a session stored on one the variant does not offe
   expect(values.model).toBe('fable-9');
   // Not even asked of the CLI: an id this variant cannot serve is not one to hand over.
   session.sendMessage('t1', 'hello');
+  await new Promise((done) => { setTimeout(done, 20); });
   expect(sdk.built).toEqual([undefined]);
 });
 
@@ -92,6 +94,7 @@ it('leaves the model empty for `default`, which names no model at all', async ()
   const { session, model } = await opened({ model: 'default' });
   expect(model).toBeUndefined();
   session.sendMessage('t1', 'hello');
+  await new Promise((done) => { setTimeout(done, 20); });
   expect(sdk.built).toEqual([undefined]);
 });
 
@@ -107,6 +110,7 @@ it('leaves the model empty when what was stored is not a name', async () => {
   const { session, model } = await opened({ model: { id: 'opus' } });
   expect(model).toBeUndefined();
   session.sendMessage('t1', 'hello');
+  await new Promise((done) => { setTimeout(done, 20); });
   expect(sdk.built).toEqual([undefined]);
 });
 

@@ -121,11 +121,12 @@ export interface ClaudeOptions {
    */
   computerConfigDir?: string | false;
   /**
-   * How long the CLI has to answer its handshake before it is a CLI that died.
+   * How long the CLI has to answer its handshake: the bound the SDK's
+   * `startup` is handed, past which the CLI did not start.
    *
    * A cold start with several MCP servers is slow, and this is the option that
    * lets a deployment with a slower machine say so. Without it, the bound the
-   * backend ships with applies to every session of every variant.
+   * backend ships with, 120 seconds, applies to every session of every variant.
    */
   handshakeTimeoutMs?: number;
   /**

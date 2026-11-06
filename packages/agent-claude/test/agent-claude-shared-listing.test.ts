@@ -14,7 +14,7 @@ const sdk = vi.hoisted(() => ({
   options: [] as Record<string, unknown>[],
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   listSessions: async () => {
     sdk.listed += 1;
     // A tick, so callers meant to share a listing really do overlap: without

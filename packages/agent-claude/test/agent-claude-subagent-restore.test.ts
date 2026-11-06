@@ -22,7 +22,7 @@ const sdk = vi.hoisted(() => ({
   messages: [] as Record<string, unknown>[],
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   listSessions: async () => sdk.sessions,
   // One session by id, out of the same store: how a past session's own
   // directory is settled without listing every path to find it.

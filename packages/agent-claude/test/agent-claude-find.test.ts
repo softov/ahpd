@@ -23,7 +23,7 @@ const sdk = vi.hoisted(() => ({
   store: {} as Record<string, Record<string, unknown>>,
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   listSessions: async ({ dir }: { dir: string }) => {
     sdk.listed += 1;
     return Object.entries(sdk.store[dir] ?? {}).map(([sessionId, info]) => info);

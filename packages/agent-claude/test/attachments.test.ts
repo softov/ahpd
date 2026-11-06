@@ -42,7 +42,7 @@ const sdk = vi.hoisted(() => {
   };
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: (given: { prompt: AsyncGenerator<Bag> }) => {
     // Read by one reader, as the SDK reads a CLI's input: a second `next()` on

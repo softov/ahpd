@@ -13,7 +13,7 @@ import type { Agent, Engine, AgentView, Bag, Start } from '@ahpd/sdk';
  * A record of the `claude` engine is one of these: its id is what clients name, its name is what they read, and its config carries the declared options and the model list alike. The cases here are the shapes that takes: the template with nothing set, a variant beside it with its own name and models, a record holding every declared field, and what each one's config becomes - a session's query, the endpoint it probes, and the environment it hands a CLI in a machine.
  */
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: ({ options }: { options: Record<string, unknown> }) => {
     sdk.options.push(options);

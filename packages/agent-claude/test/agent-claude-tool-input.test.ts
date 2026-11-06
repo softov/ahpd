@@ -30,7 +30,7 @@ const sdk = vi.hoisted(() => ({
   mcp: [] as Record<string, unknown>[],
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   // A transcript as the SDK reads it back, which leaves each entry's
   // `toolUseResult` out: its `SessionMessage` has no field for it.

@@ -47,7 +47,7 @@ vi.mock('../../agent-claude/src/mcp.js', () => ({
   }),
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   listSessions: async () => [],
   getSessionMessages: async () => [],

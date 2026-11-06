@@ -46,9 +46,9 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `computerCli` | `part` | Where the CLI a machine runs comes from |
 | `computerCliFallback` | `refuse` | With `computerCli: "part"`, what a machine gets when the `claude` part cannot be built |
 | `computerConfigDir` | `/ahpd/<id>`, or `/ahpd/claude` for the first record | The configuration directory the CLI reads *inside a machine*; `false` leaves the image's own |
-| `handshakeTimeoutMs` | `120000` | How long the CLI has to answer its handshake before its session treats it as a CLI that died |
+| `handshakeTimeoutMs` | `120000` | How long the CLI has to answer its handshake, the bound the SDK's `startup` is handed |
 
-`computerCli` is `part`, the `claude` part this host builds at its pinned version, or `host`, which mounts this host's own installed CLI. `computerCliFallback` is `refuse`, which refuses a Claude session in a machine and names the part, or `host`, which mounts this host's own CLI instead and logs that it did. `handshakeTimeoutMs` is how long a CLI has to take the control request that says it is up: a cold start with several MCP servers is slow, and a machine slower than that is what the option is for. A CLI that misses the bound is treated as one that died: the turn fails with that reason, the query is closed, and the next send starts a CLI that resumes the conversation.
+`computerCli` is `part`, the `claude` part this host builds at its pinned version, or `host`, which mounts this host's own installed CLI. `computerCliFallback` is `refuse`, which refuses a Claude session in a machine and names the part, or `host`, which mounts this host's own CLI instead and logs that it did. `handshakeTimeoutMs` is how long a CLI has to take the control request that says it is up: a cold start with several MCP servers is slow, and a machine slower than that is what the option is for. A session starts its CLI through the SDK's `startup`, as VS Code's Claude does, and hands it this bound: a CLI that misses it did not start, the SDK closes it, the turn fails in the SDK's words, and the next send starts a CLI again.
 
 ### A record of the engine
 

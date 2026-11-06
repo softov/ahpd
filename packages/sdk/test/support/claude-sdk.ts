@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { warmed } from './warmed.js';
 
 /**
  * Where the CLI keeps its conversations for the cases that load the fake.
@@ -181,7 +182,8 @@ const extraFor = (): Record<string, unknown> | undefined => {
   return id === undefined ? undefined : { _meta: { 'claudecode/toolUseId': id } };
 };
 
-export const fake = {
+// The SDK's `startup` beside its `query`, which a session starts its CLI through.
+export const fake = warmed({
   /*
    * The definitions as the host built them, with the arguments a handler is
    * handed wrapped on: the real SDK calls a tool handler with the arguments
@@ -312,7 +314,7 @@ export const fake = {
       close: () => { fake.closed = true; fake.wake?.(); },
     };
   },
-};
+});
 
 export function resetSdk(): void {
   sdk.sessions.length = 0;

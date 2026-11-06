@@ -16,7 +16,7 @@ import type { Bag, Session, Start } from '@ahpd/sdk';
 
 const sdk = vi.hoisted(() => ({ messages: [] as Record<string, unknown>[] }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   getSessionMessages: async () => sdk.messages,
   getSessionInfo: async (id: string, options?: { dir?: string }) => ({ sessionId: id, summary: 'read back', lastModified: 0, cwd: options?.dir }),
