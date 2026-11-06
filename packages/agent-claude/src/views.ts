@@ -1,18 +1,19 @@
 /**
- * What a `claude-login` connector and a Claude agent draw, and the data they draw it from.
+ * What a `claude-login` connector and a Claude agent show on their `main`
+ * view, and the data model each view reads.
  *
- * The two schemas are a `ui` capability's component trees, declared once when
- * the adapter and the engine are registered. The builders below make the data
- * each open record sends: the login's own plan answer, and one entry for each
- * login an agent's record names. A path a schema binds that the data does not
- * hold draws nothing, so a login nobody has heard from yet sends no window.
+ * Each open record shows its view once, with the data it has, and sets the
+ * data again with `setViewData` when an account answers: the login's own plan,
+ * and one entry for each login an agent's record names. A path a view binds
+ * that the data does not hold draws nothing, so a login nobody has heard from
+ * yet shows no window.
  *
  * A `Text` reads its `text` from the data, and a `List` repeats one row over
  * the items at its path. Inside a repeated row every path is relative, so
  * `name`, `left` and `reset` read the row's own window.
  */
 
-import type { QuotaSnapshots, UiSchema } from '@ahpd/sdk';
+import type { PluginView, QuotaSnapshots } from '@ahpd/sdk';
 import type { PlanNote } from './logins.js';
 
 /** One window of a plan, as a row draws it. */
@@ -84,29 +85,29 @@ export const agentDataOf = (logins: readonly { id: string; said?: PlanNote }[]):
  * A row is the window's name, what is left of it and when it resets, and each
  * cell reads its own item of the list the row is repeated over.
  */
-const windowRow = (prefix: string): UiSchema['components'] => ({
+const windowRow = (prefix: string): PluginView['components'] => ({
   [prefix]: { id: prefix, component: 'Row', children: [`${prefix}Name`, `${prefix}Left`, `${prefix}Reset`] },
   [`${prefix}Name`]: { id: `${prefix}Name`, component: 'Text', text: { path: 'name' } },
   [`${prefix}Left`]: { id: `${prefix}Left`, component: 'Text', text: { path: 'left' } },
   [`${prefix}Reset`]: { id: `${prefix}Reset`, component: 'Text', text: { path: 'reset' } },
 });
 
-/** The `claude-login` adapter's schema: the plan type, then one row for each window. */
-export const LOGIN_UI: UiSchema = {
+/** A `claude-login` connector's view, with no data: the plan type, then one row for each window. */
+export const LOGIN_VIEW: PluginView = {
   root: 'login',
   components: {
     login: { id: 'login', component: 'Column', children: ['plan', 'windows'] },
-    plan: { id: 'plan', component: 'Text', text: { path: 'plan' } },
-    windows: { id: 'windows', component: 'List', children: { path: 'windows', componentId: 'window' } },
+    plan: { id: 'plan', component: 'Text', text: { path: '/plan' } },
+    windows: { id: 'windows', component: 'List', children: { path: '/windows', componentId: 'window' } },
     ...windowRow('window'),
   },
 };
 
-/** The Claude engine's schema: a list over the agent's logins, each with its windows. */
-export const AGENT_UI: UiSchema = {
+/** A Claude agent's view, with no data: a list over the agent's logins, each with its windows. */
+export const AGENT_VIEW: PluginView = {
   root: 'logins',
   components: {
-    logins: { id: 'logins', component: 'List', children: { path: 'logins', componentId: 'login' } },
+    logins: { id: 'logins', component: 'List', children: { path: '/logins', componentId: 'login' } },
     login: { id: 'login', component: 'Column', children: ['loginName', 'loginPlan', 'loginWindows'] },
     loginName: { id: 'loginName', component: 'Text', text: { path: 'name' } },
     loginPlan: { id: 'loginPlan', component: 'Text', text: { path: 'plan' } },

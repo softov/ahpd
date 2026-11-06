@@ -245,7 +245,7 @@ it('draws a login\'s plan with its limits, and nothing else of the account', asy
   const shown: Bag[] = [];
   logins.opened(
     { id: 'usage-work', adapter: 'claude-login', owner: 'host', config: { token: 'token-usage-work' } },
-    { show: (data) => { shown.push(data as Bag); }, clear: () => {} },
+    { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Bag); }, clearView: () => {} },
   );
   const { session } = open('login', {
     preset: { logins: ['usage-work'] },

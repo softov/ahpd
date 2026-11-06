@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Adapter, CodeSignIn, Connector, UiHandle } from '@ahpd/sdk';
+import type { Adapter, CodeSignIn, Connector, ViewHandle } from '@ahpd/sdk';
 import { echo } from '../../../examples/echo/agent.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { loginAdapter } from '../src/adapter.js';
@@ -69,10 +69,8 @@ it('is registered by a load, with its token kept in the vault and a sign-in that
   expect(adapter?.schema['required']).toEqual(['token']);
   expect(adapter?.signIn?.field).toBe('token');
   expect(adapter?.signIn?.title).toBe('Sign in with Claude');
-  // The plan usage is drawn from the data the connector sends, not from a form.
-  expect(adapter?.capabilities).toHaveLength(1);
-  expect(adapter?.capabilities?.[0]).toMatchObject({ type: 'ui', name: 'plan' });
-  expect(adapter?.capabilities?.[0]?.ui?.root).toBe('login');
+  // The plan usage is shown on the connector's main view, not in a form.
+  expect(adapter?.capabilities).toEqual([expect.objectContaining({ type: 'view', name: 'main' })]);
 });
 
 describe('the sign-in', () => {
@@ -175,11 +173,11 @@ describe('an open login', () => {
     expect(logins.held('first')).toBeUndefined();
   });
 
-  it('draws the plan of the account when an answer arrives, with a row for each window', () => {
+  it('sets the plan of the account when an answer arrives, with a row for each window', () => {
     const logins = new OpenLogins();
     const shown: Record<string, unknown>[] = [];
-    const ui: UiHandle = { show: (data) => { shown.push(data); }, clear: () => {} };
-    adapterOf(undefined, logins).open(connectorOf('first', 'sk-ant-oat01-first'), ui);
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    adapterOf(undefined, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
 
     logins.noted('first', 'sk-ant-oat01-first', {
       quotaSnapshots: {
@@ -198,11 +196,11 @@ describe('an open login', () => {
     }]);
   });
 
-  it('draws no window for an account with no plan limits, and no data for a stale token', () => {
+  it('sets no window for an account with no plan limits, and no data for a stale token', () => {
     const logins = new OpenLogins();
     const shown: Record<string, unknown>[] = [];
-    const ui: UiHandle = { show: (data) => { shown.push(data); }, clear: () => {} };
-    adapterOf(undefined, logins).open(connectorOf('first', 'sk-ant-oat01-first'), ui);
+    const view: ViewHandle = { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Record<string, unknown>); }, clearView: () => {} };
+    adapterOf(undefined, logins).open(connectorOf('first', 'sk-ant-oat01-first'), view);
 
     // A token a put replaced speaks for the account it belonged to, not this one.
     logins.noted('first', 'sk-ant-oat01-old', { quotaSnapshots: { weekly: { remainingPercentage: 10 } } });

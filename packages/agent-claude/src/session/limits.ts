@@ -12,7 +12,7 @@ import type { SessionContext } from './context.js';
  * another account's token leaves the old account's limits behind rather than
  * drawing them for the new one. A session on the CLI's own sign-in has no
  * login to share them by, so it keeps its own, and only a login's limits reach
- * the ui that draws them. A restart forgets them, as it forgets a login's
+ * the views that show them. A restart forgets them, as it forgets a login's
  * rest, and the next handshake fills them again.
  *
  * The account's plan type and provider are kept beside them, because they say
@@ -271,7 +271,7 @@ export const refreshLimits = async (ctx: SessionContext, now: number = Date.now(
 };
 
 /**
- * Keep the plan, and send it to the uis that draw it when it is not what they were told.
+ * Keep the plan, and send it to the views that show it when it is not what they were told.
  *
  * The login's connector draws it, and so does each open agent that names the
  * login. A session on the CLI's own sign-in has no connector to tell, and a

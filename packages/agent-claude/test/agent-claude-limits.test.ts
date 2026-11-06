@@ -284,7 +284,7 @@ it('carries a login\'s windows on a turn, and draws them on the login', async ()
   const shown: Bag[] = [];
   logins.opened(
     { id: 'work', adapter: 'claude-login', owner: 'host', config: { token: 'token-work' } },
-    { show: (data) => { shown.push(data as Bag); }, clear: () => {} },
+    { showView: () => {}, setViewData: (_path, data) => { shown.push(data as Bag); }, clearView: () => {} },
   );
   sdk.reset();
   sdk.usageAsked = 0;

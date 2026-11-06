@@ -26,7 +26,6 @@ import type { ClaudeOptions } from './claude.js';
 import { sharedCatalogue as oneListing } from './catalog.js';
 import { OpenLogins } from './logins.js';
 import { kindSchema } from './options.js';
-import { AGENT_UI } from './ui.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
 export const name = 'agent-claude';
@@ -130,14 +129,13 @@ const engineOf = (paths: string[], shared: Shared, hostTools: boolean | undefine
   hostOnly: ['extraArgs'],
   keyVariables: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'],
   capabilities: [{
-    type: 'ui',
-    name: 'plan',
+    type: 'view',
+    name: 'main',
     title: 'Plan usage',
     description: 'The plan of each login this agent names, and what is left of each window.',
-    ui: AGENT_UI,
   }],
-  open: (record, ui) => {
-    logins.agentOpened(record, ui);
+  open: (record, view) => {
+    logins.agentOpened(record, view);
     return claude({
       ...shared,
       paths,
