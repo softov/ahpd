@@ -76,7 +76,7 @@ A bot is addressed by its slug, which is the URI path and the record's own `id`:
 | `resourceRead bot://<slug>/<user>` | That person's main chat with the bot, as `{ chat }`. |
 | `resourceList bot://<slug>/<user>/` | The names of that person's back sessions. |
 | `resourceRead bot://<slug>/<user>/<name>` | One back session, as `{ session }`. |
-| `resourceResolve bot://<slug>` | Its metadata, with `etag`. |
+| `resourceResolve bot://<slug>` | Its metadata: its record's times, and `etag`. A time is answered where it is known, so the root, a person's chat and their back sessions carry none. |
 | `resourceList bot://` | The bots the reader may see, by slug. |
 | `resourceDelete bot://<slug>` | Deletes one, and leaves a tombstone. |
 | `createResourceWatch bot://` or `bot://<slug>` | Tells the reader when a bot it may read is made, edited or deleted. |

@@ -570,6 +570,24 @@ it('leaves a time it cannot read out of a resolve', async () => {
   expect(at['ctime']).toBe('2026-10-11T00:00:00.000Z');
 });
 
+it('resolves only the times it knows, as the spec\'s resolve carries them', async () => {
+  const { host } = made({ soft: ['bot:*', 'session:create'] });
+  const soft = await as(host, 'soft');
+  await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true });
+  const kept = await record(soft, 'bot://motion');
+
+  // A bot's are its record's. Its size is what a read answers, which holds the
+  // reader's own chat, and a resolve has no reader.
+  const bot = got(await call(soft, 'resourceResolve', { uri: 'bot://motion' }));
+  expect(bot).toEqual({
+    uri: 'bot://motion', type: 'file', mtime: kept['updatedAt'], ctime: kept['createdAt'], etag: kept['updatedAt'],
+  });
+  // The root, a person's chat and their back sessions have no time of their own.
+  expect(got(await call(soft, 'resourceResolve', { uri: 'bot://' }))).toEqual({ uri: 'bot://', type: 'directory' });
+  expect(got(await call(soft, 'resourceResolve', { uri: 'bot:/motion/soft' }))).toEqual({ uri: 'bot:/motion/soft', type: 'file' });
+  expect(got(await call(soft, 'resourceResolve', { uri: 'bot:/motion/soft/' }))).toEqual({ uri: 'bot:/motion/soft/', type: 'directory' });
+});
+
 it('moves an older record\'s parts into the AGENTS.md it already has, and keeps its text', async () => {
   const { host, bots, records } = made({ soft: ['bot:*', 'session:create'] });
   const folder = join(bots, 'older');

@@ -656,9 +656,13 @@ export function botProvider(options: BotOptions): BotProvider {
      * what opens it - `<user>/` is a directory, the back sessions of that
      * person, and `<user>/<name>` is a file only where a row names a session.
      *
-     * A chat and a back session are answered the moment they are asked about,
-     * because neither has a time of its own to name: what a read serves is
-     * where the session is, and it is where it was a moment ago.
+     * The spec's resolve carries a time when it is known, and VS Code fills
+     * only what the stat has: a bot's are its record's, and the root, a chat
+     * and a back session have none of their own. A bot's size is left out too,
+     * because what a read of it answers holds the reader's own chat, and this
+     * road has no reader.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L1076-L1085
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L305-L307
      *
      * The reader is not handed to this road, so this answers shape and never
      * permission, and `read` is where somebody looking into another person's
@@ -669,19 +673,16 @@ export function botProvider(options: BotOptions): BotProvider {
       const held = at(uri);
       if (held.slug === '') {
         if (held.path !== '') throw absent(uri);
-        const now = new Date().toISOString();
-        return { uri, type: 'directory', mtime: now, ctime: now };
+        return { uri, type: 'directory' };
       }
       const bot = store.get(held.slug);
       if (bot === undefined) throw absent(uri);
       if (held.path === '') {
-        const body = JSON.stringify(bot, null, 2);
         const mtime = moment(bot.updatedAt);
         const ctime = moment(bot.createdAt);
         return {
           uri,
           type: 'file',
-          size: Buffer.byteLength(body, 'utf8'),
           ...(mtime === undefined ? {} : { mtime }),
           ...(ctime === undefined ? {} : { ctime }),
           // What an edit is checked against: the moment the record last changed,
@@ -692,12 +693,11 @@ export function botProvider(options: BotOptions): BotProvider {
       }
       const where = named(held.path);
       if (where === undefined) throw absent(uri);
-      const now = new Date().toISOString();
-      if (where.at === 'sessions') return { uri, type: 'directory', mtime: now, ctime: now };
-      if (where.at === 'chat') return { uri, type: 'file', mtime: now, ctime: now };
+      if (where.at === 'sessions') return { uri, type: 'directory' };
+      if (where.at === 'chat') return { uri, type: 'file' };
       const session = await options.backSessions.get(bot.id, where.user, where.name);
       if (session === undefined) throw noSession(uri);
-      return { uri, type: 'file', mtime: now, ctime: now };
+      return { uri, type: 'file' };
     },
 
     /**
