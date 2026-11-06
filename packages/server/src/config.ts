@@ -326,6 +326,20 @@ export interface Config {
    */
   pullRequestLookup?: 'url' | 'branch';
   /**
+   * How the folder shell integration points zsh at is taken when it is there
+   * already: `<tmp>/<user>-ahpd-zsh`, a name known in advance in a folder
+   * every user can write.
+   *
+   * `owned`, the default, takes only a folder of this user's that is not a
+   * link, since another user can make the name first and a link there would
+   * send zsh's four startup files wherever it points; anything else starts the
+   * shell with no integration. `asFound` sets the folder's mode on whatever is
+   * there and uses it, as VS Code does
+   * (src/vs/platform/terminal/node/terminalEnvironment.ts L219-L250 at
+   * 6b68d3fe).
+   */
+  zshFolder?: 'owned' | 'asFound';
+  /**
    * How `ahpd configure` and `ahpd doctor` find a command on PATH.
    *
    * `runnable`, the default, takes a regular file with an execute bit, tries

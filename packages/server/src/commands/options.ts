@@ -102,6 +102,8 @@ export interface Options {
   nodeRestart: 'end' | 'reconnect';
   /** How the merged sessions pass learns the state of a pull request. */
   pullRequestLookup: 'url' | 'branch';
+  /** How the zsh folder shell integration points zsh at is taken when it is there already. */
+  zshFolder: 'owned' | 'asFound';
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
   /** The environment every shell this host starts is given, absent when the deployment named none. */
@@ -638,6 +640,11 @@ export const serverFields = {
     type: 'string',
     enum: ['url', 'branch'],
     description: 'How merged sessions learn the state of a pull request: url asks for each pull request by its page, branch asks for the pull requests of the session\'s branch.',
+  },
+  zshFolder: {
+    type: 'string',
+    enum: ['owned', 'asFound'],
+    description: 'How the folder shell integration points zsh at, under the temporary folder, is taken when it is there already: owned, the default, takes only a folder of this user\'s that is not a link, since another user can make the known name first; asFound sets its mode on whatever is there, as VS Code does.',
   },
   onPath: {
     type: 'string',
@@ -1272,6 +1279,7 @@ const noCwd = input['noCwd'] === true;
     archiveDirtyWorktree: given('archiveDirtyWorktree') ?? 'keep',
     nodeRestart: given('nodeRestart') ?? 'end',
     pullRequestLookup: given('pullRequestLookup') ?? 'url',
+    zshFolder: given('zshFolder') ?? 'owned',
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',
