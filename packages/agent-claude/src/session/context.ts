@@ -104,6 +104,13 @@ export interface ClaudeSessionOptions extends SessionOptions {
    * preset, which nothing edits while the daemon runs.
    */
   presetOf?: () => Bag;
+  /**
+   * The record's model, read at the start when this session's settings name none.
+   *
+   * Unlike `presetOf`, it is read once: a record edited while the session runs
+   * reaches it on the next start and not on the next turn.
+   */
+  model?: string;
   /** The list the CLI reports, as the harness offers it; absent is the CLI's. */
   offerModels?: (cli: { id: string; name: string }[]) => Promise<{ id: string; name: string }[]>;
   /**

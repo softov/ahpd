@@ -150,6 +150,8 @@ export interface ClaudeOptions {
    * daemon runs, is passed as `preset` instead.
    */
   presetOf?: () => Bag;
+  /** The record's model: what a session starts on when its own settings name none. */
+  model?: string;
   /**
    * The models this harness offers, by id and with a name.
    * Without either list, the CLI's own list.
@@ -710,6 +712,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // The host's own tools, offered to the model beside this backend's.
       ...(start.tools && start.tools.length > 0 ? { tools: start.tools } : {}),
       ...(start.instructions && start.instructions.length > 0 ? { instructions: start.instructions } : {}),
+      ...(options.model === undefined ? {} : { model: options.model }),
       settings: start.settings,
       schema: start.schema,
       emit: start.emit,

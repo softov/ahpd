@@ -129,6 +129,7 @@ const engineOf = (paths: string[], shared: Shared, logins: OpenLogins): Engine =
     paths,
     provider: record.id,
     displayName: record.name,
+    ...(record.model === undefined ? {} : { model: record.model }),
     ...(Array.isArray(record.config['models']) ? { models: modelsOf(record.config['models']) } : {}),
     ...(Array.isArray(record.config['modelSources']) ? { modelSources: sourcesOf(record.config['modelSources']) } : {}),
     ...(typeof record.config['keepCliModels'] === 'boolean' ? { keepCliModels: record.config['keepCliModels'] } : {}),
