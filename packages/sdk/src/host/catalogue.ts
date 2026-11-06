@@ -970,6 +970,13 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * session recorded since this host started is one the map built at startup
      * never saw, so reading the store here is also what keeps that map current.
      */
+    const stored = new Set(kept.sessions());
+    for (const id of stored) {
+      const backendId = ctx.sessionBackendId(id);
+      if (backendId === id || offered.has(id) || claimed.has(id)) continue;
+      const both = offered.get(backendId);
+      if (both !== undefined) offered.set(id, both.map(({ agent, row }) => ({ agent, row: { ...row, id } })));
+    }
     for (const id of offered.keys()) recordedChats(id);
     for (const own of chatBackends()) claimed.add(own);
     for (const id of [...offered.keys()]) {
@@ -983,7 +990,6 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * that only a backend knows. Asking the store once rather than once a row
      * keeps a listing over a hundred transcripts from a hundred questions.
      */
-    const stored = new Set(kept.sessions());
     const found: Summary[] = [];
     for (const [id, both] of offered) {
       /*
@@ -1054,8 +1060,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
         ? asked
         : [...asked.filter((agent) => agent.provider === recorded), ...asked.filter((agent) => agent.provider !== recorded)];
       for (const agent of order) {
-        const row = await agent.find?.(id, { workingDirectory: folder }).catch(() => undefined);
-        if (row !== undefined) return { agent, row };
+        const row = await agent.find?.(ctx.sessionBackendId(id), { workingDirectory: folder }).catch(() => undefined);
+        if (row !== undefined) return { agent, row: { ...row, id } };
       }
       return undefined;
     }));
