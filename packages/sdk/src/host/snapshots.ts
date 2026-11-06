@@ -24,11 +24,13 @@ export interface Snapshots {
    */
   sessionSeed(uri: string): Bag;
   /**
-   * The state a running chat's channel opens with: what its backend holds,
-   * with what this host keeps beside it. Read once, when the backend starts
-   * the chat; every change after it is an action.
+   * The state a running chat's channel opens with, resolved as VS Code's host
+   * resolves a chat's state: what its backend holds, with what this host keeps
+   * beside it. Read once, when the backend starts the chat; every change after
+   * it is an action.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L213
    */
-  chatSeed(session: string, chatUri: string): Bag;
+  resolveChatState(session: string, chatUri: string): Bag;
   /**
    * A running session's held state, opened from `sessionSeed` the first time
    * anything reads it, or nothing for a session this host is not running.
@@ -175,7 +177,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     };
   };
 
-  const chatSeed = (session: string, chatUri: string): Bag => {
+  const resolveChatState = (session: string, chatUri: string): Bag => {
     const talking = byChat.get(chatUri);
     if (talking === undefined) return {};
     const owner = sessions.get(session);
@@ -514,7 +516,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const talking = byChat.get(channel);
     if (talking) {
       // Held from the moment its backend started, which is where its seed is read.
-      const state = heldOf(channel, 'chat', () => chatSeed(talking.uri, channel));
+      const state = heldOf(channel, 'chat', () => resolveChatState(talking.uri, channel));
       return served(channel, windowed(state, view));
     }
     /*
@@ -809,5 +811,5 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     };
   };
 
-  return { value, snapshotOf, sessionSeed, chatSeed, sessionStateOf };
+  return { value, snapshotOf, sessionSeed, resolveChatState, sessionStateOf };
 }

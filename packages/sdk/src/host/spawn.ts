@@ -1867,7 +1867,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      */
     ctx.flushDeltas();
     const open = ctx.stateOf(chatUri);
-    if (open === undefined) ctx.openState(chatUri, 'chat', ctx.chatSeed(uri, chatUri));
+    if (open === undefined) ctx.openState(chatUri, 'chat', ctx.resolveChatState(uri, chatUri));
     else if (open.activeTurn === undefined && (!Array.isArray(open.turns) || open.turns.length === 0)) {
       /*
        * A chat that opened with no conversation - its record read nothing, as
@@ -1877,7 +1877,7 @@ export function createSpawn(ctx: HostContext): Spawn {
        * chat's persisted history with.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
        */
-      const turns = ctx.chatSeed(uri, chatUri).turns;
+      const turns = ctx.resolveChatState(uri, chatUri).turns;
       if (Array.isArray(turns) && turns.length > 0) {
         dispatch(chatUri, { type: 'chat/truncated' });
         dispatch(chatUri, { type: 'chat/turnsLoaded', turns });
