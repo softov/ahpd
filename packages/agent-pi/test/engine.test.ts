@@ -108,7 +108,7 @@ it('registers the pi engine, its form, its template, its host-only field and its
   // The fields of one record: what this backend has, without the four the
   // agents channel owns.
   const fields = Object.keys((engine.schema.properties ?? {}) as Bag).sort();
-  expect(fields).toEqual(['env', 'projectTrust', 'sessionDir']);
+  expect(fields).toEqual(['env', 'hostTools', 'projectTrust', 'sessionDir']);
   for (const owned of ['provider', 'displayName', 'name', 'description', 'icon', 'model']) {
     expect(fields).not.toContain(owned);
   }

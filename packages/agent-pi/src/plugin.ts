@@ -84,7 +84,7 @@ export const optionsOf = (values: Record<string, unknown>): PiOptions => values 
 const NOT_A_RECORD = new Set(['provider', 'displayName', 'description', 'model']);
 
 /** The fields of a record that become an option a turn runs on. */
-const RECORD_FIELDS = ['projectTrust', 'sessionDir'] as const;
+const RECORD_FIELDS = ['projectTrust', 'sessionDir', 'hostTools'] as const;
 
 /**
  * The engine's form: what a record may set, and nothing a second engine spells.
@@ -103,6 +103,7 @@ const kindSchema = (): Record<string, unknown> => ({
   additionalProperties: false,
   properties: {
     ...Object.fromEntries(Object.entries(optionsSchema.properties).filter(([key]) => !NOT_A_RECORD.has(key))),
+    hostTools: { type: 'boolean', description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting." },
     env: {
       type: 'object',
       description: "Variables pi is given, by name. One pi takes a key from is kept in the vault and never shown again; only a host record may set any other.",

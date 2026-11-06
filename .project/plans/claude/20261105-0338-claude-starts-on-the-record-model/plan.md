@@ -46,12 +46,12 @@ record.model -> open -> claude({ model }) -> session start, when settings name n
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Claude takes the record's model](task-01-claude-takes-the-record-model.md) | todo | - |
+| [01 - Claude takes the record's model](task-01-claude-takes-the-record-model.md) | implemented | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** [task-01-claude-takes-the-record-model.md](task-01-claude-takes-the-record-model.md) is implemented on 2026-11-05. A record's `model` reaches the session from `open`, and a session whose settings name none starts on it when the agent offers it. `defaults` is still the mode alone.
+- **Next action:** review task 01. It is the plan's only task.
 - **Open questions:** none.
 - **Watch out for:** the copy PR edits `packages/agent-claude/package.json`; this plan does not.
 

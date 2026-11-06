@@ -124,7 +124,7 @@ it('leaves the output style to the flag settings, which the CLI takes live', () 
 });
 
 it('says what an option is when nothing named one', () => {
-  expect(optionDefaults()).toEqual({ thinking: 'adaptive', hostTasks: true, enableTasks: true });
+  expect(optionDefaults()).toEqual({ thinking: 'adaptive', hostTasks: true, hostTools: true, enableTasks: true });
 });
 
 it('builds a session query from the declared values of its record', async () => {

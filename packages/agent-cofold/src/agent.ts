@@ -74,6 +74,14 @@ export interface CofoldOptions {
    * machine the daemon runs on.
    */
   tools?: ToolsConfig;
+  /**
+   * Whether the host's own tools reach this backend's sessions.
+   *
+   * On by default. Off drops each tool with no owner when the session starts
+   * and whenever the host sends a new list, and keeps each client's, which a
+   * client still provides.
+   */
+  hostTools?: boolean;
   /** A model adapter to use instead of `openaiCompat`; for a test or an embedder. */
   adapter?: ModelAdapter;
   /**

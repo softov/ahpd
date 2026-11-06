@@ -12,6 +12,9 @@
     },
     "sessionDir": {
       "description": "Pasta onde o pi guarda suas sessões. Por padrão, a do próprio pi. Cada agente pode alterar."
+    },
+    "hostTools": {
+      "description": "Oferece as ferramentas do host a cada sessão. Ativado por padrão. Cada agente pode alterar."
     }
   },
   "session": {

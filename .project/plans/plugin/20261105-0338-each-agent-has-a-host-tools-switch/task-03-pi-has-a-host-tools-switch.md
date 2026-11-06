@@ -1,6 +1,6 @@
 ---
 title: pi has a host tools switch
-status: todo
+status: implemented
 depends: []
 layer: agent-pi
 refs:
@@ -38,5 +38,5 @@ A pi plugin option and a pi record field `hostTools` turn the host's tools off, 
 
 ## Resume
 
-- **Done so far:** nothing.
-- **Found:** nothing yet.
+- **Done so far:** `hostTools` is a plugin option (manifest and es/pt) and a record field (`RECORD_FIELDS`, over the plugin's, declared with acp's record wording), and `session.ts` keeps only the tools with an owner in `offering` at the start and on a later list.
+- **Found:** the plan's `src/backend.ts` is the pi-runtime `BackendOptions`, not the host-facing options; `hostTools` went into `PiOptions` in `src/types.ts`, which is what a session is built with. Two tests outside the task's Files pin the option and the record's fields: `test/agent-pi-options.test.ts` (the README's options table must match the manifest, so the README lists it too) and `test/engine.test.ts` (the record's fields); `packages/server/test/plugin-load.test.ts` lists the plugin's options too.

@@ -85,7 +85,8 @@
           "enum": ["trust", "deny"],
           "description": "Whether pi loads a project's own extensions, skills and prompts. 'trust' (default) loads them in folders the host trusts; 'deny' never loads them. Each agent can override it."
         },
-        "sessionDir": { "type": "string", "description": "Folder where pi keeps its sessions. Defaults to pi's own. Each agent can override it." }
+        "sessionDir": { "type": "string", "description": "Folder where pi keeps its sessions. Defaults to pi's own. Each agent can override it." },
+        "hostTools": { "type": "boolean", "description": "Offer the host's tools to each session. On by default. Each agent can override it." }
       }
     }
   }

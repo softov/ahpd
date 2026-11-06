@@ -3,8 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createAgentSession, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { echo } from '../../../examples/echo/agent.js';
+import { loadPlugins } from '../../server/src/plugins.js';
 import { Status } from '../../sdk/src/sessions/catalog.js';
-import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
+import { startedNow } from '../../sdk/test/support/started.js';
+import type { AgentView, Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import type { ClientCallAnswer } from '../../sdk/src/tools/clientcalls.js';
 import { mapEvent } from '../src/mapping.js';
@@ -118,6 +121,70 @@ it('hands the host tools to pi as custom tools', async () => {
   session.sendMessage('t1', 'hello');
   await settled();
   expect((pi.opens[0]?.tools ?? []).map((one) => one.name)).toEqual(['bash', 'open_file']);
+});
+
+/*
+ * The host tools switch, through the plugin: on drops nothing, and off drops
+ * the tools with no owner while each client's still reaches pi.
+ */
+const REPO = join(import.meta.dirname, '../../..');
+const SOURCE = './packages/agent-pi/src/index.ts';
+const PASSED_OPEN = 'plugin agent-pi: plugins.agent-pi.options.open is not an option agent-pi knows; passed through';
+
+const MINE: BoundTool = { definition: { name: 'mine' }, run: async () => 'ok' };
+const REVIEW: BoundTool = { definition: { name: 'review' }, owner: 'a-client' };
+
+/** One record, as an engine is handed it: every field read at each call. */
+const viewOf = (id: string, held: () => Bag): AgentView => ({
+  id,
+  engine: 'pi',
+  owner: 'host',
+  name: id,
+  description: undefined,
+  icon: undefined,
+  model: undefined,
+  get config() { return held(); },
+});
+
+/** The tools one record of a plugin configured this way offered pi, by name. */
+const offeredBy = async (plugin: Bag, held: () => Bag): Promise<string[]> => {
+  const pi = fakePi();
+  const { problems, options } = await loadPlugins(
+    [{ name: SOURCE, options: { ...plugin, open: pi.open } }],
+    {
+      base: { path: root, agents: [echo({ path: root })] },
+      configDir: REPO,
+      cwd: REPO,
+      log: () => {},
+    },
+  );
+  expect(problems).toEqual([PASSED_OPEN]);
+  const engine = options.engines?.['pi'];
+  if (engine === undefined) throw new Error('no pi engine was registered');
+  const agent = engine.open(viewOf('pi-host-tools', held));
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/host-tools',
+    chatUri: 'ahp-chat:/host-tools',
+    settings: agent.defaults(),
+    emit: () => {},
+    tools: [MINE, REVIEW],
+  } as unknown as Start));
+  session.sendMessage('t1', 'hello');
+  await settled();
+  await session.close();
+  return (pi.opens[0]?.tools ?? []).map((one) => one.name);
+};
+
+it('offers the host\'s tools and a client\'s by default', async () => {
+  expect(await offeredBy({}, () => ({}))).toEqual(['mine', 'review']);
+});
+
+it('drops the host\'s tools when the plugin turns them off', async () => {
+  expect(await offeredBy({ hostTools: false }, () => ({}))).toEqual(['review']);
+});
+
+it('lets a record turn the host\'s tools off over the plugin\'s on', async () => {
+  expect(await offeredBy({ hostTools: true }, () => ({ hostTools: false }))).toEqual(['review']);
 });
 
 /** The client's tools one session offered pi, by the name the model calls them. */
