@@ -116,7 +116,7 @@ tail -f ~/.config/ahpd/daemon.log   # macOS
 ```
 
 ::: info Environment
-The file gets the `PATH` of the shell that ran `service install`, so the agents this host starts find their own runtimes. The daemon's own interpreter is written in full, so a `node` from nvm needs no `PATH` of its own.
+The file gets the `PATH` of the shell that ran `service install`, so the agents this host starts find their own runtimes. `"service": { "path": "manager" }` writes none, and the daemon runs on the manager's own `PATH`, as VS Code's CLI writes its unit. The daemon's own interpreter is written in full, so a `node` from nvm needs no `PATH` of its own.
 
 A configuration home of its own is an `XDG_CONFIG_HOME` that is not `~/.config`. An install from one writes that home into the file too, so the daemon the manager starts keeps to the folder under it. Which of the daemon's environment an agent's shells get is [`shellEnv`](../sdk/HOST.md#configuration-keys)'s to say.
 :::

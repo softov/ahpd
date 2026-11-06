@@ -163,6 +163,12 @@ describe('a wrong value on a known key', () => {
     expect(refusal({ updateCheck: 'false' })).toBe(`${config}: updateCheck must be true or false`);
   });
 
+  it('reads service.path as the shell\'s or the manager\'s, the shell\'s when the file names none, and refuses another', () => {
+    expect(folded({}).servicePath).toBe('shell');
+    expect(folded({ service: { path: 'manager' } }).servicePath).toBe('manager');
+    expect(refusal({ service: { path: 'login' } })).toBe(`${config}: service.path must be one of shell, manager`);
+  });
+
   it('takes onPath as runnable or findExecutable, and refuses another lookup', () => {
     expect(folded({ onPath: 'findExecutable' }).warnings).toEqual([]);
     expect(folded({ onPath: 'runnable' }).warnings).toEqual([]);

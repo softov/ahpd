@@ -90,7 +90,7 @@ export const declareService = (registry: Registry<object>): Command[] => {
           program: process.argv[1] as string,
           configFile,
           home: homedir(),
-          path: process.env['PATH'] ?? '',
+          ...(options.servicePath === 'shell' ? { path: process.env['PATH'] ?? '' } : {}),
           log: daemonLog(),
           ...(name === undefined ? {} : { name }),
           ...(ownHome === undefined ? {} : { configHome: ownHome }),

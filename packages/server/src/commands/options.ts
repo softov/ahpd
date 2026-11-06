@@ -179,6 +179,8 @@ export interface Options {
    * daemon read.
    */
   serviceName?: string;
+  /** The `PATH` the unit or the agent gives the daemon: the installing shell's, or the manager's own. */
+  servicePath: 'shell' | 'manager';
   /** A file every frame is appended to, both directions, one JSON line each. */
   wire?: string;
   /**
@@ -720,8 +722,9 @@ export const serverFields = {
     type: 'object',
     properties: {
       name: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,39}$' },
+      path: { type: 'string', enum: ['shell', 'manager'] },
     },
-    description: 'The service that holds this daemon, for a daemon that runs beside another in a configuration home of its own: name, a lowercase letter or digit and then up to 39 letters, digits and dashes, installs it as ahpd@<name> on systemd and dev.ahpd.daemon.<name> on launchd. Absent is the plain ahpd and dev.ahpd.daemon. Set in the configuration file only.',
+    description: 'The service that holds this daemon. name, for a daemon that runs beside another in a configuration home of its own, a lowercase letter or digit and then up to 39 letters, digits and dashes, installs it as ahpd@<name> on systemd and dev.ahpd.daemon.<name> on launchd; absent is the plain ahpd and dev.ahpd.daemon. path is the PATH the daemon is given: shell, the default, is the PATH of the shell that ran ahpd service install, and manager sets none, so the daemon runs on the manager\'s own, as VS Code\'s CLI writes its unit. Set in the configuration file only.',
   },
   httpApi: {
     type: ['object', 'boolean'],
@@ -1285,6 +1288,7 @@ const noCwd = input['noCwd'] === true;
     policiesPayOrder: given('policies')?.payOrder ?? 'ending',
     policiesOwnLimits: given('policies')?.ownLimits ?? true,
     ...(serviceName === undefined ? {} : { serviceName }),
+    servicePath: given('service')?.path ?? 'shell',
     ...(wire === undefined ? {} : { wire }),
     ...(httpApi === undefined ? {} : { httpApi }),
     mcpTools,

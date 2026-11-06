@@ -248,6 +248,15 @@ describe('unitOf', () => {
     expect(unitOf(facts)).toContain('Environment=PATH=/usr/local/bin:/usr/bin:/bin');
   });
 
+  // service.path manager: VS Code's CLI's unit sets no PATH
+  // (cli/src/tunnels/service_linux.rs L192-L219 at 6b68d3fe).
+  it('gives the daemon no PATH of its own under the manager\'s, unit and agent alike', () => {
+    const { path: _path, ...managers } = facts;
+    expect(unitOf(managers)).not.toContain('PATH');
+    expect(plistOf(managers)).not.toContain('PATH');
+    expect(unitOf(managers)).toContain('Environment=AHPD_SERVICE=systemd\n');
+  });
+
   // VS Code's CLI's unit (cli/src/tunnels/service_linux.rs L192-L219 at 6b68d3fe).
   it('starts it after the network and again ten seconds after it ends, never giving up, and holds no secret', () => {
     const unit = unitOf(facts);

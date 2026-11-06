@@ -218,8 +218,12 @@ export interface ServiceFacts {
    * is what a terminal in that home would have given the same daemon.
    */
   home: string;
-  /** The `PATH` of the shell that ran the install, so the agents this host starts find their runtimes. */
-  path: string;
+  /**
+   * The `PATH` of the shell that ran the install, so the agents this host
+   * starts find their runtimes, or absent under `service.path` `manager`, which
+   * gives the daemon the manager's own.
+   */
+  path?: string;
   /**
    * Where a supervised daemon writes what it prints.
    *
@@ -289,10 +293,10 @@ ExecStart=${unitWord(facts.node)} ${unitWord(facts.program)} --config-file ${uni
 WorkingDirectory=${unitWord(facts.home)}
 # What makes the daemon record that a manager holds it.
 Environment=AHPD_SERVICE=systemd
-# The PATH of the shell that ran the install, so the agents this host starts
+${facts.path === undefined ? '' : `# The PATH of the shell that ran the install, so the agents this host starts
 # find their own runtimes.
 Environment=PATH=${unitWord(facts.path)}
-${unitHome(facts)}# Started again ten seconds after it ends, as VS Code's CLI keeps its service
+`}${unitHome(facts)}# Started again ten seconds after it ends, as VS Code's CLI keeps its service
 # running; a stop through systemd starts nothing after it.
 Restart=always
 RestartSec=10
@@ -364,11 +368,11 @@ export const plistOf = (facts: ServiceFacts): string => `<?xml version="1.0" enc
 		<!-- What makes the daemon record that a manager holds it. -->
 		<key>AHPD_SERVICE</key>
 		<string>launchd</string>
-		<!-- The PATH of the shell that ran the install, so the agents this host
+${facts.path === undefined ? '' : `		<!-- The PATH of the shell that ran the install, so the agents this host
 		     starts find their own runtimes. -->
 		<key>PATH</key>
 		<string>${plistWord(facts.path)}</string>
-${plistHome(facts)}	</dict>
+`}${plistHome(facts)}	</dict>
 	<!-- Where the daemon's output goes: launchd gives it no terminal to print to. -->
 	<key>StandardOutPath</key>
 	<string>${plistWord(facts.log)}</string>

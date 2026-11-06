@@ -109,6 +109,16 @@ export interface ServiceSetting {
    * `dev.ahpd.daemon`.
    */
   name?: string;
+  /**
+   * The `PATH` the unit or the agent gives the daemon.
+   *
+   * `shell`, the default, is the `PATH` of the shell that ran `ahpd service
+   * install`, so the agents this host starts find their own runtimes.
+   * `manager` sets none, and the daemon runs on the manager's own, as VS Code's
+   * CLI writes its unit (cli/src/tunnels/service_linux.rs L192-L219 at
+   * 6b68d3fe).
+   */
+  path?: 'shell' | 'manager';
 }
 
 /**
