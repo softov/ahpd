@@ -122,14 +122,14 @@ describe('the turns a chat began', () => {
   const ids = (turns: Bag[]): unknown[] => turns.map((turn) => turn.id);
   const prose = (turn: Bag | undefined): unknown[] => ((turn?.responseParts ?? []) as Bag[]).map((part) => part.content);
 
-  it('reads a turn the chat never began back inside the turn before it', async () => {
+  it('reads each turn its transcript holds back as its own, one the chat never began included, as VS Code\'s replay', async () => {
     const { turns } = area();
     turns.turnRecordedAs(LIVE, PEER, 't1', 't1');
     turns.turnRecordedAs(LIVE, PEER, 't2', 't2');
     const back = await read(turns, [said('t1', 'asked'), said('s1', 'and also'), said('t2', 'next')]);
-    expect(ids(back)).toEqual(['t1', 't2']);
-    expect((back[0]?.message as Bag).text).toBe('asked');
-    expect(prose(back[0])).toEqual(['asked', 'and also']);
+    expect(ids(back)).toEqual(['t1', 's1', 't2']);
+    expect(prose(back[0])).toEqual(['asked']);
+    expect((back[1]?.message as Bag).text).toBe('and also');
   });
 
   it('reads a turn written again under a new id back as the turn it began as', async () => {
@@ -141,22 +141,16 @@ describe('the turns a chat began', () => {
     expect(prose(back[0])).toEqual(['asked', 'asked']);
   });
 
-  it('leaves the turns a chat had before it kept a record as they are', async () => {
+  it('reads a turn written twice back as two for a chat with no record, and on a store that keeps no folder', async () => {
+    const held = [said('first-try', 'asked'), said('second-try', 'asked')];
     const { turns } = area();
-    turns.turnRecordedAs(LIVE, PEER, 't3', 't3');
-    const back = await read(turns, [said('t1', 'old'), said('s1', 'old steer'), said('t3', 'new'), said('s2', 'new steer')]);
-    expect(ids(back)).toEqual(['t1', 's1', 't3']);
-    expect(prose(back[2])).toEqual(['new', 'new steer']);
-  });
-
-  it('folds nothing for a chat with no record, nor on a store that keeps no folder', async () => {
-    const held = [said('t1', 'asked'), said('s1', 'and also')];
-    const { turns } = area();
-    turns.turnRecordedAs(LIVE, TAIL, 't1', 't1');
-    expect(ids(await read(turns, held))).toEqual(['t1', 's1']);
+    turns.turnRecordedAs(LIVE, TAIL, 't1', 'first-try');
+    turns.turnRecordedAs(LIVE, TAIL, 't1', 'second-try');
+    expect(ids(await read(turns, held))).toEqual(['first-try', 'second-try']);
     const nowhere = createLocalTurns({ kept: memorySessions(), log: () => {}, outputsFor: () => undefined } as unknown as HostContext);
-    nowhere.turnRecordedAs(LIVE, PEER, 't1', 't1');
-    expect(ids(await read(nowhere, held))).toEqual(['t1', 's1']);
+    nowhere.turnRecordedAs(LIVE, PEER, 't1', 'first-try');
+    nowhere.turnRecordedAs(LIVE, PEER, 't1', 'second-try');
+    expect(ids(await read(nowhere, held))).toEqual(['first-try', 'second-try']);
   });
 
   it('keeps a local turn the transcript holds as a turn of its own', async () => {
@@ -174,31 +168,39 @@ describe('the turns a chat began', () => {
     expect(ids(await read(turns, [said('first-try', 'asked'), said('second-try', 'asked')]))).toEqual(['first-try', 't2']);
   });
 
-  it('ends a turn where the last turn read back inside it ended, with what both spent', async () => {
+  /*
+   * VS Code's resumed turn: the reducer reopens the failed turn with its parts,
+   * the host adds the runs' durations, and mergeLogicalTurnUsage keeps the
+   * later run's counts and model and adds the costs.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L974
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L137-L174
+   */
+  it('reads a turn run twice back as VS Code keeps a resumed turn, its durations added and its usage merged', async () => {
     const { turns } = area();
-    turns.turnRecordedAs(LIVE, PEER, 't1', 't1');
-    const first = {
-      ...said('t1', 'asked'),
+    turns.turnRecordedAs(LIVE, PEER, 't1', 'first-try');
+    turns.turnRecordedAs(LIVE, PEER, 't1', 'second-try');
+    const failed = {
+      ...said('first-try', 'asked'),
+      state: 'error',
       startedAt: '2026-10-28T10:00:00.000Z',
       duration: 2000,
-      usage: { inputTokens: 10, outputTokens: 5, model: 'one', _meta: { 'ahpd.cacheWriteTokens': 3, 'ahpd.cost': { amount: 0.5, currency: 'USD' } } },
+      usage: { inputTokens: 10, outputTokens: 5, model: 'one', _meta: { 'ahpd.cacheWriteTokens': 3, 'ahpd.cost': { amount: 0.5, currency: 'USD', input: 0.25 } } },
     };
-    const after = {
-      ...said('s1', 'and also'),
-      state: 'cancelled',
+    const again = {
+      ...said('second-try', 'asked'),
       startedAt: '2026-10-28T10:00:05.000Z',
       duration: 1000,
-      usage: { inputTokens: 7, cacheReadTokens: 4, model: 'two', _meta: { 'ahpd.cost': { amount: 0.25, currency: 'USD' }, 'ahpd.context': { used: 20, size: 100 } } },
+      usage: { inputTokens: 7, cacheReadTokens: 4, model: 'two', _meta: { 'ahpd.cost': { amount: 0.25, currency: 'USD', input: 0.125 }, 'ahpd.context': { used: 20, size: 100 } } },
     };
-    const back = await read(turns, [first, after]);
+    const back = await read(turns, [failed, again]);
     expect(back).toHaveLength(1);
-    expect(back[0]).toMatchObject({ id: 't1', state: 'cancelled', startedAt: '2026-10-28T10:00:00.000Z', duration: 6000 });
+    expect(back[0]).toMatchObject({ id: 'first-try', state: 'complete', startedAt: '2026-10-28T10:00:00.000Z', duration: 3000 });
     expect(back[0]?.usage).toEqual({
-      inputTokens: 17,
+      inputTokens: 7,
       outputTokens: 5,
       cacheReadTokens: 4,
       model: 'two',
-      _meta: { 'ahpd.cacheWriteTokens': 3, 'ahpd.cost': { amount: 0.75, currency: 'USD' }, 'ahpd.context': { used: 20, size: 100 } },
+      _meta: { 'ahpd.cacheWriteTokens': 3, 'ahpd.cost': { amount: 0.75, currency: 'USD', input: 0.375 }, 'ahpd.context': { used: 20, size: 100 } },
     });
   });
 

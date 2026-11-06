@@ -165,18 +165,20 @@ whose transcript names turns its own way says what it wrote a turn down as with
 CLI's uuid and pi by its prompt's entry. One that keeps the id it was given, as
 cofold stores a prompt under the turn's id, says nothing.
 
-**A turn is read back as it began.** The host records, in the session's folder
-under the chat, the transcript id each turn began under: its own id as it
-starts, whether a client sent it, the host took it up from the chat's queue, or
-your backend opened it itself, and what `onTurnRecorded` says. A read puts a turn your
-transcript holds and the record does not inside the turn before it, and so does
-a turn recorded as the same turn as the one before, which is that turn written
-down again: Claude's CLI writes a steering message it runs after the turn's last
-answer as a prompt of its own, and a retried turn's prompt a second time. The
-joined turn keeps the first one's id and message, takes both answers, ends as
-the later one ended, and spent what both spent. Turns before the first one the
-record holds stay as they are, so a chat from before the record, or one on a
-store with no session folder, reads as your transcript gives it.
+**A turn is read back as it began.** Each turn your transcript holds reads back
+as a turn of its own, as VS Code's replay starts a turn at every prompt a
+transcript holds: a steering message Claude's CLI runs after the turn's last
+answer, which it writes as a prompt of its own, reads back as its own turn. The
+host records, in the session's folder under the chat, the transcript id each
+turn began under: its own id as it starts, whether a client sent it, the host
+took it up from the chat's queue, or your backend opened it itself, and what
+`onTurnRecorded` says. A turn recorded as the same turn as the one before it is
+that turn run again and written down a second time, as Claude's CLI writes a
+resumed turn's prompt, and the two read back as one turn, as VS Code's host
+keeps a resumed turn: the first one's id and message, both answers, the later
+one's end, both durations added, and the later one's counts and model with the
+cost of both. A chat with no record, or one on a store with no session folder,
+reads as your transcript gives it.
 
 ## `Session`
 

@@ -25,11 +25,11 @@ import type { HostContext } from './context.js';
  * names turns its own way says so through `onTurnRecorded`.
  *
  * The same folder records the turns a chat began, by the id its transcript
- * holds each under, which is what a read needs to show a turn as it ran: a
- * backend may write one turn as several of its own, as Claude's CLI writes a
- * steering message it runs after the turn's last answer as a prompt of its
- * own, while the reference keeps that message's answer in the turn it steered.
- * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1595-L1609
+ * holds each under: a live chat finds the turn an anchor names by it, a read
+ * finds the failed turn a transcript holds a copy of by it, and a turn its
+ * backend ran again and wrote down under a second id reads back by it as the
+ * one turn it is, as VS Code's host keeps a resumed turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L974
  */
 export interface LocalTurns {
   /**
@@ -58,8 +58,8 @@ export interface LocalTurns {
    */
   keepFailedTurn(session: string, chat: string, turns: readonly Bag[], turnId: string): void;
   /**
-   * One chat's transcript, read with the outputs it is handed, with each turn
-   * it holds no beginning for read back inside the turn before it, and with its
+   * One chat's transcript, read with the outputs it is handed, each turn it
+   * holds a turn of its own and a turn run twice the one turn it is, with its
    * local turns put back, or the local turns alone for a chat whose backend
    * holds no transcript.
    */
@@ -168,55 +168,47 @@ const added = (a: unknown, b: unknown): number | undefined => {
 };
 
 /**
- * What a turn and one read back inside it spent, as one turn's usage: token
- * counts and costs added and the rest as the later one left it, the model that
- * answered last and the context as it ended, as agent-pi adds one call's usage
- * to its turn's.
+ * What one turn run twice spent, as VS Code merges a resumed turn's usage: the
+ * later run's counts and model over the earlier run's, and the cost of both
+ * added.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L137-L174
  */
-const spentBoth = (first: Bag | undefined, then: Bag | undefined): Bag | undefined => {
-  if (first === undefined || then === undefined) return then ?? first;
-  const was = bag(first._meta);
-  const now = bag(then._meta);
-  const meta: Bag = { ...was, ...now };
-  for (const key of ['ahpd.cacheWriteTokens', 'ahpd.reasoningTokens']) {
-    const sum = added(was[key], now[key]);
-    if (sum !== undefined) meta[key] = sum;
-  }
-  const paid = bag(was['ahpd.cost']);
-  const paying = bag(now['ahpd.cost']);
+const mergeLogicalTurnUsage = (previous: Bag | undefined, current: Bag | undefined): Bag | undefined => {
+  if (previous === undefined || current === undefined) return current ?? previous;
+  const paid = bag(bag(previous._meta)['ahpd.cost']);
+  const paying = bag(bag(current._meta)['ahpd.cost']);
+  let cost: Bag | undefined;
   if (typeof paid.amount === 'number' && typeof paying.amount === 'number') {
-    const cost: Bag = { ...paid, ...paying, amount: paid.amount + paying.amount };
+    cost = { ...paid, ...paying, amount: paid.amount + paying.amount };
     for (const side of ['input', 'output']) {
       const sum = added(paid[side], paying[side]);
       if (sum !== undefined) cost[side] = sum;
     }
-    meta['ahpd.cost'] = cost;
   }
-  const out: Bag = { ...first, ...then };
-  for (const key of ['inputTokens', 'outputTokens', 'cacheReadTokens']) {
-    const sum = added(first[key], then[key]);
-    if (sum !== undefined) out[key] = sum;
-  }
-  if (Object.keys(meta).length > 0) out._meta = meta;
-  return out;
+  const meta = previous._meta === undefined && current._meta === undefined
+    ? undefined
+    : { ...bag(previous._meta), ...bag(current._meta), ...(cost === undefined ? {} : { 'ahpd.cost': cost }) };
+  const model = current.model ?? previous.model;
+  return { ...previous, ...current, ...(model === undefined ? {} : { model }), ...(meta === undefined ? {} : { _meta: meta }) };
 };
 
 /**
- * A turn with another read back inside it, as one turn: the first's id, start
- * and message, both answers in the order they came, and the later one's end.
+ * One turn run twice, read back as the one turn it is, as VS Code's host keeps
+ * a resumed turn: the first run's id, start and message, the parts of both in
+ * the order they came, the later run's end, both runs' durations added and
+ * their usage merged.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/protocol/channels-chat/reducer.ts#L402-L428
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L974
  */
-const joinedTurn = (first: WireTurn<Turn>, then: WireTurn<Turn>): WireTurn<Turn> => {
-  const usage = spentBoth(first.usage as Bag | undefined, then.usage as Bag | undefined);
-  const began = first.startedAt === undefined ? Number.NaN : Date.parse(first.startedAt);
-  const ended = then.startedAt === undefined || then.duration === undefined
-    ? Number.NaN
-    : Date.parse(then.startedAt) + then.duration;
+const resumedTurn = (first: WireTurn<Turn>, then: WireTurn<Turn>): WireTurn<Turn> => {
+  const usage = mergeLogicalTurnUsage(first.usage as Bag | undefined, then.usage as Bag | undefined);
+  const duration = added(first.duration, then.duration);
   return {
     ...first,
     responseParts: [...first.responseParts, ...then.responseParts],
     state: then.state,
-    usage: usage as WireTurn<Turn>['usage'],
-    ...(Number.isNaN(began) || Number.isNaN(ended) ? {} : { duration: ended - began }),
+    ...(usage === undefined ? {} : { usage: usage as WireTurn<Turn>['usage'] }),
+    ...(duration === undefined ? {} : { duration }),
   };
 };
 
@@ -413,30 +405,26 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
    * A transcript's turns as the chat began them, and the turn each one read
    * back inside another went into.
    *
-   * A turn the chat's record holds no beginning for is one the backend wrote of
-   * its own inside a turn that began before it, so it is read back inside that
-   * turn, as the reference keeps a steering message's answer in the turn it
-   * steered. So is a turn recorded as the same turn as the one before it, which
-   * is that turn written down again. A local turn is the host's own and stays
-   * a turn of its own, and so does every turn before the first one the record
-   * holds: a chat from before its record reads as its transcript gives it.
-   * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/CONTEXT.md#L1597-L1606
+   * Each turn the transcript holds is a turn of its own, as VS Code's replay
+   * starts a turn at every prompt a transcript holds, a steering message the
+   * backend ran as a prompt of its own included. A turn recorded as the same
+   * turn as the one before it is that turn run again and written down under a
+   * second id, so the two read back as the one turn it is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L282-L292
    */
   const asBegun = (session: string, chat: string, turns: readonly WireTurn<Turn>[]): { turns: WireTurn<Turn>[]; joined: Map<string, string> } => {
     const joined = new Map<string, string>();
     const began = new Map(recordedIn(session, chat).map((one) => [one.transcriptId, one.turnId]));
     if (began.size === 0) return { turns: [...turns], joined };
     const out: WireTurn<Turn>[] = [];
-    let recorded = false;
     // The turn the one last kept began as.
     let last: string | undefined;
     for (const turn of turns) {
       const id = String(turn.id);
       const as = began.get(id);
-      recorded ||= as !== undefined;
       const into = out.at(-1);
-      if (into !== undefined && recorded && (as === undefined || as === last) && !isLocal(session, chat, id)) {
-        out[out.length - 1] = joinedTurn(into, turn);
+      if (into !== undefined && as !== undefined && as === last) {
+        out[out.length - 1] = resumedTurn(into, turn);
         joined.set(id, String(into.id));
         continue;
       }
