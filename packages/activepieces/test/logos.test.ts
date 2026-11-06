@@ -111,14 +111,25 @@ describe('logoOf', () => {
     expect(logo.problem).toContain('the CDN is down');
   });
 
-  it('takes a logo up to VS Code\'s 256 KB for an icon, and answers one line past it, caching nothing', async () => {
-    expect(LOGO_LIMIT).toBe(256 * 1024);
+  // Upstream's 32 KB (plan plugin/58, Softov 2026-10-24): a logo travels in
+  // the adapters list every client receives in full.
+  it('takes a logo up to 32 KB, and answers one line past it, caching nothing', async () => {
+    expect(LOGO_LIMIT).toBe(32 * 1024);
     const atLimit = await logoOf('ap-demo', 'https://example.com/demo.png', home, fetcher(Buffer.alloc(LOGO_LIMIT, 'a'), { contentType: 'image/png' }).answer);
     expect(atLimit.problem).toBeUndefined();
 
     const past = await logoOf('ap-other', 'https://example.com/other.png', home, fetcher(Buffer.alloc(LOGO_LIMIT + 1, 'a'), { contentType: 'image/png' }).answer);
-    expect(past).toEqual({ problem: 'the logo of ap-other is larger than 256 KB' });
+    expect(past).toEqual({ problem: 'the logo of ap-other is larger than 32 KB' });
     expect(existsSync(cache('ap-other'))).toBe(false);
+  });
+
+  it('holds a logo to the logoLimitBytes option, 0 setting no limit', async () => {
+    const big = Buffer.alloc(40 * 1024, 'a');
+    const none = await logoOf('ap-none', 'https://example.com/none.png', home, fetcher(big, { contentType: 'image/png' }).answer, { limitBytes: 0, timeoutMs: 10_000 });
+    expect(none.problem).toBeUndefined();
+    expect(none.icon).toBeDefined();
+    const small = await logoOf('ap-small', 'https://example.com/small.png', home, fetcher(big, { contentType: 'image/png' }).answer, { limitBytes: 16 * 1024, timeoutMs: 10_000 });
+    expect(small).toEqual({ problem: 'the logo of ap-small is larger than 16 KB' });
   });
 
   it('gives the whole read ten seconds', async () => {

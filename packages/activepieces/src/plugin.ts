@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { logoOf } from './logos.js';
+import { LOGO_LIMIT, LOGO_TIMEOUT_MS, logoOf } from './logos.js';
 import type { NetworkMode } from './guard.js';
 import { adapterOf, nameOf } from './mapping.js';
 import { isAnswer, isOutput } from './wire.js';
@@ -487,9 +487,12 @@ export const apply: Plugin['apply'] = async (host, options) => {
   // Each connector's store, one file to a connector, beside the logos. A host
   // with no configuration folder keeps the stores in the engine's memory.
   const stores = host.configDir === undefined || host.configDir === '' ? undefined : join(host.configDir, 'activepieces', 'stores');
+  const whole = (value: unknown, fallback: number): number =>
+    (typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : fallback);
+  const bounds = { limitBytes: whole(options['logoLimitBytes'], LOGO_LIMIT), timeoutMs: whole(options['logoTimeoutMs'], LOGO_TIMEOUT_MS) };
   const logos = await Promise.all(answer.pieces.map((piece): Logo | Promise<Logo> => {
     const named = nameOf(piece.package);
-    return named === undefined ? {} : logoOf(named, piece.logoUrl, host.configDir);
+    return named === undefined ? {} : logoOf(named, piece.logoUrl, host.configDir, undefined, bounds);
   }));
   for (const [at, piece] of answer.pieces.entries()) {
     const logo = logos[at];

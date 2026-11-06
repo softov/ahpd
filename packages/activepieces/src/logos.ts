@@ -8,9 +8,13 @@
  * answer that is not an image dropped, and the size checked from
  * `content-length` and again as the bytes arrive. Each hop goes through the
  * plugin's guarded fetch, so a logo URL that resolves into the host's own
- * network is blocked as a piece's would be. A logo is held to 256 KB, VS
- * Code's bound for an icon's image.
+ * network is blocked as a piece's would be.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexProfileImage.ts#L14-L25
+ *
+ * A logo is held to upstream's 32 KB, because it travels in the adapters list
+ * every client receives in full (plan plugin/58, Softov 2026-10-24: a piece
+ * whose logo is larger ships a curated SVG). The bound and the ten seconds are
+ * the plugin's `logoLimitBytes` and `logoTimeoutMs` options.
  *
  * The fetch happens once for each piece: what it reads is kept in the daemon's
  * configuration folder, and a start after that reads the file rather than the
@@ -21,15 +25,28 @@
 
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { MOST_BYTES, WITHIN_MS, fetched } from './fetch.ts';
+import { WITHIN_MS, fetched } from './fetch.ts';
 import type { Answer } from './fetch.ts';
 import type { Icon } from '@ahpd/sdk';
 
-/** The most one logo may be, in bytes, whether it came from the cache or the network: VS Code's 256 KB for an icon. */
-export const LOGO_LIMIT = MOST_BYTES;
+/**
+ * The most one logo may be, in bytes, whether it came from the cache or the
+ * network, unless the `logoLimitBytes` option says otherwise: upstream's 32 KB
+ * (plan plugin/58).
+ */
+export const LOGO_LIMIT = 32 * 1024;
 
-/** How long the whole read may take, redirects included: VS Code's ten seconds. */
-const LOGO_TIMEOUT_MS = WITHIN_MS;
+/**
+ * How long the whole read may take, redirects included, unless the
+ * `logoTimeoutMs` option says otherwise: VS Code's ten seconds.
+ */
+export const LOGO_TIMEOUT_MS = WITHIN_MS;
+
+/** The bounds one logo is read within: `limitBytes`, where 0 sets no limit, and `timeoutMs`. */
+export interface LogoBounds {
+  limitBytes: number;
+  timeoutMs: number;
+}
 
 /** What one piece's logo came to: an icon, or the line saying why there is none. */
 export interface Logo {
@@ -91,15 +108,13 @@ const iconOf = (bytes: Buffer, contentType: string): Icon => ({
   contentType,
 });
 
-/** The guarded fetch, whose bounds are VS Code's on an image read. */
-const guarded: LogoFetcher = async (url) => await fetched(url);
-
-/** A read, or the refusal when the whole of it takes longer than the bound. */
-const withinBound = async (read: Promise<Answer>): Promise<Answer> => {
+/** A read, or the refusal when the whole of it takes longer than the bound, 0 being none. */
+const withinBound = async (read: Promise<Answer>, timeoutMs: number): Promise<Answer> => {
+  if (timeoutMs === 0) return await read;
   let late: NodeJS.Timeout | undefined;
   void read.catch(() => undefined);
   const timer = new Promise<never>((_answer, refuse) => {
-    late = setTimeout(() => { refuse(new Error(`the read took longer than ${LOGO_TIMEOUT_MS / 1000} seconds`)); }, LOGO_TIMEOUT_MS);
+    late = setTimeout(() => { refuse(new Error(`the read took longer than ${String(timeoutMs / 1000)} seconds`)); }, timeoutMs);
   });
   try {
     return await Promise.race([read, timer]);
@@ -114,22 +129,28 @@ const withinBound = async (read: Promise<Answer>): Promise<Answer> => {
  *
  * `dir` is the daemon's configuration folder, which is where the cache lives.
  * Absent, there is nowhere to keep the logo, so the promise of one fetch for
- * each piece cannot be kept and no fetch is made.
+ * each piece cannot be kept and no fetch is made. `bounds` are the plugin's
+ * `logoLimitBytes` and `logoTimeoutMs` options, and the read is the guarded
+ * fetch held to the same size unless `fetcher` reads it instead.
  */
 export async function logoOf(
   piece: string,
   url: string | undefined,
   dir: string | undefined,
-  fetcher: LogoFetcher = guarded,
+  fetcher?: LogoFetcher,
+  bounds: LogoBounds = { limitBytes: LOGO_LIMIT, timeoutMs: LOGO_TIMEOUT_MS },
 ): Promise<Logo> {
   if (dir === undefined || dir === '') return {};
   const folder = folderOf(dir);
+  const over = (size: number): boolean => bounds.limitBytes > 0 && size > bounds.limitBytes;
+  const read: LogoFetcher = fetcher
+    ?? (async (at) => await fetched(at, { maxBytes: bounds.limitBytes === 0 ? Number.POSITIVE_INFINITY : bounds.limitBytes }));
 
   const cached = cachedOf(folder, piece);
   if (cached !== undefined) {
     try {
       const bytes = readFileSync(cached.at);
-      if (bytes.length <= LOGO_LIMIT) {
+      if (!over(bytes.length)) {
         return { icon: iconOf(bytes, cached.contentType) };
       }
     }
@@ -142,7 +163,7 @@ export async function logoOf(
 
   let answer: Answer;
   try {
-    answer = await withinBound(fetcher(url));
+    answer = await withinBound(read(url), bounds.timeoutMs);
   }
   catch (error) {
     return { problem: `the logo of ${piece} could not be fetched: ${reason(error)}` };
@@ -154,8 +175,8 @@ export async function logoOf(
   if (!contentType.startsWith('image/')) {
     return { problem: `the logo of ${piece} is not an image` };
   }
-  if (answer.bytes.length > LOGO_LIMIT) {
-    return { problem: `the logo of ${piece} is larger than ${LOGO_LIMIT / 1024} KB` };
+  if (over(answer.bytes.length)) {
+    return { problem: `the logo of ${piece} is larger than ${String(bounds.limitBytes / 1024)} KB` };
   }
 
   const cache = join(folder, `${piece}.${extensionOf(contentType)}`);
