@@ -85,15 +85,18 @@ const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning', messageId: string 
  * part for whatever text their runtime sends.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
  *
- * A chunk that names content by its URI, a link to a resource or a resource
- * the agent embedded, is a part of its own: the spec's part for content held
- * outside the state tree, carrying the URI with the size and the type the
- * agent gave it.
+ * A chunk that names content by its URI, a link to a resource, a resource the
+ * agent embedded or an image that names its source, is a part of its own: the
+ * spec's part for content held outside the state tree, carrying the URI with
+ * the size and the type the agent gave it.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
  */
 const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', content: ContentBlock, messageId: string | undefined): Bag[] => {
-  if (content.type === 'resource_link' || content.type === 'resource') {
-    const named = content.type === 'resource_link' ? content : content.resource;
+  const named = content.type === 'resource_link' ? content
+    : content.type === 'resource' ? content.resource
+      : content.type === 'image' && typeof content.uri === 'string' && content.uri !== '' ? { uri: content.uri, mimeType: content.mimeType }
+        : undefined;
+  if (named !== undefined) {
     const part: Bag = {
       kind: 'contentRef',
       uri: named.uri,

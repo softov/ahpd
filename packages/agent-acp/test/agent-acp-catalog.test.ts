@@ -1950,6 +1950,19 @@ it('answers a resource the agent linked or embedded as a content reference part'
   expect(turn.parts.map((one) => one.kind)).toEqual(['markdown', 'contentRef', 'contentRef', 'markdown']);
 });
 
+it('answers an image that names its source as a content reference part', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  const drawn = mapUpdate(turn, {
+    sessionUpdate: 'agent_message_chunk',
+    content: { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png', uri: 'file:///tmp/chart.png' },
+  } as unknown as SessionUpdate);
+  expect(drawn).toEqual([{
+    type: 'chat/responsePart',
+    turnId: 't1',
+    part: { kind: 'contentRef', uri: 'file:///tmp/chart.png', contentType: 'image/png' },
+  }]);
+});
+
 /*
  * A call's terminal is titled by the call, as VS Code's agents title one, and
  * says how its command ended once the terminal has exited, the spec's result.
