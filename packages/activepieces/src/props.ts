@@ -346,8 +346,18 @@ const validateProperty = (prop: Prop, value: unknown, originalValue: unknown): s
       return Array.isArray(value) ? [] : [`Expected array, received: ${shown}`];
     case 'OBJECT':
       return isObject(value) ? [] : [`Expected object, received: ${shown}`];
-    case 'FILE':
-      return isObject(value) ? [] : [`Expected file url or base64 with mimeType, received: ${shown}`];
+    case 'FILE': {
+      if (isObject(value)) return [];
+      /*
+       * The validator's words, with a URL named by its host and never its path
+       * or query, where a signed URL carries its token (plan plugin/70, Softov
+       * 2026-10-26: "A refusal names a URL's host, never its path or query").
+       * A URL with no host, a `data:` URI, is named by its scheme.
+       */
+      const url = typeof originalValue === 'string' && URL.canParse(originalValue) ? new URL(originalValue) : undefined;
+      const named = url === undefined ? shown : (url.host === '' ? url.protocol : url.host);
+      return [`Expected file url or base64 with mimeType, received: ${named}`];
+    }
     default:
       return [];
   }
