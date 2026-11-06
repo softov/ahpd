@@ -94,7 +94,12 @@ export interface SessionOpenedEvent {
   client: string;
 }
 
-/** A turn that began. */
+/**
+ * A turn its chat began: a start this host handed the chat's backend, one the
+ * backend opened itself, or a `!` command this host runs as the turn. A start
+ * this host ends before handing it over, refused or failed in its
+ * preparation, ends with no start before it.
+ */
 export interface TurnStartEvent {
   type: 'turn_start';
   /** The session channel URI. */
@@ -112,7 +117,16 @@ export interface TurnStartEvent {
   queuedMessageId?: string;
 }
 
-/** A turn that ended, and how. */
+/**
+ * A turn that ended on a session's default chat or another chat it holds, and
+ * how: every way one ends, its backend's ends and the ones this host says
+ * itself, a start it refused before any backend ran it among them, as VS
+ * Code's host offers its chat contributions every turn's end with the reason.
+ * A worker's chat runs its turns inside a call of its lead chat's turn, which
+ * ends on the lead chat.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L19-L49
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L258-L270
+ */
 export interface TurnEndEvent {
   type: 'turn_end';
   /** The session channel URI. */
@@ -123,17 +137,27 @@ export interface TurnEndEvent {
   turn: string;
   /**
    * `complete` when the backend finished it, `cancelled` when somebody stopped
-   * it, `error` when it ended in `chat/error`.
+   * it, `error` when it ended in `chat/error`, a send or its preparation
+   * failing included, `rejected` when this host refused the start before any
+   * backend ran it, so no turn began and nothing of one is left to finish, and
+   * `localCommand` when this host ran it as its own `!` command.
    */
-  status: 'complete' | 'cancelled' | 'error';
-  /** The message of the `chat/error` that ended it, on `error` only. */
+  status: 'complete' | 'cancelled' | 'error' | 'rejected' | 'localCommand';
+  /** The message of the `chat/error` that ended it, on `error` and `rejected`. */
   error?: string;
   /**
-   * The `errorType` of the `chat/error` that ended it, on `error` only, so a
-   * plugin that carries the failure on carries it whole, as VS Code's host
-   * builds a failed turn's part from the error itself.
+   * The `errorType` of the `chat/error` that ended it, on `error` and
+   * `rejected`, so a plugin that carries the failure on carries it whole, as
+   * VS Code's host builds a failed turn's part from the error itself.
    */
   errorType?: string;
+  /**
+   * On `rejected`, whether whoever sent the message still holds it: a client
+   * keeps a start it sent, and a chat's first message handed over with the chat
+   * is held by nobody else, as VS Code's host says of a rejection.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L44-L49
+   */
+  recoverable?: boolean;
   /** Who sent it, as `TurnStartEvent.sender` says: the same name or nothing. */
   sender?: Owner;
 }

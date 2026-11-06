@@ -351,17 +351,24 @@ export function chatAction(
    * there in an error carrying `errorType` and `message`, with the time since
    * it was said at `since`: as the reference host's admission ends a request
    * it refuses, and its send ends a turn whose preparation failed, with
-   * `chat/error` on the turn the request started.
+   * `chat/error` on the turn the request started. `ending` is which of the two
+   * the turn's `turn_end` says, `rejected` for a start refused and `error` for
+   * a send that failed, and a client keeps a start it sent.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L110
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2336
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2350
    */
-  const unsent = (where: string, errorType: string, message: string, since = Date.now()): void => {
+  const unsent = (where: string, ending: 'rejected' | 'error', errorType: string, message: string, since = Date.now()): void => {
     if (!ctx.answered(origin)) dispatch(where, action, origin);
+    const turn = String(action.turnId ?? '');
     dispatch(where, {
       type: 'chat/error',
-      turnId: String(action.turnId ?? ''),
+      turnId: turn,
       duration: Math.max(0, Date.now() - since),
       part: { kind: 'error', error: { errorType, message } },
+    });
+    ctx.raiseTurnEnd({
+      session: sessionFor(where), chat: where, turn, status: ending, error: message, errorType,
+      ...(ending === 'rejected' ? { recoverable: true } : {}),
     });
   };
   /*
@@ -381,7 +388,7 @@ export function chatAction(
    */
   const bang = (on: Session, chat: string, run: string): void => {
     if (ctx.refusing !== undefined) {
-      unsent(chat, 'rejected', ctx.refusing);
+      unsent(chat, 'rejected', 'rejected', ctx.refusing);
       return;
     }
     const turnId = String(action.turnId ?? '');
@@ -415,7 +422,7 @@ export function chatAction(
     const lead = owning === undefined ? undefined : leadOf(owning);
     const command = lead === undefined ? undefined : commandOf(lead);
     if (lead !== undefined && command !== undefined) bang(lead, channel, command);
-    else unsent(channel, 'readOnly', 'This chat is read-only.');
+    else unsent(channel, 'rejected', 'readOnly', 'This chat is read-only.');
     return;
   }
   if (worker && !WORKER_ACTIONS.has(type)) {
@@ -464,8 +471,8 @@ export function chatAction(
         },
         () => ctx.cancelledTurns.get(relaying.chatUri)?.has(turnId) === true,
         (on) => { on.relay?.('chat', sent, origin); }),
-      (why) => { if (startSaid) unsent(relaying.chatUri, 'rejected', why, since); else no(why); },
-      (why) => { if (startSaid) unsent(relaying.chatUri, 'sendFailed', why, since); else no(why); },
+      (why) => { if (startSaid) unsent(relaying.chatUri, 'rejected', 'rejected', why, since); else no(why); },
+      (why) => { if (startSaid) unsent(relaying.chatUri, 'error', 'sendFailed', why, since); else no(why); },
     );
   }
   /*
@@ -539,11 +546,11 @@ export function chatAction(
     void running
       .then((failure) => {
         if (ctx.cancelledTurns.get(channel)?.has(turnId) === true) return undefined;
-        if (failure !== undefined) unsent(channel, 'sendFailed', failure, since);
+        if (failure !== undefined) unsent(channel, 'error', 'sendFailed', failure, since);
         else return conn.applyNow(params, origin);
         return undefined;
       })
-      .catch((error: unknown) => { unsent(channel, 'sendFailed', error instanceof Error ? error.message : String(error), since); });
+      .catch((error: unknown) => { unsent(channel, 'error', 'sendFailed', error instanceof Error ? error.message : String(error), since); });
     return;
   }
   if (running !== undefined && type === 'chat/turnCancelled') {
@@ -769,7 +776,7 @@ export function chatAction(
   if (over !== undefined && type === 'chat/turnStarted') {
     // As the reference host ends a turn it finds no agent for.
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L119-L136
-    unsent(session.chatUri, 'noAgent', over);
+    unsent(session.chatUri, 'rejected', 'noAgent', over);
     return;
   }
   if (over !== undefined) {
@@ -880,11 +887,11 @@ export function chatAction(
       const since = Date.now();
       if (!ctx.answered(origin)) dispatch(session.chatUri, action, origin);
       if ((kept.flags(idOf(session.uri)) & Status.IsArchived) !== 0) {
-        unsent(session.chatUri, 'archived', 'This session is archived and read-only. Restore the session to continue the conversation.');
+        unsent(session.chatUri, 'rejected', 'archived', 'This session is archived and read-only. Restore the session to continue the conversation.');
         break;
       }
       if (session.chatUri !== sessions.get(session.uri)?.defaultChat && (kept.chatFlags(idOf(session.uri), session.chatUri) & Status.IsArchived) !== 0) {
-        unsent(session.chatUri, 'archived', 'This chat is archived and read-only. Restore the chat to continue the conversation.');
+        unsent(session.chatUri, 'rejected', 'archived', 'This chat is archived and read-only. Restore the chat to continue the conversation.');
         break;
       }
       // Before it is started or queued, so a handler sees it once
@@ -926,15 +933,15 @@ export function chatAction(
        */
       const attached = messageAttachments(message, connection);
       if (attached.refusal !== undefined) {
-        unsent(session.chatUri, 'sendFailed', attached.refusal, since);
+        unsent(session.chatUri, 'error', 'sendFailed', attached.refusal, since);
         break;
       }
       // Its start is the client's, said above, so nothing more is said for it.
       beginTurn(
         () => beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, attached.attachments,
           () => undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true),
-        (why) => { unsent(session.chatUri, 'rejected', why, since); },
-        (why) => { unsent(session.chatUri, 'sendFailed', why, since); },
+        (why) => { unsent(session.chatUri, 'rejected', 'rejected', why, since); },
+        (why) => { unsent(session.chatUri, 'error', 'sendFailed', why, since); },
       );
       break;
     }
@@ -1622,8 +1629,9 @@ export function chatAction(
       /*
        * Said, and the turn it reopens is run again by the backend, with the
        * time it ran before kept for its end. A backend that holds no such turn
-       * to run ends it again in an error that can be resumed, as the reference
-       * host ends a resume its agent rejects.
+       * to run ends it again in an error that can be resumed, and its
+       * `turn_end` with it, as the reference host ends a resume its agent
+       * rejects.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1817-L1876
        */
       dispatch(channel, action, origin);
@@ -1632,12 +1640,14 @@ export function chatAction(
       const rejected = (error: unknown): void => {
         if (!ctx.resumedTurns.has(`${channel}\n${named}`)) return;
         ctx.resumedTurns.delete(`${channel}\n${named}`);
+        const message = error instanceof Error ? error.message : String(error);
         dispatch(channel, {
           type: 'chat/error',
           turnId: named,
           duration: resumed.duration + (Date.now() - resumed.since),
-          part: { kind: 'error', error: { errorType: 'sendFailed', message: error instanceof Error ? error.message : String(error) }, resumable: true },
+          part: { kind: 'error', error: { errorType: 'sendFailed', message }, resumable: true },
         });
+        ctx.raiseTurnEnd({ session: session.uri, chat: channel, turn: named, status: 'error', error: message, errorType: 'sendFailed' });
       };
       try { void Promise.resolve(session.resumeTurn(named)).catch(rejected); }
       catch (error) { rejected(error); }

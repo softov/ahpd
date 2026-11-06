@@ -1595,11 +1595,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * chat's agent does not offer is the daemon's `unofferedModel` to decide; a
    * model the backend will not take ends the turn in a `modelSelectionFailed`
    * error, an agent it will not take is logged, and a send that fails ends the
-   * turn in a `sendFailed` one. A turn `stopped`
-   * meanwhile is never sent. A backend that answers the model and the agent at
-   * once is sent the prompt in the same tick, which keeps the order its turns
-   * were said in; one that answers later is waited on.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2224-L2346
+   * turn in a `sendFailed` one, each with the turn's `turn_end` an `error`. A
+   * turn `stopped` meanwhile is never sent. A backend that answers the model
+   * and the agent at once is sent the prompt in the same tick, which keeps the
+   * order its turns were said in; one that answers later is waited on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2224-L2350
    */
   const sendTurn = (
     session: Session,
@@ -1616,12 +1616,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       forgetSender(turnId);
       forgetKeys(turnId);
       if (stopped?.() === true) return;
+      const message = error instanceof Error ? error.message : String(error);
       dispatch(session.chatUri, {
         type: 'chat/error',
         turnId,
         duration: Math.max(0, Date.now() - since),
-        part: { kind: 'error', error: { errorType, message: error instanceof Error ? error.message : String(error) } },
+        part: { kind: 'error', error: { errorType, message } },
       });
+      ctx.raiseTurnEnd({ session: session.uri, chat: session.chatUri, turn: turnId, status: 'error', error: message, errorType });
     };
     /*
      * A model the chat's agent does not offer, decided here where VS Code's
@@ -1720,12 +1722,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       const chatUri = session.chatUri;
       const since = Date.now();
       const failed = (error: unknown): void => {
+        const message = error instanceof Error ? error.message : String(error);
         dispatch(chatUri, {
           type: 'chat/error',
           turnId,
           duration: Math.max(0, Date.now() - since),
-          part: { kind: 'error', error: { errorType: 'sendFailed', message: error instanceof Error ? error.message : String(error) } },
+          part: { kind: 'error', error: { errorType: 'sendFailed', message } },
         });
+        ctx.raiseTurnEnd({ session: session.uri, chat: chatUri, turn: turnId, status: 'error', error: message, errorType: 'sendFailed' });
       };
       return relaunch(session.uri).then(() => {
         const back = byChat.get(chatUri)?.chat;

@@ -171,8 +171,15 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
       ctx.kept.setSender(idOf(owner.uri), turnId, by);
     }
     dispatch(chat, by === undefined ? start : withSenderOn(start, by));
-    // Ended by this host, so nothing held against the turn is let go by anything else.
-    const ended = (errorType: string, why: string): void => {
+    /*
+     * Ended by this host, so nothing held against the turn is let go by
+     * anything else, and its `turn_end` says how: `rejected` for a start
+     * refused, which a queued message's sender is taken to hold still, as the
+     * reference host admits a queued turn, and `error` for a send that failed.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L288-L313
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L111
+     */
+    const ended = (ending: 'rejected' | 'error', errorType: string, why: string): void => {
       ctx.forgetSender(turnId);
       ctx.forgetKeys(turnId);
       dispatch(chat, {
@@ -180,6 +187,11 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
         turnId,
         duration: Math.max(0, Date.now() - since),
         part: { kind: 'error', error: { errorType, message: why } },
+      });
+      ctx.raiseTurnEnd({
+        session: owner.uri, chat, turn: turnId, status: ending, error: why, errorType,
+        ...(ending === 'rejected' ? { recoverable: true } : {}),
+        ...(by === undefined ? {} : { sender: by }),
       });
     };
     const lead = sessions.get(owner.uri);
@@ -192,15 +204,15 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
      */
     const attached = ctx.messageAttachments(message, sender?.connection);
     if (attached.refusal !== undefined) {
-      ended('sendFailed', attached.refusal);
+      ended('error', 'sendFailed', attached.refusal);
       return;
     }
     // Its start is the drain's, said above, so nothing more is said for it.
     ctx.beginTurn(
       () => ctx.beginOrRun(owner.chat, provider, turnId, String(message.text ?? ''), ctx.modelIn(message.model), ctx.messageFrom(message),
         sender?.connection, attached.attachments, () => undefined, () => ctx.cancelledTurns.get(chat)?.has(turnId) === true),
-      (why) => { ended('rejected', why); },
-      (why) => { ended('sendFailed', why); },
+      (why) => { ended('rejected', 'rejected', why); },
+      (why) => { ended('error', 'sendFailed', why); },
     );
   };
 

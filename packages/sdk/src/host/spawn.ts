@@ -21,6 +21,7 @@ import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
+import type { TurnEndEvent } from '../types/events.js';
 import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
@@ -52,6 +53,13 @@ export interface Spawn {
   sendSubagent(uri: string, given: Bag): void;
   /** Workers whose turn has been ended, so a second ending is not a second turn. */
   endedWorkers: Set<string>;
+  /**
+   * Raise `turn_end` for a turn of a session's chat, with who sent it where
+   * `end` does not say, as VS Code's host offers its chat contributions each
+   * turn's end at the place that ends it: its agent's end, a send that failed,
+   * a start its admission refused, a local command run.
+   */
+  raiseTurnEnd(end: Omit<TurnEndEvent, 'type'>): void;
   /** The worker chat for one tool call of a backend's, made on first ask. */
   openSubagent(session: string, lead: string, toolCallId: string, request: SubagentRequest): SubagentChat;
   /** A chat of a session held as `<provider>:/<id>`, in the `ahp-session:/<id>` spelling it was built for, when it has one. */
@@ -184,6 +192,21 @@ export function createSpawn(ctx: HostContext): Spawn {
     contributedDefaults, runningSchema, chatSummary, subagentSummary, markSummaryDirty, refreshSessionChangesSummary, setAgentModels,
     publishAccountInfo, updateChatMovability,
   } = ctx;
+
+  /*
+   * A turn's end, raised where it ends, with its sender read from the turn
+   * while the host holds it and from the store once it has let it go. A
+   * worker's chat ends its turns inside a call of its lead chat's turn, which
+   * is the turn that ends on the lead chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L137
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L221
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1127-L1152
+   */
+  const raiseTurnEnd = (end: Omit<TurnEndEvent, 'type'>): void => {
+    if (toolCallOfSubagentChat(end.chat) !== undefined) return;
+    const sender = end.sender ?? senderOf(end.turn) ?? kept.sender(idOf(end.session), end.turn);
+    void fire({ ...end, type: 'turn_end', ...(sender === undefined ? {} : { sender }) });
+  };
 
   /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
   const unstamped = (meta: unknown): meta is Bag =>
@@ -1391,10 +1414,10 @@ export function createSpawn(ctx: HostContext): Spawn {
         // A nested session's record follows the title and the last turn.
         if (action.type === 'session/titleChanged' && typeof action.title === 'string') moveNested(idOf(uri), { title: action.title });
         else if (channel === 'chat' && action.type === 'chat/turnComplete') moveNested(idOf(uri), {});
-        // The two ends of a turn, as the host sees them: the backend saying it
-        // began, and saying it finished, was stopped or failed. A per-token
-        // delta is not an event, because a plugin that wants the stream is a
-        // client.
+        // A turn's two ends as its road says them: begun, and finished,
+        // stopped or failed, a `!` command's turn finished as this host's
+        // local command. A per-token delta is not an event, because a plugin
+        // that wants the stream is a client.
         if (action.type === 'chat/turnStarted') {
           // The queued message the turn took up, which the queue drain admitted it for.
           const queued = channel === 'chat' ? ctx.takenUp(chatUri, turn) : undefined;
@@ -1408,19 +1431,18 @@ export function createSpawn(ctx: HostContext): Spawn {
           });
         }
         else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
-          void fire({
-            type: 'turn_end',
+          raiseTurnEnd({
             session: uri,
             chat: chatUri,
             turn,
-            status: action.type === 'chat/turnCancelled' ? 'cancelled' : 'complete',
+            status: action.type === 'chat/turnCancelled' ? 'cancelled'
+              : ctx.commandTurns.has(commandTurnKey(chatUri, turn)) ? 'localCommand' : 'complete',
             ...(sender === undefined ? {} : { sender }),
           });
         }
         else if (action.type === 'chat/error') {
           const failure = (((action.part ?? {}) as Bag).error ?? {}) as Bag;
-          void fire({
-            type: 'turn_end',
+          raiseTurnEnd({
             session: uri,
             chat: chatUri,
             turn,
@@ -1939,7 +1961,7 @@ export function createSpawn(ctx: HostContext): Spawn {
 
   return {
     unstamped, withWorkerUri, stampedCalls, withSender, asSentChat,
-    sendSubagent, endedWorkers,
+    sendSubagent, endedWorkers, raiseTurnEnd,
     openSubagent, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
     spawn, wirePlan,
   };

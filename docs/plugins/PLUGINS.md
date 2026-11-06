@@ -1292,8 +1292,8 @@ does not stop the next handler or the action it observed.
 | `session_start` | `session`, `provider`, and `client` when a client of this host created it |
 | `session_end` | `session`, `reason` |
 | `session_opened` | `session`, `client` |
-| `turn_start` | `session`, `chat`, `turn`, `sender` (`user:<id>` or `root:<host>`) when the host knows who sent it, and `queuedMessageId` when the turn took up a queued message |
-| `turn_end` | `session`, `chat`, `turn`, `status` (`complete`, `cancelled`, or `error` for a turn that ended in `chat/error`), `error` with that error's message and `errorType` with its type on `error`, and `sender` as on `turn_start` |
+| `turn_start` | `session`, `chat`, `turn`, `sender` (`user:<id>` or `root:<host>`) when the host knows who sent it, and `queuedMessageId` when the turn took up a queued message. Raised when the turn is handed to its chat: its backend, or the host's own `!` command |
+| `turn_end` | `session`, `chat`, `turn`, `status`, `error` with the ending error's message and `errorType` with its type on `error` and `rejected`, `recoverable` on `rejected`, and `sender` as on `turn_start`. `status` is `complete`, `cancelled`, `error` for a turn that ended in `chat/error`, a send that failed included, `rejected` for a start the host refused before handing it over (no `turn_start` comes before it, and `recoverable` says whether whoever sent it still holds the message), or `localCommand` for a `!` command the host ran, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L19-L49) offers every turn's end to its chat contributions. A worker's chat raises neither: its turns run inside a call of its lead chat's turn |
 | `message` | `session`, `chat`, `turn`, `text` |
 | `tool_call` | `session`, `chat`, `tool`, `ok`, and `error` when it threw |
 | `plan_update` | `session`, `chat`, `turn`, `harness`, `tool`, `title` when the session has one, `sender` when the host knows who sent the turn, and either `entries` (a whole list) or `change` (one change, with the harness's id where it names one) |

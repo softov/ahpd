@@ -681,6 +681,27 @@ describe('more than one chat in a session', () => {
     expect(state.turns.map((turn) => [turn.message.text, turn.state])).toEqual([['hello', 'error']]);
   });
 
+  /*
+   * And its `turn_end` says the start was refused, with nobody holding the
+   * message once the chat is made, as VS Code's host starts a chat's first
+   * turn with a rejection nobody can recover.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7697
+   */
+  it('raises turn_end rejected for a first message it will not run, which nobody holds once the chat is made', async () => {
+    const ends: unknown[] = [];
+    const { host, client, uri } = await running({
+      events: { turn_end: [{ by: 'probe', context: {} as never, handle: (event) => { ends.push(event); } }] },
+    });
+    host.refuseTurns('This host is stopping');
+    await client.handle({
+      method: 'createChat', params: { channel: uri, chat: second, initialMessage: { text: 'hello', origin: { kind: 'user' } } },
+    });
+    await settle();
+    expect(ends).toEqual([expect.objectContaining({
+      chat: second, status: 'rejected', errorType: 'rejected', error: 'This host is stopping', recoverable: false,
+    })]);
+  });
+
   it('refuses a first message that is not the user\'s before any chat is made, as VS Code\'s host', async () => {
     const { client, uri } = await running();
     await expect(client.handle({ method: 'createChat', params: { channel: uri, chat: second, initialMessage: { text: 'hello' } } }))

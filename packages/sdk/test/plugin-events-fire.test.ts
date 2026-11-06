@@ -3,6 +3,7 @@ import { createHost } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import { memoryAutomations } from '../src/automations/automations.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
+import { shellTerminals } from '../src/machines/terminals.js';
 import { sdkVersion } from '../src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
@@ -154,6 +155,17 @@ const failer = (): Agent => {
         },
       };
     },
+  };
+};
+
+/** A backend whose every send throws before it runs the turn. */
+const thrower = (): Agent => {
+  const inner = echo({ path: DIR, pace: 0 });
+  return {
+    ...inner,
+    provider: 'thrower',
+    displayName: 'Thrower',
+    create: (start) => ({ ...inner.create(start), sendMessage: () => { throw new Error('the CLI is gone'); } }),
   };
 };
 
@@ -390,6 +402,85 @@ it('fires turn_end error, with the message and its type, when a turn ends in cha
   const ended = of(seen, 'turn_end');
   expect(ended).toHaveLength(1);
   expect(ended[0]).toMatchObject({ turn: 'turn-f', status: 'error', error: 'the model refused', errorType: 'turnFailed' });
+});
+
+/*
+ * The ends this host says itself raise `turn_end` as its backend's do, each
+ * with how it ended: a start refused before any backend ran it is `rejected`,
+ * with the refusal's words and a sender still holding the message, a send
+ * that failed is an `error`, and a `!` command the host ran is a
+ * `localCommand`, as VS Code's host offers each to its contributions'
+ * `onTurnEnd`. A refused start was handed to nobody, so no `turn_start` comes
+ * before it; a send that failed was handed to its backend first, and a
+ * command to its chat.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L19-L49
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L111
+ */
+it('fires turn_end rejected, with the refusal, for a start the host refuses before any backend runs it', async () => {
+  const { seen, client } = watched();
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/filed', provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/filed') } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-session:/filed', clientSeq: 1, action: { type: 'session/isArchivedChanged', isArchived: true } },
+  });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/filed'), clientSeq: 2, action: { type: 'chat/turnStarted', turnId: 'turn-r', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
+  await wait(100);
+
+  expect(of(seen, 'turn_start')).toEqual([]);
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
+    session: 'ahp-session:/filed',
+    turn: 'turn-r',
+    status: 'rejected',
+    errorType: 'archived',
+    error: 'This session is archived and read-only. Restore the session to continue the conversation.',
+    recoverable: true,
+  })]);
+});
+
+it('fires turn_end rejected for a queued message the host will not run, whose sender still holds it', async () => {
+  const { seen, client, host } = watched();
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/stopping', provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/stopping') } });
+  host.refuseTurns('This host is stopping');
+  await send(client, chatUriFor('ahp-session:/stopping'), 'q-1', 'later', 'chat/pendingMessageSet');
+  await wait(100);
+
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
+    status: 'rejected', errorType: 'rejected', error: 'This host is stopping', recoverable: true,
+  })]);
+});
+
+it('fires turn_end error, with the failure, for a turn whose send fails before its backend runs it', async () => {
+  const { seen, client } = watched({ agents: [thrower()] });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/gone', provider: 'thrower' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/gone') } });
+  await send(client, chatUriFor('ahp-session:/gone'), 'turn-s', 'hello');
+  await wait(100);
+
+  expect(of(seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-s' }]);
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
+    turn: 'turn-s', status: 'error', errorType: 'sendFailed', error: 'the CLI is gone',
+  })]);
+  expect(of(seen, 'turn_end')[0]).not.toHaveProperty('recoverable');
+});
+
+it('fires turn_end localCommand for a ! command the host ran as the turn', async () => {
+  const { seen, client } = watched({ terminals: shellTerminals() });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/bang', provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/bang') } });
+  await send(client, chatUriFor('ahp-session:/bang'), 'turn-b', '!echo here');
+  for (let i = 0; i < 200 && of(seen, 'turn_end').length === 0; i++) await wait(25);
+
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({ turn: 'turn-b', status: 'localCommand' })]);
+  expect(of(seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-b' }]);
 });
 
 it('names who sent each turn, and a queued message keeps its sender when it runs', async () => {

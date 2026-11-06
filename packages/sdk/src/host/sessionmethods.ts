@@ -370,12 +370,23 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     const start = (said: Bag): void => {
       dispatch(chat.chatUri, { type: 'chat/turnStarted', turnId, startedAt: new Date(since).toISOString(), message: said });
     };
-    const ended = (errorType: string) => (why: string): void => {
+    /*
+     * The turn ended in an error, with its `turn_end`: `rejected` for a start
+     * refused, which nobody holds the message of once the chat is made, as the
+     * reference host starts a chat's first turn, and `error` for a preparation
+     * or a send that failed.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7697
+     */
+    const ended = (ending: 'rejected' | 'error', errorType: string) => (why: string): void => {
       dispatch(chat.chatUri, {
         type: 'chat/error',
         turnId,
         duration: Math.max(0, Date.now() - since),
         part: { kind: 'error', error: { errorType, message: why } },
+      });
+      ctx.raiseTurnEnd({
+        session: uri, chat: chat.chatUri, turn: turnId, status: ending, error: why, errorType,
+        ...(ending === 'rejected' ? { recoverable: false } : {}),
       });
     };
     let settled: Bag;
@@ -384,20 +395,20 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     }
     catch (error) {
       start(message);
-      ended('attachmentPreparationFailed')(error instanceof Error ? error.message : String(error));
+      ended('error', 'attachmentPreparationFailed')(error instanceof Error ? error.message : String(error));
       return;
     }
     start(settled);
     const attached = messageAttachments(settled, connection);
     if (attached.refusal !== undefined) {
-      ended('sendFailed')(attached.refusal);
+      ended('error', 'sendFailed')(attached.refusal);
       return;
     }
     void beginTurn(
       () => beginOrRun(chat, provider, turnId, String(settled.text ?? ''), modelIn(settled.model), messageFrom(settled), connection,
         attached.attachments, () => undefined, () => ctx.cancelledTurns.get(chat.chatUri)?.has(turnId) === true),
-      ended('rejected'),
-      ended('sendFailed'),
+      ended('rejected', 'rejected'),
+      ended('error', 'sendFailed'),
     );
   };
 
