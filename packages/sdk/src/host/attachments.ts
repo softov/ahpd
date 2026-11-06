@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { basename, extname, join, sep } from 'node:path';
+import { extname, join, sep } from 'node:path';
 import { SNAPSHOT_TAG as TAG } from '../resources/attachments.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { ROOT } from './channels.js';
@@ -229,33 +229,34 @@ function tagged(one: Bag, path: string, contentType: string): Record<string, unk
 }
 
 /**
- * The bytes, written read-only under a name of this host's own.
+ * The bytes, written read-only in a folder of their own.
  *
- * The name is this host's rather than the client's: the label is a display
- * string, and a label is not a path. Its basename is kept so a person reading
- * the folder can tell the files apart, the unique prefix is what keeps two
- * pastes of the same name apart, and the extension comes from the content type
- * that the file is actually in.
+ * As VS Code's host writes a snapshot: a fresh folder named by a UUID, which
+ * is what keeps two pastes of the same name apart, holding the file under
+ * the label with the characters no path segment carries replaced, and the
+ * content type's extension where the label has none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13868-L13907
  */
 async function put(dir: string, label: string, contentType: string, bytes: Buffer): Promise<string> {
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const path = join(dir, nameOf(label, contentType));
+  const folder = join(dir, randomUUID());
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const path = join(folder, nameOf(label, contentType));
   await writeFile(path, bytes, { mode: 0o400 });
   return path;
 }
 
-/** A file's name: a unique prefix, the label's basename, the type's extension. */
+/** A file's name: the label as one path segment, with the type's extension where it has none. */
 function nameOf(label: string, contentType: string): string {
   const base = safe(label);
-  const own = extname(base);
-  const wanted = extensionOf(contentType);
-  const stem = base.slice(0, base.length - own.length);
-  return `${randomUUID().slice(0, 8)}-${stem}${wanted === '' ? own : wanted}`;
+  return extname(base) !== '' ? base : `${base}${extensionOf(contentType)}`;
 }
 
-/** The label as one path segment, and as nothing at all when it is not one. */
+/**
+ * The label as one path segment, as VS Code replaces what a segment cannot
+ * hold; `.` and `..`, which would name a folder, are this host's own guard.
+ */
 function safe(label: string): string {
-  const base = basename(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  const base = label.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_');
   return base === '' || base === '.' || base === '..' ? 'attachment' : base;
 }
 

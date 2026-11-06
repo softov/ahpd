@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
 import type { FakeModel } from '@cofold/agents/testing';
@@ -212,8 +212,12 @@ it('sends a pasted image as an image part to a model that takes images', async (
   // The picture itself, not the path to it: the bytes went to a file, and the
   // model is sent what the file holds.
   expect(input(model)).toEqual([{ type: 'text', text: 'look' }, image()]);
-  // And the turn a client reads back names the file the host wrote.
-  expect(localPath(String(settled(p, chatUri)[0]?.uri))).toMatch(/-shot\.png$/);
+  // And the turn a client reads back names the file the host wrote, under its
+  // label in a folder of its own, as VS Code's host writes a snapshot.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13868-L13907
+  const written = localPath(String(settled(p, chatUri)[0]?.uri));
+  expect(basename(written)).toBe('shot.png');
+  expect(basename(dirname(written))).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 });
 
 it('names that image by path when the model takes none', async () => {

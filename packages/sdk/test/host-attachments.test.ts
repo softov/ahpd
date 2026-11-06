@@ -18,7 +18,7 @@
 
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { posix } from '../../../tools/posix.ts';
 import { WAIT_MS } from '../../../tools/wait.ts';
@@ -176,15 +176,21 @@ async function serving(said: Said, dir = temp(), store = true, pace = 0, held = 
   return { host, client, peer: p, chatUri, dir, turn, state };
 }
 
+/** A folder a snapshot is written in, which a UUID names. */
+const SNAPSHOT_FOLDER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /**
- * The files in the one session's folder, by name, which are its attachments.
+ * The files in the one session's folder which are its attachments, each in a
+ * folder of its own named by a UUID, by its path inside the session's folder.
  * The host keeps what is its own there, such as the turns a chat began, in
  * folders beside them.
  */
 const written = (dir: string): { folder: string; names: string[] } => {
   const folder = join(dir, 'attachments');
   const session = join(folder, first(readdirSync(folder)));
-  const names = readdirSync(session, { withFileTypes: true }).filter((one) => one.isFile()).map((one) => one.name);
+  const names = readdirSync(session, { withFileTypes: true })
+    .filter((one) => one.isDirectory() && SNAPSHOT_FOLDER.test(one.name))
+    .flatMap((one) => readdirSync(join(session, one.name)).map((file) => join(one.name, file)));
   return { folder: session, names };
 };
 
@@ -263,21 +269,24 @@ it('writes each attachment of a message to its own file', async () => {
   expect(note.uri).toBe(uriOf(join(folder, text)));
 });
 
-it('names the file inside the folder whatever the label says', async () => {
+/*
+ * The label is one path segment in a folder of its own, the characters a
+ * segment cannot hold replaced, as VS Code's host names a snapshot.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13868-L13907
+ */
+it('names the file inside the folder whatever the label says, as VS Code\'s host', async () => {
   const said = saidNothing();
   const { dir, turn } = await serving(said);
   await turn({
     type: 'chat/turnStarted',
     turnId: 't1',
     startedAt: new Date().toISOString(),
-    message: { text: 'here', origin: { kind: 'user' }, attachments: [png('../../outside.png')] },
+    message: { text: 'here', origin: { kind: 'user' }, attachments: [png('../../outside.png'), png('notes')] },
   });
   await until(() => said.begun.length > 0);
 
   const { names } = written(dir);
-  expect(names).toHaveLength(1);
-  // The label's basename, inside the folder: no path from the client is one.
-  expect(first(names)).toMatch(/-outside\.png$/);
+  expect(names.map((one) => one.split(sep).at(-1)).sort()).toEqual(['.._.._outside.png', 'notes.png']);
   expect(readdirSync(join(dir, 'attachments'))).toHaveLength(1);
 });
 
@@ -323,12 +332,15 @@ it('tags a copy from the session\'s own folder where it stands, and leaves a tag
   // Two files this host wrote for an earlier message, which a client opened
   // and attached again.
   const folder = fileSessions({ dir }).attachmentsDir?.('one') as string;
-  mkdirSync(folder, { recursive: true });
-  writeFileSync(join(folder, 'copy.png'), PNG);
-  writeFileSync(join(folder, 'kept.png'), PNG);
-  const untagged = { type: 'resource', label: 'copy.png', uri: uriOf(join(folder, 'copy.png')), contentType: 'image/png', sizeHint: 1 };
+  const copy = join(folder, '00000000-0000-4000-8000-000000000001', 'copy.png');
+  const kept = join(folder, '00000000-0000-4000-8000-000000000002', 'kept.png');
+  mkdirSync(dirname(copy), { recursive: true });
+  mkdirSync(dirname(kept), { recursive: true });
+  writeFileSync(copy, PNG);
+  writeFileSync(kept, PNG);
+  const untagged = { type: 'resource', label: 'copy.png', uri: uriOf(copy), contentType: 'image/png', sizeHint: 1 };
   const tagged = {
-    type: 'resource', label: 'kept.png', uri: uriOf(join(folder, 'kept.png')),
+    type: 'resource', label: 'kept.png', uri: uriOf(kept),
     _meta: { [TAG]: { isSnapshot: true, contentType: 'image/png' } },
   };
   await turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again', attachments: [untagged, tagged] } });
@@ -336,7 +348,7 @@ it('tags a copy from the session\'s own folder where it stands, and leaves a tag
 
   // Both files are here already, so nothing was asked for or written.
   expect(p.asked).toEqual([]);
-  expect(written(dir).names.sort()).toEqual(['copy.png', 'kept.png']);
+  expect(written(dir).names.map((one) => one.split(sep).at(-1)).sort()).toEqual(['copy.png', 'kept.png']);
   // The one without the tag is the attachment as sent with the tag added,
   // and the one carrying it is the attachment as sent.
   expect(sent(first(said.begun))).toEqual([
