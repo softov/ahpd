@@ -718,6 +718,40 @@ it('answers a press while the run\'s own turn is going with that run, as VS Code
   expect(runsOf(store)[0]?.['primarySession']).toBe(pin);
 });
 
+/*
+ * A run settles when its session's default chat ends a turn, and a failed one
+ * carries that chat's error whole, as VS Code's host settles a run on its
+ * sessions' default chats with the chat error's own `ErrorInfo`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1249-L1297
+ */
+it('settles a run on its session\'s default chat alone, failed with the chat\'s ErrorInfo, as VS Code\'s host', async () => {
+  const store = memoryAutomations();
+  const { client, chatUri, cli } = await live({ automations: store });
+  store.create(AUTOMATION, watching());
+
+  await fails(client, chatUri, 't1', cli);
+  await until(() => runCount(store) === 1 && newest(store)['primarySession'] !== undefined, 'the run');
+  const session = String(newest(store)['primarySession']);
+
+  // A side chat of the run's session ends a turn while the run's own turn is
+  // going, and the run goes on.
+  const side = 'ahp-chat:/side';
+  await client.handle({ method: 'createChat', params: { channel: session, chat: side } });
+  await settle();
+  await begins(client, side, 's1');
+  await ends(cli + 2);
+  expect(bag(newest(store)['lifecycle'])['status']).toBe('running');
+
+  // The run's own turn fails, and the run fails with the chat's error.
+  const own = sessionQueries()[cli + 1];
+  if (own === undefined) throw new Error('the run has no session running');
+  own.frames.push({ type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 3 });
+  own.wake?.();
+  own.wake = undefined;
+  await until(() => bag(newest(store)['lifecycle'])['status'] === 'failed', 'the run to fail');
+  expect(bag(bag(newest(store)['lifecycle'])['error'])).toMatchObject({ errorType: 'turnFailed', message: expect.any(String) });
+});
+
 it('waits behind a turn a person is running in the chat it is pinned to', async () => {
   const store = memoryAutomations();
   const { client, chatUri, cli } = await live({ automations: store });

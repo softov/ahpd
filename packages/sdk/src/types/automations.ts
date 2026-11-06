@@ -1,6 +1,6 @@
 /** Automations: a session started by a trigger rather than by a person. */
 
-import type { AutomationOperation, AutomationTriggerDefinition, SessionOriginKind } from '@microsoft/agent-host-protocol';
+import type { AutomationOperation, AutomationTriggerDefinition, ErrorInfo, SessionOriginKind } from '@microsoft/agent-host-protocol';
 
 import type { CapturedPlugin } from './clientplugins.js';
 import type { Bag } from './common.js';
@@ -225,8 +225,8 @@ export interface StartSession {
 /** How a run's execution ended, for a store to record. */
 export interface RunEnding {
   status: 'completed' | 'failed' | 'cancelled';
-  /** Why it failed, when it did. */
-  error?: { message: string };
+  /** Why it failed, when it did, as the turn's own error said it. */
+  error?: ErrorInfo;
 }
 
 /**

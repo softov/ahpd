@@ -1345,9 +1345,9 @@ it('settles a run by hand, and never reopens one that ended', async () => {
   // A failed ending carries the error and the protocol's `completedAt`, which
   // is the field the old failure path wrongly called `endedAt`.
   const second = await store.run('ahp-automation:/one', { kind: 'manual' }, start);
-  expect(store.settle?.(second?.resource ?? '', { status: 'failed', error: { message: 'no backend' } })).toBe(true);
+  expect(store.settle?.(second?.resource ?? '', { status: 'failed', error: { errorType: 'sendFailed', message: 'no backend' } })).toBe(true);
   expect(second?.lifecycle.status).toBe('failed');
-  expect(second?.lifecycle.error).toEqual({ message: 'no backend' });
+  expect(second?.lifecycle.error).toEqual({ errorType: 'sendFailed', message: 'no backend' });
   expect(second?.lifecycle.completedAt).toBeTypeOf('string');
   expect('endedAt' in (second?.lifecycle ?? {})).toBe(false);
 

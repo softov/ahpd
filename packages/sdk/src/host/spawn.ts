@@ -1,5 +1,5 @@
 import { chatReducer } from '@microsoft/agent-host-protocol';
-import type { ChatAction, ChatState, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
+import type { ChatAction, ChatState, ErrorInfo, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
 import { CommandAutoApprover, DEFAULT_TERMINAL_AUTO_APPROVE_RULES, splitCommand } from '../access/commandautoapprover.js';
 import type { CommandShell, CommandSplit, CommandSplitter, SensitiveEditLocation, TerminalAutoApprovePatterns, TerminalAutoApproveRules } from '../access/commandautoapprover.js';
 import { RpcError, INTERNAL_ERROR } from '../rpc.js';
@@ -1367,21 +1367,25 @@ export function createSpawn(ctx: HostContext): Spawn {
           });
         }
         /*
-         * And the run this session was started for, when the turn that was it
-         * ends. One call per action, so a run is never settled twice for one
-         * event.
+         * And the run this session was started for, when its default chat's
+         * turn ends, as VS Code's host settles a run on its sessions' default
+         * chats: completed, cancelled, or failed with the chat error's own
+         * `ErrorInfo`. One call per action, so a run is never settled twice for
+         * one event.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1249-L1297
          */
-        if (action.type === 'chat/turnComplete') ctx.settleRun(uri, { status: 'completed' });
-        else if (action.type === 'chat/turnCancelled') ctx.settleRun(uri, { status: 'cancelled' });
-        else if (action.type === 'chat/error') {
-          // `ChatErrorAction.part` is `{ kind: 'error', error: { errorType,
-          // message } }`, and only the message is worth carrying into a run.
-          const part = (action.part ?? {}) as Bag;
-          const failure = (part.error ?? {}) as Bag;
-          ctx.settleRun(uri, {
-            status: 'failed',
-            error: { message: typeof failure.message === 'string' ? failure.message : 'The run failed' },
-          });
+        if (chatUri === sessions.get(uri)?.defaultChat) {
+          if (action.type === 'chat/turnComplete') ctx.settleRun(uri, { status: 'completed' });
+          else if (action.type === 'chat/turnCancelled') ctx.settleRun(uri, { status: 'cancelled' });
+          else if (action.type === 'chat/error') {
+            const failure = ((action.part ?? {}) as Bag).error as Bag | undefined;
+            ctx.settleRun(uri, {
+              status: 'failed',
+              ...(typeof failure?.errorType === 'string' && typeof failure.message === 'string'
+                ? { error: failure as unknown as ErrorInfo }
+                : {}),
+            });
+          }
         }
         /*
          * The harness a transcript is written under, kept as soon as the
