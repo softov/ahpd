@@ -561,6 +561,33 @@ it('still sends the after when the person declines the edit', async () => {
 });
 
 /*
+ * A run whose events cannot be applied ends its turn with `chat/error` and the
+ * run cancelled, as VS Code's Claude pipeline fails the sends it holds when its
+ * loop throws and its host ends a failed send, typed `sendFailed`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2349
+ */
+it('ends the turn with chat/error when an event of its run cannot be applied', async () => {
+  const dir = place();
+  let thrown = false;
+  const { session, v } = await open({
+    script: [{ text: 'hello' }],
+    workspace: dir,
+    store: dir,
+    onEmit: (channel, action) => {
+      if (thrown || channel !== 'chat' || action.type !== 'chat/delta') return;
+      thrown = true;
+      throw new Error('a client could not take it');
+    },
+  });
+  session.sendMessage('t1', 'hi');
+  await when(() => ended(v));
+  expect(v.of('chat', 'chat/error').at(-1)?.part)
+    .toMatchObject({ kind: 'error', error: { errorType: 'sendFailed', message: 'a client could not take it' } });
+  await settled(dir);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/*
  * A refused call held in the session's own snapshot as the protocol's reducer
  * holds it: cancelled, with `denied`, the reason its cancelled state carries,
  * and left so by the completion that follows, so a client that subscribes

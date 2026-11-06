@@ -1,5 +1,5 @@
 import { run } from '@cofold/agents';
-import type { Agent as CofoldAgent, ContentPart, ImagePart, TextPart } from '@cofold/agents';
+import type { Agent as CofoldAgent, ContentPart, ImagePart, RunEvent, TextPart } from '@cofold/agents';
 import { bag, partsOf, reason, str, titleFrom } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, TurnOptions } from '@ahpd/sdk';
 import { modelReferenceOf } from './agent.js';
@@ -67,6 +67,11 @@ export interface Turns {
    * refuses images is a turn that fails rather than a correction.
    */
   supportsVision: () => boolean;
+  /**
+   * The `run.finished` a turn whose send failed ends with, typed by the stage
+   * it failed at, for every area that ends one.
+   */
+  turnFailure: (turnId: string, code: SendFailure, why: unknown) => RunEvent;
 }
 
 export const createTurns = (ctx: SessionContext): Turns => {
@@ -351,7 +356,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
    * words.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2553-L2574
    */
-  const turnFailure = (turnId: string, code: SendFailure, why: unknown) => ({
+  const turnFailure = (turnId: string, code: SendFailure, why: unknown): RunEvent => ({
     seq: 0,
     runId: `${turnId}:refused`,
     sessionId,
@@ -597,5 +602,6 @@ export const createTurns = (ctx: SessionContext): Turns => {
     resumeTurn,
     sendNext,
     supportsVision: () => supportsVision,
+    turnFailure,
   };
 };

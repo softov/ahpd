@@ -1,6 +1,6 @@
 import { resume } from '@cofold/agents';
 import type { RunEvent, RunHandle } from '@cofold/agents';
-import { bag, endedParts, mergeLogicalTurnUsage, statusOf, str } from '@ahpd/sdk';
+import { bag, endedParts, mergeLogicalTurnUsage, reason, statusOf, str } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { TurnMapping } from './mapping.js';
 import type { SessionContext } from './context.js';
@@ -170,22 +170,38 @@ export const createRuns = (ctx: SessionContext): Runs => {
    */
   const read = (live: RunHandle, mapping: TurnMapping, turnId: string, replayedThrough = 0): void => {
     void (async () => {
-      for await (const event of live.events) {
+      try {
+        for await (const event of live.events) {
+          /*
+           * A shell command the owner's rules already allow.
+           *
+           * cofold pauses the run and asks on `approval.requested`, which the
+           * mapping would turn into a question. An approval is answered before
+           * that, so no entry is raised, no row is moved to
+           * `pending-confirmation` and no request is held; the run's own
+           * `tool.started` then readies the call `not-needed`, as it does for
+           * one nobody was asked about. Only the live stream is checked: what a
+           * resumed handle replays, through `replayedThrough`, rebuilds what
+           * was asked then, whatever the rules say now.
+           */
+          if (event.type === 'approval.requested' && event.seq > replayedThrough
+            && await ctx.autoApprove(event.requestId, event.name, event.input)) continue;
+          await apply(mapping, turnId, event);
+        }
+      }
+      catch (error) {
         /*
-         * A shell command the owner's rules already allow.
-         *
-         * cofold pauses the run and asks on `approval.requested`, which the
-         * mapping would turn into a question. An approval is answered before
-         * that, so no entry is raised, no row is moved to
-         * `pending-confirmation` and no request is held; the run's own
-         * `tool.started` then readies the call `not-needed`, as it does for one
-         * nobody was asked about. Only the live stream is checked: what a
-         * resumed handle replays, through `replayedThrough`, rebuilds what was
-         * asked then, whatever the rules say now.
+         * A run whose events cannot be read or applied ends its turn: the run
+         * is cancelled and the turn, where it is still the running one, ends
+         * with `chat/error` in the failure's words, as VS Code's Claude
+         * pipeline fails the sends it holds when its loop throws and its host
+         * ends a turn whose send failed.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2349
          */
-        if (event.type === 'approval.requested' && event.seq > replayedThrough
-          && await ctx.autoApprove(event.requestId, event.name, event.input)) continue;
-        await apply(mapping, turnId, event);
+        live.cancel({ reason: reason(error) });
+        if (ctx.active !== undefined && String(ctx.active.id) === turnId) {
+          await apply(mapping, turnId, ctx.turnFailure(turnId, 'sendFailed', error)).catch(() => {});
+        }
       }
     })();
   };
