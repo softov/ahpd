@@ -331,6 +331,13 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   turnSenders: 'said' | 'kept';
   /**
+   * What a backend's own background work actions come to: `drop`, the host
+   * drawing every row, or `say`, VS Code's, the backend's action said as the
+   * host's. A daemon key that takes hold while the daemon runs, read as each
+   * action arrives.
+   */
+  backendBackgroundWork: 'drop' | 'say';
+  /**
    * What archiving a session does with a tree that has changes nobody
    * committed: `keep` it, or `commit` them and remove it. A daemon key that
    * takes hold while the daemon runs, read when a tree is given back.

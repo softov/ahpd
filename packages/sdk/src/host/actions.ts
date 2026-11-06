@@ -525,6 +525,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         // And whether a turn's sender is said, read the same way: as the next start is said or turn read back.
         const senders = theirs['turnSenders'];
         if (senders === 'said' || senders === 'kept') ctx.turnSenders = senders;
+        // And what a backend's own background work actions come to, read as the next one arrives.
+        const work = theirs['backendBackgroundWork'];
+        if (work === 'drop' || work === 'say') ctx.backendBackgroundWork = work;
         // And what archive does with a dirty tree, read the same way: when a tree is given back.
         const dirtyTree = theirs['archiveDirtyWorktree'];
         if (dirtyTree === 'keep' || dirtyTree === 'commit') ctx.archiveDirtyWorktree = dirtyTree;

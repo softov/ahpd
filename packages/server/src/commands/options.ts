@@ -100,6 +100,8 @@ export interface Options {
   unofferedModel: 'fail' | 'keep';
   /** Whether a turn's sender is said on what clients read. */
   turnSenders: 'said' | 'kept';
+  /** What a backend's own background work actions come to. */
+  backendBackgroundWork: 'drop' | 'say';
   /** What archiving a session does with a working tree that has changes nobody committed. */
   archiveDirtyWorktree: 'keep' | 'commit';
   /** What a session on a joined node does when that node's `ahpd join` restarts. */
@@ -639,6 +641,11 @@ export const serverFields = {
     type: 'string',
     enum: ['said', 'kept'],
     description: 'Whether a turn\'s sender is said on what clients read: said puts it on each start and message, kept keeps it on the host alone as VS Code does.',
+  },
+  backendBackgroundWork: {
+    type: 'string',
+    enum: ['drop', 'say'],
+    description: 'What a backend\'s own background work actions come to: drop leaves every background row to the host, say says the backend\'s action as VS Code does.',
   },
   archiveDirtyWorktree: {
     type: 'string',
@@ -1295,6 +1302,7 @@ const noCwd = input['noCwd'] === true;
     closedChats: given('closedChats') ?? 'hidden',
     unofferedModel: given('unofferedModel') ?? 'fail',
     turnSenders: given('turnSenders') ?? 'said',
+    backendBackgroundWork: given('backendBackgroundWork') ?? 'drop',
     archiveDirtyWorktree: given('archiveDirtyWorktree') ?? 'keep',
     nodeRestart: given('nodeRestart') ?? 'end',
     pullRequestLookup: given('pullRequestLookup') ?? 'url',

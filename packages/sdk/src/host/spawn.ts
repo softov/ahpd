@@ -196,6 +196,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     publishAccountInfo, updateChatMovability,
   } = ctx;
   ctx.turnSenders = options.turnSenders ?? 'said';
+  ctx.backendBackgroundWork = options.backendBackgroundWork ?? 'drop';
 
   /*
    * A turn's end, raised where it ends, with its sender read from the turn
@@ -1288,7 +1289,8 @@ export function createSpawn(ctx: HostContext): Spawn {
          */
         if (channel === 'session' && (action.type === 'session/inputNeededSet' || action.type === 'session/inputNeededRemoved')) return;
         /*
-         * Background work is the host's to draw.
+         * Background work is the host's to draw, where the daemon's
+         * `backendBackgroundWork` is `drop`.
          *
          * A row is the protocol's shape with a `_meta` flag and a snapshot
          * beside it, all of which the host builds from `backgroundTasks`, so an
@@ -1297,8 +1299,10 @@ export function createSpawn(ctx: HostContext): Spawn {
          * third party's among them, as upstream decided (plan host/115). Dropped
          * rather than refused, because a backend mid-migration should not fail
          * a turn over it, and logged because silence is how it goes unnoticed.
+         * `say` is VS Code's: a provider's own action goes out as the host's.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
          */
-        if (action.type === 'chat/backgroundWorkSet' || action.type === 'chat/backgroundWorkRemoved') {
+        if ((action.type === 'chat/backgroundWorkSet' || action.type === 'chat/backgroundWorkRemoved') && ctx.backendBackgroundWork === 'drop') {
           log(`dropped ${action.type} from ${agent.provider}: the host draws background work`);
           return;
         }

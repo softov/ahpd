@@ -99,6 +99,7 @@ An unknown key is logged and ignored:
 | `closedChats` | `--closed-chats` | `hidden` | `delete` removes a closed chat from the backend |
 | `unofferedModel` | `--unoffered-model` | `fail` | `keep` keeps a chat's model when a turn names one its agent does not offer, as VS Code does |
 | `turnSenders` | `--turn-senders` | `said` | `kept` keeps each turn's sender on the host and says it in no action, as VS Code does |
+| `backendBackgroundWork` | `--backend-background-work` | `drop` | `say` says a backend's own background work actions as the host's, as VS Code does |
 | `automations` | `--automations` | `file` | `memory` keeps automations until exit, and fires no schedule |
 | `terminalAutoApproveDefaults` | `--terminal-auto-approve-defaults` | `vscode` | The rules for a session whose window pushed none; `none` approves no command. See [Terminal rules](#terminal-rules) |
 | `wire` | `--wire` | | Log every frame to this file, for debugging |

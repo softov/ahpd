@@ -307,6 +307,13 @@ export interface Config {
    */
   turnSenders?: 'said' | 'kept';
   /**
+   * What a backend's own background work actions come to.
+   *
+   * `drop`, the default, drops them, the host drawing every background row.
+   * `say` is VS Code's: the backend's action is said as the host's.
+   */
+  backendBackgroundWork?: 'drop' | 'say';
+  /**
    * What archiving a session does with a working tree that has changes nobody
    * committed.
    *

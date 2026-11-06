@@ -794,6 +794,15 @@ export interface HostOptions {
    */
   turnSenders?: 'said' | 'kept';
   /**
+   * What a backend's own `chat/backgroundWorkSet` and
+   * `chat/backgroundWorkRemoved` come to.
+   *
+   * `drop`, the default, drops them with a line in the log, the host drawing
+   * every background row from `backgroundTasks`. `say` is VS Code's: the
+   * backend's action is said as the host's own.
+   */
+  backendBackgroundWork?: 'drop' | 'say';
+  /**
    * What archiving a session does with a working tree that has changes
    * nobody committed.
    *
