@@ -361,6 +361,18 @@ export interface Config {
    */
   daemonRecord?: 'fields' | 'schemaVersion';
   /**
+   * How an object a client writes to root config is written.
+   *
+   * `merged`, the default, writes it over what the key holds: a `null` takes a
+   * key back, and a `<set>`, which is what a client was shown for a
+   * credential, leaves that credential as it is, so a client sends back one
+   * nested value beside the rest. `replaced` writes each top-level key's value
+   * whole, as the protocol's reducer applies `root/configChanged`
+   * (types/channels-root/reducer.ts L26-L36 at spec v1.0.0), a `<set>` taken
+   * out with the credential it stood for.
+   */
+  rootConfigWrite?: 'merged' | 'replaced';
+  /**
    * How `ahpd configure` and `ahpd doctor` find a command on PATH.
    *
    * `runnable`, the default, takes a regular file with an execute bit, tries

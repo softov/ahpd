@@ -106,6 +106,8 @@ export interface Options {
   zshFolder: 'owned' | 'asFound';
   /** How a plugin whose entry points outside its own package is taken. */
   pluginEntryOutside: 'refuse' | 'warn';
+  /** How an object a client writes to root config is written: over what the key holds, or in its place. */
+  rootConfigWrite: 'merged' | 'replaced';
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
   /** The environment every shell this host starts is given, absent when the deployment named none. */
@@ -652,6 +654,11 @@ export const serverFields = {
     type: 'string',
     enum: ['refuse', 'warn'],
     description: 'How a plugin whose entry points outside its own package is taken: refuse, the default, so a manifest cannot point its own package at somebody else\'s code; warn loads it with a warning on its row, as VS Code loads an extension whose main is outside its folder.',
+  },
+  rootConfigWrite: {
+    type: 'string',
+    enum: ['merged', 'replaced'],
+    description: 'How an object a client writes to root config is written: merged, the default, over what the key holds, a null taking a key back and a <set> leaving a credential as it is; replaced, each top-level key\'s value replaced whole, as the protocol\'s reducer applies a root config change.',
   },
   daemonRecord: {
     type: 'string',
@@ -1293,6 +1300,7 @@ const noCwd = input['noCwd'] === true;
     pullRequestLookup: given('pullRequestLookup') ?? 'url',
     zshFolder: given('zshFolder') ?? 'owned',
     pluginEntryOutside: given('pluginEntryOutside') ?? 'refuse',
+    rootConfigWrite: given('rootConfigWrite') ?? 'merged',
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',
