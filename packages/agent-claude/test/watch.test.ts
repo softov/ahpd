@@ -89,17 +89,37 @@ describe('the watcher of the Claude folders', () => {
     expect(calls()).toBe(1);
   });
 
-  it('calls for the list of installed plugins, and not for the other files the CLI writes beside it', async () => {
+  /*
+   * The plugins folder whole, as VS Code's Claude watcher triggers on it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L443-L452
+   */
+  it('calls for every change in the plugins folder, its subfolders among them', async () => {
     const root = fresh();
-    mkdirSync(join(root, 'plugins'));
+    mkdirSync(join(root, 'plugins', 'marketplaces', 'tools'), { recursive: true });
     const { calls } = await watched({ configDir: root });
     writeFileSync(join(root, 'plugins', 'known_marketplaces.json'), '{}\n');
-    mkdirSync(join(root, 'plugins', 'marketplaces'));
-    await pause(900);
-    expect(calls()).toBe(0);
-    writeFileSync(join(root, 'plugins', 'installed_plugins.json'), '{}\n');
     await until(calls, 1);
     expect(calls()).toBe(1);
+    writeFileSync(join(root, 'plugins', 'marketplaces', 'tools', 'plugin.json'), '{}\n');
+    await until(calls, 2);
+    expect(calls()).toBe(2);
+  });
+
+  it('drops a change told while it is quiet, and calls for one after', async () => {
+    const root = fresh();
+    mkdirSync(join(root, 'plugins', 'marketplaces', 'tools'), { recursive: true });
+    let quiet = true;
+    let calls = 0;
+    stops.push(watchFolders({ configDir: root }, () => { calls += 1; }, () => quiet));
+    await pause(100);
+    writeFileSync(join(root, 'plugins', 'installed_plugins.json'), '{}\n');
+    writeFileSync(join(root, 'plugins', 'marketplaces', 'tools', 'plugin.json'), '{}\n');
+    await pause(900);
+    expect(calls).toBe(0);
+    quiet = false;
+    writeFileSync(join(root, 'plugins', 'known_marketplaces.json'), '{}\n');
+    await until(() => calls, 1);
+    expect(calls).toBe(1);
   });
 
   it('does not call for the files the CLI rewrites in a synced skills folder, and calls for a skill there', async () => {

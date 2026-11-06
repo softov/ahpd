@@ -140,6 +140,10 @@ export async function probe(cwd: string): Promise<Offered> {
     // A harness that will not answer offers nothing, which is a real answer.
     return { models: [], commands: [], customizations: [] };
   } finally {
+    // Closed, and its exit awaited, so a probe ends with its CLI's process:
+    // the query's cleanup settles once the process has exited, or after the
+    // SDK's own bound.
     handle.close();
+    await Promise.resolve((handle as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.()).catch(() => undefined);
   }
 }

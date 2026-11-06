@@ -186,6 +186,20 @@ export interface ClaudeOptions {
   sharedCatalogue?: () => Promise<Listed[]>;
 }
 
+/*
+ * How many probes have their CLI up, of every agent this process built: they
+ * all read the one personal folder, `configDirOf`'s.
+ *
+ * What a probe's own CLI writes as it starts and stops calls for no probe,
+ * whatever it writes: a call starts a probe, whose CLI would write again, and
+ * every agent's watch reads the folder each probe's CLI writes in. VS Code's
+ * Claude watcher triggers on customization sources alone so that the SDK's
+ * own writes never force a re-scan, and a re-scan here is a CLI of its own,
+ * so every probe's watch is quiet while one runs.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L433-L442
+ */
+let probing = 0;
+
 /** Claude Code on one or more directories, ready to be handed to `createHost`. */
 export function claude(options: ClaudeOptions): Agent<Session> {
   const dirs = options.paths;
@@ -490,14 +504,20 @@ export function claude(options: ClaudeOptions): Agent<Session> {
 
     directories: () => [...dirs],
 
-    // What the CLI offers, its models with this variant's own.
+    // What the CLI offers, its models with this variant's own. The probe is
+    // counted from before its CLI starts to the turn after its CLI's exit, by
+    // when every change that CLI made has been told.
     probe: async () => {
-      const probed = await probe(dir);
+      probing += 1;
+      let probed: Awaited<ReturnType<typeof probe>>;
+      try { probed = await probe(dir); }
+      finally { setImmediate(() => { probing -= 1; }); }
       return { ...probed, models: await offer(probed.models) };
     },
 
-    // The personal folder only, which is the one the probe reads.
-    probeChanged: (onChange) => watchFolders({ configDir: configDirOf() }, onChange),
+    // The personal folder only, which is the one the probe reads, quiet while
+    // a probe's own CLI is up.
+    probeChanged: (onChange) => watchFolders({ configDir: configDirOf() }, onChange, () => probing > 0),
 
     // Every session the store holds, wherever it ran. The shared listing is
     // copied rather than handed over: the host's fold does not touch a row,
