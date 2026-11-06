@@ -259,6 +259,24 @@ describe('ahpd.icons', () => {
     expect(problems[0]).toContain('larger than 32 KB');
   });
 
+  it('holds an icon file and a fetched icon to the daemon\'s iconLimitBytes, 0 setting no limit', async () => {
+    write('icons-limit/icon.svg', Buffer.alloc(33 * 1024, 'a'));
+    const dir = pkg('icons-limit', { description: 'A large icon.', icons: [{ src: './icon.svg' }, { src: 'https://example.com/icon.svg' }] });
+    const fetcher: typeof fetch = async () => answer(Buffer.alloc(33 * 1024, 'b'), 'image/svg+xml');
+    const loadWithin = (limitBytes: number) => loadPlugins([dir], {
+      base: base(), configDir: home, cwd: home, log: () => {}, fetcher, icons: { limitBytes, timeoutMs: 10_000 },
+    });
+
+    const none = await loadWithin(0);
+    expect(none.problems).toEqual([]);
+    expect(none.loaded[0]?.manifest?.icons).toHaveLength(2);
+
+    const small = await loadWithin(16 * 1024);
+    expect(small.loaded[0]?.manifest?.icons).toEqual([]);
+    expect(small.problems).toHaveLength(2);
+    expect(small.problems.every((line) => line.includes('larger than 16 KB'))).toBe(true);
+  });
+
   it('drops an unknown extension with no content type, with one line', async () => {
     write('icons-unknown/icon.bin', 'not an image');
     const dir = pkg('icons-unknown', { description: 'An unknown icon.', icons: [{ src: './icon.bin' }] });

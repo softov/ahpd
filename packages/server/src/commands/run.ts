@@ -855,7 +855,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     configFile: pluginFile,
     typed: options.typedPlugins,
     noPlugins: options.noPlugins,
-    where: { configDir: configDir(), cwd: process.cwd(), entryOutside: options.pluginEntryOutside },
+    where: {
+      configDir: configDir(),
+      cwd: process.cwd(),
+      entryOutside: options.pluginEntryOutside,
+      icons: { limitBytes: options.iconLimitBytes, timeoutMs: options.iconTimeoutMs },
+    },
     loaded: () => loaded,
     alerts: () => alerts,
     // Read through the set rather than kept here: a view changes with no
@@ -1630,6 +1635,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     hostId: hostId(),
     cwd: process.cwd(),
     entryOutside: options.pluginEntryOutside,
+    icons: { limitBytes: options.iconLimitBytes, timeoutMs: options.iconTimeoutMs },
     log: stamp,
     say: (line) => {
       const one = line.trim();

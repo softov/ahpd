@@ -21,6 +21,7 @@ import { isRecord, secretRef } from '@ahpd/sdk';
 import type { IssuerVerify, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
 import type { Config, HttpSetting, RoutesSetting } from '../config.js';
 import { asSpec, configDir, configPath, loadConfig, shellEnvProblems } from '../config.js';
+import { ICON_LIMIT, ICON_TIMEOUT_MS } from '../icons.js';
 import { sourceOf, pluginIdOf, pluginIdsOf, runPlugins } from '../plugins.js';
 import { proxyConfiguration, proxyProblems, proxySchema, type ProxyConfiguration } from '../proxy/providers.js';
 
@@ -108,6 +109,10 @@ export interface Options {
   pluginEntryOutside: 'refuse' | 'warn';
   /** How an object a client writes to root config is written: over what the key holds, or in its place. */
   rootConfigWrite: 'merged' | 'replaced';
+  /** The most one plugin icon may be, in bytes; 0 sets no limit. */
+  iconLimitBytes: number;
+  /** How long one fetch of an `https:` plugin icon may take. */
+  iconTimeoutMs: number;
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
   /** The environment every shell this host starts is given, absent when the deployment named none. */
@@ -654,6 +659,18 @@ export const serverFields = {
     type: 'string',
     enum: ['refuse', 'warn'],
     description: 'How a plugin whose entry points outside its own package is taken: refuse, the default, so a manifest cannot point its own package at somebody else\'s code; warn loads it with a warning on its row, as VS Code loads an extension whose main is outside its folder.',
+  },
+  iconLimitBytes: {
+    type: 'integer',
+    minimum: 0,
+    description: 'The most one plugin icon may be, in bytes, a file, a data: URI or a fetched body, since every client receives each in full. Default 32768; 0 sets no limit.',
+    cli: { value: 'BYTES' },
+  },
+  iconTimeoutMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long one fetch of an https: plugin icon may take before the icon is given up. Default 10000, VS Code\'s for an image request.',
+    cli: { value: 'MS' },
   },
   rootConfigWrite: {
     type: 'string',
@@ -1301,6 +1318,8 @@ const noCwd = input['noCwd'] === true;
     zshFolder: given('zshFolder') ?? 'owned',
     pluginEntryOutside: given('pluginEntryOutside') ?? 'refuse',
     rootConfigWrite: given('rootConfigWrite') ?? 'merged',
+    iconLimitBytes: given('iconLimitBytes') ?? ICON_LIMIT,
+    iconTimeoutMs: given('iconTimeoutMs') ?? ICON_TIMEOUT_MS,
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',

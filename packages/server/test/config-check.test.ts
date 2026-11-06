@@ -169,6 +169,15 @@ describe('a wrong value on a known key', () => {
     expect(refusal({ service: { path: 'login' } })).toBe(`${config}: service.path must be one of shell, manager`);
   });
 
+  // The fetch bound is VS Code's for an image request (PROFILE_IMAGE_REQUEST_TIMEOUT_MS,
+  // src/vs/platform/agentHost/node/codex/codexProfileImage.ts L17 at 6b68d3fe),
+  // and the icon limit upstream's 32 KB (plan plugin/58).
+  it('reads iconLimitBytes and iconTimeoutMs, 32768 and VS Code\'s 10000 when the file names neither', () => {
+    expect(folded({})).toMatchObject({ iconLimitBytes: 32768, iconTimeoutMs: 10_000 });
+    expect(folded({ iconLimitBytes: 0, iconTimeoutMs: 2500 })).toMatchObject({ iconLimitBytes: 0, iconTimeoutMs: 2500 });
+    expect(refusal({ iconLimitBytes: -1 })).toContain('iconLimitBytes');
+  });
+
   it('takes onPath as runnable or findExecutable, and refuses another lookup', () => {
     expect(folded({ onPath: 'findExecutable' }).warnings).toEqual([]);
     expect(folded({ onPath: 'runnable' }).warnings).toEqual([]);

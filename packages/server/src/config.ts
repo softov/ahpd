@@ -373,6 +373,20 @@ export interface Config {
    */
   rootConfigWrite?: 'merged' | 'replaced';
   /**
+   * The most one plugin icon may be, in bytes, whether a file, a `data:` URI or
+   * a fetched body: 32768 by default, upstream's 32 KB, which keeps the plugins
+   * and adapters lists small since every client receives each in full (plan
+   * plugin/58, Softov 2026-10-23). 0 sets no limit.
+   */
+  iconLimitBytes?: number;
+  /**
+   * How long one fetch of an `https:` plugin icon may take before the icon is
+   * given up: 10000 by default, VS Code's for an image request
+   * (`PROFILE_IMAGE_REQUEST_TIMEOUT_MS`,
+   * src/vs/platform/agentHost/node/codex/codexProfileImage.ts L17 at 6b68d3fe).
+   */
+  iconTimeoutMs?: number;
+  /**
    * How `ahpd configure` and `ahpd doctor` find a command on PATH.
    *
    * `runnable`, the default, takes a regular file with an execute bit, tries

@@ -31,7 +31,8 @@ import { check, type JsonSchema } from '@cofold/commands';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import { checkIcons, foldHostOptions, frozenCopy, gapLine, grantProblem, isRecord, isRecordSlug, pluginHost, readSecret, reason, RECORD_SLUG, runtime, schemaGaps, sdkVersion, secretRef } from '@ahpd/sdk';
 import type { Agent, AgentOwner, Alert, Catalogs, InstallAnswer, Contribution, FoldedOptions, Grant, HostOptions, Icon, Loaded, NodeRegistry, Plugin, PluginContext, PluginContracts, PluginHost, PluginLink, PluginManifest, PluginSpec, PluginView, RecordStore, Route, SessionStore, Usage, Vault, ViewSurface } from '@ahpd/sdk';
-import { fetchIcons, resolveIcons } from './icons.js';
+import { fetchIcons, ICON_LIMIT, resolveIcons } from './icons.js';
+import type { IconBounds } from './icons.js';
 import { readCatalogs } from './i18n.js';
 import { satisfies } from './compat.js';
 import { run as runProgram } from './install.js';
@@ -69,6 +70,8 @@ export interface Resolved {
   manifestPath?: string;
   /** How an entry that points outside its package is taken, as the daemon's `pluginEntryOutside` says. */
   entryOutside?: EntryOutside;
+  /** The bounds the plugin's icons are read within, as the daemon's `iconLimitBytes` and `iconTimeoutMs` say. */
+  icons?: IconBounds;
 }
 
 /**
@@ -87,6 +90,7 @@ export interface Where {
   configDir: string;
   cwd: string;
   entryOutside?: EntryOutside;
+  icons?: IconBounds;
 }
 
 /**
@@ -393,10 +397,17 @@ export function resolvePlugin(spec: PluginSpec, options: Where): Resolved {
   const name = sourceOf(spec);
   const { configDir, cwd } = options;
 
+  // The daemon's settings for reading what the spec resolves to, carried to
+  // the manifest reads and checks that follow.
+  const carried = {
+    ...(options.entryOutside === undefined ? {} : { entryOutside: options.entryOutside }),
+    ...(options.icons === undefined ? {} : { icons: options.icons }),
+  };
+
   // `file:`, `npm:`, `jsr:`, `https:` and `data:` are the writer's decision:
   // what an import of one means is the runtime's business, and pretending to
   // resolve it here would be a second opinion nobody asked for.
-  if (hasScheme(name)) return { spec, url: name };
+  if (hasScheme(name)) return { spec, url: name, ...carried };
 
   if (isAbsolute(name) || name.startsWith('.')) {
     const candidates = [resolve(cwd, name), resolve(configDir, name)];
@@ -406,10 +417,7 @@ export function resolvePlugin(spec: PluginSpec, options: Where): Resolved {
     }
     if (statSync(found).isDirectory()) {
       const entry = entryOf(found, options.entryOutside);
-      return {
-        spec, url: pathToFileURL(entry).href, path: entry, packageDir: found,
-        ...(options.entryOutside === undefined ? {} : { entryOutside: options.entryOutside }),
-      };
+      return { spec, url: pathToFileURL(entry).href, path: entry, packageDir: found, ...carried };
     }
     /*
      * A standalone plugin names its `plugin.json`, and the `main` in it names
@@ -429,7 +437,7 @@ export function resolvePlugin(spec: PluginSpec, options: Where): Resolved {
       if (at !== folder && !at.startsWith(folder + sep)) {
         throw new Error(`${found} names a main ${main} that points outside its folder, at ${at}.`);
       }
-      return { spec, url: pathToFileURL(at).href, path: at, manifestPath: found };
+      return { spec, url: pathToFileURL(at).href, path: at, manifestPath: found, ...carried };
     }
     /*
      * A bare file that sits in no plugin package declares its manifest the
@@ -455,10 +463,10 @@ export function resolvePlugin(spec: PluginSpec, options: Where): Resolved {
         if (at !== found) {
           throw new Error(`${beside} names ${main}, but ${basename(found)} was named; name the plugin.json, or write one whose main is ${basename(found)}.`);
         }
-        return { spec, url: pathToFileURL(found).href, path: found, manifestPath: beside };
+        return { spec, url: pathToFileURL(found).href, path: found, manifestPath: beside, ...carried };
       }
     }
-    return { spec, url: pathToFileURL(found).href, path: found };
+    return { spec, url: pathToFileURL(found).href, path: found, ...carried };
   }
 
   if (runtime() === 'deno') throw new Error(denoMessage(name, configDir));
@@ -484,7 +492,7 @@ export function resolvePlugin(spec: PluginSpec, options: Where): Resolved {
     url: pathToFileURL(file).href,
     path: file,
     ...(packageDir === undefined ? {} : { packageDir }),
-    ...(options.entryOutside === undefined ? {} : { entryOutside: options.entryOutside }),
+    ...carried,
   };
 }
 
@@ -549,7 +557,7 @@ export interface Manifest {
  * cannot read is a `problem` rather than a throw, because the caller decides
  * what to do about a package that cannot describe itself.
  */
-export const readManifest = (packageDir: string): Manifest => {
+export const readManifest = (packageDir: string, iconLimit: number = ICON_LIMIT): Manifest => {
   const path = join(packageDir, 'package.json');
   let value: Record<string, unknown>;
   try {
@@ -589,7 +597,7 @@ export const readManifest = (packageDir: string): Manifest => {
    */
   if (Array.isArray(inside?.icons)) {
     const iconProblems: string[] = [];
-    manifest.icons = resolveIcons(inside.icons, packageDir, `plugin ${typeof value.name === 'string' ? value.name : packageDir}`, (line) => iconProblems.push(line));
+    manifest.icons = resolveIcons(inside.icons, packageDir, `plugin ${typeof value.name === 'string' ? value.name : packageDir}`, (line) => iconProblems.push(line), iconLimit);
     if (iconProblems.length > 0) manifest.iconProblems = iconProblems;
   }
   readI18n(manifest, inside?.i18n, packageDir, `plugin ${typeof value.name === 'string' ? value.name : packageDir}`);
@@ -604,7 +612,7 @@ export const readManifest = (packageDir: string): Manifest => {
  * place, plus `id`, `name` and `version`: the three a package.json carries
  * outside its `ahpd`. `main` names the module to run and is kept as the entry.
  */
-export const readStandalone = (path: string): Manifest => {
+export const readStandalone = (path: string, iconLimit: number = ICON_LIMIT): Manifest => {
   let value: Record<string, unknown>;
   try {
     const found: unknown = JSON.parse(readFileSync(path, 'utf8'));
@@ -616,7 +624,7 @@ export const readStandalone = (path: string): Manifest => {
   catch (error) {
     return { path, problem: `${path} could not be read: ${reason(error)}` };
   }
-  return standaloneOf(value, path, dirname(path));
+  return standaloneOf(value, path, dirname(path), iconLimit);
 };
 
 /**
@@ -625,9 +633,9 @@ export const readStandalone = (path: string): Manifest => {
  * Shared by a `plugin.json` and by a configuration entry that carries its own
  * manifest, so one shape is read one way wherever it was written. `base` is the
  * folder a relative icon is read from, or nothing where the entry has no folder
- * of its own.
+ * of its own, and `iconLimit` the daemon's `iconLimitBytes`.
  */
-const standaloneOf = (inside: Record<string, unknown>, path: string, base: string | undefined): Manifest => {
+const standaloneOf = (inside: Record<string, unknown>, path: string, base: string | undefined, iconLimit: number): Manifest => {
   const manifest: Manifest = { path, standalone: true, ahpd: inside };
   // The id is what a standalone plugin is called; `name` is what a listing prints.
   if (typeof inside.id === 'string') manifest.name = inside.id;
@@ -643,7 +651,7 @@ const standaloneOf = (inside: Record<string, unknown>, path: string, base: strin
   if (isRecord(inside.optionsSchema)) manifest.optionsSchema = inside.optionsSchema;
   if (Array.isArray(inside.icons) && base !== undefined) {
     const iconProblems: string[] = [];
-    manifest.icons = resolveIcons(inside.icons, base, `plugin ${typeof inside.id === 'string' ? inside.id : path}`, (line) => iconProblems.push(line));
+    manifest.icons = resolveIcons(inside.icons, base, `plugin ${typeof inside.id === 'string' ? inside.id : path}`, (line) => iconProblems.push(line), iconLimit);
     if (iconProblems.length > 0) manifest.iconProblems = iconProblems;
   }
   if (base !== undefined) readI18n(manifest, inside.i18n, base, `plugin ${typeof inside.id === 'string' ? inside.id : path}`);
@@ -671,11 +679,11 @@ const readI18n = (manifest: Manifest, folder: unknown, base: string, by: string)
  * An entry declares a manifest by declaring its `id`: without one it is an
  * entry naming a module, and the module's file is the plugin's.
  */
-const inlineManifestOf = (spec: PluginSpec, base: string | undefined): Manifest | undefined => {
+const inlineManifestOf = (spec: PluginSpec, base: string | undefined, iconLimit: number = ICON_LIMIT): Manifest | undefined => {
   if (typeof spec === 'string' || spec.id === undefined) return undefined;
   const inside = spec as unknown as Record<string, unknown>;
   const at = `the entry for ${sourceOf(spec)}`;
-  return standaloneOf(inside, at, base);
+  return standaloneOf(inside, at, base, iconLimit);
 };
 
 /**
@@ -1063,14 +1071,14 @@ function locate(resolved: Resolved, version: string): Located | { refused: strin
    * wins over any package around it: the spec said which file describes it.
    */
   if (resolved.manifestPath !== undefined) {
-    manifest = readStandalone(resolved.manifestPath);
+    manifest = readStandalone(resolved.manifestPath, resolved.icons?.limitBytes);
     const bad = checkStandalone(manifest);
     if (bad !== undefined) return { refused: bad };
   }
 
   const manifestDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
   if (manifest === undefined && manifestDir !== undefined) {
-    manifest = readManifest(manifestDir);
+    manifest = readManifest(manifestDir, resolved.icons?.limitBytes);
     const bad = checkManifest(manifest, manifestDir, resolved.entryOutside);
     if (bad !== undefined) return { refused: bad };
     if (manifest.sdkRange !== undefined) {
@@ -1097,7 +1105,7 @@ function locate(resolved: Resolved, version: string): Located | { refused: strin
    * manifest is what a package plugin is described by.
    */
   if (manifest === undefined) {
-    manifest = inlineManifestOf(resolved.spec, resolved.path === undefined ? undefined : dirname(resolved.path));
+    manifest = inlineManifestOf(resolved.spec, resolved.path === undefined ? undefined : dirname(resolved.path), resolved.icons?.limitBytes);
     if (manifest !== undefined) {
       const bad = checkStandalone(manifest);
       if (bad !== undefined) return { refused: bad };
@@ -1605,7 +1613,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions, impor
    * that is not an image costs the icon and one line, as a bad file does.
    */
   if (declared?.icons !== undefined && declared.icons.length > 0) {
-    declared = { ...declared, icons: await fetchIcons(declared.icons, `plugin ${name}`, (line) => problems.push(line), options.fetcher) };
+    declared = { ...declared, icons: await fetchIcons(declared.icons, `plugin ${name}`, (line) => problems.push(line), options.fetcher, resolved.icons) };
   }
   /*
    * An adapter's icon is relative to the package of the plugin that registered
@@ -1614,8 +1622,8 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions, impor
    */
   for (const adapter of Object.values(contribution.adapters)) {
     if (adapter.icons === undefined) continue;
-    const read = resolveIcons(adapter.icons, base, `plugin ${name}`, (line) => problems.push(line));
-    const icons = await fetchIcons(read, `plugin ${name}`, (line) => problems.push(line), options.fetcher);
+    const read = resolveIcons(adapter.icons, base, `plugin ${name}`, (line) => problems.push(line), resolved.icons?.limitBytes);
+    const icons = await fetchIcons(read, `plugin ${name}`, (line) => problems.push(line), options.fetcher, resolved.icons);
     if (icons.length === 0) delete adapter.icons;
     else adapter.icons = icons;
   }
@@ -1627,8 +1635,8 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions, impor
   for (const engine of Object.values(contribution.engines ?? {})) {
     for (const template of engine.templates ?? []) {
       if (template.icon === undefined) continue;
-      const read = resolveIcons([template.icon], base, `plugin ${name}`, (line) => problems.push(line));
-      const icons = await fetchIcons(read, `plugin ${name}`, (line) => problems.push(line), options.fetcher);
+      const read = resolveIcons([template.icon], base, `plugin ${name}`, (line) => problems.push(line), resolved.icons?.limitBytes);
+      const icons = await fetchIcons(read, `plugin ${name}`, (line) => problems.push(line), options.fetcher, resolved.icons);
       if (icons.length > 0) template.icons = icons;
     }
   }
@@ -1687,6 +1695,8 @@ export interface LoadOptions {
   cwd: string;
   /** How an entry outside its package is taken, the daemon's `pluginEntryOutside`; absent is `refuse`. */
   entryOutside?: EntryOutside;
+  /** The bounds a plugin's icons are read within, the daemon's `iconLimitBytes` and `iconTimeoutMs`. */
+  icons?: IconBounds;
   /** One line per notable thing. */
   log(message: string): void;
   /** One line in the daemon's announcement; dropped when the caller has none. */
@@ -1899,6 +1909,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     configDir: options.configDir,
     cwd: options.cwd,
     ...(options.entryOutside === undefined ? {} : { entryOutside: options.entryOutside }),
+    ...(options.icons === undefined ? {} : { icons: options.icons }),
   };
   const kept = new Map<string, Kept>();
   /**
@@ -2368,18 +2379,18 @@ export async function describePlugin(
 
   let manifest: Manifest | undefined;
   if (resolved.manifestPath !== undefined) {
-    manifest = readStandalone(resolved.manifestPath);
+    manifest = readStandalone(resolved.manifestPath, resolved.icons?.limitBytes);
     const bad = checkStandalone(manifest);
     if (bad !== undefined) return { ...row, state: 'error', problem: bad };
   }
   if (manifest === undefined) {
-    manifest = inlineManifestOf(resolved.spec, resolved.path === undefined ? undefined : dirname(resolved.path));
+    manifest = inlineManifestOf(resolved.spec, resolved.path === undefined ? undefined : dirname(resolved.path), resolved.icons?.limitBytes);
     const bad = manifest === undefined ? undefined : checkStandalone(manifest);
     if (bad !== undefined) return { ...row, state: 'error', problem: bad };
   }
   const packageDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
   if (manifest === undefined && packageDir !== undefined) {
-    manifest = readManifest(packageDir);
+    manifest = readManifest(packageDir, resolved.icons?.limitBytes);
     if (manifest.problem !== undefined) return { ...row, state: 'error', problem: manifest.problem };
     const bad = checkManifest(manifest, packageDir, resolved.entryOutside);
     if (bad !== undefined) return { ...row, state: 'error', problem: bad };
