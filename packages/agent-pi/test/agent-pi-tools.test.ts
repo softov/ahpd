@@ -227,6 +227,7 @@ it('names a client\'s call in its row by the name the client announced', async (
   expect(start).toMatchObject({ toolName: 'open', displayName: 'open', contributor: { kind: 'client', clientId: 'editor' } });
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
   expect(callIn(parts, 'c1')).toMatchObject({ toolName: 'open', displayName: 'open' });
+  expect(needed(session)[0]?.toolCall).toMatchObject({ toolName: 'open', displayName: 'open' });
 });
 
 it('keeps the answer a client gives between the ready and the run', async () => {

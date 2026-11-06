@@ -301,8 +301,12 @@ export function piSession(
   /** The running turn's record in `watchedTurns`, sealed when the turn ends. */
   let turn: WatchedTurn | undefined;
 
-  /** A steering message pi read into the turn, taken out of the chat, its hand-off answered `true`. */
-  const takenOut = (id: string): void => {
+  /**
+   * A steering message pi read into the turn, VS Code's consumed steering:
+   * taken out of the chat, its hand-off answered `true`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1624-L1626
+   */
+  const steeringConsumed = (id: string): void => {
     emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
     answers.get(id)?.(true);
     answers.delete(id);
@@ -345,8 +349,8 @@ export function piSession(
       .map((one) => String(one.owner)),
   });
 
-  /** The client that provides a tool, by the name pi calls it. */
-  const clientOf = (toolName: string): string | undefined =>
+  /** The client that provides a tool, by the name pi calls it: the spec's contributor of its call. */
+  const contributorOf = (toolName: string): string | undefined =>
     built.find((one) => one.definition.name === toolName)?.owner;
 
   /**
@@ -358,17 +362,18 @@ export function piSession(
    * sentence the chat's `chat/toolCallReady` carries beside it.
    */
   const openClientCall = (id: string, toolName: string, turnId: string, line: string, input: Bag): void => {
-    const owner = clientOf(toolName);
+    const owner = contributorOf(toolName);
     if (owner === undefined) return;
+    // The name the client announced, off the `<clientId>__<name>` the model was
+    // offered, which the call's row is named and drawn by too.
+    const announced = toolName.slice(owner.length + 2);
     calls.open({
       turnId,
       owner,
       toolCall: {
         toolCallId: id,
-        // The name the client announced: the tool under its own name, not the
-        // `<clientId>__<name>` the model was offered.
-        toolName: toolName.slice(owner.length + 2),
-        displayName: toolName,
+        toolName: announced,
+        displayName: announced,
         invocationMessage: line,
         confirmed: 'not-needed',
         toolInput: JSON.stringify(input),
@@ -899,7 +904,7 @@ export function piSession(
        * holds has been read into the turn, or let go, and is taken out.
        */
       case 'queue_update': {
-        for (const id of submittedSteering.splice(0, Math.max(0, submittedSteering.length - event.steering.length))) takenOut(id);
+        for (const id of submittedSteering.splice(0, Math.max(0, submittedSteering.length - event.steering.length))) steeringConsumed(id);
         return;
       }
 
@@ -1220,7 +1225,7 @@ export function piSession(
       blocks: new Map(),
       parts: active.responseParts as Bag[],
       calls: new Map(),
-      ownerOf: clientOf,
+      ownerOf: contributorOf,
     };
     turn = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[] };
     watchedTurns.push(turn);
@@ -1450,7 +1455,7 @@ export function piSession(
           if (queued) return;
           const at = submittedSteering.indexOf(id);
           if (at >= 0) submittedSteering.splice(at, 1);
-          if (answers.has(id)) takenOut(id);
+          if (answers.has(id)) steeringConsumed(id);
         })();
       });
     },
@@ -1494,7 +1499,7 @@ export function piSession(
         blocks: new Map(),
         parts,
         calls: new Map(),
-        ownerOf: clientOf,
+        ownerOf: contributorOf,
       };
       // The transcript's own record of the turn, so what the run adds is read
       // back with it, running again until this run ends. A turn read from pi's
