@@ -143,17 +143,23 @@ const fileOf = (options: PiOptions, id: string, directory: string): { file: stri
  * A path outside pi's own session directory is refused, because the caller
  * named a session and a session is a file under pi's store.
  *
+ * pi is loaded first, as the listing loads it, so a process that has not run
+ * pi yet finds the file it is asked to delete, as VS Code's Copilot agent
+ * starts a client to delete a session it holds none for; the name is VS Code's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8490-L8517
+ *
  * `node:fs/promises` is imported here rather than at the top of the file, for
  * the same reason pi is: this module is on the path of a plugin that has to
  * apply without waiting for anything, and a delete is asked for once in a while
  * rather than on every read.
  */
-export async function forgetSession(
+export async function deleteSession(
   options: PiOptions,
   provider: string,
   id: string,
   directory: string | undefined,
 ): Promise<void> {
+  await loadPi();
   const found = directory === undefined ? undefined : fileOf(options, id, directory);
   if (found?.mine === true) {
     const { rm } = await import('node:fs/promises');

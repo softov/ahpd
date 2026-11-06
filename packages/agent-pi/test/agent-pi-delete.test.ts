@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { piAgent } from '../src/agent.js';
-import { forget, forgetSession, watch } from '../src/catalog.js';
+import { forget, deleteSession, watch } from '../src/catalog.js';
 import { loadPi } from '../src/pi.js';
 import type { PiOptions, WatchedSession } from '../src/types.js';
 
@@ -67,7 +67,7 @@ beforeEach(async () => {
 afterEach(() => { rmSync(root, { recursive: true, force: true }); forget(); });
 
 it('removes the file pi keeps the session in', async () => {
-  await forgetSession(options, 'pi', 'pi-1', root);
+  await deleteSession(options, 'pi', 'pi-1', root);
 
   expect(existsSync(file)).toBe(false);
 });
@@ -94,7 +94,7 @@ it('forgets a running session too, so the next listing does not offer it again',
     turns: [],
   } satisfies WatchedSession);
 
-  await forgetSession(options, 'pi', 'pi-1', root);
+  await deleteSession(options, 'pi', 'pi-1', root);
 
   const { catalogue } = await import('../src/catalog.js');
   expect(await catalogue(options, 'pi', [root])).toEqual([]);
@@ -104,11 +104,11 @@ it('counts a session pi has no file for as deleted', async () => {
   // Nothing on disk: a session deleted twice, or a row for a project pi has no
   // store for. Neither is a failure - there is nothing left to remove.
   found.at = undefined;
-  await expect(forgetSession(options, 'pi', 'gone', root)).resolves.toBeUndefined();
+  await expect(deleteSession(options, 'pi', 'gone', root)).resolves.toBeUndefined();
 
   // And with no directory at all, which is what a listed row may carry.
   found.at = file;
-  await expect(forgetSession(options, 'pi', 'pi-1', undefined)).resolves.toBeUndefined();
+  await expect(deleteSession(options, 'pi', 'pi-1', undefined)).resolves.toBeUndefined();
   expect(existsSync(file)).toBe(true);
 });
 
@@ -120,7 +120,7 @@ it('refuses a path outside pi\'s own session directory', async () => {
   writeFileSync(away, '{}\n');
   found.at = away;
 
-  await expect(forgetSession(options, 'pi', 'pi-1', root)).rejects.toThrow(/not one of pi/);
+  await expect(deleteSession(options, 'pi', 'pi-1', root)).rejects.toThrow(/not one of pi/);
 
   expect(existsSync(away)).toBe(true);
 });
@@ -129,8 +129,24 @@ it('keeps the rest of a provider\'s watched sessions', async () => {
   const two = { id: 'pi-2', title: 'two', createdAt: '2026-01-01T00:00:00.000Z', modifiedAt: '2026-01-01T00:00:00.000Z', directory: root, turns: [] } satisfies WatchedSession;
   watch('pi', two);
 
-  await forgetSession(options, 'pi', 'gone', root);
+  await deleteSession(options, 'pi', 'gone', root);
 
   const { watchedSession } = await import('../src/catalog.js');
   expect(watchedSession('pi', 'pi-2')).toBe(two);
+});
+
+/*
+ * A process that has not loaded pi yet loads it before its lookup, as the
+ * listing does, so the file is removed rather than left for the next listing
+ * to offer again, as VS Code's Copilot agent starts a client to delete a
+ * session it holds none for. Last in the file: a fresh module graph is what a
+ * process that never loaded pi is, and the cases above read the first one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L8490-L8517
+ */
+it('loads pi before its lookup, in a process that has not loaded it yet', async () => {
+  vi.resetModules();
+  const fresh = await import('../src/catalog.js');
+  await fresh.deleteSession(options, 'pi', 'pi-1', root);
+
+  expect(existsSync(file)).toBe(false);
 });

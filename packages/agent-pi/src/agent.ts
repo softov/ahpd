@@ -18,7 +18,7 @@
 import type { Agent, Bag, Listed, Offered, Session } from '@ahpd/sdk';
 import { runtimeModels } from './backend.js';
 import type { RuntimeModels } from './backend.js';
-import { catalogue, findSession, forgetSession, stateFile, watchedSession } from './catalog.js';
+import { catalogue, deleteSession, findSession, stateFile, watchedSession } from './catalog.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import { piMachine } from './machine.js';
@@ -165,7 +165,7 @@ export function piAgent(
      * this process's record of the session with it, or the next listing
      * offers the row again.
      */
-    delete: (id, directory) => forgetSession(options, provider, id, directory),
+    delete: (id, directory) => deleteSession(options, provider, id, directory),
 
     /*
      * The machine half. pi is a library in this process, so no command can
