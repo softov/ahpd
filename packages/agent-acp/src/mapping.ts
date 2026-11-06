@@ -574,13 +574,15 @@ const listed = (value: unknown): unknown[] => (Array.isArray(value) ? value : []
  *
  * A field written as an array carries its choices on its `items` rather than on
  * itself, so both are read here and one function serves a select and a
- * multi-select alike.
+ * multi-select alike; a titled multi-select's are its items' `anyOf`, as
+ * VS Code's mappers read them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L221-L222
  */
 const choicesOf = (schema: Bag): Bag[] | undefined => {
   const carried = schema.type === 'array' ? bag(schema.items) : schema;
   const values = strings(carried.enum);
   if (values.length > 0) return values.map((value) => ({ id: value, label: value }));
-  const titled = listed(carried.oneOf).map(bag).filter((one) => typeof one.const === 'string');
+  const titled = [...listed(carried.oneOf), ...listed(carried.anyOf)].map(bag).filter((one) => typeof one.const === 'string');
   if (titled.length === 0) return undefined;
   return titled.map((one) => {
     const description = str(one.description);
