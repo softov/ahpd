@@ -528,6 +528,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         // And what a backend's own background work actions come to, read as the next one arrives.
         const work = theirs['backendBackgroundWork'];
         if (work === 'drop' || work === 'say') ctx.backendBackgroundWork = work;
+        // And what the session tools' counts are kept per, read as the next call is counted.
+        const per = theirs['agentOrchestrationLimitsScope'];
+        if (per === 'sessionTree' || per === 'session') ctx.agentOrchestrationLimitsScope = per;
         // And what archive does with a dirty tree, read the same way: when a tree is given back.
         const dirtyTree = theirs['archiveDirtyWorktree'];
         if (dirtyTree === 'keep' || dirtyTree === 'commit') ctx.archiveDirtyWorktree = dirtyTree;

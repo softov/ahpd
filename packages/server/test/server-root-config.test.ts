@@ -65,10 +65,10 @@ const keySchema = (root: RootConfigPort, key: string): Record<string, unknown> =
   ((root.schema() as { properties: Record<string, { properties: Record<string, unknown> }> }).properties[key] ?? { properties: {} }).properties;
 
 describe('the daemon keys root config carries', () => {
-  it('are the eighteen of them, and none of the others', () => {
+  it('are the nineteen of them, and none of the others', () => {
     const { schema } = port();
     const properties = (schema() as { properties: Record<string, unknown> }).properties;
-    expect(Object.keys(properties)).toEqual(['paths', 'port', 'host', 'httpApi', 'routes', 'modelProxy', 'updateCheck', 'advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'unofferedModel', 'turnSenders', 'backendBackgroundWork', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers']);
+    expect(Object.keys(properties)).toEqual(['paths', 'port', 'host', 'httpApi', 'routes', 'modelProxy', 'updateCheck', 'advancedTools', 'sessionTools', 'sessionToolsProviders', 'closedChats', 'unofferedModel', 'turnSenders', 'backendBackgroundWork', 'agentOrchestrationLimitsScope', 'archiveDirtyWorktree', 'pullRequestLookup', 'wire', 'mcpServers']);
     for (const key of ['stdio', 'configFile', 'connectionToken', 'connectionTokenFile', 'requireIssuer', 'issuer', 'resource', 'users', 'automations', 'sessions']) {
       expect(Object.keys(properties)).not.toContain(key);
     }

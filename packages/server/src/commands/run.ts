@@ -1366,6 +1366,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     unofferedModel: options.unofferedModel,
     turnSenders: options.turnSenders,
     backendBackgroundWork: options.backendBackgroundWork,
+    agentOrchestrationLimitsScope: options.agentOrchestrationLimitsScope,
     archiveDirtyWorktree: options.archiveDirtyWorktree,
     pullRequestLookup: options.pullRequestLookup,
     // What a session on a joined node does when that node's join restarts.

@@ -314,6 +314,14 @@ export interface Config {
    */
   backendBackgroundWork?: 'drop' | 'say';
   /**
+   * What the session tools' counts are kept per, over their sliding hour.
+   *
+   * `sessionTree`, the default, keeps one count for a session somebody started
+   * and every session the tools grew from it. `session` is VS Code's: each
+   * session's own count.
+   */
+  agentOrchestrationLimitsScope?: 'sessionTree' | 'session';
+  /**
    * What archiving a session does with a working tree that has changes nobody
    * committed.
    *

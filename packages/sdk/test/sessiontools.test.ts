@@ -762,6 +762,33 @@ describe("VS Code's limits on spawning and messaging", () => {
   });
 
   /*
+   * The daemon's `agentOrchestrationLimitsScope` at `session`, VS Code's: each
+   * session keeps its own count, so a session the first one made still makes
+   * one once the first has used its fifty, and the refusal is VS Code's own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L46-L94
+   */
+  it('keeps each session\'s count where the daemon counts per session, and refuses in VS Code\'s words', async () => {
+    const host = createHost({
+      path: root, agents: [claude({ paths: [root] })], ...machine(), tools: hostTools(),
+      sleepAfterMinutes: 0, agentOrchestrationLimitsScope: 'session',
+    });
+    const client = host.accept(peer());
+    await hello(client);
+    const first = await started(client, 'first');
+    for (let i = 0; i < 50; i++) {
+      expect(said(await spawn(first.at, `made ${i}`)), `made ${i}`).toMatch(/^New session created \(/);
+    }
+    const child = sessionQueries().length - 1;
+
+    expect(said(await spawn(first.at, 'one more'))).toMatch(new RegExp(
+      '^Refusing to create more sessions: this session already used 50 of 50 allowed in the last 60 minutes\\.'
+      + ' The limit applies to each session separately and frees up as older actions leave that window\\.'
+      + ' Retry after \\d+ seconds, or turn off agent orchestration limits in settings\\.$',
+    ));
+    expect(said(await spawn(child, 'the child\'s own'))).toMatch(/^New session created \(/);
+  });
+
+  /*
    * Counted over VS Code's sliding hour, so a tree that hit a limit recovers
    * as its oldest actions leave the window.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L43-L94

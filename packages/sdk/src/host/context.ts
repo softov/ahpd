@@ -338,6 +338,12 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   backendBackgroundWork: 'drop' | 'say';
   /**
+   * What the session tools' counts are kept per: each `sessionTree`, or each
+   * `session`, as VS Code's host counts them. A daemon key that takes hold
+   * while the daemon runs, read as each tool call is counted.
+   */
+  agentOrchestrationLimitsScope: 'sessionTree' | 'session';
+  /**
    * What archiving a session does with a tree that has changes nobody
    * committed: `keep` it, or `commit` them and remove it. A daemon key that
    * takes hold while the daemon runs, read when a tree is given back.

@@ -46,13 +46,13 @@ import type { HostContext } from './context.js';
  */
 const MAX_SPAWN_DEPTH = 3;
 
-/** VS Code's `maxCreatedSessions`: how many sessions one tree may make. */
+/** VS Code's `maxCreatedSessions`: how many sessions one budget may make. */
 const MAX_CREATED_SESSIONS = 50;
 
-/** VS Code's `maxCreatedChats`: how many chats one tree may make, by either tool. */
+/** VS Code's `maxCreatedChats`: how many chats one budget may make, by either tool. */
 const MAX_CREATED_CHATS = 50;
 
-/** VS Code's `maxSentMessages`: how many messages one tree may send. */
+/** VS Code's `maxSentMessages`: how many messages one budget may send. */
 const MAX_SENT_MESSAGES = 100;
 
 /**
@@ -74,23 +74,22 @@ const RULE_MOST = 4096;
 const LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
 /**
- * What one session tree may make in the window, and the action its refusal
- * names.
+ * What one budget may make in the window, and the action its refusal names.
  *
  * VS Code's three limiters and its refusal, from `sessionServerTools.ts`, each
- * counted over the window. VS Code counts per session; here it is one session
- * tree, the plan's own answer to what the counts are kept per, so the
- * sentence says the tree, which is what is true of it.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L86-L94
+ * counted over the window. A budget is one session tree, the plan's own answer
+ * to what the counts are kept per, or one session, VS Code's, by the daemon's
+ * `agentOrchestrationLimitsScope`, and the sentence names whichever it is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L46-L94
  */
-const TREE_LIMITS = {
+const ORCHESTRATION_LIMITS = {
   sessions: { max: MAX_CREATED_SESSIONS, action: 'create more sessions' },
   chats: { max: MAX_CREATED_CHATS, action: 'create more chats' },
   messages: { max: MAX_SENT_MESSAGES, action: 'send more messages' },
 } as const;
 
-/** Which of the three a tree is being asked about. */
-type Made = keyof typeof TREE_LIMITS;
+/** Which of the three a budget is being asked about. */
+type Made = keyof typeof ORCHESTRATION_LIMITS;
 
 /**
  * What a host says about a client's plugin when it has nowhere to keep one.
@@ -395,7 +394,7 @@ export interface Tooling {
    * where absent; `config` is checked against that backend's schema, and the
    * session's keys no backend owns are added from the session. `calling` is
    * the turn a tool call is made from, where there is one: the chat is counted
-   * against that session's tree, as a tool's chat always has been.
+   * against that session's budget, its tree's or its own.
    */
   openChat(session: string, asked: ChatStart, calling?: { uri: string; chatUri: string }): Promise<{ chat: string }>;
 }
@@ -424,6 +423,7 @@ export function createTooling(ctx: HostContext): Tooling {
     chatSummary, persistChatTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
     resolveCreatedSessionConfig, createProviderSession, backendsOwn, removeSession, spawn,
   } = ctx;
+  ctx.agentOrchestrationLimitsScope = options.agentOrchestrationLimitsScope ?? 'sessionTree';
   /**
    * Where a decision that outlives one session is kept, or nothing for a host
    * that keeps none: one embedded in a single session has nowhere to put a
@@ -1244,32 +1244,35 @@ export function createTooling(ctx: HostContext): Tooling {
       : [])));
 
   /**
-   * When each session tree made each of the three, inside the window, by the
-   * id of the session at its top.
+   * When each budget made each of the three, inside the window, by the id it
+   * is kept under.
    *
-   * Kept per tree: one tree is a session somebody started and everything the
-   * `create` tool grew from it, so a runaway agent exhausts its own budget and
-   * not the host's, and a second tree is made from nothing. A time older than
-   * the window is dropped as the tree is next asked about, so a tree that hit
-   * a limit recovers, as VS Code's limiter frees room. In memory, as VS Code's
+   * Kept per tree by default: one tree is a session somebody started and
+   * everything the `create` tool grew from it, so a runaway agent exhausts its
+   * own budget and not the host's, and a second tree is made from nothing.
+   * Kept per session where the daemon's `agentOrchestrationLimitsScope` is
+   * `session`, as VS Code's limiter counts each session. A time older than the
+   * window is dropped as the budget is next asked about, so one that hit a
+   * limit recovers, as VS Code's limiter frees room. In memory, as VS Code's
    * are.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L46-L94
    */
   const counted = new Map<string, Record<Made, number[]>>();
 
   /**
-   * The session at the top of one session's tree, which is the id its counts
-   * are kept under.
+   * The id one session's counts are kept under: the session at the top of its
+   * tree, or the session itself where the daemon counts each session.
    *
    * A store that keeps no parent links holds no tree, and every session in it
    * is a root of its own - which is what the store that does keep them answers
    * for a session nothing started.
    */
-  const treeOf = (id: string): string => kept.rootOf?.(id) ?? id;
+  const budgetOf = (id: string): string => (ctx.agentOrchestrationLimitsScope === 'session' ? id : kept.rootOf?.(id) ?? id);
 
-  /** A tree's times for one of the three that are still inside the window. */
-  const recentIn = (tree: string, what: Made): number[] => {
+  /** A budget's times for one of the three that are still inside the window. */
+  const recentIn = (budget: string, what: Made): number[] => {
     const cutoff = Date.now() - LIMIT_WINDOW_MS;
-    return (counted.get(tree)?.[what] ?? []).filter((time) => time > cutoff);
+    return (counted.get(budget)?.[what] ?? []).filter((time) => time > cutoff);
   };
 
   /**
@@ -1281,26 +1284,27 @@ export function createTooling(ctx: HostContext): Tooling {
   const enforced = (): boolean => ctx.rootConfig.agentOrchestrationLimits !== 'off';
 
   /**
-   * Refuse one more of something a tree has no room for, in VS Code's words
-   * with the tree where VS Code names the session.
+   * Refuse one more of something a budget has no room for, in VS Code's words,
+   * the tree named where the budget is one.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L86-L94
    */
-  const room = (tree: string, what: Made): void => {
+  const room = (budget: string, what: Made): void => {
     if (!enforced()) return;
-    const limit = TREE_LIMITS[what];
-    const recent = recentIn(tree, what);
+    const limit = ORCHESTRATION_LIMITS[what];
+    const recent = recentIn(budget, what);
     if (recent.length < limit.max) return;
     const retryAfterSeconds = Math.max(1, Math.ceil(((recent[0] ?? Date.now()) + LIMIT_WINDOW_MS - Date.now()) / 1000));
-    throw new Error(`Refusing to ${limit.action}: this session tree already used ${recent.length} of ${limit.max}`
-      + ` allowed in the last ${Math.round(LIMIT_WINDOW_MS / 60000)} minutes. The limit applies to each session tree`
+    const per = ctx.agentOrchestrationLimitsScope === 'session' ? 'session' : 'session tree';
+    throw new Error(`Refusing to ${limit.action}: this ${per} already used ${recent.length} of ${limit.max}`
+      + ` allowed in the last ${Math.round(LIMIT_WINDOW_MS / 60000)} minutes. The limit applies to each ${per}`
       + ' separately and frees up as older actions leave that window.'
       + ` Retry after ${retryAfterSeconds} seconds, or turn off agent orchestration limits in settings.`);
   };
 
   /** One more, counted once the thing it counts has actually been made. */
-  const countUp = (tree: string, what: Made): void => {
-    const held = counted.get(tree) ?? { sessions: [], chats: [], messages: [] };
-    counted.set(tree, { ...held, [what]: [...recentIn(tree, what), Date.now()] });
+  const countUp = (budget: string, what: Made): void => {
+    const held = counted.get(budget) ?? { sessions: [], chats: [], messages: [] };
+    counted.set(budget, { ...held, [what]: [...recentIn(budget, what), Date.now()] });
   };
 
   /**
@@ -1744,16 +1748,17 @@ export function createTooling(ctx: HostContext): Tooling {
     const held = sessions.get(at);
     if (!held) throw new Error(`${at} is not a session this host is running`);
     /*
-     * The tree the call is made from, which is the one it is counted against.
+     * The budget of the session the call is made from, which is the one it is
+     * counted against.
      *
-     * A chat has no tree of its own, and the session named need not be the
+     * A chat has no budget of its own, and the session named need not be the
      * one this tool was called from. A tool is counted where it runs, so a
      * chat added to another session still spends the calling session's
      * budget - the same answer `send` gives, and for the same reason: the
      * session an agent is running in is the one whose spending is bounded.
      */
-    const tree = calling === undefined ? undefined : treeOf(idOf(calling.uri));
-    if (tree !== undefined) room(tree, 'chats');
+    const budget = calling === undefined ? undefined : budgetOf(idOf(calling.uri));
+    if (budget !== undefined) room(budget, 'chats');
     /*
      * Which backend serves it. A name this host does not hold is refused
      * rather than quietly started on the session's own: the plugin asked for
@@ -1799,7 +1804,7 @@ export function createTooling(ctx: HostContext): Tooling {
       if (calling !== undefined) remember(calling.chatUri, firstTurn);
       void ctx.startTurn(chat, firstTurn, asked.prompt, model === undefined ? undefined : { id: model }, asked.from);
     }
-    if (tree !== undefined) countUp(tree, 'chats');
+    if (budget !== undefined) countUp(budget, 'chats');
     return { chat: chatUri };
   };
 
@@ -1876,7 +1881,8 @@ export function createTooling(ctx: HostContext): Tooling {
     context: contextOf,
     send: async (at, chatId, text, from) => {
       /*
-       * The tree the call is made from, which is the one it is counted against.
+       * The budget of the session the call is made from, which is the one it
+       * is counted against.
        *
        * The session the message goes to is not asked. A tool is counted where
        * it runs: the session that asked for the message is the one whose budget
@@ -1884,8 +1890,8 @@ export function createTooling(ctx: HostContext): Tooling {
        * runaway send a hundred messages into each of any number of sessions
        * without ever meeting a limit.
        */
-      const tree = treeOf(idOf(uri));
-      room(tree, 'messages');
+      const budget = budgetOf(idOf(uri));
+      room(budget, 'messages');
       // A session asleep in the catalogue is woken for the message, and held
       // awake until it has begun.
       const release = ctx.hold(at);
@@ -1902,13 +1908,13 @@ export function createTooling(ctx: HostContext): Tooling {
           const calling = activeTurnOf(chatUri);
           ctx.enqueue(found.chat.chatUri, crypto.randomUUID(), text, from,
             calling === undefined ? undefined : { owner: senderOf(calling), connection: sentBy.get(calling) });
-          countUp(tree, 'messages');
+          countUp(budget, 'messages');
           return 'queued';
         }
         const started = crypto.randomUUID();
         remember(chatUri, started);
         void ctx.startTurn(found.chat, started, text, undefined, from);
-        countUp(tree, 'messages');
+        countUp(budget, 'messages');
         return 'sent';
       } finally {
         release();
@@ -1916,14 +1922,14 @@ export function createTooling(ctx: HostContext): Tooling {
     },
     create: async (asked) => {
       /*
-       * The chain this session is part of, and the tree it grows.
+       * The chain this session is part of, and the budget it spends.
        *
        * The session made here is a child of the calling one, so it is the
        * calling session that is asked both questions: how deep it already sits
-       * in its chain, and how much its tree has made.
+       * in its chain, and how much its budget has made.
        */
-      const tree = treeOf(idOf(uri));
-      room(tree, 'sessions');
+      const budget = budgetOf(idOf(uri));
+      room(budget, 'sessions');
       const depth = kept.depthOf?.(idOf(uri)) ?? 0;
       if (enforced() && depth >= MAX_SPAWN_DEPTH) {
         throw new Error(
@@ -1997,7 +2003,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const firstTurn = crypto.randomUUID();
       remember(chatUri, firstTurn);
       void ctx.startTurn(lead.chat, firstTurn, asked.prompt, model === undefined ? undefined : { id: model }, asked.from);
-      countUp(tree, 'sessions');
+      countUp(budget, 'sessions');
       return { session: made, chat: chatUriFor(made) };
     },
     createChat: async (session, asked) => await openChat(session, asked, { uri, chatUri }),
@@ -2136,7 +2142,8 @@ export function createTooling(ctx: HostContext): Tooling {
    * somebody who is not in a chat: what a tool does to another session - a
    * message, a chat, a session, a title, a deletion - is done as the caller,
    * and what it does to its own chat throws instead of guessing one. Nothing
-   * is counted against a tree, because a person with no session is not a tree.
+   * is counted against a budget, because a person with no session spends
+   * none.
    */
   const sessionlessContext = (caller: ToolCaller): SessionlessToolCall => {
     const sender = ownerOfCaller(caller);
@@ -2178,8 +2185,8 @@ export function createTooling(ctx: HostContext): Tooling {
         }
       },
       create: async (asked) => {
-        // No chain and no tree: a session made here belongs to the caller, has
-        // no parent, and spends no budget kept for one.
+        // No chain and no budget: a session made here belongs to the caller,
+        // has no parent, and spends nothing a budget keeps.
         const provider = asked.provider ?? ctx.first?.provider;
         if (provider === undefined) throw new Error(noProvider(provider));
         const agent = ctx.agents.get(provider);
