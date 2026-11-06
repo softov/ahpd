@@ -129,11 +129,11 @@ export const createTurns = (ctx: SessionContext): Turns => {
     // The operator's rule, read when a call is put to a person: a matched
     // tool's question offers no session choice cofold would remember.
     managedApprovalRequired: (name) => start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask',
-    // A failed turn can be put back when there is a point to cut to: the last
-    // message of the turn before, or, for a conversation's first turn, no
+    // A failed turn can be put back when there is a point to truncate to: the
+    // last message of the turn before, or, for a conversation's first turn, no
     // session at all. A turn before it that nobody named a point for is one
-    // this process cannot cut back to.
-    canCut: () => {
+    // this process cannot truncate back to.
+    canTruncate: () => {
       const before = turns.at(-1);
       return before === undefined || ctx.points.has(String(before.id));
     },
@@ -306,7 +306,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
         // this call's to start, and not this call's to fail either.
         if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
         if (ctx.cancelRequested || ctx.disposed) {
-          await ctx.apply(mapping, turnId, stopped(turnId));
+          await ctx.apply(mapping, turnId, turnCancelled(turnId));
           return;
         }
         launch(parts);
@@ -373,17 +373,18 @@ export const createTurns = (ctx: SessionContext): Turns => {
   });
 
   /**
-   * The `run.finished` a turn that was stopped before it ran ends with.
+   * The `run.finished` a turn cancelled before it ran ends with, the spec's
+   * `chat/turnCancelled` once mapped.
    *
    * A cancel reaches a run through its handle, and a turn whose message is
-   * still being read has no handle yet, so the stop finds nothing to stop. The
-   * turn is already open on the wire, though, and one that never settles is a
-   * spinner nothing can clear - so the ending it would have had is handed to
-   * the mapping, the way a turn that cannot start is.
+   * still being read has no handle yet, so the cancel finds nothing to cancel.
+   * The turn is already open on the wire, though, and one that never settles
+   * is a spinner nothing can clear - so the ending it would have had is handed
+   * to the mapping, the way a turn that cannot start is.
    */
-  const stopped = (turnId: string) => ({
+  const turnCancelled = (turnId: string) => ({
     seq: 0,
-    runId: `${turnId}:stopped`,
+    runId: `${turnId}:cancelled`,
     sessionId,
     agentId: AGENT_ID,
     at: new Date().toISOString(),

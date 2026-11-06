@@ -98,15 +98,15 @@ export interface TurnMappingOptions {
    */
   managedApprovalRequired?(name: string): boolean;
   /**
-   * Whether the turn can be run again, cut back to the turn before it.
+   * Whether the turn can be run again, the store truncated back to the turn
+   * before it with cofold's own `Store.sessions.truncate`.
    *
    * Read when the run fails, so the error part says a resume is possible only
-   * when there is a point to cut back to - or no turn before, for a
+   * when there is a point to truncate to - or no turn before, for a
    * conversation's first turn, which starts over under its id. A replay passes
-   * none: it rebuilds a paused run rather than a failed one, and a failure read
-   * back is not one this process can put on the store.
+   * none: it rebuilds a paused run.
    */
-  canCut?(): boolean;
+  canTruncate?(): boolean;
   /**
    * Whether this turn is a failed one run again.
    *
@@ -195,8 +195,8 @@ export type SendFailure = typeof SEND_FAILURES[number];
  * the spec's error part.
  *
  * `resumable` says a client may ask for the turn again. It is set only for a
- * failure the session can put back: a model call, cut back to the turn before,
- * or a conversation's first turn, which is started over.
+ * failure the session can put back: a model call, the store truncated back to
+ * the turn before, or a conversation's first turn, which is started over.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1133-L1146
  */
 const errorPart = (errorType: string, message: string, resumable = false): Bag => ({
@@ -832,10 +832,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
              *
              * A new turn's failed send - an agent that could not be built, a
              * prompt with nothing to run on - is not one a resume can put
-             * back, and neither is a failure with no point to cut to.
+             * back, and neither is a failure with no point to truncate to.
              */
             const sent = (SEND_FAILURES as readonly string[]).includes(outcome.error.code);
-            const resumable = (!sent || options.resumed === true) && options.canCut?.() === true;
+            const resumable = (!sent || options.resumed === true) && options.canTruncate?.() === true;
             actions.push({ type: 'chat/error', turnId, duration, part: errorPart(outcome.error.code, outcome.error.message, resumable) });
             return only(actions);
           }
