@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import { shellTerminals } from '../src/machines/terminals.js';
+import { memorySessions } from '../src/sessions/sessions.js';
 import { hostTools } from '../src/tools/index.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Owners } from '../src/host/owners.js';
@@ -102,24 +103,6 @@ const failer = (): Agent => {
   };
 };
 
-/** The echo backend, reporting what each turn it is handed used before it answers. */
-const reporting = (): Agent => {
-  const inner = echo({ path: DIR, pace: 0 });
-  return {
-    ...inner,
-    create: (start) => {
-      const session = inner.create(start);
-      return {
-        ...session,
-        sendMessage: (turnId, text, from, attachments, options) => {
-          start.emit('chat', { type: 'chat/usage', turnId, usage: { inputTokens: 3, outputTokens: 5 } });
-          return session.sendMessage(turnId, text, from, attachments, options);
-        },
-      };
-    },
-  };
-};
-
 /** One host with somebody to name, Ana connected to it, and one session of `provider`. */
 async function signedIn(over: Partial<HostOptions> = {}, provider = 'echo') {
   const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], users: directory(), ...over });
@@ -147,35 +130,24 @@ describe('a turn lets go of its sender', () => {
   });
 
   /*
-   * Who sent a turn is this host's own record, used for what it runs and
-   * charges and carried by no action and no state a client reads, as the
-   * reference host keeps a pending message's sender, hands it to the turn the
-   * message becomes, and says it in no action.
+   * Who sent a queued message is this host's record, kept beside the queue and
+   * handed to the turn the message becomes, as the reference host keeps a
+   * pending message's sender for the turn it admits; the turn's start carries
+   * it under `ahpd.sender`, and the store keeps it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L77-L83
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L288-L326
    */
-  it('names who sent each turn on its usage record, a queued message\'s included, and on no action or turn', async () => {
-    const records: UsageEntry[] = [];
-    const usage = {
-      record: async (entry: UsageEntry) => { records.push(entry); },
-      total: async () => ({}),
-      pools: async () => [],
-      records: async () => [],
-      groups: async () => [],
-    } as Usage;
-    const { client, dispatch, peer: p, chat } = await signedIn({ usage, agents: [reporting()] });
-    await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
+  it('keeps the queued sender on the turn it becomes', async () => {
+    const store = memorySessions();
+    const { dispatch, peer: p, chat } = await signedIn({ sessions: store });
     await dispatch({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'hello there' } });
     await wait(100);
     const started = p.notes
       .filter((note) => note.method === 'action')
       .map((note) => note.params as { channel: string; action: Bag })
-      .filter((one) => one.channel === chat && one.action.type === 'chat/turnStarted')
-      .map((one) => one.action);
-    expect(started.map((one) => one.queuedMessageId)).toEqual([undefined, 'q1']);
-    expect(records.map((one) => [one.turn, one.owner])).toEqual([['t1', 'user:ana'], [started[1]?.turnId, 'user:ana']]);
-    const opened = await client.handle({ method: 'subscribe', params: { channel: chat } });
-    expect(JSON.stringify([p.notes, opened])).not.toContain('ahpd.sender');
+      .find((one) => one.channel === chat && one.action.type === 'chat/turnStarted')?.action;
+    expect(started).toMatchObject({ queuedMessageId: 'q1', _meta: { 'ahpd.sender': 'user:ana' }, message: { _meta: { 'ahpd.sender': 'user:ana' } } });
+    expect(store.sender('s', String(started?.turnId))).toBe('user:ana');
   });
 
   /*

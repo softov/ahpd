@@ -12,7 +12,7 @@ import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
 import { readCreatedBy, readMultiRoot, readOrigin } from '../sessions/remotesession.js';
-import { HOSTS_OWN, bangCommand, noProvider } from './common.js';
+import { HOSTS_OWN, bangCommand, noProvider, withSenderOn } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -1563,16 +1563,21 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   /**
    * The start of a turn this host begins itself, said as the host's with the
    * message it was given, as the reference host says the start of a turn of
-   * its own.
+   * its own, and carrying who asked where somebody did: on the wire, and in
+   * the store, which a turn read back after the in-memory entry is let go of
+   * asks.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L174-L183
    */
   const sayStart = (session: Session, turnId: string, text: string, model: Chosen | undefined, from?: MessageFrom, attachments?: MessageAttachment[]): void => {
-    dispatch(session.chatUri, {
+    const start: Bag = {
       type: 'chat/turnStarted',
       turnId,
       startedAt: new Date().toISOString(),
       message: messageOf(text, model, from, attachments),
-    });
+    };
+    const sender = senders.get(turnId);
+    if (sender !== undefined) kept.setSender(idOf(session.uri), turnId, sender);
+    dispatch(session.chatUri, sender === undefined ? start : withSenderOn(start, sender));
   };
 
   /**
@@ -1799,7 +1804,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       if (by !== undefined) senders.set(turnId, by);
       if (sender !== undefined) sentBy.set(turnId, sender);
       if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
-      else said();
+      else {
+        // A client's start goes out as the client sent it, and the store
+        // keeps who sent it, as `sayStart` keeps the sender of a host's.
+        said();
+        if (by !== undefined) kept.setSender(idOf(session.uri), turnId, by);
+      }
       ctx.bang(session, session.chatUri, turnId, command);
       return undefined;
     }
@@ -1878,7 +1888,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       }
       else {
         if (said === undefined) sayStart(session, turnId, text, model, from, attachments);
-        else said();
+        else {
+          // A client's start goes out as the client sent it, and the store
+          // keeps who sent it, as `sayStart` keeps the sender of a host's.
+          said();
+          if (who !== undefined) kept.setSender(idOf(session.uri), turnId, who);
+        }
         void sendTurn(session, turnId, text, model, from, attachments, stopped);
       }
       return undefined;

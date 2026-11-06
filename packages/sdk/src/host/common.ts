@@ -1,7 +1,27 @@
 import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { RpcError, METHOD_NOT_FOUND } from '../rpc.js';
+import type { Bag } from '../types/common.js';
+import type { Owner } from '../types/usage.js';
 
 export { reason } from '../utils/values.js';
+
+/**
+ * A turn's start carrying who sent it, under `ahpd.sender` on the action and
+ * on its message: `chat/turnStarted` is one of the few actions that declares a
+ * `_meta`, and the message is what a chat's state keeps, so a turn read back
+ * says its sender there too. AHP's message origin carries a kind and no
+ * person, and a namespaced `_meta` key is the protocol's place for a fact it
+ * does not define.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L779-L789
+ */
+export const withSenderOn = (action: Bag, sender: Owner): Bag => {
+  const message = (typeof action.message === 'object' && action.message !== null ? action.message : {}) as Bag;
+  return {
+    ...action,
+    _meta: { ...(action._meta as Bag | undefined), 'ahpd.sender': sender },
+    message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } },
+  };
+};
 
 /**
  * A port this host was not given.

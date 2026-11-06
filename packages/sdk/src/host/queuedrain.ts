@@ -14,7 +14,8 @@
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md?plain=1#L623-L625
  */
 
-import { holdsTheQueue } from '../sessions/catalog.js';
+import { holdsTheQueue, idOf } from '../sessions/catalog.js';
+import { withSenderOn } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { MessageAttachment, MessageFrom } from '../types/session.js';
@@ -157,7 +158,19 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
     const turnId = crypto.randomUUID();
     const since = Date.now();
     kept.admitted.set(turnId, id);
-    dispatch(chat, { type: 'chat/turnStarted', turnId, startedAt: new Date(since).toISOString(), message, queuedMessageId: id });
+    /*
+     * The turn of whoever queued the message: the owner it was queued for, a
+     * message of this host's, or the person on the connection that sent it.
+     * Who that is goes on the turn's start and into the store, as every start
+     * this host says carries its sender.
+     */
+    const start: Bag = { type: 'chat/turnStarted', turnId, startedAt: new Date(since).toISOString(), message, queuedMessageId: id };
+    const by = sender?.owner ?? (sender?.connection === undefined ? undefined : ctx.ownerFor(sender.connection));
+    if (by !== undefined) {
+      ctx.senders.set(turnId, by);
+      ctx.kept.setSender(idOf(owner.uri), turnId, by);
+    }
+    dispatch(chat, by === undefined ? start : withSenderOn(start, by));
     // Ended by this host, so nothing held against the turn is let go by anything else.
     const ended = (errorType: string, why: string): void => {
       ctx.forgetSender(turnId);
@@ -171,8 +184,6 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
     };
     const lead = sessions.get(owner.uri);
     const provider = lead === undefined ? 'This provider' : ctx.chatAgent(lead, chat).provider;
-    // A message of this host's is the turn of the owner it was queued for.
-    if (sender?.owner !== undefined) ctx.senders.set(turnId, sender.owner);
     /*
      * The chats the message attaches, read out as the turn is sent, as a
      * client's start's are: one that cannot be read ends the turn, as the

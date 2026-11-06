@@ -38,7 +38,7 @@ What the new chat says it was made from is kept for as long as the chat is, and 
 
 `chat/turnStarted` arrives from a client and this host emits it again, because nothing in a client applies what it sent itself. The running turn is `activeTurn` and is not in `turns`; it moves across when it completes.
 
-Who sent a turn is this host's own record, as the same typed reference a session's owner is: `user:<id>` for somebody who signed in, `root:<host>` for a turn the deployment's own token started. The host holds it while the turn runs, for what the turn runs as and what its usage record names, and says it in no action and no state a client reads, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L77-L83) keeps a pending message's sender for the turn it admits.
+A turn says who sent it, as the same typed reference a session's owner is: `user:<id>` for somebody who signed in, `root:<host>` for a turn the deployment's own token started. It rides in the `_meta` of the message rather than in one place of its own, because only the message declares one, and the session store keeps it by turn, so a turn read back after a restart says it too. A turn sent before any of this was kept says nothing rather than guessing.
 
 One action ends a turn and which one says how it went: `chat/turnComplete` when it worked, `chat/error` when it did not, `chat/turnCancelled` when somebody stopped it. All three carry a required `duration`, and a message that arrives without one is `NaN` inside a client's reducer rather than a missing number - which is why `chat/error` *is* the ending rather than a message beside one.
 

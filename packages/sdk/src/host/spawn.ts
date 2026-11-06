@@ -15,7 +15,7 @@ import { linkIn } from '../automations/calllinks.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
-import { CLOSING } from './common.js';
+import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
@@ -44,6 +44,8 @@ export interface Spawn {
   withWorkerUri(chat: string, action: Bag): Bag;
   /** Every turn's tool calls stamped with this session's name where a client reduced the stamp. */
   stampedCalls(session: string, chat: string, turns: Bag[]): Bag[];
+  /** Every turn marked with which client sent it. */
+  withSender(session: string, turns: Bag[]): Bag[];
   /** A chat's state with the attachments its clients sent back on its messages. */
   asSentChat(state: Bag): Bag;
   /** Write one action on a worker's chat. */
@@ -264,9 +266,9 @@ export function createSpawn(ctx: HostContext): Spawn {
    * turn, the message waiting behind one and the steering message are all held
    * by the backend as it was handed them, so a subscriber would read the
    * pointer `messageAttachments` made in place of the chat attachment that was
-   * sent. A backend's state is the agent's answer and not a place this host
-   * writes into, so what moves is copied and what did not is the backend's own
-   * object.
+   * sent. `withSender` is here for the same reason and in the same place - a
+   * backend's state is the agent's answer and not a place this host writes
+   * into, so what moves is copied and what did not is the backend's own object.
    */
   const asSentChat = (state: Bag): Bag => {
     const list = (given: unknown): unknown => {
@@ -311,6 +313,23 @@ export function createSpawn(ctx: HostContext): Spawn {
       return { ...part, toolCall: { ...call, _meta: { ...call._meta, subagentChatUri: linked ?? subagentChatUri(session, call.toolCallId) } } };
     });
     return touched ? { ...turn, responseParts: next } : turn;
+  });
+  /**
+   * A turn with the sender who asked it, and every turn without one left as it
+   * is.
+   *
+   * `_meta` is the protocol's own place for a message's context and only the
+   * message declares one - `Turn` and `ActiveTurn` do not - so a turn read out
+   * of a session says who sent it the way the live action does, on the thing
+   * the client was handed. A copy where a sender was found and the backend's
+   * own object everywhere else, because `chatState()` is the agent's answer
+   * and not a place this host writes into.
+   */
+  const withSender = (session: string, turns: Bag[]): Bag[] => turns.map((turn) => {
+    const sender = kept.sender(idOf(session), String(turn.id ?? ''));
+    const message = turn.message as Bag | undefined;
+    if (sender === undefined || typeof message !== 'object' || message === null) return turn;
+    return { ...turn, message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } } };
   });
 
   /** Workers whose turn has been ended, so a second ending is not a second turn. */
@@ -1262,6 +1281,20 @@ export function createSpawn(ctx: HostContext): Spawn {
           completePlan(chatUri, turn);
         }
         /*
+         * Who asked, on the wire and on disk.
+         *
+         * The action carries it because `chat/turnStarted` is one of the few
+         * that declares a `_meta`; the store keeps it because the in-memory
+         * entry is let go of when the turn ends and a session read out of its
+         * transcript asks the store, not this map. Nothing is written and
+         * nothing is sent where there is nobody to name, so a host with no
+         * users directory sends exactly what it sent before.
+         */
+        if (sender !== undefined && channel === 'chat' && action.type === 'chat/turnStarted') {
+          kept.setSender(idOf(uri), turn, sender);
+          if (answering === undefined) action = withSenderOn(action, sender);
+        }
+        /*
          * The bits of a chat whose backend runs it on another host, as that
          * host says them: kept here, where every row and state of the chat
          * reads them, and the session's read bit follows a read, as it follows
@@ -1597,15 +1630,21 @@ export function createSpawn(ctx: HostContext): Spawn {
        * chose it by, and a backend whose transcript names turns its own way -
        * Claude writes a turn whose id is not a UUID under a uuid of its own - is
        * read back by that other id after a restart, finding nothing. So the
-       * record of the turns the chat began keeps it, and a `!` turn after it is
-       * anchored to it by that id, with no host learning one backend's
-       * transcript format. Nothing where the two ids agree, which is every
+       * record of the turns the chat began keeps it, the sender is kept under
+       * it as well, and a `!` turn after it is anchored to it by that id, with
+       * no host learning one backend's transcript format.
+       *
+       * The sender's in-memory entry first, because a turn still running is
+       * only in that map, and the store after it for the turn a backend names
+       * once the turn is over. Nothing where the two ids agree, which is every
        * backend that keeps the ids it was given and which the turn's start
-       * recorded already.
+       * recorded already, and no sender where nobody sent the turn.
        */
       onTurnRecorded: (turnId, transcriptId) => {
         if (transcriptId === turnId) return;
         ctx.turnRecordedAs(uri, chatUri, turnId, transcriptId);
+        const sender = senderOf(turnId) ?? kept.sender(idOf(uri), turnId);
+        if (sender !== undefined) kept.setSender(idOf(uri), transcriptId, sender);
       },
       onHandshake: () => { learnModels(uri); },
       /*
@@ -1852,7 +1891,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   };
 
   return {
-    unstamped, withWorkerUri, stampedCalls, asSentChat,
+    unstamped, withWorkerUri, stampedCalls, withSender, asSentChat,
     sendSubagent, endedWorkers,
     openSubagent, formerChatUri, titleOf, keepTitle, keepSessionTitle, keepProvider,
     spawn, wirePlan,

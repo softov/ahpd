@@ -157,6 +157,41 @@ const senderOn = (turn: Bag | undefined): unknown =>
   ((turn?.message as Bag | undefined)?._meta as Bag | undefined)?.['ahpd.sender'];
 
 /**
+ * Echo under a backend that writes its turns down its own way.
+ *
+ * The turn runs as the id the client chose and is written down as one of the
+ * backend's own, which it says once through `onTurnRecorded` - the whole of
+ * what a backend whose own record names turns its own way, as the Claude
+ * CLI's transcript names every turn by its frame uuid, owes the host for a
+ * sender to outlive the turn it was sent on.
+ */
+const naming = (agent: Agent): Agent => ({
+  ...agent,
+  create: (start) => {
+    const written = new Map<string, string>();
+    const session = agent.create(start);
+    const own = (turn: Bag): Bag => ({ ...turn, id: written.get(String(turn.id)) ?? turn.id });
+    return {
+      ...session,
+      sendMessage: (turnId, text, from) => {
+        void session.sendMessage(turnId, text, from);
+        // Said after the turn began, because that is when the host knows who
+        // sent it - and after in Claude too, where the uuid arrives with the
+        // prompt's first echo rather than before the turn was ever announced.
+        const id = `x${written.size + 1}`;
+        written.set(turnId, id);
+        start.onTurnRecorded?.(turnId, id);
+      },
+      allTurns: () => session.allTurns().map(own),
+      chatState: () => {
+        const state = session.chatState();
+        return { ...state, turns: ((state.turns as Bag[] | undefined) ?? []).map(own) };
+      },
+    };
+  },
+});
+
+/**
  * Echo under a backend that writes down what each turn was handed.
  *
  * The words of a message reach a backend as `sendMessage`'s `text` and what was
@@ -456,13 +491,7 @@ const WRITTEN = `{
 }
 `;
 
-/*
- * Who sent a turn is this host's own record, held while the turn runs, as the
- * reference host keeps a pending message's sender, so a row's `senders` are
- * read past and the row is written back without them.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L26
- */
-it('reads a row written before this version, and writes it back as it was but for its turns\' senders', async () => {
+it('reads a row written before this version whole, and writes it back as it was', async () => {
   const dir = join(root, 'sessions');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'a.json'), WRITTEN);
@@ -472,6 +501,7 @@ it('reads a row written before this version, and writes it back as it was but fo
   expect(store.config('a')).toEqual({ voice: 'shouty' });
   expect(store.scope('a')).toEqual({ team: 'backend', project: 'ahpd' });
   expect(store.owner('a')).toBe('user:ana');
+  expect(store.sender('a', 'turn-1')).toBe('user:ana');
   expect(store.provider('a')).toBe('claude');
   expect(store.artifacts('a')).toEqual([
     { id: 'a1', type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com' },
@@ -488,11 +518,11 @@ it('reads a row written before this version, and writes it back as it was but fo
   expect(store.chats('a')).toEqual([]);
 
   // A change that leaves the row as it was is still a write of it, and what it
-  // writes is the bytes it read but the senders: the field order on disk is the
-  // file's rather than the order the fields happened to be set in.
+  // writes is the bytes it read: the field order on disk is the file's rather
+  // than the order the fields happened to be set in.
   store.setFlags('a', ARCHIVED);
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(readFileSync(join(dir, 'a.json'), 'utf8')).toBe(WRITTEN.replace('  "senders": {\n    "turn-1": "user:ana"\n  },\n', ''));
+  expect(readFileSync(join(dir, 'a.json'), 'utf8')).toBe(WRITTEN);
 });
 
 it('forgets a session that was disposed, rather than keeping its bits for ever', async () => {
@@ -530,12 +560,12 @@ it('keeps the settings a session was given, so a resumed one still has them', as
 
 it('keeps no row for a session whose every field was set back to nothing', () => {
   const store = memorySessions();
-  // A flag read and cleared, and an owner taken back: back where it started, so
+  // A flag read and cleared, and a sender taken back: back where it started, so
   // there is no row left for a listing to carry for months.
   store.setFlags('a', READ);
   store.setFlags('a', 0);
-  store.setOwner('a', 'user:ana');
-  store.setOwner('a', undefined);
+  store.setSender('a', 'turn-1', 'user:ana');
+  store.setSender('a', 'turn-1', undefined);
 
   // A session nothing is left about is not one a prune sees at all, and an
   // always-true predicate is asked about every id the store holds.
@@ -605,6 +635,7 @@ it('forgets a session entirely, whatever was set on it', () => {
   store.setConfig('a', { voice: 'shouty' });
   store.setScope('a', { team: 'backend', project: 'ahpd' });
   store.setOwner('a', 'user:ana');
+  store.setSender('a', 'turn-1', 'user:ana');
   store.setProvider('a', 'claude');
   store.setChats('a', [{ uri: 'ahp-chat:/one', backendId: 'one', default: true }]);
 
@@ -614,6 +645,7 @@ it('forgets a session entirely, whatever was set on it', () => {
   expect(store.config('a')).toBeUndefined();
   expect(store.scope('a')).toBeUndefined();
   expect(store.owner('a')).toBeUndefined();
+  expect(store.sender('a', 'turn-1')).toBeUndefined();
   expect(store.provider('a')).toBeUndefined();
   expect(store.chats('a')).toEqual([]);
 });
@@ -696,7 +728,7 @@ it('keeps a session\'s chats across a restart, in order, and forgets them with t
   expect(fileSessions({ dir }).chats('a')).toEqual([]);
 });
 
-it('moves a chat to another session in the store, with its title', async () => {
+it('moves a chat to another session in the store, with its title and the senders of its turns', async () => {
   const dir = join(root, 'sessions');
   const store = fileSessions({ dir });
   const lead = { uri: 'ahp-chat:/one', backendId: 'one', default: true };
@@ -705,14 +737,24 @@ it('moves a chat to another session in the store, with its title', async () => {
   store.setChats('a', [lead, peer]);
   store.setChats('b', [tail]);
   store.setChatTitle('a', 'ahp-chat:/peer', 'Kqueue port');
+  /*
+   * A sender is kept per session and per turn, and every chat of a session
+   * writes into the same map - so a move names the turns the chat owns and
+   * takes those alone. The turns it left behind are still the source's, and
+   * the destination's own are still the destination's.
+   */
+  store.setSender('a', 'turn-1', 'user:ana');
+  store.setSender('a', 'turn-2', 'user:bo');
+  store.setSender('b', 'tail-1', 'user:cy');
 
-  store.moveChat('a', 'b', 'ahp-chat:/peer');
+  store.moveChat('a', 'b', 'ahp-chat:/peer', ['turn-1']);
   await new Promise((tick) => { setTimeout(tick, 5); });
 
-  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', chats: [lead] });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', senders: { 'turn-2': 'user:bo' }, chats: [lead] });
   expect(row(dir, 'b')).toEqual({
     version: 1,
     id: 'b',
+    senders: { 'tail-1': 'user:cy', 'turn-1': 'user:ana' },
     chats: [tail, peer],
     chatTitles: { 'ahp-chat:/peer': 'Kqueue port' },
   });
@@ -723,6 +765,9 @@ it('moves a chat to another session in the store, with its title', async () => {
   expect(second.chats('b')).toEqual([tail, peer]);
   expect(second.chatTitle('a', 'ahp-chat:/peer')).toBeUndefined();
   expect(second.chatTitle('b', 'ahp-chat:/peer')).toBe('Kqueue port');
+  expect(second.sender('a', 'turn-1')).toBeUndefined();
+  expect(second.sender('a', 'turn-2')).toBe('user:bo');
+  expect(second.sender('b', 'turn-1')).toBe('user:ana');
 
   /*
    * The same move in the memory store, which is the other half of what the
@@ -732,10 +777,13 @@ it('moves a chat to another session in the store, with its title', async () => {
   const memory = memorySessions();
   memory.setChats('a', [lead, peer]);
   memory.setChatTitle('a', 'ahp-chat:/peer', 'Kqueue port');
-  memory.moveChat('a', 'b', 'ahp-chat:/peer');
+  memory.setSender('a', 'turn-1', 'user:ana');
+  memory.moveChat('a', 'b', 'ahp-chat:/peer', ['turn-1']);
   expect(memory.chats('a')).toEqual([lead]);
   expect(memory.chats('b')).toEqual([peer]);
   expect(memory.chatTitle('b', 'ahp-chat:/peer')).toBe('Kqueue port');
+  expect(memory.sender('a', 'turn-1')).toBeUndefined();
+  expect(memory.sender('b', 'turn-1')).toBe('user:ana');
 });
 
 it('names every id it holds, on both stores, and no id it was merely asked about', async () => {
@@ -787,6 +835,35 @@ it('keeps whose work a session is across a restart, and forgets it with the sess
   await new Promise((tick) => { setTimeout(tick, 5); });
   expect(row(dir, 'b')).toBeUndefined();
   expect(memorySessions().owner('a')).toBeUndefined();
+});
+
+it('keeps who sent each turn across a restart, and forgets it with the session', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  store.setOwner('a', 'user:ana');
+  // Two turns, two people, one session: the turn is the only thing that says
+  // which of them it was.
+  store.setSender('a', 'turn-1', 'user:ana');
+  store.setSender('a', 'turn-2', 'user:bo');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({
+    version: 1, id: 'a', owner: 'user:ana', senders: { 'turn-1': 'user:ana', 'turn-2': 'user:bo' },
+  });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
+  expect(second.sender('a', 'turn-1')).toBe('user:ana');
+  expect(second.sender('a', 'turn-2')).toBe('user:bo');
+  expect(second.sender('a', 'turn-never')).toBeUndefined();
+  expect(second.sender('nobody', 'turn-1')).toBeUndefined();
+  // A sender cleared with `undefined` leaves nothing worth a file, the way a
+  // flag read and cleared does.
+  second.setSender('a', 'turn-1', undefined);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(fileSessions({ dir }).sender('a', 'turn-1')).toBeUndefined();
+  second.forget('a');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toBeUndefined();
+  expect(memorySessions().sender('a', 'turn-2')).toBeUndefined();
 });
 
 it('keeps which harness a session runs on across a restart, and forgets it with the session', async () => {
@@ -955,26 +1032,32 @@ it('reads a row that names no owner as one nobody owns', () => {
   const dir = join(root, 'sessions');
   mkdirSync(dir, { recursive: true });
   // What a version that did not record owners wrote, and a row whose owner is
-  // not a typed reference: both are ignored rather than guessed at.
+  // not a typed reference: both are ignored rather than guessed at. A turn's
+  // sender is held to the same rule, one value at a time.
   const write = (id: string, one: Record<string, unknown>): void => {
     writeFileSync(join(dir, `${id}.json`), JSON.stringify({ version: 1, id, ...one }));
   };
   write('a', { flags: READ });
   write('b', { owner: 'ana' });
   write('c', { owner: 'user:' });
+  write('d', { owner: 'user:ana', senders: { t1: 'ana', t2: 'user:', t3: 'user:bo' } });
   const store = fileSessions({ dir });
   expect(store.flags('a')).toBe(READ);
   expect(store.owner('a')).toBeUndefined();
   expect(store.owner('b')).toBeUndefined();
   expect(store.owner('c')).toBeUndefined();
+  expect(store.sender('d', 't1')).toBeUndefined();
+  expect(store.sender('d', 't2')).toBeUndefined();
+  expect(store.sender('d', 't3')).toBe('user:bo');
 });
 
-it('reads an owner saved under a first-party plugin\'s old name as its id', () => {
+it('reads an owner and a sender saved under a first-party plugin\'s old name as its id', () => {
   const dir = join(root, 'sessions');
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'a.json'), JSON.stringify({ version: 1, id: 'a', owner: 'plugin:@ahpd/bot' }));
+  writeFileSync(join(dir, 'a.json'), JSON.stringify({ version: 1, id: 'a', owner: 'plugin:@ahpd/bot', senders: { t1: 'plugin:@ahpd/webhook' } }));
   const store = fileSessions({ dir });
   expect(store.owner('a')).toBe('plugin:bot');
+  expect(store.sender('a', 't1')).toBe('plugin:webhook');
 });
 
 it('records no owner on a host with no directory to name somebody in', async () => {
@@ -1008,17 +1091,10 @@ it('keeps the owner beside a session a later daemon resumes', async () => {
   expect(fileSessions({ dir }).owner('one')).toBe('user:ana');
 });
 
-/*
- * Whose a session is goes on its row, past a restart; who sent a turn is this
- * host's own record while the turn runs, which no turn a client reads carries,
- * as the reference host keeps a pending message's sender and puts it in no
- * action.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L26
- */
-it('says whose a session is and keeps it past a restart, and says no turn\'s sender', async () => {
+it('says on the wire who sent a turn and whose a session is, and keeps it past a restart', async () => {
   const dir = join(root, 'sessions');
   const store = fileSessions({ dir });
-  const { client, peer: on } = await running(store, { principal: ana });
+  const { client } = await running(store, { principal: ana });
   const chat = await chatOf(client);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
 
@@ -1031,11 +1107,39 @@ it('says whose a session is and keeps it past a restart, and says no turn\'s sen
   await ask(client, chat, 'turn-1');
   await new Promise((tick) => { setTimeout(tick, 100); });
   const turns = await turnsOn(client, chat);
-  expect(turns.map(senderOn)).toEqual([undefined]);
-  expect(JSON.stringify(on.notes)).not.toContain('ahpd.sender');
+  expect(senderOn(turns[0])).toBe('user:ana');
 
+  /*
+   * And the answer outlives the process, which is the whole of what the store
+   * is for: a session read out of its transcript after a restart asks a second
+   * store on this file, and not the map this host let go of at turn end.
+   */
   await new Promise((tick) => { setTimeout(tick, 5); });
-  expect(fileSessions({ dir }).owner('one')).toBe('user:ana');
+  const after = fileSessions({ dir });
+  expect(after.owner('one')).toBe('user:ana');
+  expect(after.sender('one', 'turn-1')).toBe('user:ana');
+});
+
+it('keeps a turn\'s sender under the id the backend wrote it down as, so a history read back still names it', async () => {
+  const store = memorySessions();
+  const { client } = await running(store, { principal: ana }, naming(echo({ path: root, pace: 0 })));
+  const chat = await chatOf(client);
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+
+  await ask(client, chat, 't1');
+  await new Promise((tick) => { setTimeout(tick, 100); });
+
+  /*
+   * The turn as every client holds it, under the id the client chose: the
+   * chat's state is what the actions said while the daemon ran it.
+   */
+  const turns = await turnsOn(client, chat);
+  expect(turns.map((turn) => String(turn.id))).toEqual(['t1']);
+  expect(senderOn(turns[0])).toBe('user:ana');
+  expect(store.sender('one', 't1')).toBe('user:ana');
+  // And under the id this backend wrote it as, which is what a Claude turn is
+  // named by once the daemon has restarted and the history is read back.
+  expect(store.sender('one', 'x1')).toBe('user:ana');
 });
 
 it('says neither who sent a turn nor whose a session is when the host has no directory', async () => {
@@ -1056,7 +1160,7 @@ it('says neither who sent a turn nor whose a session is when the host has no dir
   expect((turns[0]?.message as Bag | undefined)?._meta).toBeUndefined();
 });
 
-it('says no turn\'s sender on the oldest page either', async () => {
+it('says who sent a turn on the oldest page too, not only on the tail window', async () => {
   const store = memorySessions();
   const { client, peer: on } = await running(store, { principal: ana });
   const chat = await chatOf(client);
@@ -1087,7 +1191,7 @@ it('says no turn\'s sender on the oldest page either', async () => {
   expect(page?.turns).toHaveLength(10);
   // The ten oldest, which is the whole of what this case is about.
   expect(page?.turns?.map((turn) => String(turn.id))).toEqual(Array.from({ length: 10 }, (_, at) => `turn-${at}`));
-  expect(page?.turns?.map(senderOn)).toEqual(Array(10).fill(undefined));
+  expect(page?.turns?.map(senderOn)).toEqual(Array(10).fill('user:ana'));
 });
 
 it('keeps the titles chats were given, and forgets them with the session', async () => {

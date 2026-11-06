@@ -426,12 +426,15 @@ it('names who sent each turn, and a queued message keeps its sender when it runs
 });
 
 /*
- * Who sent a turn is this host's own record, which the events above read, and
+ * Who sent a turn rides its start on the wire, as upstream decided (Softov,
+ * 2026-10-02: "`_meta` on the wire"): `ahpd.sender` on the action and on its
+ * message, the spec's `_meta` place for a fact it does not define. The rest of
  * a client's start goes out as the client sent it, as the reference host
  * applies a client's action and says it with the client's origin.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L779-L789
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
  */
-it('says a client\'s start on the wire as the client sent it, on a host with somebody to name', async () => {
+it('says a client\'s start on the wire with its sender, on a host with somebody to name', async () => {
   /** The `chat/turnStarted` frame a client was sent, out of what it saw. */
   const started = (notes: { method: string; params: unknown }[]): Bag | undefined => notes
     .filter((note) => note.method === 'action')
@@ -449,7 +452,8 @@ it('says a client\'s start on the wire as the client sent it, on a host with som
   const action = said('turn-who', 'hello there', 'chat/turnStarted');
   await ana.handle({ method: 'dispatchAction', params: { channel: chat, action } });
   await wait(100);
-  expect(started(on.notes)).toEqual(action);
+  const sender = { 'ahpd.sender': 'user:ana' };
+  expect(started(on.notes)).toEqual({ ...action, _meta: sender, message: { ...(action.message as Bag), _meta: sender } });
   expect(of(named.seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-who', sender: 'user:ana' }]);
 });
 

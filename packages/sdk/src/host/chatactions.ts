@@ -4,7 +4,7 @@ import { localPath } from '../resources/fileuri.js';
 import { readMultiRoot } from '../sessions/remotesession.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
 import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
-import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
+import { HOSTS_OWN, HOSTS_TAKEN, withSenderOn } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
@@ -252,6 +252,15 @@ export function chatAction(
   /** The message an action carries, which its text and its attachments ride on. */
   const messageOf = (one: Record<string, unknown>): Record<string, unknown> =>
     (typeof one.message === 'object' && one.message !== null ? one.message : {}) as Record<string, unknown>;
+  /*
+   * A client's start as this host says it: as the client sent it, with who
+   * sent it under `ahpd.sender` on the action and its message where somebody
+   * did, which every client's state and a turn read back then carry. A start
+   * carried to another host goes as the client sent it.
+   */
+  const sent = action;
+  const startedBy = type === 'chat/turnStarted' ? ownerFor(connection) : undefined;
+  if (startedBy !== undefined) action = withSenderOn(action, startedBy);
 
   /*
    * The two bits a chat carries of its own.
@@ -378,7 +387,10 @@ export function chatAction(
     if (!ctx.answered(origin)) dispatch(chat, action, origin);
     void fire({ type: 'message', session: on.uri, chat, turn: turnId, text: String(messageOf(action).text ?? '') });
     const by = ownerFor(connection);
-    if (by !== undefined) ctx.senders.set(turnId, by);
+    if (by !== undefined) {
+      ctx.senders.set(turnId, by);
+      kept.setSender(idOf(on.uri), turnId, by);
+    }
     ctx.sentBy.set(turnId, connection);
     ctx.bang(on, chat, turnId, run);
   };
@@ -450,7 +462,7 @@ export function chatAction(
           if (!ctx.answered(origin)) dispatch(relaying.chatUri, action, origin);
         },
         () => ctx.cancelledTurns.get(relaying.chatUri)?.has(turnId) === true,
-        (on) => { on.relay?.('chat', action, origin); }),
+        (on) => { on.relay?.('chat', sent, origin); }),
       (why) => { if (startSaid) unsent(relaying.chatUri, 'rejected', why, since); else no(why); },
       (why) => { if (startSaid) unsent(relaying.chatUri, 'sendFailed', why, since); else no(why); },
     );

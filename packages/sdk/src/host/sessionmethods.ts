@@ -170,15 +170,18 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     }
     /*
      * Out of the source, in the store and here: the chat's own record - its
-     * title and its entry on the session's chat list - and the two maps that
-     * say which session is holding it.
+     * title, its senders and its entry on the session's chat list - and the two
+     * maps that say which session is holding it. The store is told the turns
+     * the chat owns, because it cannot find them itself: a sender is kept per
+     * session and turn, and every chat of a session writes into the same map.
      *
      * The claim is set as well as dropped, and the order matters: `drop` keeps
      * the claim a key already has, and `Claiming.set` will not overwrite one,
      * so a chat that has just left `byChat` still answers as the source's chat
      * until this line puts it where it now belongs.
      */
-    kept.moveChat(idOf(found.uri), idOf(into), chatUri);
+    const turns = ctx.liveTurnsOf(found.uri, chatUri, found.chat.allTurns() as Bag[]).map((one) => String(one.id ?? ''));
+    kept.moveChat(idOf(found.uri), idOf(into), chatUri, turns);
     // And the outputs its terminals kept and its local turns, which are the
     // chat's own.
     ctx.moveChatOutputs(found.uri, into, chatUri);
@@ -576,7 +579,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       }
       dispatch(channel, {
         type: 'chat/turnsLoaded',
-        turns: page.turns,
+        // The action declares no `_meta` of its own, so the turns are the
+        // whole of it: a client paging back through a conversation must not
+        // find the sender gone on the oldest page.
+        turns: ctx.withSender(idOf(owning), page.turns),
         ...(page.turnsNextCursor ? { turnsNextCursor: page.turnsNextCursor } : {}),
       });
       return {};
