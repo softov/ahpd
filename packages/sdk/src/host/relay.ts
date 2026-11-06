@@ -32,6 +32,11 @@ export interface Relay {
   clientGone(connection: Connection): void;
   /** A connection that answers for its client's id: every request and watch waiting on that client goes on. */
   clientBack(clientId: string): void;
+  /**
+   * The host closing: no client comes back to it, so every grace ends now and
+   * whatever waited on one settles with no connection.
+   */
+  stopLapses(): void;
 }
 
 export function createRelay(ctx: HostContext): Relay {
@@ -246,13 +251,21 @@ export function createRelay(ctx: HostContext): Relay {
   const clientGone = (connection: Connection): void => {
     listening.delete(connection);
     const { clientId } = connection;
-    if (!ownId(clientId) || connectedAs(clientId) !== undefined || lapsing.has(clientId)) return;
+    if (ctx.closed || !ownId(clientId) || connectedAs(clientId) !== undefined || lapsing.has(clientId)) return;
     const timer = setTimeout(() => {
       const held = lapsing.get(clientId);
       lapsing.delete(clientId);
       for (const wait of held?.waits ?? []) wait(undefined);
     }, CONNECTION_GRACE_MS);
     lapsing.set(clientId, { timer, waits: [] });
+  };
+
+  const stopLapses = (): void => {
+    for (const [clientId, held] of lapsing) {
+      clearTimeout(held.timer);
+      lapsing.delete(clientId);
+      for (const wait of held.waits) wait(undefined);
+    }
   };
 
   const clientBack = (clientId: string): void => {
@@ -297,5 +310,5 @@ export function createRelay(ctx: HostContext): Relay {
     request: async (client, uri, access) => await ask(client, 'resourceRequest', { uri, ...access }),
   };
 
-  return { clients, clientResources, ownId, claimsId, heard, clientGone, clientBack };
+  return { clients, clientResources, ownId, claimsId, heard, clientGone, clientBack, stopLapses };
 }

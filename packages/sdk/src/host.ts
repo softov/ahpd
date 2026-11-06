@@ -1991,6 +1991,7 @@ export function createHost(options: HostOptions): Host {
         ctx.stopWakes();
         ctx.stopMerged();
         ctx.closed = true;
+        ctx.stopLapses();
         unwatchProbes(true);
         /*
          * And no wait outlives the host it was begun in. What a client that
