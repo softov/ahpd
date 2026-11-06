@@ -472,9 +472,11 @@ const idleClose = (options: AcpOptions, held: Listing): void => {
  * the log, as VS Code's Codex agent stops its own.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L42-L69
  *
- * A server that cannot be reached, or one whose listing fails, falls back to
- * the record - a catalogue read must answer, and must never take the daemon
- * down over a subprocess that did not start.
+ * A server that cannot be reached, or one whose listing fails, rejects with the
+ * failure, logged, as VS Code's Codex agent answers a listing it cannot make so
+ * the orchestrator asks again rather than reading an empty catalogue; the host
+ * keeps the rows it last had for this agent and asks at its next read.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8043-L8052
  */
 export async function catalogueOf(options: AcpOptions, provider: string): Promise<Listed[]> {
   const held = listingFor(options);
@@ -507,9 +509,10 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
     }
     return sessions.map(listedFrom);
   }
-  catch {
+  catch (error) {
     dropListing(options, held);
-    return watchedRows(provider);
+    options.log?.(`${provider}: session/list failed: ${error instanceof Error ? error.message : String(error)}`);
+    throw error;
   }
   finally {
     idleClose(options, held);
@@ -522,10 +525,10 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
  * A find is the same listing `catalogueOf` does, and the only thing this adds
  * is that the asks of one client are not one listing each: a find asking while
  * one is out joins it, and a find asking inside `FIND_FRESH` of the last answer
- * is answered from it. `catalogueOf` never rejects - a server that cannot be
- * reached answers with the watched records - so a failure is kept the same way
- * its rows would be, and the command behind it is not spawned again for that
- * window.
+ * is answered from it. A listing that fails answers a find from the watched
+ * records, so a find never throws over a server that did not start, and that
+ * answer is kept the same way a listing's rows are: the command behind it is
+ * not spawned again for that window.
  */
 const rowsForFind = (options: AcpOptions, provider: string): Promise<Listed[]> => {
   const known = finds.get(options);
@@ -534,7 +537,7 @@ const rowsForFind = (options: AcpOptions, provider: string): Promise<Listed[]> =
     if (Date.now() - known.at < FIND_FRESH) return Promise.resolve(known.rows);
   }
   const held: Finds = { running: undefined, at: 0, rows: [] };
-  const running = catalogueOf(options, provider).then((rows) => {
+  const running = catalogueOf(options, provider).catch(() => watchedRows(provider)).then((rows) => {
     held.rows = rows;
     held.at = Date.now();
     return rows;
@@ -560,9 +563,8 @@ const rowsForFind = (options: AcpOptions, provider: string): Promise<Listed[]> =
  * the row `list` answers: a find that preferred the record of a session this
  * process is watching would answer a title or a time the listing does not have,
  * and the host would tell every client that row changed for a session that did
- * not. A session the server cannot list, or a server that does not list at all,
- * is answered from the watched records by `catalogueOf` itself, so that case
- * needs nothing here either.
+ * not. A server that does not list at all is answered from the watched records
+ * by `catalogueOf` itself, and a listing that failed by `rowsForFind`.
  */
 export async function findListed(options: AcpOptions, provider: string, id: string): Promise<Listed | undefined> {
   return (await rowsForFind(options, provider)).find((row) => row.id === id);

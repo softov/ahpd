@@ -114,11 +114,18 @@ it('rejects the handshake with a sentence naming a missing command', async () =>
   expect(escaped).toEqual([]);
 });
 
-it('answers a listing with the watched sessions when the command is missing', async () => {
+/*
+ * A listing the server cannot make is the host's to ask again, so it rejects
+ * rather than answering the watched sessions as the whole catalogue, as VS
+ * Code's Codex agent answers a listing it cannot make.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8043-L8052
+ */
+it('rejects a listing whose command is missing, and logs it', async () => {
   watchSession({ provider: 'acp-missing-list', id: 'kept', cwd: '/tmp', additional: [], title: 'Kept' });
-  const agent = acpAgent({ command: MISSING, provider: 'acp-missing-list' });
-  const listed = await agent.list?.() ?? [];
-  expect(listed.map((row) => row.id)).toEqual(['kept']);
+  const lines: string[] = [];
+  const agent = acpAgent({ command: MISSING, provider: 'acp-missing-list', log: (line) => { lines.push(line); } });
+  await expect(agent.list?.()).rejects.toThrow(`${MISSING} was not found`);
+  expect(lines.some((line) => line.startsWith('acp-missing-list: session/list failed:'))).toBe(true);
   await pause(20);
   expect(escaped).toEqual([]);
 });
