@@ -581,7 +581,9 @@ arrives with one sets the effort for that turn, while a turn whose model names
 none clears it back to the model's own, as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1217-L1224)
 sets the effort each model selection resolves to: the CLI holds a single effort
 setting per query. The session's config has no effort key; its keys are VS
-Code's Claude's, `permissionMode` with five modes, `permissions` and
+Code's Claude's, `permissionMode` with its five modes and the SDK's `dontAsk`
+beside them (a session nobody watches refuses rather than waits on a person,
+the decision `claude-approvals-keeps-dont-ask`), `permissions` and
 `sensitiveEditLocations`, with the platform's `shellInitScripts` beside them.
 
 The other five declared fields - `maxContextWindow`, `maxOutputTokens`,

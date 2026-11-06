@@ -281,7 +281,11 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     type: 'object',
     properties: {
       /*
-       * One axis, and the five values VS Code's Claude offers of the SDK's.
+       * One axis: the five values VS Code's Claude offers of the SDK's, and the
+       * SDK's `dontAsk`, which denies what is not already allowed without
+       * asking, so a session nobody watches can refuse rather than wait on a
+       * person (decision claude-approvals-keeps-dont-ask, Softov 2026-09-29:
+       * "Move, but keep dontAsk").
        *
        * The protocol's config schema is generic and a backend advertises what
        * it has - VS Code's own hosts advertise different properties for
@@ -299,13 +303,14 @@ export function claude(options: ClaudeOptions): Agent<Session> {
         type: 'string',
         title: 'Approvals',
         description: 'How Claude handles tool approvals.',
-        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'],
+        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'],
         enumLabels: [
           'Ask Before Edits',
           'Edit Automatically',
           'Plan Mode',
           'Auto Mode',
           'Bypass Permissions',
+          "Don't Ask",
         ],
         enumDescriptions: [
           'Claude asks before editing files.',
@@ -313,6 +318,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
           'Claude creates a plan before making changes.',
           'Claude decides whether to ask for each tool operation.',
           'Claude runs all tools without asking.',
+          'Claude denies anything not already approved, without asking.',
         ],
         default: 'default',
         sessionMutable: true,

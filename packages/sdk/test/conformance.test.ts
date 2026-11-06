@@ -857,7 +857,7 @@ it('still refuses something that is not a URI at all', async () => {
  * asks a backend to; VS Code's own hosts advertise different properties for
  * Copilot and for Claude.
  */
-it('advertises the five modes VS Code\'s Claude has, under the name the CLI has them', async () => {
+it('advertises the five modes VS Code\'s Claude has and the SDK\'s dontAsk, under the name the CLI has them', async () => {
   const { client } = await running();
   const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
     schema: { properties: Record<string, { enum?: string[] }> };
@@ -872,8 +872,10 @@ it('advertises the five modes VS Code\'s Claude has, under the name the CLI has 
    */
   expect(Object.keys(cfg.schema.properties)).not.toContain('autoApprove');
   expect(Object.keys(cfg.schema.properties)).not.toContain('mode');
+  // VS Code's five, and the SDK's `dontAsk`, which a session nobody watches
+  // refuses with rather than waiting on a person.
   expect(cfg.schema.properties.permissionMode?.enum)
-    .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']);
+    .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
 });
 
 it('takes one on a running session, and leaves the advertised control saying what happened', async () => {
