@@ -198,13 +198,13 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
     /**
      * Whether the server can delete a session, and asking it to.
      *
-     * A getter over the capability the handshake carried, so the property is
-     * absent until the server has been asked and has said yes. A server without
-     * `session/delete` is not refused here - it has no delete to send, so the
-     * host takes its own route and logs that the server kept its copy.
+     * A getter over the capability the handshake carried: absent once a
+     * handshake said the server keeps its sessions, so the host takes its own
+     * route and logs that the server kept its copy, and a delete that reads the
+     * handshake at the delete while none has been read.
      */
     get delete() {
-      return deletes(options) ? (id: string) => forgetSession(options, provider, id) : undefined;
+      return deletes(options) === false ? undefined : (id: string) => forgetSession(options, provider, id);
     },
 
     /*

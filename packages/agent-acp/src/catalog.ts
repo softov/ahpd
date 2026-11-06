@@ -149,17 +149,17 @@ const listsSessions = (agentCapabilities: AgentCapabilities | undefined): boolea
  *
  * ACP owns the conversation, so whether there is a delete to send is the
  * server's own answer and only its handshake carries it. The agent's `delete`
- * reads this, which is why it is a getter rather than a property set once: an
- * agent built before the first listing has nothing to say yet, and a property
- * decided then would be a permanent `undefined` on a server that does support it.
- *
- * A dispose before the first `list()` therefore finds nothing and takes the
- * route a server without the capability takes, which the host logs.
+ * reads this, which is why it is a getter rather than a property set once:
+ * absent once a handshake said the server keeps its sessions, and a delete
+ * that reads the handshake itself while none has been read.
  */
 const deletesSessions = new WeakMap<AcpOptions, boolean>();
 
-/** Whether the last handshake for these options advertised `session/delete`. */
-export const deletes = (options: AcpOptions): boolean => deletesSessions.get(options) === true;
+/**
+ * Whether the last handshake for these options advertised `session/delete`,
+ * and `undefined` while no handshake has been read.
+ */
+export const deletes = (options: AcpOptions): boolean | undefined => deletesSessions.get(options);
 
 /** Whether these capabilities said the server supports `session/delete`. */
 const deletesOf = (agentCapabilities: AgentCapabilities | undefined): boolean =>
@@ -281,9 +281,12 @@ export function watchedSession(provider: string, id: string): WatchedSession | u
  * Ask the server to delete a session, and drop what this process knew of it.
  *
  * Only a server whose handshake advertised `sessionCapabilities.delete` can be
- * asked, and a server that has not been asked has no delete to send - which is
- * what `deletes` answers, and why the agent's `delete` is absent until the
- * handshake has been read.
+ * asked, so the handshake is read first, on the connection the request goes
+ * out on, as ACP has a client check the `initialize` answer before
+ * `session/delete`. A server it shows keeping its sessions is sent nothing: the
+ * delete says in the log that the server keeps its copy, as the host says for
+ * an agent with no delete, and resolves, the agent's `delete` absent from then.
+ * https://agentclientprotocol.com/protocol/v1/session-delete
  *
  * Both kinds of row go the same way. A session this process watched is the
  * bridge's own, but one the server listed is the server's, and the server is
@@ -305,21 +308,31 @@ export function watchedSession(provider: string, id: string): WatchedSession | u
 export async function forgetSession(options: AcpOptions, provider: string, id: string): Promise<void> {
   const held = listingFor(options);
   try {
-    await held.connection.deleteSession(id);
-  }
-  catch (error) {
-    if ((error as { code?: unknown }).code !== NOT_FOUND) throw error;
+    const handshake = await held.connection.initialize();
+    heardCapabilities(options, handshake.agentCapabilities);
+    if (deletes(options) !== true) {
+      options.log?.(`${provider} keeps its own copy of a deleted session, so it may be listed again`);
+      return;
+    }
+    try {
+      await held.connection.deleteSession(id);
+    }
+    catch (error) {
+      if ((error as { code?: unknown }).code !== NOT_FOUND) throw error;
+    }
+    finally {
+      /*
+       * The rows a find read are a moment old, and a delete is the one change
+       * they cannot have: kept over it, a find right after a delete would answer
+       * the session the server has just dropped, and the host would offer it
+       * again. They go, so the next find lists the server again.
+       */
+      finds.delete(options);
+      watched.delete(keyOf(provider, id));
+      placeOf.delete(keyOf(provider, id));
+    }
   }
   finally {
-    /*
-     * The rows a find read are a moment old, and a delete is the one change
-     * they cannot have: kept over it, a find right after a delete would answer
-     * the session the server has just dropped, and the host would offer it
-     * again. They go, so the next find lists the server again.
-     */
-    finds.delete(options);
-    watched.delete(keyOf(provider, id));
-    placeOf.delete(keyOf(provider, id));
     idleClose(options, held);
   }
 }
@@ -470,8 +483,7 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
     /*
      * What the server said it can do, kept for the agent's `delete` and
      * `chats.fork` rather than for this read: the handshake is the only place
-     * `session/delete` and `session/fork` are ever advertised, and this is the
-     * one call that reads it every time.
+     * `session/delete` and `session/fork` are ever advertised.
      */
     heardCapabilities(options, handshake.agentCapabilities);
     if (!listsSessions(handshake.agentCapabilities)) return watchedRows(provider);

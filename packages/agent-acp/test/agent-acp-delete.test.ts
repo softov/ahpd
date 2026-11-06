@@ -11,10 +11,11 @@ import { acpAgent } from '../src/index.js';
  * Deleting an ACP session.
  *
  * Whether there is a delete to send is the server's own answer: `session/delete`
- * is only asked of a server whose handshake advertised it, and this bridge reads
- * that handshake while it reads the catalogue - which is the only call that
- * makes one. So the agent's `delete` is absent until then, and a dispose that
- * arrives first has nothing to send.
+ * is only asked of a server whose handshake advertised it. A delete reads that
+ * handshake first, on the connection its request goes out on, as ACP has a
+ * client check the `initialize` answer; the agent's `delete` is absent once a
+ * handshake said the server keeps its sessions.
+ * https://agentclientprotocol.com/protocol/v1/session-delete
  *
  * The server behind every case is the real scripted subprocess, and `session/delete`
  * is a real removal there: the row is gone from the next `session/list`, and a
@@ -83,10 +84,34 @@ async function start(agent: Agent, id: string): Promise<Session> {
   return session;
 }
 
-it('has no delete to send before the server has been asked', () => {
-  // Nothing has read a handshake yet, so there is no answer to give and the
-  // property is absent rather than a function that refuses.
-  const { agent } = backend();
+it('asks the server to delete before any listing, reading its handshake first', async () => {
+  // Nothing has read a handshake yet, so the delete reads it before it sends.
+  const { agent, log } = backend();
+  expect(agent.delete).toBeTypeOf('function');
+
+  await agent.delete?.('listed-2', '/tmp/two');
+
+  expect(requests(log).map((one) => one.method)).toEqual(['initialize', 'session/delete']);
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1']);
+});
+
+it('sends no delete to a server whose handshake, read at the delete, did not advertise one', async () => {
+  const lines: string[] = [];
+  const log = join(scratch(), 'requests.jsonl');
+  const agent = acpAgent({
+    command: process.execPath,
+    args: [FIXTURE, '--no-delete'],
+    env: { ACP_LOG: log },
+    provider: 'acp',
+    log: (line) => { lines.push(line); },
+  });
+  expect(agent.delete).toBeTypeOf('function');
+
+  await expect(agent.delete?.('listed-1', '/tmp/one')).resolves.toBeUndefined();
+
+  expect(requests(log).some((one) => one.method === 'session/delete')).toBe(false);
+  expect(lines).toContain('acp keeps its own copy of a deleted session, so it may be listed again');
+  // From then on the host takes its own route, as for any agent with no delete.
   expect(agent.delete).toBeUndefined();
 });
 

@@ -871,10 +871,10 @@ export interface Agent<Started extends Session | Promise<Session> = Session | Pr
    * Spelled as it may also be `undefined` because a backend whose ability to
    * delete is the server's answer rather than its own spells it as a getter
    * over that answer: ACP's server advertises `session/delete` in its
-   * handshake, which nothing has read when the agent is built. A getter is the
-   * only shape that can be absent now and present after the first listing, and
-   * the host reads this property once per delete, so what it finds is the
-   * answer as of then.
+   * handshake, so ACP's delete reads the handshake at the delete while none has
+   * been read, and is absent once one said the server keeps its sessions. The
+   * host reads this property once per delete, so what it finds is the answer
+   * as of then.
    */
   delete?: ((id: string, directory: string | undefined) => Promise<void>) | undefined;
 
