@@ -861,11 +861,13 @@ export const apply: Plugin['apply'] = (host, options) => {
    * A chat with a bot: a session of its own that runs no model, one JSON line
    * per turn under the daemon's configuration folder. Every message in one,
    * new or resumed, goes to the wake, and so does a stop of one of its turns.
-   * See `chat.ts`.
+   * A steer the wake failed on is dropped, as one whose send failed is. See
+   * `chat.ts`.
    */
   host.registerAgent(botChatAgent(host.configDir, store, (message, handle) => {
     wake.woken(message, handle).catch((error: unknown) => {
       host.problem(`${name}: a message in ${message.session} was not woken: ${reason(error)}`);
+      if (message.steering !== undefined) handle.steeringConsumed?.(message.steering);
     });
   }, (session, turnId) => {
     wake.stopped(session, turnId).catch((error: unknown) => {

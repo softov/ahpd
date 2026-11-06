@@ -118,6 +118,13 @@ export interface ChatMessage {
   turnId: string;
   /** What was said. */
   text: string;
+  /**
+   * The id of the client's steering message this is, where it is one. Whoever
+   * answers says with `steeringSent` that it is sending the message on, and
+   * with `steeringConsumed` that the work behind the turn took it in or never
+   * will; the chat holds it pending until then.
+   */
+  steering?: string;
 }
 
 /**
@@ -131,7 +138,9 @@ export interface ChatMessage {
  * it in an error - each ends the turn it finds open, and does nothing at all
  * when there is none. `responsePart` adds an answer and leaves the turn open,
  * `subagent` shows the chat of another session it waits on, and `onCancel`
- * hears a client's `chat/turnCancelled`.
+ * hears a client's `chat/turnCancelled`. `steeringSent` and `steeringConsumed`
+ * are the two answers VS Code's agents give a steering message: its hand-off,
+ * and `steering_consumed`.
  *
  * `onMessage` is the other direction: each turn this chat begins, and each
  * message steered into the open one, is handed to it. That is how what a person
@@ -189,6 +198,31 @@ export interface TurnHandle {
   asking?(entry: Bag): void;
   /** Take a request's copy out of the open turn, because the back session no longer waits on it. */
   withdrawn?(id: string): void;
+  /**
+   * Say a steering message is being sent on to the work behind its turn, and
+   * answer whether it may be.
+   *
+   * True where the turn it was steered into is still open: the message is that
+   * turn's from here, written down against it, and its hand-off is answered
+   * `true`. False where that turn ended while the message was on its way: the
+   * hand-off is answered `false`, which hands the message back unsent, for the
+   * host to steer the turn that runs then with it or run it next, as VS Code's
+   * agents hand back a steer whose turn ended first. False too for a message
+   * the chat no longer holds, which a stop took out. Nothing is sent on a
+   * false.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1948
+   */
+  steeringSent?(id: string): boolean;
+  /**
+   * Take a steering message out of the chat's pending state, because the work
+   * behind the turn took it in, or dropped it because sending it failed: the
+   * protocol's `chat/pendingMessageRemoved`, as VS Code's host says one once
+   * its agent reports the steer consumed. A hand-off not yet answered is
+   * answered `true`, the message being done with.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L775-L782
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L218-L228
+   */
+  steeringConsumed?(id: string): void;
   /** What a client of this chat confirmed, for the plugin to send back to the back session. */
   onConfirm?: (toolCallId: string, approved: boolean, optionId?: string) => void;
   /**
@@ -526,6 +560,12 @@ export function botChatAgent(
     const handed: { turn: OpenTurn; text: string; from: MessageFrom | undefined; model: Chosen | undefined; attachments: MessageAttachment[] | undefined }[] = [];
     /** The turns a later one took the place of. */
     const replaced = new Set<string>();
+    /**
+     * The steering messages handed on that the chat still holds pending, by
+     * the client's id: the turn each was steered into, the message as the log
+     * keeps it, and the answer to its hand-off until `steeringSent` gives it.
+     */
+    const steers = new Map<string, { turn: string; message: ChatTurn['message']; answer?: (sent: boolean) => void }>();
 
     const touch = (): void => { modified = new Date().toISOString(); };
 
@@ -750,6 +790,23 @@ export function botChatAgent(
      */
     const finish = (held: OpenTurn, state: Ending, parts: Bag[]): void => {
       open = undefined;
+      /*
+       * A steer the work behind the turn holds and never took in is over with
+       * the turn, and is taken out before the turn's end is said, as VS Code's
+       * agents clear a steer's pending state when its turn ends. A stop lets go
+       * of every steer of the turn, one still on its way to the work included,
+       * and the host takes them out of the chat at a stop. One still on its way
+       * at any other ending is left for `steeringSent` to hand back.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L3409-L3412
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L6852-L6854
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L65
+       */
+      for (const [steering, one] of steers) {
+        if (one.turn !== held.id || (one.answer !== undefined && state !== 'cancelled')) continue;
+        steers.delete(steering);
+        if (state !== 'cancelled') start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
+        one.answer?.(true);
+      }
       const duration = Date.now() - Date.parse(held.startedAt);
       for (const call of held.calls) {
         const toolCall = call.part.toolCall as Bag;
@@ -873,6 +930,29 @@ export function botChatAgent(
         const held = open;
         if (held === undefined) return;
         withdrawAsked(held, id);
+      },
+      steeringSent: (steering) => {
+        const one = steers.get(steering);
+        const answer = one?.answer;
+        if (one === undefined || answer === undefined) return false;
+        delete one.answer;
+        if (open?.id !== one.turn) {
+          steers.delete(steering);
+          answer(false);
+          return false;
+        }
+        // Kept, as everything said in a chat is, on a line of its own against
+        // the turn it went into, so a chat read back after a restart shows it.
+        append(dir, id, { id: one.turn, steering: true, message: one.message, _meta: mark });
+        answer(true);
+        return true;
+      },
+      steeringConsumed: (steering) => {
+        const one = steers.get(steering);
+        if (one === undefined) return;
+        steers.delete(steering);
+        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: steering });
+        one.answer?.(true);
       },
     };
     if (heard !== undefined) handle.onMessage = (message) => { heard(message, handle); };
@@ -1061,31 +1141,34 @@ export function botChatAgent(
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L175-L203
        *
        * The id the host names is the client's steering message, which the host
-       * said as the chat's steering message. It is taken out once it is handed
-       * on, since the back session holds it from then, and the hand-off answers
-       * `true`. The message carries who sent it, so a correction an agent sent
-       * shows as that agent's.
+       * said as the chat's steering message. The hand-off is answered as VS
+       * Code's agents answer one they send on: `true` once whoever answers is
+       * sending it on into the turn it was steered into, and `false` where that
+       * turn ended first, handing it back unsent (`steeringSent`). It stays
+       * pending until the work behind the turn takes it in, or drops it because
+       * sending it failed (`steeringConsumed`), as VS Code's host takes a steer
+       * out once its agent reports it consumed. The message carries who sent
+       * it, so a correction an agent sent shows as that agent's.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L6817-L6837
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L775-L782
        *
-       * Kept, as everything said in a chat is, on a line of its own against the
-       * turn it went into, so a chat read back after a restart still shows it.
-       *
-       * False where there is no open turn to steer: the host keeps it pending,
-       * hands it again on the turn's next action, and runs it next once the
-       * turn ends well.
+       * False where there is no open turn to steer, or nobody to hand it to:
+       * the host keeps it pending, hands it again on the turn's next action,
+       * and runs it next once the turn ends well.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1943-L1948
        */
       sendSteeringMessage: ({ id: pendingId, text, attachments, from }) => {
         const held = open;
-        if (held === undefined) return false;
+        if (held === undefined || handle.onMessage === undefined) return false;
         const message = messageOf(text, from, undefined, attachments);
-        append(dir, id, { id: held.id, steering: true, message, _meta: mark });
-        handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text });
-        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: pendingId });
         // The modified time stays, as the protocol's reducer moves it only at
         // a turn's end and its start.
         // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L227-L232
         // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L369-L373
-        return true;
+        return new Promise<boolean>((answer) => {
+          steers.set(pendingId, { turn: held.id, message, answer });
+          handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text, steering: pendingId });
+        });
       },
 
       /**

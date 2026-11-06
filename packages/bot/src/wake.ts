@@ -121,11 +121,18 @@ export interface Answering {
   posted?: boolean;
   /**
    * The messages this wake sent the back session that no turn of it has taken
-   * up yet, by their ids. The back session's host takes up a queued message in
-   * the order messages came, so the turn that answers the main turn is the one
-   * the last of them becomes.
+   * up yet, by their ids, each with the main chat's steering message it
+   * carries where it is a steer. The back session's host takes up a queued
+   * message in the order messages came, so the turn that answers the main turn
+   * is the one the last of them becomes.
    */
-  waiting: Set<string>;
+  waiting: Map<string, string | undefined>;
+  /**
+   * How the back session's last turn ended, where it ended while a message of
+   * this wake still waited there: what ends the main turn where that message
+   * is dropped and no turn takes it up.
+   */
+  ended?: { text: string; failed?: string };
 }
 
 /**
@@ -152,9 +159,11 @@ export interface Wake {
    * Wake the back session this message names, and send the message into it.
    *
    * A message that cannot be sent - a start the host refused, a name no session
-   * can have, a session this host does not answer - ends the main turn with a
-   * notice naming the cause, because the person is waiting on it and nothing
-   * else is coming.
+   * can have, a session this host does not answer - ends the main turn failed,
+   * naming the cause, because the person is waiting on it and nothing else is
+   * coming. A steer that cannot be sent is dropped instead, and the turn it
+   * went into goes on waiting on the work it already waited on; a steer whose
+   * turn ended while it was on its way is handed back to the main chat unsent.
    */
   woken(message: ChatMessage, handle: TurnHandle): Promise<void>;
   /**
@@ -179,7 +188,9 @@ export interface Wake {
   /**
    * A turn began in a back session a main turn is waiting on: the message of
    * this wake's it took up, named by `queuedMessageId`, waits no more, and the
-   * turn is the clock a stop is measured by.
+   * turn is the clock a stop is measured by. A steer that message carried is
+   * in the work from here, and the main chat takes it out of its pending
+   * state.
    */
   taken(backSession: string, backTurn: string, queuedMessageId: string | undefined): void;
   /**
@@ -224,7 +235,10 @@ export interface Wake {
    * option `mainTurnPostMessageAbsent`: the last words, the notice, or nothing.
    *
    * Nothing where no main turn is waiting on this session, which is one whose
-   * main turn already ended and one this wake never woke.
+   * main turn already ended and one this wake never woke. A message of this
+   * wake still waiting in the session holds the ending back: the main turn is
+   * answered by the turn that message becomes, and ends this way only where
+   * the message is dropped.
    *
    * `failed` is the sentence a turn that failed ended with, and the main turn
    * fails with it.
@@ -341,7 +355,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * of it has taken up, as a client takes back one it queued: each would
    * otherwise run there as a turn nobody waits on.
    */
-  const removePendingMessages = async (back: string, waiting: Set<string>): Promise<void> => {
+  const removePendingMessages = async (back: string, waiting: Map<string, string | undefined>): Promise<void> => {
     if (waiting.size === 0) return;
     let looked: Looked;
     try {
@@ -351,7 +365,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       seams.problem(`${back} kept the messages a stop took back: ${reason(error)}`);
       return;
     }
-    for (const id of [...waiting]) {
+    for (const id of [...waiting.keys()]) {
       waiting.delete(id);
       let left: string | undefined;
       try {
@@ -556,6 +570,49 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
     },
   });
 
+  const finished = (backSession: string, text: string, failed?: string): void => {
+    const held = answering.get(backSession);
+    if (held === undefined) return;
+    // A message this wake sent still waits there, and the main turn is
+    // answered by the turn it becomes; the ending is kept for the case where
+    // that message is dropped.
+    if (held.waiting.size > 0) {
+      held.ended = { text, ...(failed === undefined ? {} : { failed }) };
+      return;
+    }
+    /*
+     * Let go before the turn ends: ending it starts whatever was queued
+     * behind it in the main chat, and that message wakes a session which may
+     * be this one - a turn left in the map here would be answered by the
+     * next message's turn as well.
+     */
+    answering.delete(backSession);
+    // A turn that failed fails the main turn, as the reference host ends a failed send.
+    if (failed !== undefined && held.handle.fail !== undefined) {
+      held.handle.fail(failed);
+      return;
+    }
+    // What the session posted is the answer, and its last words are not added to it.
+    if (held.posted === true) {
+      held.handle.complete();
+      return;
+    }
+    /*
+     * The table `mainTurnPostMessageAbsent` names. A turn that said nothing
+     * has nothing to post, so it is completed with no answer rather than an
+     * empty one; whether that ending is a notice is what `postNotice` is for.
+     */
+    if (text !== '' && (absent === 'post' || absent === 'postNotice')) {
+      held.handle.complete(text);
+      return;
+    }
+    if (absent === 'notice' || absent === 'postNotice') {
+      held.handle.notice(`${held.bot} finished without a reply`);
+      return;
+    }
+    held.handle.complete();
+  };
+
   return {
     main: (backSession) => answering.get(backSession),
 
@@ -616,44 +673,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       return true;
     },
 
-    finished: (backSession, text, failed) => {
-      const held = answering.get(backSession);
-      if (held === undefined) return;
-      // A message this wake sent still waits there, and the main turn is
-      // answered by the turn it becomes.
-      if (held.waiting.size > 0) return;
-      /*
-       * Let go before the turn ends: ending it starts whatever was queued
-       * behind it in the main chat, and that message wakes a session which may
-       * be this one - a turn left in the map here would be answered by the
-       * next message's turn as well.
-       */
-      answering.delete(backSession);
-      // A turn that failed fails the main turn, as the reference host ends a failed send.
-      if (failed !== undefined && held.handle.fail !== undefined) {
-        held.handle.fail(failed);
-        return;
-      }
-      // What the session posted is the answer, and its last words are not added to it.
-      if (held.posted === true) {
-        held.handle.complete();
-        return;
-      }
-      /*
-       * The table `mainTurnPostMessageAbsent` names. A turn that said nothing
-       * has nothing to post, so it is completed with no answer rather than an
-       * empty one; whether that ending is a notice is what `postNotice` is for.
-       */
-      if (text !== '' && (absent === 'post' || absent === 'postNotice')) {
-        held.handle.complete(text);
-        return;
-      }
-      if (absent === 'notice' || absent === 'postNotice') {
-        held.handle.notice(`${held.bot} finished without a reply`);
-        return;
-      }
-      held.handle.complete();
-    },
+    finished,
 
     woken: async (message, handle) => {
       // On its way from here, so a stop of the main turn meanwhile finds it.
@@ -671,8 +691,20 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
          * main turn failed with the cause, as VS Code's host ends a turn whose
          * send failed; a holder with no failed ending says the cause as a notice.
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2329-L2337
+         *
+         * A steer is dropped, and the turn it went into goes on, waiting on the
+         * work it already waited on: VS Code's agents clear a steer whose
+         * sending failed, and its host leaves the turn running. The cause is
+         * the operator's to read.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L6817-L6837
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L218-L228
          */
         const failed = (words: string): void => {
+          if (message.steering !== undefined) {
+            seams.problem(`a steer of ${message.turnId} in ${message.session} was dropped: ${words}`);
+            handle.steeringConsumed?.(message.steering);
+            return;
+          }
           if (handle.fail !== undefined) handle.fail(words);
           else handle.notice(words);
         };
@@ -706,6 +738,14 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
         // A message whose main turn a client stopped on its way is not sent.
         if (delivery.stopped) return;
         /*
+         * A steer goes on only into the turn it was steered into: one whose turn
+         * ended while it was on its way is handed back unsent, for the main chat
+         * to steer the turn that runs then with it or run it next. Asked here,
+         * with nothing awaited between the answer and the hold below, so the
+         * turn that answered is the one that holds it.
+         */
+        if (message.steering !== undefined && handle.steeringSent?.(message.steering) === false) return;
+        /*
          * What changes from message to message, said with the message: the main
          * chat the person is waiting in, who they are, and when they said it. The
          * system prompt is the bot's and never changes, so nothing of this goes
@@ -722,16 +762,18 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
          * ends inside the send still finds the turn that is waiting on it. A steer
          * of the main turn names the open turn it went into, which is the turn
          * the answer after it belongs to, and keeps what was posted into that
-         * turn and the messages it sent still waiting.
+         * turn, the messages it sent still waiting, and the ending they hold.
          */
         const action = queued(block, message);
+        const queuedId = String(action['id']);
         const before = answering.get(session);
         const same = before !== undefined && before.handle === handle && before.turnId === message.turnId;
-        const waiting = same ? before.waiting : new Set<string>();
-        waiting.add(String(action['id']));
+        const waiting = same ? before.waiting : new Map<string, string | undefined>();
+        waiting.set(queuedId, message.steering);
         answering.set(session, {
           session: message.session, turnId: message.turnId, handle, bot: bot.name, waiting,
           ...(same && before.posted === true ? { posted: true } : {}),
+          ...(same && before.ended !== undefined ? { ended: before.ended } : {}),
         });
         /*
          * The open turn shows what it is waiting on: the back session's chat, as
@@ -751,10 +793,20 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
           refused = reason(error);
         }
         if (refused !== undefined) {
-          // Nothing was said, so nothing is coming: the turn ends here rather
-          // than waiting for an answer this session never received.
-          answering.delete(session);
+          /*
+           * Nothing was said, so nothing is coming of this message: the turn
+           * ends here rather than waiting for an answer this session never
+           * received. A steer into a turn this session was already answering
+           * leaves that wait as it was, and the turn ends now only where the
+           * session's turn ended while the steer was on its way.
+           */
+          waiting.delete(queuedId);
+          if (message.steering === undefined || !same) answering.delete(session);
           failed(`${bot.name} was not woken: ${refused}`);
+          const now = answering.get(session);
+          if (!delivery.stopped && now?.waiting === waiting && waiting.size === 0 && now.ended !== undefined) {
+            finished(session, now.ended.text, now.ended.failed);
+          }
           return;
         }
         // A send a stop came during: what it sent is taken back, and the turn
@@ -773,7 +825,18 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
     taken: (backSession, backTurn, queuedMessageId) => {
       const held = answering.get(backSession);
       if (held === undefined) return;
-      if (queuedMessageId !== undefined) held.waiting.delete(queuedMessageId);
+      // A turn of the session runs again, and its own end is the one that counts.
+      delete held.ended;
+      if (queuedMessageId !== undefined) {
+        const steering = held.waiting.get(queuedMessageId);
+        held.waiting.delete(queuedMessageId);
+        /*
+         * The steer it carried is in the work now, so the main chat takes it
+         * out, as VS Code's host does once its agent reports a steer consumed.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L775-L782
+         */
+        if (steering !== undefined) held.handle.steeringConsumed?.(steering);
+      }
       startedTurns.set(backSession, { turn: backTurn, at: Date.now() });
     },
 
@@ -788,7 +851,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       const slug = started.get(backSession);
       const bot = slug === undefined ? undefined : seams.store.get(slug);
       const name = bot?.name ?? '';
-      answering.set(backSession, { session, turnId, handle, bot: name, waiting: new Set() });
+      answering.set(backSession, { session, turnId, handle, bot: name, waiting: new Map() });
       startedTurns.set(backSession, { turn: backTurn, at: Date.now() });
       handle.subagent?.(chat, name);
     },

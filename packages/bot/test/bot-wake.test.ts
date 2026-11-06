@@ -89,6 +89,11 @@ interface Recorded {
   failures: string[];
   /** Each turn `begin` opened, with the text and the sender it was given. */
   begun: { text: string; from?: MessageFrom }[];
+  /**
+   * The steers said to be sent on and those taken out, by the main chat's ids,
+   * and whether the turn they went into has ended, which hands a steer back.
+   */
+  steering: { sent: string[]; consumed: string[]; ended: boolean };
 }
 
 const turn = (): Recorded => {
@@ -98,6 +103,7 @@ const turn = (): Recorded => {
   const endings: string[] = [];
   const failures: string[] = [];
   const begun: { text: string; from?: MessageFrom }[] = [];
+  const steering = { sent: [] as string[], consumed: [] as string[], ended: false };
   let open = false;
   const handle: TurnHandle = {
     begin: (text, from) => {
@@ -114,8 +120,14 @@ const turn = (): Recorded => {
     responsePart: (text) => { posts.push(text); },
     notice: (text) => { open = false; notices.push(text); },
     fail: (message) => { open = false; failures.push(message); },
+    steeringSent: (id) => {
+      if (steering.ended) return false;
+      steering.sent.push(id);
+      return true;
+    },
+    steeringConsumed: (id) => { steering.consumed.push(id); },
   };
-  return { handle, replies, posts, notices, endings, failures, begun };
+  return { handle, replies, posts, notices, endings, failures, begun, steering };
 };
 
 /**
@@ -170,6 +182,8 @@ async function sitting(
   let namesFirst = true;
   /** What a send is refused with, where the host refuses one. */
   let sendRefusal: string | undefined;
+  /** What a held send waits on, for a case that acts while one is on its way. */
+  let sendHeld: Promise<void> | undefined;
   let minted = 0;
 
   // The rows an earlier daemon wrote, and a host that still has each session:
@@ -216,6 +230,7 @@ async function sitting(
     },
     send: async (channel, action) => {
       sent.push({ channel, action });
+      if (sendHeld !== undefined) await sendHeld;
       return sendRefusal;
     },
     ...(mayUse === undefined ? {} : { mayUse }),
@@ -234,6 +249,12 @@ async function sitting(
     },
     startWithoutNaming: () => { namesFirst = false; },
     refuseSend: (line: string) => { sendRefusal = line; },
+    /** Hold every send from here, and answer with what lets them go. */
+    holdSend: (): (() => void) => {
+      let go = (): void => {};
+      sendHeld = new Promise<void>((resolve) => { go = () => { resolve(); }; });
+      return go;
+    },
   };
 }
 
@@ -399,6 +420,92 @@ it('answers the main turn with the turn its last message became', async () => {
   one.wake.finished('ahp-session:/1', 'the second answer');
   expect(said.replies).toEqual(['the second answer']);
   expect(said.notices).toEqual([]);
+});
+
+/*
+ * A steer is in the work once a turn of the back session takes it up, and the
+ * main chat takes it out then, as VS Code's host takes a steer out once its
+ * agent reports it consumed (agentSideEffects.ts L775-L782 at 6b68d3fe).
+ */
+it('takes a steer out of the main chat once the back session takes it up', async () => {
+  const one = await sitting();
+  const said = turn();
+  await one.wake.woken(message('t1', 'hello'), said.handle);
+  one.wake.taken('ahp-session:/1', 'r1', String(one.sent[0]?.action['id']));
+
+  await one.wake.woken({ ...message('t1', 'stop that'), steering: 's1' }, said.handle);
+  expect(said.steering.sent).toEqual(['s1']);
+  // Waiting behind the running turn, so still pending when that turn ends.
+  one.wake.finished('ahp-session:/1', 'the first answer');
+  expect(said.steering.consumed).toEqual([]);
+
+  one.wake.taken('ahp-session:/1', 'r2', String(one.sent[1]?.action['id']));
+  expect(said.steering.consumed).toEqual(['s1']);
+});
+
+/*
+ * A steer whose main turn ended while it was on its way is handed back by the
+ * main chat, and nothing of it reaches the back session.
+ */
+it('sends nothing of a steer whose main turn ended on its way', async () => {
+  const one = await sitting();
+  const said = turn();
+  await one.wake.woken(message('t1', 'hello'), said.handle);
+  said.steering.ended = true;
+
+  await one.wake.woken({ ...message('t1', 'stop that'), steering: 's1' }, said.handle);
+  expect(one.sent).toHaveLength(1);
+  expect(said.steering.consumed).toEqual([]);
+  expect(one.wake.main('ahp-session:/1')?.waiting.size).toBe(1);
+});
+
+/*
+ * A steer the back session refuses is dropped, and the main turn goes on
+ * waiting on the work it already waited on, as VS Code's agents clear a steer
+ * whose sending failed and its host leaves the turn alone (codexAgent.ts
+ * L6817-L6837, queueDrainContribution.ts L218-L228 at 6b68d3fe).
+ */
+it('drops a steer the back session refuses, and the main turn goes on', async () => {
+  const one = await sitting();
+  const said = turn();
+  await one.wake.woken(message('t1', 'hello'), said.handle);
+  one.wake.taken('ahp-session:/1', 'r1', String(one.sent[0]?.action['id']));
+  one.refuseSend('The chat is archived');
+
+  await one.wake.woken({ ...message('t1', 'stop that'), steering: 's1' }, said.handle);
+  expect(said.failures).toEqual([]);
+  expect(said.steering.consumed).toEqual(['s1']);
+  expect(one.problems).toEqual([`a steer of t1 in ${CHAT} was dropped: Backer was not woken: The chat is archived`]);
+  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1', handle: said.handle });
+
+  one.wake.finished('ahp-session:/1', 'the first answer');
+  expect(said.replies).toEqual(['the first answer']);
+});
+
+/*
+ * The back session's turn can end while a steer is on its way: the steer holds
+ * the main turn's ending back, and a refusal of it lets that ending through.
+ */
+it('ends the main turn as its back turn ended, where a steer on its way meanwhile is refused', async () => {
+  const one = await sitting();
+  const said = turn();
+  await one.wake.woken(message('t1', 'hello'), said.handle);
+  one.wake.taken('ahp-session:/1', 'r1', String(one.sent[0]?.action['id']));
+  const release = one.holdSend();
+  one.refuseSend('The chat is archived');
+
+  const steered = one.wake.woken({ ...message('t1', 'stop that'), steering: 's1' }, said.handle);
+  await new Promise((done) => { setTimeout(done, 5); });
+  expect(one.sent).toHaveLength(2);
+  one.wake.finished('ahp-session:/1', 'the first answer');
+  expect(said.replies).toEqual([]);
+
+  release();
+  await steered;
+  expect(said.replies).toEqual(['the first answer']);
+  expect(said.failures).toEqual([]);
+  expect(said.steering.consumed).toEqual(['s1']);
+  expect(one.wake.main('ahp-session:/1')).toBeUndefined();
 });
 
 /*

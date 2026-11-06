@@ -502,9 +502,12 @@ it('ends a turn with a notice, and with a cancellation', async () => {
  * provider, and the turn goes on (queueDrainContribution.ts L171-L208 at
  * a4e689ae). The message is handed to whoever answers as a message into that
  * turn, whose answer lands there, and the log keeps it on a line of its own,
- * so a chat read back after a restart still shows what was said.
+ * so a chat read back after a restart still shows what was said. It stays the
+ * chat's steering message until the work behind the turn takes it in, as VS
+ * Code's host takes a steer out once its agent reports it consumed
+ * (agentSideEffects.ts L775-L782 at 6b68d3fe).
  */
-it('steers a message into the open turn, which goes on', async () => {
+it('steers a message into the open turn, which goes on, and keeps it pending until the work takes it in', async () => {
   const { host, configDir, records } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -521,15 +524,23 @@ it('steers a message into the open turn, which goes on', async () => {
 
   const life = actions(notes, CHAT).filter((one) => String(one['type']).startsWith('chat/turn'));
   expect(life.map((one) => one['type'])).toEqual(['chat/turnStarted']);
-  // Said as the chat's steering message, then taken out once it is handed on.
-  const pending = actions(notes, CHAT).filter((one) => String(one['type']).startsWith('chat/pendingMessage'));
-  expect(pending.map((one) => [one['type'], one['kind'], one['id']])).toEqual([
-    ['chat/pendingMessageSet', 'steering', 's1'],
-    ['chat/pendingMessageRemoved', 'steering', 's1'],
-  ]);
   expect(heard).toEqual([
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
-    { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that' },
+    { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that', steering: 's1' },
+  ]);
+  const pending = (): unknown[] => actions(notes, CHAT)
+    .filter((one) => String(one['type']).startsWith('chat/pendingMessage'))
+    .map((one) => [one['type'], one['kind'], one['id']]);
+  // Sent on into the open turn, and still the chat's steering message.
+  expect(chat.steeringSent?.('s1')).toBe(true);
+  expect(pending()).toEqual([['chat/pendingMessageSet', 'steering', 's1']]);
+  expect((await stateOf(client))['steeringMessage']).toMatchObject({ id: 's1' });
+
+  // Taken out once the work behind the turn takes it in.
+  chat.steeringConsumed?.('s1');
+  expect(pending()).toEqual([
+    ['chat/pendingMessageSet', 'steering', 's1'],
+    ['chat/pendingMessageRemoved', 'steering', 's1'],
   ]);
 
   chat.complete('done');
@@ -542,6 +553,101 @@ it('steers a message into the open turn, which goes on', async () => {
   const read = await fresh.transcript?.('one');
   expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
   expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
+});
+
+/*
+ * A steer whose turn ended while it was on its way to the work behind it goes
+ * back unsent, and runs as the next turn, as VS Code's agents hand back a steer
+ * whose turn ended first and its host runs it next (agent.ts L1943-L1948,
+ * queueDrainContribution.ts L230-L243 at 6b68d3fe).
+ */
+it('hands a steer back unsent when its turn ended on its way, and runs it next', async () => {
+  const { host, configDir } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const heard: ChatMessage[] = [];
+  chat.onMessage = (message) => { heard.push(message); };
+
+  await said(client, 't1', 'hello');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', origin: { kind: 'user' } } } },
+  });
+  chat.complete('done');
+  expect(chat.steeringSent?.('s1')).toBe(false);
+  // The host hears the hand-off's answer once the promise it holds settles.
+  await new Promise((done) => { setTimeout(done, 0); });
+
+  const after = await stateOf(client);
+  expect(after['steeringMessage']).toBeUndefined();
+  expect(after['activeTurn']).toMatchObject({ message: { text: 'stop that' } });
+  expect(heard.map((one) => [one.text, one.steering])).toEqual([['hello', undefined], ['stop that', 's1'], ['stop that', undefined]]);
+  // Nothing of it is written against the turn it missed.
+  expect(lines(configDir, 'one').filter((line) => line['steering'] === true)).toEqual([]);
+});
+
+/*
+ * A steer the work behind its turn holds and never took in is over with the
+ * turn: it is taken out before the turn's end is said, as VS Code's agents
+ * clear a steer's pending state when its turn ends (codexAgent.ts L3409-L3412
+ * at 6b68d3fe).
+ */
+it('takes out a steer the work behind its turn still holds when the turn ends', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const chat = turns(HELD);
+  chat.onMessage = () => {};
+
+  await said(client, 't1', 'hello');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', origin: { kind: 'user' } } } },
+  });
+  expect(chat.steeringSent?.('s1')).toBe(true);
+  chat.fail?.('it broke');
+
+  const told = actions(notes, CHAT).map((one) => one['type'])
+    .filter((type) => String(type).startsWith('chat/pendingMessage') || type === 'chat/error');
+  expect(told).toEqual(['chat/pendingMessageSet', 'chat/pendingMessageRemoved', 'chat/error']);
+  expect((await stateOf(client))['steeringMessage']).toBeUndefined();
+});
+
+/*
+ * A stop takes out every steer of its turn once, one still on its way to the
+ * work included, which is then sent nowhere: VS Code's host takes a stopped
+ * turn's steering out, and its agents let go of what they hold
+ * (queueDrainContribution.ts L55-L65, codexAgent.ts L6852-L6854 at 6b68d3fe).
+ */
+it('takes out a steer still on its way when its turn is stopped, and sends it nowhere', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const heard: ChatMessage[] = [];
+  chat.onMessage = (message) => { heard.push(message); };
+
+  await said(client, 't1', 'hello');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', origin: { kind: 'user' } } } },
+  });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  expect(chat.steeringSent?.('s1')).toBe(false);
+
+  const removed = actions(notes, CHAT).filter((one) => one['type'] === 'chat/pendingMessageRemoved');
+  expect(removed).toEqual([expect.objectContaining({ kind: 'steering', id: 's1' })]);
+  const after = await stateOf(client);
+  expect(after['steeringMessage']).toBeUndefined();
+  expect(after['activeTurn']).toBeUndefined();
+  expect(heard.map((one) => one.text)).toEqual(['hello', 'stop that']);
 });
 
 // The protocol's reducer moves a chat's modifiedAt at a turn's start and end only.
@@ -566,7 +672,7 @@ it('leaves the chat\'s modified time where a steer finds it', async () => {
   const before = session.modifiedAt();
   // Long enough that a moved time would read as another one.
   await new Promise((resolve) => { setTimeout(resolve, 20); });
-  expect(session.sendSteeringMessage?.({ id: 's1', text: 'stop that', from: { origin: { kind: 'user' } } })).toBe(true);
+  expect(session.sendSteeringMessage?.({ id: 's1', text: 'stop that', from: { origin: { kind: 'user' } } })).toBeInstanceOf(Promise);
   expect(session.modifiedAt()).toBe(before);
 });
 
@@ -637,8 +743,15 @@ it('keeps a queued message behind the steered turn', async () => {
   expect(steered['queuedMessages']).toMatchObject([{ id: 'q1', message: { text: 'and then this' } }]);
   expect(heard.map((one) => one.text)).toEqual(['hello', 'stop that']);
 
-  // It starts when the steered turn ends, and not before.
+  // The work behind the turn takes the steer in, and the turn goes on.
+  chat.steeringSent?.('s1');
+  chat.steeringConsumed?.('s1');
+  expect((await stateOf(client))['activeTurn']).toMatchObject({ id: 't1' });
+
+  // It starts when the steered turn ends, and not before: once the host has
+  // heard the turn's end through.
   chat.complete('done');
+  await new Promise((done) => { setTimeout(done, 0); });
   const after = await stateOf(client);
   expect(after['activeTurn']).toMatchObject({ message: { text: 'and then this' } });
   // The chat's reducer leaves the key out once its queue is empty.
