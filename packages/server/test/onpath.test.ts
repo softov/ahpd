@@ -67,6 +67,15 @@ it('finds gemini.cmd on Windows through PATHEXT', () => {
   expect(onPath('gemini', second, 'win32', { PATHEXT: '.cmd' })).toBe(wanted);
 });
 
+// VS Code's findExecutable tries each PATHEXT extension in a folder and then
+// the name as written (src/vs/base/node/processes.ts L121-L137 at 6b68d3fe).
+it('finds a command on Windows by its name as written once no PATHEXT extension is there', () => {
+  const bare = fileIn(second, 'gemini');
+  expect(onPath('gemini', second, 'win32', { PATHEXT: '.cmd' })).toBe(bare);
+  const shim = fileIn(second, 'gemini.cmd');
+  expect(onPath('gemini', second, 'win32', { PATHEXT: '.cmd' })).toBe(shim);
+});
+
 // Windows-only: finding `gemini.CMD` for `gemini.cmd` takes a file system
 // that does not tell names apart by case.
 it.runIf(process.platform === 'win32')('names the file as its folder holds it, whatever case PATHEXT gives', () => {

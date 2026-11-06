@@ -8,8 +8,10 @@
  *
  * Away from Windows a file is a command when it is a regular file with an
  * execute bit. On Windows the name is tried with each extension in `PATHEXT`,
- * so `gemini` finds `gemini.cmd`; the extension is not invented from a list of
- * `.exe` alone, because a `.cmd` shim is exactly what npm installs.
+ * so `gemini` finds `gemini.cmd`, and then as it is written, in each folder in
+ * turn, as VS Code's `findExecutable` tries them
+ * (src/vs/base/node/processes.ts L121-L137 at 6b68d3fe); the extensions come
+ * from `PATHEXT` because a `.cmd` shim is exactly what npm installs.
  */
 
 import { readdirSync, statSync } from 'node:fs';
@@ -44,7 +46,7 @@ const namesOf = (command: string, platform: NodeJS.Platform, env: NodeJS.Process
   // A command that already names an extension `PATHEXT` knows is not tried
   // again with another one, which would look for `gemini.cmd.exe`.
   if (extensions.some((extension) => lower.endsWith(extension.toLowerCase()))) return [command];
-  return extensions.map((extension) => `${command}${extension}`);
+  return [...extensions.map((extension) => `${command}${extension}`), command];
 };
 
 /**
