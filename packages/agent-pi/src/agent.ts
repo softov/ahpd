@@ -15,6 +15,7 @@
  * the catalogue is `catalog.ts`.
  */
 
+import { ensureWorkspacelessScratchDir } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, Offered, Session } from '@ahpd/sdk';
 import { runtimeModels } from './backend.js';
 import type { RuntimeModels } from './backend.js';
@@ -41,7 +42,7 @@ export function piAgent(
   options: PiOptions,
   directories: readonly string[],
   models: RuntimeModels = runtimeModels,
-): Agent<Session> {
+): Agent {
   const provider = options.provider ?? 'pi';
   const displayName = options.displayName ?? 'pi';
   const paths = [...directories];
@@ -180,6 +181,20 @@ export function piAgent(
      */
     machine: () => piMachine(provider),
 
-    create: (start) => piSession(options, start, options.open),
+    /*
+     * A resumed session's earlier turns are read from pi's file before the
+     * session is built, so a file pi cannot read fails the session's start, as
+     * VS Code's Copilot agent raises a failure to read a chat whose session it
+     * knows; the session is handed what was read.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7933-L7939
+     */
+    create: (start) => {
+      if (start.resume === undefined) return piSession(options, start, options.open);
+      const resume = start.resume;
+      return (async (): Promise<Session> => {
+        const earlier = await replayed(options, resume, [start.workingDirectory ?? ensureWorkspacelessScratchDir(start.uri)]);
+        return piSession(options, start, options.open, async () => earlier);
+      })();
+    },
   };
 }

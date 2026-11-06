@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -463,6 +463,33 @@ it('lists a session pi ran in a folder this host does not serve', async () => {
     rmSync(agentDir, { recursive: true, force: true });
     rmSync(elsewhere, { recursive: true, force: true });
   }
+});
+
+/*
+ * A pi file that cannot be replayed raises its failure to a read of it and to
+ * the start of a session resuming it, as VS Code's Copilot agent raises a
+ * failure to read a chat whose session it knows.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7933-L7939
+ */
+it('raises a pi file it cannot replay, to a read and to a resumed start', async () => {
+  const sessionDir = join(root, 'broken');
+  const disk = await sessionOnDisk(sessionDir);
+  // A message entry with no message, at the end of the branch.
+  appendFileSync(disk.file, `${JSON.stringify({ type: 'message', id: 'broken', parentId: disk.secondEnd, timestamp: new Date().toISOString() })}\n`);
+  const agent = piAgent({ sessionDir }, [root], async () => []);
+
+  await expect(agent.transcript?.(disk.id)).rejects.toThrow(TypeError);
+  const starting = agent.create({
+    uri: 'ahp-session:/broken',
+    chatUri: 'ahp-chat:/broken',
+    settings: {},
+    workingDirectory: root,
+    schema: () => ({}),
+    emit: () => {},
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+    resume: disk.id,
+  });
+  await expect(Promise.resolve(starting)).rejects.toThrow(TypeError);
 });
 
 it('lists an empty directory as no sessions rather than failing', async () => {

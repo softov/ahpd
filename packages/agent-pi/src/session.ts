@@ -285,7 +285,9 @@ export function piSession(
    * A resumed session's earlier turns, as pi's file has them. They open the
    * watched record, so a transcript read after this session runs a turn still
    * has them, and they end where the file says, so one can be truncated like a
-   * watched turn. A turn this session watched keeps the end it saw.
+   * watched turn. A turn this session watched keeps the end it saw. The agent
+   * reads them before it builds the session, so a file that cannot be read
+   * fails the start, and hands them in through `replay`.
    */
   if (start.resume !== undefined) {
     void replay(start.resume, where).then((rebuilt) => {
