@@ -1433,7 +1433,7 @@ holds both names.
 
 | Key | |
 | --- | --- |
-| `ahpd.entry` | What to import, when `exports` is not enough to say. It wins over `exports`, `main` and `index.js` for resolution, and a mismatch with what the package resolves to is reported |
+| `ahpd.entry` | What to import, when `exports` is not enough to say. It wins over `exports`, `main` and `index.js` for resolution, and a mismatch with what the package resolves to is reported. An entry outside the package is refused, so a manifest cannot point its own package at somebody else's code; the daemon's `pluginEntryOutside` set to `warn` loads it with a warning on its row, as VS Code loads an extension whose `main` is outside its folder |
 | `ahpd.title` | What `ahpd plugin list` prints, unless the module exports its own `title` |
 | `id` | A standalone plugin's id, which a package takes from its package name |
 | `name` | A standalone plugin's display name, where a package writes `ahpd.title` |

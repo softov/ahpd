@@ -28,6 +28,7 @@ import {
 } from './install.js';
 import type { Moved, Runner } from './install.js';
 import { describePlugin, sourceOf, optionsSchemaLoaded, optionsSchemaOf, pluginIdOf, runPlugins, schemaOf } from './plugins.js';
+import type { Where } from './plugins.js';
 import { redactSecretsInText, redactToken } from './redaction.js';
 import type { Fetch } from './update.js';
 import { version } from './version.js';
@@ -143,7 +144,7 @@ export interface PluginsChannelOptions {
   /** The daemon leaves the file's plugins out, so only the `--plugin` ones are listed. */
   noPlugins?: boolean;
   /** What a spec is resolved against, as `describePlugin` takes it. */
-  where: { configDir: string; cwd: string };
+  where: Where;
   /**
    * The plugins the daemon loaded, once it has.
    *

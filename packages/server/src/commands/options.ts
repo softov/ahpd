@@ -104,6 +104,8 @@ export interface Options {
   pullRequestLookup: 'url' | 'branch';
   /** How the zsh folder shell integration points zsh at is taken when it is there already. */
   zshFolder: 'owned' | 'asFound';
+  /** How a plugin whose entry points outside its own package is taken. */
+  pluginEntryOutside: 'refuse' | 'warn';
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
   /** The environment every shell this host starts is given, absent when the deployment named none. */
@@ -645,6 +647,11 @@ export const serverFields = {
     type: 'string',
     enum: ['owned', 'asFound'],
     description: 'How the folder shell integration points zsh at, under the temporary folder, is taken when it is there already: owned, the default, takes only a folder of this user\'s that is not a link, since another user can make the known name first; asFound sets its mode on whatever is there, as VS Code does.',
+  },
+  pluginEntryOutside: {
+    type: 'string',
+    enum: ['refuse', 'warn'],
+    description: 'How a plugin whose entry points outside its own package is taken: refuse, the default, so a manifest cannot point its own package at somebody else\'s code; warn loads it with a warning on its row, as VS Code loads an extension whose main is outside its folder.',
   },
   onPath: {
     type: 'string',
@@ -1280,6 +1287,7 @@ const noCwd = input['noCwd'] === true;
     nodeRestart: given('nodeRestart') ?? 'end',
     pullRequestLookup: given('pullRequestLookup') ?? 'url',
     zshFolder: given('zshFolder') ?? 'owned',
+    pluginEntryOutside: given('pluginEntryOutside') ?? 'refuse',
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',

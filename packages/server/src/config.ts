@@ -340,6 +340,16 @@ export interface Config {
    */
   zshFolder?: 'owned' | 'asFound';
   /**
+   * How a plugin whose entry points outside its own package is taken.
+   *
+   * `refuse`, the default, refuses it, so a manifest cannot point its own
+   * package at somebody else's code. `warn` loads it with a warning on its row,
+   * as VS Code warns of an extension whose `main` is outside its folder and
+   * loads it (src/vs/platform/extensions/common/extensionValidator.ts L292-L302
+   * at 6b68d3fe).
+   */
+  pluginEntryOutside?: 'refuse' | 'warn';
+  /**
    * How `ahpd configure` and `ahpd doctor` find a command on PATH.
    *
    * `runnable`, the default, takes a regular file with an execute bit, tries

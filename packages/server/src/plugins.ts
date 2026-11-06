@@ -67,6 +67,26 @@ export interface Resolved {
    * the spec points at; `path` is already the module that file's `main` names.
    */
   manifestPath?: string;
+  /** How an entry that points outside its package is taken, as the daemon's `pluginEntryOutside` says. */
+  entryOutside?: EntryOutside;
+}
+
+/**
+ * How a plugin whose entry points outside its own package is taken, as the
+ * daemon's `pluginEntryOutside` setting names it: `refuse`, so a manifest
+ * cannot point its own package at somebody else's code, or `warn`, loaded with
+ * a warning on its row, as VS Code warns of an extension whose `main` is
+ * outside its folder and loads it
+ * (src/vs/platform/extensions/common/extensionValidator.ts L292-L302 at
+ * 6b68d3fe).
+ */
+export type EntryOutside = 'refuse' | 'warn';
+
+/** Where a spec is resolved from, and how an entry outside its package is taken. */
+export interface Where {
+  configDir: string;
+  cwd: string;
+  entryOutside?: EntryOutside;
 }
 
 /**
@@ -109,14 +129,14 @@ const ids = new Map<string, string>();
  * The id of the plugin a spec loads: the one this process read, or, for a spec
  * no import has named, its manifest's name, its file's name or the spec.
  */
-export const pluginIdOf = (spec: PluginSpec, where?: { configDir: string; cwd: string }): string =>
+export const pluginIdOf = (spec: PluginSpec, where?: Where): string =>
   ids.get(sourceOf(spec)) ?? (where === undefined ? sourceOf(spec) : unimportedId(spec, where));
 
 /** Whether a name a person typed names this spec: its id, or the spec as written. */
 export const isNamed = (spec: PluginSpec, name: string): boolean => sourceOf(spec) === name || pluginIdOf(spec) === name;
 
 /** A spec's id read without an import, from what resolving it and its manifest say. */
-const unimportedId = (spec: PluginSpec, where: { configDir: string; cwd: string }): string => {
+const unimportedId = (spec: PluginSpec, where: Where): string => {
   try {
     const found = locate(resolvePlugin(spec, where), sdkVersion());
     return 'refused' in found ? sourceOf(spec) : provisionalOf(spec, found);
@@ -299,11 +319,12 @@ const installInto = async (plugin: string, folder: string, spec: string, npm: Ru
  *
  * `ahpd.entry` first, because that is the field added for exactly this; then
  * the package's own `exports["."]`; then `main`; then the conventional
- * `index.js`. An entry that resolves outside the directory is refused rather
- * than followed, so a manifest cannot point its own package at somebody
- * else's code.
+ * `index.js`. An entry that resolves outside the directory is refused under
+ * `pluginEntryOutside` `refuse`, the default, so a manifest cannot point its
+ * own package at somebody else's code, and followed under `warn`, the loader
+ * saying so on the plugin's row.
  */
-export const entryOf = (dir: string): string => {
+export const entryOf = (dir: string, outside: EntryOutside = 'refuse'): string => {
   const manifest = parseManifest(dir);
   const ahpd = manifest?.ahpd;
   const ahpdEntry = typeof ahpd === 'object' && ahpd !== null && typeof (ahpd as Record<string, unknown>).entry === 'string'
@@ -326,7 +347,7 @@ export const entryOf = (dir: string): string => {
 
   if (named !== undefined) {
     const at = resolve(dir, named);
-    if (at !== dir && !at.startsWith(dir + sep)) {
+    if (outside === 'refuse' && at !== dir && !at.startsWith(dir + sep)) {
       throw new Error(`${dir} has an ahpd entry ${named} that points outside the package, at ${at}.`);
     }
     if (existsSync(at)) return at;
@@ -368,7 +389,7 @@ function rootsOf(configDir: string): string[] {
  * bare name is resolved from the configuration directory. Nothing here is
  * awaited, nothing here touches the network, and nothing here runs plugin code.
  */
-export function resolvePlugin(spec: PluginSpec, options: { configDir: string; cwd: string }): Resolved {
+export function resolvePlugin(spec: PluginSpec, options: Where): Resolved {
   const name = sourceOf(spec);
   const { configDir, cwd } = options;
 
@@ -384,8 +405,11 @@ export function resolvePlugin(spec: PluginSpec, options: { configDir: string; cw
       throw new Error(`Plugin ${name} is not there: tried ${candidates.join(' and ')}.`);
     }
     if (statSync(found).isDirectory()) {
-      const entry = entryOf(found);
-      return { spec, url: pathToFileURL(entry).href, path: entry, packageDir: found };
+      const entry = entryOf(found, options.entryOutside);
+      return {
+        spec, url: pathToFileURL(entry).href, path: entry, packageDir: found,
+        ...(options.entryOutside === undefined ? {} : { entryOutside: options.entryOutside }),
+      };
     }
     /*
      * A standalone plugin names its `plugin.json`, and the `main` in it names
@@ -460,6 +484,7 @@ export function resolvePlugin(spec: PluginSpec, options: { configDir: string; cw
     url: pathToFileURL(file).href,
     path: file,
     ...(packageDir === undefined ? {} : { packageDir }),
+    ...(options.entryOutside === undefined ? {} : { entryOutside: options.entryOutside }),
   };
 }
 
@@ -761,13 +786,13 @@ const manifestFields = (manifest: Manifest): PluginManifest | undefined => {
  * Whether a manifest is a shape anything can read.
  *
  * The one place names: an `ahpd`
- * that is not an object, an `ahpd.entry` that is not a string or that points
- * outside its own package, one of the manifest fields that is not the
- * kind a client draws, and a `@ahpd/sdk` peer that is not a string. A
- * `package.json` that does not parse is the reader's own `problem` and is
- * returned as it stands.
+ * that is not an object, an `ahpd.entry` that is not a string or, under
+ * `pluginEntryOutside` `refuse`, that points outside its own package, one of
+ * the manifest fields that is not the kind a client draws, and a `@ahpd/sdk`
+ * peer that is not a string. A `package.json` that does not parse is the
+ * reader's own `problem` and is returned as it stands.
  */
-export const checkManifest = (manifest: Manifest, packageDir: string): string | undefined => {
+export const checkManifest = (manifest: Manifest, packageDir: string, outside: EntryOutside = 'refuse'): string | undefined => {
   if (manifest.problem !== undefined) return manifest.problem;
   if (manifest.ahpd !== undefined && (typeof manifest.ahpd !== 'object' || manifest.ahpd === null || Array.isArray(manifest.ahpd))) {
     return `${manifest.path} has an ahpd key that is not an object.`;
@@ -791,7 +816,7 @@ export const checkManifest = (manifest: Manifest, packageDir: string): string | 
     const wrong = checkFields(inside, (field) => `${manifest.path} has an ahpd.${field} that`);
     if (wrong !== undefined) return wrong;
   }
-  if (manifest.entry !== undefined) {
+  if (manifest.entry !== undefined && outside === 'refuse') {
     const at = resolve(packageDir, manifest.entry);
     if (at !== packageDir && !at.startsWith(packageDir + sep)) {
       return `${manifest.path} names an ahpd.entry ${manifest.entry} that points outside the package.`;
@@ -1046,7 +1071,7 @@ function locate(resolved: Resolved, version: string): Located | { refused: strin
   const manifestDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
   if (manifest === undefined && manifestDir !== undefined) {
     manifest = readManifest(manifestDir);
-    const bad = checkManifest(manifest, manifestDir);
+    const bad = checkManifest(manifest, manifestDir, resolved.entryOutside);
     if (bad !== undefined) return { refused: bad };
     if (manifest.sdkRange !== undefined) {
       let satisfied = false;
@@ -1104,6 +1129,14 @@ function locate(resolved: Resolved, version: string): Located | { refused: strin
     }
     url = pathToFileURL(target).href;
   }
+  // Under `pluginEntryOutside` `warn` an entry outside its package loads, and
+  // the row says so in VS Code's words for a `main` outside its folder
+  // (src/vs/platform/extensions/common/extensionValidator.ts L297-L300 at
+  // 6b68d3fe).
+  if (resolved.entryOutside === 'warn' && manifestDir !== undefined && target !== undefined
+    && target !== manifestDir && !target.startsWith(manifestDir + sep)) {
+    problems.push(`Expected the entry (${target}) to be included inside the plugin's folder (${manifestDir}). This might make the plugin non-portable.`);
+  }
   return { ...(manifest === undefined ? {} : { manifest }), ...(target === undefined ? {} : { target }), url, problems };
 }
 
@@ -1119,7 +1152,7 @@ function locate(resolved: Resolved, version: string): Located | { refused: strin
  */
 export async function optionsSchemaOf(
   spec: PluginSpec,
-  options: { configDir: string; cwd: string },
+  options: Where,
 ): Promise<Record<string, unknown> | undefined> {
   const found = locate(resolvePlugin(spec, options), sdkVersion());
   if ('refused' in found) throw new Error(found.refused);
@@ -1313,7 +1346,7 @@ export async function namePlugin(resolved: Resolved, version: string, reload = 0
  * the name cannot be read from the file. For a command that runs without a
  * daemon: a daemon names its plugins as it loads them.
  */
-export async function pluginIdsOf(specs: readonly PluginSpec[], where: { configDir: string; cwd: string }): Promise<void> {
+export async function pluginIdsOf(specs: readonly PluginSpec[], where: Where): Promise<void> {
   for (const spec of specs) {
     let resolved: Resolved;
     try {
@@ -1652,6 +1685,8 @@ export interface LoadOptions {
   configDir: string;
   /** The directory a relative path is tried against first. */
   cwd: string;
+  /** How an entry outside its package is taken, the daemon's `pluginEntryOutside`; absent is `refuse`. */
+  entryOutside?: EntryOutside;
   /** One line per notable thing. */
   log(message: string): void;
   /** One line in the daemon's announcement; dropped when the caller has none. */
@@ -1860,7 +1895,11 @@ export interface PluginSet {
 export const pluginSet = (options: LoadOptions): PluginSet => {
   const paths = options.paths ?? [options.base.path];
   const version = options.version ?? sdkVersion();
-  const where = { configDir: options.configDir, cwd: options.cwd };
+  const where: Where = {
+    configDir: options.configDir,
+    cwd: options.cwd,
+    ...(options.entryOutside === undefined ? {} : { entryOutside: options.entryOutside }),
+  };
   const kept = new Map<string, Kept>();
   /**
    * What each plugin's row says, by id, in the order the alerts arrived.
@@ -2305,7 +2344,7 @@ export interface PluginRow {
  */
 export async function describePlugin(
   spec: PluginSpec,
-  options: { configDir: string; cwd: string },
+  options: Where,
   version: string = sdkVersion(),
 ): Promise<PluginRow> {
   // The id the entry is keyed by, which this row answers whichever state it is
@@ -2342,7 +2381,7 @@ export async function describePlugin(
   if (manifest === undefined && packageDir !== undefined) {
     manifest = readManifest(packageDir);
     if (manifest.problem !== undefined) return { ...row, state: 'error', problem: manifest.problem };
-    const bad = checkManifest(manifest, packageDir);
+    const bad = checkManifest(manifest, packageDir, resolved.entryOutside);
     if (bad !== undefined) return { ...row, state: 'error', problem: bad };
   }
   if (manifest === undefined) {
