@@ -144,10 +144,17 @@ describe('choosing a model', () => {
     expect(sourced).toMatch(/^\{ \. '.*ahpd-shell-init-.*\.sh'; \} 2>\/dev\/null \|\| printf 'shell init script exited %s\\n' "\$\?"\nmake$/);
     const path = /'([^']*)'/.exec(sourced)?.[1] ?? '';
     expect(readFileSync(path, 'utf8')).toBe('export FOO=bar\n');
-    // A PowerShell script is nothing to a bash tool, and a malformed list is refused rather than written.
+    // A PowerShell script is nothing to a bash tool.
     expect(await set([{ shell: 'powershell', script: '$x = 1' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
     expect((await before('make')).hookSpecificOutput).toBeUndefined();
-    expect(await set([{ shell: 'zsh', script: 'x' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
+    /*
+     * A malformed value, a shell VS Code's list does not take, is held as it
+     * was set, and a bash tool sources nothing for it, as VS Code's Copilot
+     * ignores one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8469-L8473
+     */
+    expect(await set([{ shell: 'zsh', script: 'x' }])).toEqual([{ shell: 'zsh', script: 'x' }]);
+    expect((await before('make')).hookSpecificOutput).toBeUndefined();
     // Cleared, and the file with it.
     expect(await set([])).toEqual([]);
     expect(existsSync(path)).toBe(false);
@@ -216,7 +223,13 @@ describe('choosing a model', () => {
     expect(await sdk.canUseTool?.('Bash', {}, { toolUseID: 'c1' })).toMatchObject({ behavior: 'deny' });
   });
 
-  it('refuses a permissions value that is not one, and takes one that is', async () => {
+  /*
+   * A key the schema declares is the host's to check, and a value its checks
+   * pass is said as sent and handed on, the backend's answer for it logged, as
+   * VS Code's host applies a config change to its agents.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
+   */
+  it('says a permissions value as sent, a malformed one included, and hands it on', async () => {
     const { client, peer: p, uri } = await running();
     const set = async (value: unknown) => {
       client.handle({
@@ -228,11 +241,9 @@ describe('choosing a model', () => {
         rejectionReason?: string; action?: { config?: Record<string, unknown> };
       };
     };
-    // A client sending a string where the schema says an object should hear
-    // that the value was not taken, rather than have it quietly ignored.
-    expect(await set('all')).toMatchObject({ rejectionReason: expect.stringContaining('permissions') });
-    // And the good one is echoed rather than refused - asserted here so this
-    // cannot pass in a world where every value is turned away.
+    const odd = await set('all');
+    expect(odd.rejectionReason).toBeUndefined();
+    expect(odd.action?.config).toEqual({ permissions: 'all' });
     const took = await set({ allow: ['Read'], deny: [] });
     expect(took.rejectionReason).toBeUndefined();
     expect(took.action?.config).toEqual({ permissions: { allow: ['Read'], deny: [] } });
