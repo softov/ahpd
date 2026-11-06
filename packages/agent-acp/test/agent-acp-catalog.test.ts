@@ -1016,6 +1016,19 @@ it('answers nothing for a session a server that cannot load does not have', asyn
   expect(requests(log).some((one) => one.method === 'session/load')).toBe(false);
 });
 
+/*
+ * A session the server says it does not hold is no session; a server that does
+ * not start is a failure, raised to the read as VS Code's read of a session it
+ * knows lets one through.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7933-L7939
+ */
+it('answers nothing for a session the server does not hold, and raises a server that does not start', async () => {
+  const { agent } = backend(['--load-missing'], 'acp-load-missing');
+  expect(await agent.transcript?.('a-session-it-does-not-hold')).toBeUndefined();
+  const missing = acpAgent({ command: join(scratch(), 'no-such-command'), provider: 'acp-load-unstarted' });
+  await expect(missing.transcript?.('a-session')).rejects.toThrow('was not found');
+});
+
 it('loads a session at the folder the server listed it under', async () => {
   const { agent, log } = backend();
   // `listed-1` is the fixture's `/tmp/one`. A server that keeps a conversation

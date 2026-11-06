@@ -14,8 +14,9 @@
  * catalogue row still needs its transcript, so only the live connection goes.
  */
 
+import { RequestError } from '@agentclientprotocol/sdk';
 import type { AgentCapabilities, SessionInfo, SessionUpdate } from '@agentclientprotocol/sdk';
-import { uriOf } from '@ahpd/sdk';
+import { bag, uriOf } from '@ahpd/sdk';
 import type { Bag, Listed } from '@ahpd/sdk';
 import { connectAcp } from './connection.js';
 import { replayedTurns } from './transcript.js';
@@ -356,9 +357,12 @@ const server = (options: AcpOptions, handlers: AcpHandlers): AcpConnection => co
  * bridge has, so the configuration's own folder is the fallback and the
  * daemon's is the last one.
  *
- * Undefined where the server cannot be asked - it never started, its handshake
- * did not advertise `loadSession`, or it holds no such conversation - which is
- * the same answer as for a session no server has, rather than an empty one.
+ * Undefined where the handshake did not advertise `loadSession` or the server
+ * answers that it holds no such conversation, ACP's resource not found, the
+ * same answer as for a session no server has. A server that does not start and
+ * a load that fails otherwise raise the failure to the caller, as VS Code's
+ * read of a session it knows lets one through.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7933-L7939
  */
 export async function loadedSession(
   options: AcpOptions,
@@ -374,12 +378,16 @@ export async function loadedSession(
     const handshake = await connection.initialize();
     if (handshake.agentCapabilities?.loadSession !== true) return undefined;
     const cwd = placeOf.get(keyOf(provider, id)) ?? options.cwd ?? process.cwd();
-    await connection.loadSession({ sessionId: id, cwd, mcpServers: [] });
+    const loaded = await connection.loadSession({ sessionId: id, cwd, mcpServers: [] }).then(
+      () => true,
+      (why: unknown) => {
+        if (bag(why).code === RequestError.resourceNotFound().code) return false;
+        throw why;
+      },
+    );
+    if (!loaded) return undefined;
     // A load names no title, so the record holds none, as an untitled row is listed.
     return watchSession({ provider, id, cwd, additional: [], title: '', replay });
-  }
-  catch {
-    return undefined;
   }
   finally {
     connection?.close();

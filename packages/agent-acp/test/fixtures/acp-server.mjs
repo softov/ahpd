@@ -1752,6 +1752,12 @@ const onLine = (line) => {
     }
 
     case 'session/load': {
+      // `--load-missing`: the server holds no such conversation, ACP's
+      // resource not found.
+      if (process.argv.includes('--load-missing')) {
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32002, message: 'Resource not found' } });
+        return;
+      }
       // The loaded id is the one the request named, so every update after it
       // belongs to the conversation the client asked to continue.
       session = String(message.params?.sessionId ?? nextSession());
