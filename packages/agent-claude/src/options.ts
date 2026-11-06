@@ -113,6 +113,21 @@ export const hostTasks: Declaration = {
 };
 
 /**
+ * Whether the host's own tools reach a session of this agent.
+ *
+ * On by default. Read by `clienttools.ts` where the CLI's in-process servers
+ * are declared: off leaves the `host` server out and keeps the `client` one, so
+ * a client's tools still reach the agent.
+ */
+export const hostTools: Declaration = {
+  schema: {
+    type: 'boolean',
+    description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting.",
+  },
+  fallback: true,
+};
+
+/**
  * Whether the host holds the task list instead of Claude.
  *
  * The tasks plugin's `task_add` is the tool that takes the five away, and
@@ -275,7 +290,7 @@ export const extraArgs: Declaration = {
 };
 
 /** Every declared option, by the name a record gives it. */
-export const DECLARED: Record<string, Declaration> = { sandbox, thinking, hostTasks, enableTasks, outputStyle, env, logins, extraArgs };
+export const DECLARED: Record<string, Declaration> = { sandbox, thinking, hostTasks, hostTools, enableTasks, outputStyle, env, logins, extraArgs };
 
 /** One model a record writes out: an id, and the name the picker draws. */
 const MODEL: Bag = {

@@ -170,7 +170,9 @@ export function piSession(
    * Held rather than read from `start` once, because a client's tools arrive
    * and go while the session runs.
    */
-  let offering: BoundTool[] = [...(start.tools ?? [])];
+  const taken = (tools: BoundTool[]): BoundTool[] =>
+    options.hostTools === false ? tools.filter((one) => one.owner !== undefined) : [...tools];
+  let offering: BoundTool[] = taken(start.tools ?? []);
   /** The tools the live or opening backend was built with, by their names. */
   let built: BoundTool[] = [];
   /** Finished turns. The running one is `active` and is deliberately not here. */
@@ -1627,8 +1629,9 @@ export function piSession(
       const key = (list: BoundTool[]): string => list
         .map((one) => `${one.definition.name}\u0000${one.owner ?? ''}`)
         .join('\n');
-      if (key(offering) === key(next)) return true;
-      offering = [...next];
+      const kept = taken(next);
+      if (key(offering) === key(kept)) return true;
+      offering = kept;
       // A backend already built or being built holds the old list; the next
       // turn rebuilds it. Nothing built yet just takes the new list.
       if (opening !== undefined || live !== undefined) stale = true;

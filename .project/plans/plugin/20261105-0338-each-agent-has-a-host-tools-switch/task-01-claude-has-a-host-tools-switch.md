@@ -1,6 +1,6 @@
 ---
 title: Claude has a host tools switch
-status: todo
+status: implemented
 depends: []
 layer: agent-claude
 refs:
@@ -38,5 +38,5 @@ A Claude plugin option and a Claude record field `hostTools` turn the host's too
 
 ## Resume
 
-- **Done so far:** nothing.
-- **Found:** nothing yet.
+- **Done so far:** `hostTools` is a plugin option (manifest and es/pt) and a record field (`options.ts`), the plugin's value is laid under the record's in `presetOf`, and `clienttools.ts` drops the host's own tools and keeps each client's at start and on a later list. The README's two tables list it.
+- **Found:** three tests outside the task's Files pin the declarations and needed the field: `test/agent-claude-options.test.ts` (the README's options table must match the manifest), `test/agent-claude-declarations.test.ts` (`optionDefaults`), and `test/engine.test.ts` (the record's fields).

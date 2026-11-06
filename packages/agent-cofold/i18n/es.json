@@ -36,6 +36,9 @@
     },
     "autoCompactTokens": {
       "description": "Tamaño del historial, en tokens estimados, en el que una sesión se compacta. Por defecto, el 80% del contexto del modelo, o de 32000 si no se conoce, y nunca más que eso."
+    },
+    "hostTools": {
+      "description": "Ofrece las herramientas del host a cada sesión. Activado por defecto. Cada agente puede cambiarlo."
     }
   },
   "session": {

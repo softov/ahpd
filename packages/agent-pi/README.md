@@ -50,6 +50,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `model` | pi's own default | The model a record that names none runs on, as `provider/modelId`; a turn may choose another, and a resumed or forked session keeps its own |
 | `projectTrust` | `trust` | Whether a record that names none loads a project's own pi extensions, skills and prompts |
 | `sessionDir` | pi's own | Where a record that names none keeps its pi sessions |
+| `hostTools` | `true` | Whether the host's own tools reach each session. A record can turn them off for one agent |
 
 `projectTrust` is `trust` or `deny`. pi's third answer, `ask`, is not offered, because a daemon has nobody at a terminal to answer it. `trust` loads the project's pi resources, which runs its code.
 
@@ -68,6 +69,7 @@ A record of the engine holds what one pi agent runs on, and the channel owns its
 | `model` | The model this agent runs on, as `provider/modelId` |
 | `projectTrust` | `trust` or `deny`, as above |
 | `sessionDir` | Where this agent's pi sessions live. Host records only |
+| `hostTools` | Whether the host's own tools reach this agent's sessions. Off drops them and keeps each client's tools |
 | `env` | Variables pi is given, by name |
 
 A variable in `env` is a key of this agent's own when pi takes a key from it, such as `ANTHROPIC_API_KEY` or `DEEPSEEK_API_KEY`: it is kept in the vault, a client is told it is set and never what it is, and a team's or a person's record may set it. Any other variable is the host's to set, because a free environment can run a program. The record's variables go on pi's own runtime each turn, over the daemon's environment and over `auth.json`, and they are never written to `process.env` where the daemon's other agents would see them.

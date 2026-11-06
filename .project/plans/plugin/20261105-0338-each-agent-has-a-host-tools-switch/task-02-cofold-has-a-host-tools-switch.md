@@ -1,6 +1,6 @@
 ---
 title: cofold has a host tools switch
-status: todo
+status: implemented
 depends: []
 layer: agent-cofold
 refs:
@@ -38,5 +38,5 @@ A cofold plugin option and a cofold record field `hostTools` turn the host's too
 
 ## Resume
 
-- **Done so far:** nothing.
-- **Found:** nothing yet.
+- **Done so far:** `hostTools` is a plugin option (manifest and es/pt) and a record field (`RECORD_FIELDS`, over the plugin's), and `session.ts` keeps only the tools with an owner in `offered` at the start and on a later list.
+- **Found:** two tests outside the task's Files pin the option and the record's fields: `test/agent-cofold-options.test.ts` (the README's options table must match the manifest, so the README lists it too) and `test/engine.test.ts` (the record's fields).
