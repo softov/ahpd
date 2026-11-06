@@ -23,7 +23,7 @@
 
 import { probe, PROBE_TIMEOUT_MS, reason } from '@ahpd/sdk';
 import type {
-  Adapter, CheckResult, Connector, ConnectorOwner, DeviceSignInPoll, DeviceSignInStart,
+  Adapter, CheckResult, Connector, ConnectorOwner, DeviceSignInPoll, DeviceSignInStart, UiSchema,
 } from '@ahpd/sdk';
 
 /**
@@ -56,6 +56,23 @@ export const ACCOUNT_URL = 'https://api.github.com/user';
  * else. https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b/ts/src/contracts/tunnelServiceProperties.ts
  */
 export const TUNNELS_URL = 'https://global.rel.tunnels.api.visualstudio.com/api/v1/tunnels';
+
+/**
+ * What a `devtunnel` connector draws: the account it signed in as, and the
+ * time of the last refresh of its token.
+ *
+ * Both are what the connector already holds, so the adapter sends them with no
+ * call to the service. A connector that has not refreshed since it opened
+ * sends no time, and a path the data does not hold draws nothing.
+ */
+export const TUNNEL_UI: UiSchema = {
+  root: 'account',
+  components: {
+    account: { id: 'account', component: 'Column', children: ['accountName', 'refreshed'] },
+    accountName: { id: 'accountName', component: 'Text', text: { path: 'account' } },
+    refreshed: { id: 'refreshed', component: 'Text', text: { path: 'refreshed' } },
+  },
+};
 
 /** The grant type a device poll and a refresh name. */
 const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
@@ -370,7 +387,13 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
       },
       required: ['token', 'refresh'],
     },
-    capabilities: [],
+    capabilities: [{
+      type: 'ui',
+      name: 'account',
+      title: 'Account',
+      description: 'The GitHub account this connector signed in as, and when its token last refreshed.',
+      ui: TUNNEL_UI,
+    }],
     /*
      * A token with no tunnel listing behind it is a token the service does not
      * take, so one list of the account's tunnels is the whole check. The
@@ -397,16 +420,29 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
       start,
       poll,
     },
-    open: (connector) => {
+    open: (connector, ui) => {
       const id = connector.id;
       const token = tokenOf(connector);
       const refresh = textOf(connector.config['refresh']);
+      const account = textOf(connector.config['account']);
       tunnels.hold(id, { owner: connector.owner, token, ...(refresh === undefined ? {} : { refresh }) });
       let stopped = false;
       /** This open's refresh while it runs, which `tunnels` holds too. */
       let running: Promise<void> | undefined;
       /** The next refresh, once one is set. */
       let timer: ReturnType<typeof setTimeout> | undefined;
+      /** When this open last stored a refreshed pair, which the ui draws. */
+      let refreshedAt: string | undefined;
+
+      /** Send what this connector draws now: its account, and the last refresh's time. */
+      const show = (): void => {
+        const data: Record<string, unknown> = {};
+        if (account !== undefined) data['account'] = account;
+        if (refreshedAt !== undefined) data['refreshed'] = refreshedAt;
+        ui?.show(data);
+      };
+
+      show();
 
       /** Ask the host to check this connector, as a failed refresh does. */
       const checkNow = (): void => {
@@ -464,6 +500,8 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
           const still = tunnels.held(id);
           if (still === undefined) return;
           tunnels.hold(id, { ...still, token: next.token, refresh: next.refresh });
+          refreshedAt = new Date().toISOString();
+          show();
           again(next.expires === undefined ? DEFAULT_REFRESH_MS : next.expires * 1000 * 2 / 3);
         }
         catch (error) {

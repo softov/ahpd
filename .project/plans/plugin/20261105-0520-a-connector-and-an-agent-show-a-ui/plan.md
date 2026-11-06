@@ -98,7 +98,7 @@ plugin registers adapter or engine with a ui capability (schema) -> checkAdapter
 | [01 - a ui capability with bindings](task-01-a-ui-capability-with-bindings.md) | implemented | - |
 | [02 - the rows carry a ui's data](task-02-the-rows-carry-a-uis-data.md) | implemented | 01 |
 | [03 - claude shows plan usage](task-03-claude-shows-plan-usage.md) | implemented | 02 |
-| [04 - devtunnel shows its account](task-04-devtunnel-shows-its-account.md) | todo | 02 |
+| [04 - devtunnel shows its account](task-04-devtunnel-shows-its-account.md) | implemented | 02 |
 | [05 - the docs say how a ui is made](task-05-the-docs-say-how-a-ui-is-made.md) | todo | 02 |
 
 ## Risks and tradeoffs
@@ -109,8 +109,8 @@ plugin registers adapter or engine with a ui capability (schema) -> checkAdapter
 
 ## Resume state
 
-- **Done so far:** task-01, task-02 and task-03 implemented on 2026-11-05.
-- **Next action:** [task-04-devtunnel-shows-its-account.md](task-04-devtunnel-shows-its-account.md).
+- **Done so far:** task-01, task-02, task-03 and task-04 implemented on 2026-11-05 and 2026-11-06.
+- **Next action:** [task-05-the-docs-say-how-a-ui-is-made.md](task-05-the-docs-say-how-a-ui-is-made.md).
 - **Open questions:** none.
 - **Watch out for:** an agent and a connector must stay the same shape. A change to one needs the same change to the other. ahpw draws the ui in a plan of its own.
 

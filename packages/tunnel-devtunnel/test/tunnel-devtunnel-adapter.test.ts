@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Adapter, Connector, DeviceSignIn } from '@ahpd/sdk';
+import type { Adapter, Connector, DeviceSignIn, UiHandle } from '@ahpd/sdk';
 import {
   ACCESS_TOKEN_URL, ACCOUNT_URL, CLIENT_ID, DEVICE_CODE_URL,
   devtunnelAdapter, OpenTunnels, TUNNELS_URL,
@@ -61,6 +61,15 @@ const signInOf = (adapter: Adapter): DeviceSignIn => {
 const connectorOf = (id: string, config: Record<string, unknown>): Connector =>
   ({ id, adapter: 'devtunnel', owner: 'host', config });
 
+/** A ui handle that keeps every data it is shown. */
+const uiOf = (): { ui: UiHandle; shown: Record<string, unknown>[] } => {
+  const shown: Record<string, unknown>[] = [];
+  return {
+    shown,
+    ui: { show: (data) => { shown.push(data); }, clear: () => { shown.length = 0; } },
+  };
+};
+
 /** The start answer GitHub gives for the made-up code every case uses. */
 const STARTED: Answer = {
   body: {
@@ -89,6 +98,19 @@ describe('the registration', () => {
   it('lets a sign-in change the account only when the option says so', () => {
     expect(signInOf(devtunnelAdapter(new OpenTunnels())).switchAccount).toBe(false);
     expect(signInOf(devtunnelAdapter(new OpenTunnels(), { allowAccountChange: true })).switchAccount).toBe(true);
+  });
+
+  it('registers the account it signed in as, and its last refresh, as its ui', () => {
+    const adapter = devtunnelAdapter(new OpenTunnels());
+    expect(adapter.capabilities).toHaveLength(1);
+    const capability = adapter.capabilities[0];
+    expect(capability).toMatchObject({
+      type: 'ui',
+      name: 'account',
+      title: 'Account',
+      description: 'The GitHub account this connector signed in as, and when its token last refreshed.',
+    });
+    expect(capability?.ui?.root).toBe('account');
   });
 });
 
@@ -200,6 +222,39 @@ describe('the check', () => {
 });
 
 describe('an open connector', () => {
+  it('draws the account it signed in as when it opens, with no call to the service', () => {
+    const probe = fake();
+    const tunnels = new OpenTunnels();
+    const { ui, shown } = uiOf();
+    const close = devtunnelAdapter(tunnels, { fetch: probe.fetch })
+      .open(connectorOf('ana', { token: 'gho_only', account: 'ana' }), ui);
+
+    expect(shown).toEqual([{ account: 'ana' }]);
+    expect(probe.calls).toEqual([]);
+    (close as () => void)();
+  });
+
+  it('draws the time of a refresh once the pair is stored', async () => {
+    const probe = fake();
+    probe.on(ACCESS_TOKEN_URL, { body: { access_token: 'gho_new', refresh_token: 'ghr_new', expires_in: 28800 } });
+    const stored: string[] = [];
+    const { ui, shown } = uiOf();
+    const close = devtunnelAdapter(new OpenTunnels(), {
+      fetch: probe.fetch,
+      secret: async () => { stored.push('stored'); },
+    }).open(connectorOf('ana', { token: 'gho_old', refresh: 'ghr_old', account: 'ana' }), ui);
+
+    // The open draws the account alone, before its refresh answers.
+    expect(shown).toEqual([{ account: 'ana' }]);
+    await vi.waitFor(() => { expect(shown).toHaveLength(2); });
+    expect(stored).toHaveLength(1);
+    const drawn = shown[1]!;
+    expect(drawn['account']).toBe('ana');
+    const refreshed = String(drawn['refreshed']);
+    expect(new Date(refreshed).toISOString()).toBe(refreshed);
+    (close as () => void)();
+  });
+
   it('refreshes at open, stores both new values, and keeps the new token', async () => {
     const probe = fake();
     probe.on(ACCESS_TOKEN_URL, { body: { access_token: 'gho_new', refresh_token: 'ghr_new', expires_in: 28800 } });
