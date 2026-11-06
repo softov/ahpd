@@ -626,7 +626,7 @@ async function asking(accepted: boolean): Promise<{ sent: Bag[]; session: Sessio
  */
 it('completes a live answered question with its text alone, the answers on its request part', async () => {
   const { sent, held, part, decision } = await asking(true);
-  expect(await decision).toMatchObject({ behavior: 'allow', updatedInput: { questions: asked.questions, answers: picked } });
+  expect(await decision).toMatchObject({ behavior: 'allow', updatedInput: { questions: asked.questions, answers: { 'Which colour?': 'Red', 'Which sizes?': 'S, L' } } });
   expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).not.toHaveProperty('structuredContent');
   expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
   expect(((part?.request as Bag | undefined)?.answers)).toBeDefined();
@@ -820,10 +820,34 @@ it('records the joined answer as what the tool ran with', async () => {
     Colour: { state: 'submitted', value: { kind: 'selected', value: 'Blue', freeformValues: ['teal'] } },
     Size: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
   });
+  // Every answer one string joined with `, `, as VS Code's Claude flattens it.
   expect(await decision).toEqual({
     behavior: 'allow',
-    updatedInput: { questions: asked.questions, answers: { 'Which colour?': 'Blue, teal', 'Which sizes?': ['S', 'L'] } },
+    updatedInput: { questions: asked.questions, answers: { 'Which colour?': 'Blue, teal', 'Which sizes?': 'S, L' } },
   });
+});
+
+/*
+ * As VS Code's Claude flattens an answer: a skipped question is left out, and
+ * an answer set with nothing in it is the question cancelled.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L300-L304
+ */
+it('leaves a skipped question out, and cancels a question nothing was answered for', async () => {
+  const decided = async (answers: Bag): Promise<unknown> => {
+    let decision: Promise<unknown> | undefined;
+    const { session } = await live([
+      { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
+    ], () => {
+      decision = sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
+    });
+    session.answer('toolu_ask', true, answers);
+    return decision;
+  };
+  const skipped = { state: 'skipped', value: { kind: 'selected', value: 'Red' } };
+
+  expect(await decided({ Colour: skipped, Size: { state: 'submitted', value: { kind: 'selected-many', value: ['S'] } } }))
+    .toEqual({ behavior: 'allow', updatedInput: { questions: asked.questions, answers: { 'Which sizes?': 'S' } } });
+  expect(await decided({ Colour: skipped })).toMatchObject({ behavior: 'deny' });
 });
 
 /*

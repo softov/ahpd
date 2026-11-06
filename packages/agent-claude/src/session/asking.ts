@@ -10,8 +10,8 @@ interface PendingInput {
   request: Bag;
   /** The tool a confirmation is for, by the CLI's own name for it. */
   toolName?: string;
-  /** `AskUserQuestion` needs its own payload echoed back verbatim. */
-  questions?: unknown[];
+  /** A question's own input, which the tool runs with beside its answers. */
+  input?: Bag;
   /** Question id to the question text the SDK keys answers by. */
   asked: Map<string, string>;
   /**
@@ -309,7 +309,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         if (held === undefined) return;
         pending.delete(id);
         ctx.inputNeededRemoved(id);
-        held.settle({ behavior: 'deny', message: held.questions === undefined ? DECLINED : QUESTION_CANCELLED });
+        held.settle({ behavior: 'deny', message: held.input === undefined ? DECLINED : QUESTION_CANCELLED });
       };
       signal?.addEventListener('abort', cancelled);
       /*
@@ -333,7 +333,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         const { request, asked } = questionRequest(input, id);
         // `chat` is required on every session input request.
         const sessionRequest: Bag = { id, chat: where, kind: 'chatInput', request };
-        pending.set(id, { id, request: sessionRequest, questions: list(input.questions), asked, answers: new Map(), settle: done });
+        pending.set(id, { id, request: sessionRequest, input, asked, answers: new Map(), settle: done });
         ctx.emitOn(scope, { type: 'chat/inputRequested', request });
         ctx.inputNeededSet(sessionRequest);
         return;
@@ -683,22 +683,30 @@ export function createAsking(ctx: SessionContext): Asking {  /**
          * Freeform is the person's own words as the value, not the word they
          * typed it under - the tool reads the value as the answer itself.
          *
-         * Words typed beside a choice are the selection's `freeformValues`,
-         * and the tool reads the choice and those words joined with `, `, as
-         * VS Code joins them.
+         * As VS Code flattens an answer: a skipped question is left out, and
+         * the choice or choices with the words typed beside them are one
+         * string joined with `, `; an answer that says nothing is left out.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L126-L157
          */
+        if (answer.state === 'skipped') continue;
         const inner = bag(answer.value);
         const chosen = inner.value ?? answer.value ?? value;
-        const beside = list(inner.freeformValues).filter((one): one is string => typeof one === 'string');
-        said[question] = beside.length === 0
-          ? chosen
-          : [...(Array.isArray(chosen) ? chosen : typeof chosen === 'string' && chosen !== '' ? [chosen] : []), ...beside].join(', ');
+        const parts = [
+          ...(Array.isArray(chosen) ? chosen : [chosen]),
+          ...list(inner.freeformValues),
+        ].filter((one): one is string => typeof one === 'string' && one !== '');
+        if (parts.length > 0) said[question] = parts.join(', ');
       }
       /*
-       * The input the tool runs with: its questions as sent plus what was
-       * answered, which is what the SDK records.
+       * Nothing answered is the question cancelled, and the tool otherwise
+       * runs with its own input and the answers, as VS Code's Claude runs it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L300-L304
        */
-      held.settle({ behavior: 'allow', updatedInput: { questions: held.questions ?? [], answers: said } });
+      if (Object.keys(said).length === 0) {
+        held.settle({ behavior: 'deny', message: QUESTION_CANCELLED });
+        return true;
+      }
+      held.settle({ behavior: 'allow', updatedInput: { ...held.input, answers: said } });
       return true;
     },
   };
