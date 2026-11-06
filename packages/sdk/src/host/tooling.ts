@@ -162,8 +162,12 @@ interface HeldPlugin {
   load: Bag;
   /** The directory the copy landed in, once one has. */
   path?: string;
-  /** What the copy holds, read when it landed: the parts a client reads under this plugin. */
-  parts?: Bag[] | undefined;
+  /**
+   * What the copy holds, read when it landed: the plugin's children, as the
+   * protocol calls what a client reads under a plugin.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L893-L911
+   */
+  children?: Bag[] | undefined;
   /**
    * The session's own decision about this plugin, and nothing else.
    *
@@ -229,14 +233,16 @@ export interface Tooling {
    */
   customizationUnder(uri: string, id: string): Carried | undefined;
   /**
-   * The folder a session's decisions for a customization are kept under.
+   * The working directory a session's decisions for a customization are kept
+   * under at the workspace scope, as VS Code reads a session's working
+   * directory state.
    *
    * Its first working directory as a `file://` URI, which is what a scope
    * outside the session names: the same folder in two sessions is one decision,
    * and a window that keeps a folder open reads it back under the same spelling.
-   * Nothing for a session that works nowhere, which has no folder scope at all.
+   * Nothing for a session that works nowhere, which has no workspace scope.
    */
-  folderOf(uri: string): string | undefined;
+  workingDirectoryOf(uri: string): string | undefined;
   /**
    * One customization as a session reads it, with its decisions on it.
    *
@@ -267,7 +273,7 @@ export interface Tooling {
    * The backend goes on reporting what it reports, so this is what a session's
    * list reads its own decision from until the next report says otherwise.
    */
-  keepDecision(uri: string, id: string, enabled: boolean | undefined): void;
+  recordCustomizationEnablement(uri: string, id: string, enabled: boolean | undefined): void;
   /**
    * Say a session's customizations again where resolving them moved them, as
    * VS Code republishes them after an enablement changes.
@@ -652,8 +658,13 @@ export function createTooling(ctx: HostContext): Tooling {
    * client's plugins leave with the client.
    */
   const plugins = new Map<string, Map<string, HeldPlugin[]>>();
-  /** The session being reconciled, one at a time: a second announcement waits for the first copy. */
-  const copying = new Map<string, Promise<void>>();
+  /**
+   * The sessions whose client plugins are syncing, one sync at a time: a
+   * second announcement waits for the first copy, as VS Code's plugin manager
+   * syncs a client's customizations.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentPluginManager.ts#L74
+   */
+  const syncing = new Map<string, Promise<void>>();
 
   /** Whether two announcements are the same plugin at the same revision. */
   const samePlugin = (a: Bag, b: Bag): boolean =>
@@ -688,7 +699,7 @@ export function createTooling(ctx: HostContext): Tooling {
   const keyOf = (one: HeldPlugin, at: number): string | undefined => {
     const source = str(one.announced.uri) ?? '';
     if (at === -1) return enablementKeyOf({ type: 'plugin', uri: source });
-    return enablementKeyOf({ type: 'mcpServer', name: str(bag((one.parts ?? [])[at]).name) ?? '' }, source);
+    return enablementKeyOf({ type: 'mcpServer', name: str(bag((one.children ?? [])[at]).name) ?? '' }, source);
   };
 
   /**
@@ -705,7 +716,8 @@ export function createTooling(ctx: HostContext): Tooling {
    * clients hold are read in exactly that moment, when the backend is handed
    * the set it starts with.
    */
-  const folderOf = (uri: string): string | undefined => {
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostCustomizationEnablementService.ts#L238
+  const workingDirectoryOf = (uri: string): string | undefined => {
     const held = sessions.get(uri);
     if (held === undefined) return undefined;
     const lead = leadOf(held)?.workingDirectories()[0];
@@ -734,7 +746,7 @@ export function createTooling(ctx: HostContext): Tooling {
       out.push(...rest);
       return out;
     }
-    const dir = folderOf(uri);
+    const dir = workingDirectoryOf(uri);
     const inFolder = dir === undefined ? undefined : store.folder(dir, key);
     if (dir !== undefined && inFolder !== undefined) out.push({ kind: 'workspace', uri: dir, enabled: inFolder });
     else out.push(...rest.filter((entry) => str(entry.kind) === 'workspace'));
@@ -829,7 +841,7 @@ export function createTooling(ctx: HostContext): Tooling {
 
   /** The same for one of a plugin's servers, which a client may also have decided about. */
   const partDecisions = (uri: string, one: HeldPlugin, at: number): Bag[] => {
-    const carried = enablementOf(bag((one.parts ?? [])[at]).enablement);
+    const carried = enablementOf(bag((one.children ?? [])[at]).enablement);
     return entriesFor(uri, keyOf(one, at), carried, ownIn(carried));
   };
 
@@ -865,12 +877,14 @@ export function createTooling(ctx: HostContext): Tooling {
   const decisionOf = (uri: string, id: string): boolean | undefined => decided.get(uri)?.get(id);
 
   /**
-   * Keep a session's own decision about one customization, or clear it.
+   * Record a session's own decision about one customization, or clear it, as
+   * VS Code records a customization's enablement.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2120
    *
    * The backend has no entry to read a session's decision off, and what it
    * keeps is its own to report.
    */
-  const keepDecision = (uri: string, id: string, enabled: boolean | undefined): void => {
+  const recordCustomizationEnablement = (uri: string, id: string, enabled: boolean | undefined): void => {
     const held = decided.get(uri) ?? new Map<string, boolean>();
     decided.set(uri, held);
     if (enabled === undefined) held.delete(id);
@@ -878,24 +892,25 @@ export function createTooling(ctx: HostContext): Tooling {
   };
 
   /**
-   * The parts of a copy that has just landed, with a client's decisions on them.
+   * The children of a copy that has just landed, with a client's decisions on
+   * them.
    *
-   * Read once, when the copy settles, rather than on every read of a session's
-   * customizations: the directory is on this host's disk and does not move, and
-   * a client reads the list far more often than a plugin is copied.
+   * Read once, when the copy settles: the directory is on this host's disk and
+   * does not move, and a client reads the list far more often than a plugin is
+   * copied.
    *
-   * `childEnablement` is a client's decisions, keyed by a part's name, and the
+   * `childEnablement` is a client's decisions, keyed by a child's name, and the
    * protocol lets one hang on an MCP server alone: a skill, an agent, a rule
    * and a hook load with the plugin they arrived in. So a server the client
    * named carries what it decided, most specific first, and one it did not is
    * left with none - which every reader of the field takes as on.
    *
-   * Nothing at all for a copy whose format this host does not read, which is
-   * *not* the same answer as no parts: the protocol reads `children` absent as
-   * a container nobody has parsed, and an empty list as one that was parsed and
+   * Nothing at all for a copy whose format this host does not read, an answer
+   * apart from an empty list: the protocol reads `children` absent as a
+   * container nobody has parsed, and an empty list as one that was parsed and
    * contributes nothing.
    */
-  const partsWith = (one: HeldPlugin, path: string): Bag[] | undefined => {
+  const childrenAt = (one: HeldPlugin, path: string): Bag[] | undefined => {
     const parts = partsOf(path, uriOf(path));
     if (parts === undefined) return undefined;
     const named = bag(one.announced.childEnablement);
@@ -931,9 +946,9 @@ export function createTooling(ctx: HostContext): Tooling {
       name: str(one.announced.name) ?? uri,
       clientId,
       load: one.load,
-      // The parts a client reads under the plugin, absent while the copy is
+      // The children a client reads under the plugin, absent while the copy is
       // still coming and after one nobody could read.
-      ...(one.parts === undefined ? {} : { children: one.parts }),
+      ...(one.children === undefined ? {} : { children: one.children }),
       ...(decisions.length === 0 ? {} : { enablement: decisions }),
       ...(version === undefined ? {} : { version }),
     };
@@ -963,7 +978,7 @@ export function createTooling(ctx: HostContext): Tooling {
         if (id === idOfPlugin(clientId, one) || id === str(one.announced.id) || id === str(one.announced.uri)) {
           return { clientId, one, at: -1 };
         }
-        const at = (one.parts ?? []).findIndex((part) => part.type === 'mcpServer' && str(part.id) === id);
+        const at = (one.children ?? []).findIndex((part) => part.type === 'mcpServer' && str(part.id) === id);
         if (at !== -1) return { clientId, one, at };
       }
     }
@@ -1009,7 +1024,7 @@ export function createTooling(ctx: HostContext): Tooling {
       one.decision = asked;
     }
     else {
-      part = bag((one.parts ?? [])[at]);
+      part = bag((one.children ?? [])[at]);
       /*
        * The client's own decisions for this server, read again from what it
        * announced rather than from the list as it stands: what this host wrote
@@ -1017,7 +1032,7 @@ export function createTooling(ctx: HostContext): Tooling {
        */
       const fromClient = enablementOf(bag(one.announced.childEnablement)[str(part.name) ?? ''])
         .filter((entry) => str(entry.kind) !== 'session');
-      one.parts = (one.parts ?? []).map((other, position) => (position === at
+      one.children = (one.children ?? []).map((other, position) => (position === at
         ? { ...other, enablement: byScope([...asked, ...fromClient]) }
         : other));
     }
@@ -1056,7 +1071,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const { one, at } = found;
       const key = keyOf(one, at);
       if (key === undefined) return undefined;
-      const own = at === -1 ? ownIn(one.decision) : ownIn(bag((one.parts ?? [])[at]).enablement as Bag[] | undefined);
+      const own = at === -1 ? ownIn(one.decision) : ownIn(bag((one.children ?? [])[at]).enablement as Bag[] | undefined);
       return { key, of: at === -1 ? 'plugin' : 'server', ...(own === undefined ? {} : { own }) };
     }
     /** The reported customization with this id, looked for under the one that declared it. */
@@ -1179,7 +1194,7 @@ export function createTooling(ctx: HostContext): Tooling {
         const answer = answers[position];
         if (answer !== undefined && 'path' in answer) {
           one.path = answer.path;
-          one.parts = partsWith(one, answer.path);
+          one.children = childrenAt(one, answer.path);
           one.load = { kind: 'loaded' };
         } else {
           one.load = { kind: 'error', message: answer !== undefined && 'error' in answer ? answer.error : `${String(one.announced.uri ?? '')} was not copied` };
@@ -1217,7 +1232,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * told not to run it however else it might hear of one.
    */
   const deniedMcpServers = (uri: string): string[] => heldCopies(uri).flatMap((one) =>
-    (one.parts ?? []).flatMap((part, at) => (part.type === 'mcpServer' && partOff(uri, one, at)
+    (one.children ?? []).flatMap((part, at) => (part.type === 'mcpServer' && partOff(uri, one, at)
       ? [str(part.name) ?? '']
       : [])));
 
@@ -1321,10 +1336,10 @@ export function createTooling(ctx: HostContext): Tooling {
    * copies writing the same directory would be two answers to one question.
    */
   const reconcilePlugins = (uri: string): void => {
-    const earlier = copying.get(uri) ?? Promise.resolve();
+    const earlier = syncing.get(uri) ?? Promise.resolve();
     const done = earlier.then(() => reconcile(uri)).catch(() => {});
-    copying.set(uri, done);
-    void done.then(() => { if (copying.get(uri) === done) copying.delete(uri); });
+    syncing.set(uri, done);
+    void done.then(() => { if (syncing.get(uri) === done) syncing.delete(uri); });
   };
 
   /**
@@ -1365,7 +1380,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * what is being waited for is the copy the first of them began.
    */
   const pluginsSettled = async (uri: string): Promise<void> => {
-    const held = copying.get(uri);
+    const held = syncing.get(uri);
     if (held !== undefined) await held;
   };
 
@@ -2333,7 +2348,7 @@ export function createTooling(ctx: HostContext): Tooling {
    */
   const mcpFor = (uri: string): Record<string, McpServer> => frozenCopy(heldCopies(uri)
     .reduce<Record<string, McpServer>>((all, one) => {
-      const held = new Set((one.parts ?? [])
+      const held = new Set((one.children ?? [])
         .flatMap((part, at) => (part.type === 'mcpServer' && partOff(uri, one, at) ? [str(part.name) ?? ''] : [])));
       for (const [name, server] of Object.entries(serversOf(one.path as string))) {
         if (!held.has(name)) all[name] = server;
@@ -2496,7 +2511,7 @@ export function createTooling(ctx: HostContext): Tooling {
 
   return {
     permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions, serverToolsMoved,
-    clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, folderOf, withEntries, tellOff, forgetTold, keepDecision, publishSessionCustomizations,
+    clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, workingDirectoryOf, withEntries, tellOff, forgetTold, recordCustomizationEnablement, publishSessionCustomizations,
     retool, pluginsSettled, chatMeant, renameChat, renameSession, snapshotDefaultChatTitle, toolContext, sessionlessContext,
     pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,
     toolsServersGone, boundTools, sessionlessTools, instructions, turnInstructions, openChat,

@@ -1786,7 +1786,7 @@ export function chatAction(
       /** Whether a customization is on for one session: its own decision, then the store's. */
       const onFor = (uri: string, own: boolean | undefined): boolean => {
         if (store === undefined || key === undefined) return own ?? true;
-        const dir = ctx.folderOf(uri);
+        const dir = ctx.workingDirectoryOf(uri);
         return own ?? (dir === undefined ? undefined : store.folder(dir, key)) ?? store.global(key) ?? true;
       };
       /*
@@ -1814,7 +1814,7 @@ export function chatAction(
          * folder decision, which is a workspace-less session in VS Code.
          */
         const named = enablement.find((entry) => entry.kind === 'workspace')?.uri;
-        const folder = typeof named === 'string' && named !== '' ? named : ctx.folderOf(session.uri);
+        const folder = typeof named === 'string' && named !== '' ? named : ctx.workingDirectoryOf(session.uri);
         const wasGlobal = store.global(key);
         const wasFolder = folder === undefined ? undefined : store.folder(folder, key);
         /** What each session answers now, which is what says whether one moved. */
@@ -1839,7 +1839,7 @@ export function chatAction(
         const everywhere = wasGlobal !== store.global(key);
         const here = wasFolder !== (folder === undefined ? undefined : store.folder(folder, key));
         for (const [uri, before] of was) {
-          if (uri === session.uri || (!everywhere && !(here && ctx.folderOf(uri) === folder))) continue;
+          if (uri === session.uri || (!everywhere && !(here && ctx.workingDirectoryOf(uri) === folder))) continue;
           const at = ctx.customizationUnder(uri, id);
           if (at === undefined) continue;
           const held = sessions.get(uri);
@@ -1897,7 +1897,7 @@ export function chatAction(
        * no decision of their own, so their switch is the state's alone.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L416-L428
        */
-      if (under !== undefined) ctx.keepDecision(session.uri, id, asked);
+      if (under !== undefined) ctx.recordCustomizationEnablement(session.uri, id, asked);
       void session.setCustomizationEnabled(id, onFor(session.uri, asked)).then((took) => {
         if (!took) log(`${session.uri}: ${id} has no runtime switch`);
       });
