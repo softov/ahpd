@@ -314,6 +314,19 @@ it('says who a connection arrived as, on the handshake and in the root snapshot'
   expect(await rootMeta(door)).toEqual({ 'ahpd.principal': 'root:host' });
 });
 
+/*
+ * Under the daemon's `rootOwner` `none`, a root connection is no one, as VS
+ * Code's host records no principal for a session made without a validated
+ * identity.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10144-L10146
+ */
+it('names no one for a root connection under rootOwner none', async () => {
+  const made = host({ users: directory({ m: ['session:read'] }), rootOwner: 'none' });
+  const door = made.accept(peer(), undefined, true);
+  expect('ahpd.principal' in ((await hello(door, 'door') as Bag)._meta as Bag)).toBe(false);
+  expect(await rootMeta(door)).toEqual({});
+});
+
 it('names no principal on a host with no people for one to be', async () => {
   // Every existing install is in this case, and the key is absent rather than
   // empty: there is nothing here to name, and saying "" would be a value.

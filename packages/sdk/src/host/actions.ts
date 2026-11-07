@@ -521,6 +521,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         // And where a session that names no folder works, read the same way: as the next session is made.
         const workspaceless = theirs['workspacelessFolder'];
         if (workspaceless === 'first' || workspaceless === 'scratch') ctx.workspacelessFolder = workspaceless;
+        // And whose a root connection's session is, read the same way: as the next session is made.
+        const rootOwner = theirs['rootOwner'];
+        if (rootOwner === 'host' || rootOwner === 'none') ctx.rootOwner = rootOwner;
         // And whether a turn's sender is said, read the same way: as the next start is said or turn read back.
         const senders = theirs['turnSenders'];
         if (senders === 'said' || senders === 'kept') ctx.turnSenders = senders;

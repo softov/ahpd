@@ -340,6 +340,12 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   workspacelessFolder: 'first' | 'scratch';
   /**
+   * Whose work a session a root connection starts is: the host itself,
+   * `host`, or no one, `none`, as VS Code's host. A daemon key that takes hold
+   * while the daemon runs, read as each session is made.
+   */
+  rootOwner: 'host' | 'none';
+  /**
    * Whether a turn's sender is said on what clients read, `said`, or kept by
    * the host alone, `kept`, as VS Code's host keeps it. A daemon key that
    * takes hold while the daemon runs, read as each start is said and each

@@ -307,6 +307,14 @@ export interface Config {
    */
   workspacelessFolder?: 'first' | 'scratch';
   /**
+   * Whose work a session a root connection starts is, under a users directory.
+   *
+   * `host`, the default, is the host itself, `root:<hostName>`. `none` is VS
+   * Code's: no owner, as its host records no principal for a session made
+   * without a validated identity.
+   */
+  rootOwner?: 'host' | 'none';
+  /**
    * Whether a turn's sender is said on what clients read.
    *
    * `said`, the default, puts who sent each turn on its start and its message.

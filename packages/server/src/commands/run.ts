@@ -1365,6 +1365,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     closedChats: options.closedChats,
     unofferedModel: options.unofferedModel,
     workspacelessFolder: options.workspacelessFolder,
+    rootOwner: options.rootOwner,
     turnSenders: options.turnSenders,
     backendBackgroundWork: options.backendBackgroundWork,
     agentOrchestrationLimitsScope: options.agentOrchestrationLimitsScope,

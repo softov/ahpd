@@ -100,6 +100,8 @@ export interface Options {
   unofferedModel: 'fail' | 'keep';
   /** Where a session that names no folder works. */
   workspacelessFolder: 'first' | 'scratch';
+  /** Whose work a session a root connection starts is. */
+  rootOwner: 'host' | 'none';
   /** Whether a turn's sender is said on what clients read. */
   turnSenders: 'said' | 'kept';
   /** What a backend's own background work actions come to. */
@@ -669,6 +671,11 @@ export const serverFields = {
     type: 'string',
     enum: ['first', 'scratch'],
     description: 'Where a session that names no folder works: first, the first folder this daemon serves; scratch, a folder of its own under ~/.copilot/chats, removed with the session, as VS Code does.',
+  },
+  rootOwner: {
+    type: 'string',
+    enum: ['host', 'none'],
+    description: 'Whose work a session a root connection starts is, under a users directory: host, the host itself as root:<hostName>; none, no one, as VS Code does.',
   },
   turnSenders: {
     type: 'string',
@@ -1375,6 +1382,7 @@ const noCwd = input['noCwd'] === true;
     closedChats: given('closedChats') ?? 'hidden',
     unofferedModel: given('unofferedModel') ?? 'fail',
     workspacelessFolder: given('workspacelessFolder') ?? 'first',
+    rootOwner: given('rootOwner') ?? 'host',
     turnSenders: given('turnSenders') ?? 'said',
     backendBackgroundWork: given('backendBackgroundWork') ?? 'drop',
     agentOrchestrationLimitsScope: given('agentOrchestrationLimitsScope') ?? 'sessionTree',

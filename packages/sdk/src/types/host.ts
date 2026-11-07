@@ -797,6 +797,16 @@ export interface HostOptions {
    */
   workspacelessFolder?: 'first' | 'scratch';
   /**
+   * Whose work a session a root connection starts is, under a users directory.
+   *
+   * `host`, the default, is the host itself, `root:<hostName>`, the owner the
+   * usage rules charge it to. `none` is VS Code's: no owner, as VS Code's host
+   * records no principal for a session made without a validated identity.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10144-L10146
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L316-L317
+   */
+  rootOwner?: 'host' | 'none';
+  /**
    * Whether a turn's sender is said on what clients read.
    *
    * `said`, the default, puts who sent each turn under `_meta['ahpd.sender']`
