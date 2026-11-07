@@ -1,5 +1,5 @@
 import { deleteSession, getSessionInfo, listSessions } from '@anthropic-ai/claude-agent-sdk';
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
@@ -94,96 +94,23 @@ const projectOf = (folder: string): string => {
   return projectFolderName(real);
 };
 
-/** What every entry of a conversation carries, and the CLI's other lines in a transcript do not. */
-const ENTRY = Buffer.from('"parentUuid":');
-/** How much of each end of a transcript is read first. */
-const END = 65536;
-/** How much of the rest is read at a time, and how much of it at most. */
-const STEP = 1048576;
-const MOST = 16777216;
-
-/**
- * Whether `file` is a transcript that holds a conversation: at least one entry
- * of it, which is what the CLI's resume needs. It ends at startup with
- * `No conversation found` for a transcript of its other lines alone, the last
- * prompt, the cost and the like, which is what a CLI leaves when it is closed
- * after a prompt reached it and before it wrote the prompt's entry.
- *
- * The SDK's own test, read as it reads it: the first and the last 64 KiB, then
- * the rest 1 MiB at a time with each read's last bytes carried into the next,
- * up to 16 MiB, past which a transcript is taken to hold one. Synchronous,
- * because a session is built synchronously and its CLI starts as it is.
- * npm://@anthropic-ai/claude-agent-sdk@0.3.301 (sdk.mjs, the check its session
- * listing makes of a conversation a session continued in)
- */
-const conversation = (file: string): boolean => {
-  let fd: number;
-  try { fd = openSync(file, 'r'); }
-  catch { return false; }
-  try {
-    const size = fstatSync(fd).size;
-    const head = Buffer.alloc(Math.min(END, size));
-    readSync(fd, head, 0, head.length, 0);
-    if (head.includes(ENTRY)) return true;
-    if (size <= END) return false;
-    const tail = Buffer.alloc(END);
-    readSync(fd, tail, 0, END, size - END);
-    if (tail.includes(ENTRY)) return true;
-    const chunk = Buffer.alloc(STEP + ENTRY.length);
-    let kept = 0;
-    for (let at = 0; at < MOST;) {
-      const read = readSync(fd, chunk, kept, STEP, at);
-      if (read === 0) return false;
-      const end = kept + read;
-      if (chunk.subarray(0, end).includes(ENTRY)) return true;
-      kept = Math.min(ENTRY.length, end);
-      chunk.copyWithin(0, end - kept, end);
-      at += read;
-    }
-    return true;
-  }
-  catch { return false; }
-  finally { closeSync(fd); }
-};
-
-/**
- * Whether the CLI wrote a conversation under `id`, which is the only kind of id
- * its resume takes: it ends at startup with `No conversation found` for any
- * other.
- *
- * The project of `folder` is read first, because the CLI writes a session of
- * that folder there. Every other project follows, because the CLI's resume finds
- * a conversation under any of them, as the reference asks the SDK with no
- * folder at all. The files are read rather than the SDK asked, because a session
- * is built synchronously and its CLI starts as it is.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1728-L1744
- */
-export function written(id: string, folder: string): boolean {
-  if (!fileNamed(id)) return false;
-  if (conversation(transcriptIn(projectOf(folder), id))) return true;
-  let projects: string[];
-  try { projects = readdirSync(projectsDir()); }
-  catch { return false; }
-  return projects.some((project) => conversation(transcriptIn(project, id)));
-}
-
 /**
  * Make way for a new conversation under `id` in `folder`.
  *
  * The CLI starts a conversation under a name only on a clean transcript: it
  * ends at startup with `Session ID <id> is already in use` when the project of
  * its folder holds a transcript for that id, whatever the transcript holds. So
- * a transcript there that holds no conversation is deleted first, through the
- * SDK's `deleteSession`, as VS Code's Claude deletes a transcript through the
- * SDK before it starts a conversation over under the same id; the caller has
- * waited for the CLI that could write it to exit, as VS Code shuts the live
- * query down first. One that holds a conversation is never deleted.
+ * a transcript there in which the SDK's `getSessionInfo` finds no session is
+ * deleted first, through the SDK's `deleteSession`, as VS Code's Claude deletes
+ * a transcript through the SDK before it starts a conversation over under the
+ * same id; the caller has waited for the CLI that could write it to exit, as VS
+ * Code shuts the live query down first. One the SDK holds a session in is kept.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
  */
 export async function clearFor(id: string, folder: string): Promise<void> {
   if (!fileNamed(id)) return;
-  const file = transcriptIn(projectOf(folder), id);
-  if (!existsSync(file) || conversation(file)) return;
+  if (!existsSync(transcriptIn(projectOf(folder), id))) return;
+  if (await getSessionInfo(id, { dir: folder }).catch(() => undefined) !== undefined) return;
   await deleteSession(id, { dir: folder });
 }
 

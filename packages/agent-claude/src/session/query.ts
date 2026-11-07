@@ -278,7 +278,7 @@ export function createQuery(ctx: SessionContext): Query {
    * once the CLI says what it is.
    *
    * The CLI takes the name only on a clean transcript, so `startQuery` clears
-   * a transcript of it that holds no conversation before the CLI starts.
+   * a transcript of it that the SDK holds no session in before the CLI starts.
    */
   const namedUnder = (id: string): { sessionId: string } | Record<string, never> => (UUID.test(id) ? { sessionId: id } : {});
 
@@ -671,12 +671,12 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.gone = undefined;
     /*
      * Whether the conversation asked for is written, asked of the SDK as the
-     * first CLI starts where the record's `writtenBy` says so, as VS Code's
-     * Claude asks `getSessionInfo` before it materializes one; nothing written
-     * starts a conversation under that id.
+     * first CLI starts, as VS Code's Claude asks `getSessionInfo` as it
+     * materializes a session; nothing written starts a conversation under
+     * that id.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1720-L1736
      */
-    if (first && ctx.options.resume !== undefined && ctx.options.spawn === undefined && ctx.values['writtenBy'] === 'getSessionInfo') {
+    if (first && ctx.options.resume !== undefined && ctx.options.spawn === undefined) {
       ctx.unwritten = (await getSessionInfo(ctx.options.resume)) === undefined;
       // Nothing is written under any name until the CLI says its own.
       if (ctx.unwritten) ctx.sdkSessionId = undefined;
@@ -686,14 +686,18 @@ export function createQuery(ctx: SessionContext): Query {
      * A CLI named under an id starts on a clean transcript, cleared once the
      * CLIs that could write it have exited: this session's last, which the
      * caller has closed, and a closed session's of the same conversation, as
-     * VS Code's Claude shuts the live query down before it deletes. A session
-     * in a machine keeps its files there, out of this host's reach.
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
+     * VS Code's Claude shuts the live query down before it deletes. A start
+     * the session's close or a later start overtook while it waited clears
+     * nothing, so only the start that runs the conversation clears it, as VS
+     * Code runs a start-over in its session's sequence. A session in a machine
+     * keeps its files there, out of this host's reach.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1133-L1160
      */
     const { sessionId } = options as { sessionId?: string };
     if (sessionId !== undefined && ctx.options.spawn === undefined) {
       await (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> } | undefined)?.[Symbol.asyncDispose]?.().catch(() => {});
       await ctx.options.exits?.get(sessionId);
+      if (ctx.disposed || mine !== bound) throw new Error('The CLI was stopped while it started');
       await clearFor(sessionId, ctx.options.cwd);
     }
     const warm = await startup({ options, initializeTimeoutMs: ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS });

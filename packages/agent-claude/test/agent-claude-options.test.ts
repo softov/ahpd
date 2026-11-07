@@ -188,6 +188,8 @@ it('gives each record the same state need at its own directory', async () => {
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
+  // The SDK's read of one session: a conversation a case resumes by name is one it holds.
+  getSessionInfo: async (id: string) => ({ sessionId: id }),
   query: ({ options }: { options: Record<string, unknown> }) => {
     cli.options.push(options);
     return {

@@ -55,6 +55,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
     if (sdk.undeletable.has(id)) throw new Error(`EACCES: permission denied, unlink '${id}.jsonl'`);
     sdk.deleted.push(id);
   },
+  // The SDK's read of one session: a conversation a case resumes is one it holds.
+  getSessionInfo: async (id: string) => ({ sessionId: id }),
   query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
     const fake = { options, held: [] as Record<string, unknown>[], wake: undefined as (() => void) | undefined, closed: false };
     const index = sdk.queries.push(fake) - 1;

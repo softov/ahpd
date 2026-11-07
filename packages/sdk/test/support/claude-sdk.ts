@@ -6,7 +6,7 @@
  * its own, and imports nothing but node's, because a `vi.mock` factory loads
  * it while `@anthropic-ai/claude-agent-sdk` is still being mocked.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { warmed } from './warmed.js';
@@ -15,8 +15,7 @@ import { warmed } from './warmed.js';
  * Where the CLI keeps its conversations for the cases that load the fake.
  *
  * A folder of their own, as `CLAUDE_CONFIG_DIR` names one to the backend, so
- * what a case writes there is all the backend finds: it resumes only a
- * conversation the CLI wrote, and reads the project folders to know.
+ * what a case writes there is all the backend and the fake's own reads find.
  */
 const config = mkdtempSync(join(tmpdir(), 'ahpd-claude-config-'));
 process.env.CLAUDE_CONFIG_DIR = config;
@@ -26,8 +25,9 @@ process.env.CLAUDE_CONFIG_DIR = config;
  * it: a file in the project folder of `cwd`, spelled as the CLI spells it,
  * whose first entry is the prompt, as CLI 2.1.301 wrote one.
  *
- * A case that resumes a conversation says the CLI wrote it here, since the
- * backend starts any other under the id it was asked to resume.
+ * A case that resumes a conversation says the CLI wrote it here, or lists it,
+ * since the backend resumes what the SDK holds and starts any other under the
+ * id it was asked to resume.
  */
 export function wrote(id: string, cwd: string): void {
   let real = cwd;
@@ -42,6 +42,14 @@ export function wrote(id: string, cwd: string): void {
     turnPosition: { promptIndex: 0, turnIndex: 1 }, userType: 'external', entrypoint: 'sdk-cli',
     cwd: real, sessionId: id, version: '2.1.301', gitBranch: 'master',
   })}\n`);
+}
+
+/** The files of the conversation `id` in every project folder, as `wrote` made them. */
+function filesOf(id: string): string[] {
+  const projects = join(config, 'projects');
+  return existsSync(projects)
+    ? readdirSync(projects).map((project) => join(projects, project, `${id}.jsonl`)).filter((file) => existsSync(file))
+    : [];
 }
 
 export interface Fake {
@@ -218,12 +226,22 @@ export const fake = warmed({
     await new Promise((r) => { setTimeout(r, 0); });
     return sdk.sessions;
   },
+  /*
+   * The SDK's read of one session. The fake holds a conversation in two
+   * places, its listing and the files `wrote` made, as `deleteSession` holds
+   * one: a listed session is answered with its row, the row a listing would
+   * have offered, and a written one with the row the SDK reads off its file,
+   * its first prompt and the folder it ran in.
+   */
   getSessionInfo: async (id: string) => {
     sdk.asked += 1;
     await new Promise((r) => { setTimeout(r, 0); });
-    // The same store `listSessions` reads, so a row found by id is the row a
-    // listing would have offered - which is what the CLI's own answer is.
-    return sdk.sessions.find((one) => one['sessionId'] === id);
+    const listed = sdk.sessions.find((one) => one['sessionId'] === id);
+    if (listed !== undefined) return listed;
+    const file = filesOf(id)[0];
+    if (file === undefined) return undefined;
+    const first = JSON.parse(readFileSync(file, 'utf8').split('\n')[0] ?? '{}') as { cwd?: string; message?: { content?: string } };
+    return { sessionId: id, summary: first.message?.content ?? '', lastModified: statSync(file).mtimeMs, cwd: first.cwd };
   },
   /*
    * The SDK's delete, as its declaration says it works: the conversation's
@@ -234,10 +252,7 @@ export const fake = warmed({
   deleteSession: async (id: string) => {
     sdk.deleted.push(id);
     await new Promise((r) => { setTimeout(r, 0); });
-    const projects = join(config, 'projects');
-    const files = existsSync(projects)
-      ? readdirSync(projects).map((project) => join(projects, project, `${id}.jsonl`)).filter((file) => existsSync(file))
-      : [];
+    const files = filesOf(id);
     const listed = sdk.sessions.findIndex((one) => one['sessionId'] === id);
     if (files.length === 0 && listed < 0) throw new Error(`Session ${id} not found`);
     for (const file of files) rmSync(file);

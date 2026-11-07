@@ -6,7 +6,7 @@ import { configDirOf } from './session/disk.js';
 import type { ParseYaml } from './session/disk.js';
 import { createClaudeCustomizationWatcher } from './session/watch.js';
 import { turnsOf, subagentsBySdk, subagentsOf } from './transcript.js';
-import { catalogue, findSession, forgetSession, transcriptOf, written } from './catalog.js';
+import { catalogue, findSession, forgetSession, transcriptOf } from './catalog.js';
 import { BEFORE_TOKEN, loginsOf } from './logins.js';
 import type { AgentLogins } from './logins.js';
 import { ownEnvOf } from './options.js';
@@ -681,37 +681,16 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        */
       const inside = insideOf(start);
       const cwd = workingDirectory(start.workingDirectory);
-      /*
-       * The conversation the host asked to resume, where the CLI wrote one.
-       *
-       * Anything else is an id with no conversation behind it, a chat nobody
-       * spoke to, one whose CLI could not sign in, or one whose CLI was closed
-       * after its prompt arrived and before it wrote the prompt's entry, and
-       * the CLI ends at startup rather than resume it. So the id names a new
-       * conversation instead, on a clean transcript (`namedUnder`): the
-       * reference resumes only what the SDK holds and starts the rest under
-       * their own ids. A session in a machine keeps its files there, so what it
-       * asks for is resumed as it is. A record whose `writtenBy` is
-       * `getSessionInfo` leaves the question to the first CLI's start, which
-       * asks the SDK as VS Code's Claude does before it materializes.
-       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1728-L1744
-       */
-      const asked = (options.presetOf?.() ?? options.preset ?? {})['writtenBy'] === 'getSessionInfo';
-      const resumed = start.resume !== undefined && (inside !== undefined || asked || written(start.resume, cwd))
-        ? start.resume
-        : undefined;
-      // The new conversation's name: the chat's own, or else the id it was asked to resume.
-      const chatId = start.chatId ?? (resumed === undefined ? start.resume : undefined);
       // The fork anchors of the turns read back, for a session that carries the
       // same conversation on. A fork is a conversation of its own, whose
       // entries its CLI writes.
-      const readBack = resumed === undefined || start.forkAt !== undefined ? undefined : readForkAnchorUuids.get(resumed);
+      const readBack = start.resume === undefined || start.forkAt !== undefined ? undefined : readForkAnchorUuids.get(start.resume);
       return createSession({
       ...(inside === undefined ? {} : { spawn: inside, spawnExecutable: executable, spawnConfigDir: configDir }),
       exits,
       uri: start.uri,
       chatUri: start.chatUri,
-      ...(chatId === undefined ? {} : { chatId }),
+      ...(start.chatId === undefined ? {} : { chatId: start.chatId }),
       cwd,
       /*
        * The MCP servers, declared by this host rather than found by the CLI.
@@ -783,10 +762,20 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       ...(options.parseYaml === undefined ? {} : { parseYaml: options.parseYaml }),
       ...(start.seedCustomizations ? { seedCustomizations: start.seedCustomizations } : {}),
       ...(start.seedModels ? { seedModels: start.seedModels } : {}),
-      // A fork point and a rewind point each name an entry of a written
-      // conversation, so they go with a resume and with nothing else.
-      ...(resumed === undefined ? {} : {
-        resume: resumed,
+      /*
+       * The conversation the host asked to resume, with the fork point and the
+       * rewind point that each name an entry of it.
+       *
+       * Whether the SDK holds one under the id is the first CLI's start to ask,
+       * as VS Code's Claude asks `getSessionInfo` as it materializes a session
+       * at its first send: what the SDK holds is resumed, and any other id
+       * names a new conversation, on a clean transcript (`namedUnder`). A
+       * session in a machine keeps its files there, so what it asks for is
+       * resumed as it is.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1720-L1736
+       */
+      ...(start.resume === undefined ? {} : {
+        resume: start.resume,
         ...(start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
         ...(start.rewindAt !== undefined ? { rewindAt: start.rewindAt } : {}),
       }),

@@ -4,17 +4,18 @@ import { join } from 'node:path';
 import { afterAll, expect, it, vi } from 'vitest';
 
 /*
- * Which conversation a session picks up, by what the CLI wrote.
+ * Which conversation a session picks up, by what the SDK holds.
  *
  * The host resumes every chat it recorded by the id its conversation is under,
  * and the CLI writes a conversation only when its first message reaches it. A
  * chat nobody spoke to, or one whose CLI could not sign in, has an id with
- * nothing behind it, and one whose CLI was closed before it wrote its prompt
- * has a transcript with no entry of a conversation in it. The CLI ends at
- * startup rather than resume either, and refuses a new conversation under an
- * id it holds a transcript for. So a session resumes a conversation the CLI
- * wrote, wherever it wrote it, and starts any other under the id it was asked
- * to resume, on a clean transcript.
+ * nothing behind it, and the CLI ends at startup rather than resume it, and
+ * refuses a new conversation under an id it holds a transcript for. So a
+ * session asks the SDK's `getSessionInfo` as its first CLI starts, as VS Code's
+ * Claude asks as it materializes a session: it resumes what the SDK holds,
+ * wherever it was written, and starts any other under the id it was asked to
+ * resume, on a clean transcript.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1720-L1736
  */
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
@@ -102,14 +103,15 @@ const written = (id: string, folder: string): string => {
 };
 
 /**
- * The transcript a CLI 2.1.301 left of a conversation when it was closed after
- * the prompt arrived and before it wrote the prompt's entry: the last prompt,
- * the latch and the cost, and no entry of the conversation.
+ * A transcript the SDK's `getSessionInfo` finds no session in: lines CLI
+ * 2.1.301 writes beside a conversation, the latch and the cost, none of them a
+ * title, a prompt or a summary, which are what the SDK makes a session's row
+ * from.
+ * npm://@anthropic-ai/claude-agent-sdk@0.3.301 (sdk.mjs, the row `getSessionInfo` reads from a transcript's head and tail)
  */
-const leftBehind = (id: string, folder: string): string => {
+const unheld = (id: string, folder: string): string => {
   const file = transcript(id, folder);
   writeFileSync(file, [
-    { type: 'last-prompt', lastPrompt: 'Reply with the single word: ok', leafUuid: '0cfcd2c8-ef04-44fd-8314-1f1f03446f2d', sessionId: id },
     { type: 'atis-latch', atis: '', sessionId: id },
     {
       type: 'cost-state', sessionId: id, totalCostUSD: 0, totalAPIDuration: 0, totalAPIDurationWithoutRetries: 0,
@@ -125,9 +127,9 @@ const settle = async (times = 8): Promise<void> => {
 };
 
 /** The `query()` options the first send of a session in `FOLDER` that `create` built from these start fields started its CLI with. */
-const started = async (start: Record<string, unknown>, preset?: Record<string, unknown>): Promise<Record<string, unknown>> => {
+const started = async (start: Record<string, unknown>): Promise<Record<string, unknown>> => {
   sdk.options = [];
-  claude({ paths: [FOLDER], ...(preset === undefined ? {} : { preset }) }).create({
+  claude({ paths: [FOLDER] }).create({
     uri: 'ahp-session:/resume',
     chatUri: 'ahp-chat:/resume',
     workingDirectory: FOLDER,
@@ -155,20 +157,24 @@ const LONG = '0a0a0a0a-1111-4111-8111-000000000008';
 const EXITING = '0a0a0a0a-1111-4111-8111-000000000009';
 const VIA_SDK = '0a0a0a0a-1111-4111-8111-00000000000a';
 const HELD = '0a0a0a0a-1111-4111-8111-00000000000b';
+const OVERTAKEN = '0a0a0a0a-1111-4111-8111-00000000000c';
 
-it('starts a conversation the CLI never wrote under the id it was asked to resume', async () => {
+it('starts a conversation the SDK does not hold under the id it was asked to resume', async () => {
+  sdk.held = [];
   const options = await started({ resume: NEVER });
   expect(options).not.toHaveProperty('resume');
   expect(options).toMatchObject({ sessionId: NEVER });
 });
 
-it('keeps a chat\'s own id for a conversation the CLI never wrote', async () => {
+it('keeps a chat\'s own id for a conversation the SDK does not hold', async () => {
+  sdk.held = [];
   const options = await started({ chatId: PEER, resume: PEER });
   expect(options).not.toHaveProperty('resume');
   expect(options).toMatchObject({ sessionId: PEER });
 });
 
 it('carries no fork point beside a conversation it starts, and starts it under the chat\'s own id', async () => {
+  sdk.held = [];
   const options = await started({ chatId: FORKED, resume: NEVER, forkAt: 'entry', rewindAt: 'entry' });
   expect(options).not.toHaveProperty('resume');
   expect(options).not.toHaveProperty('forkSession');
@@ -176,27 +182,30 @@ it('carries no fork point beside a conversation it starts, and starts it under t
   expect(options).toMatchObject({ sessionId: FORKED });
 });
 
-it('resumes a conversation the CLI wrote under the folder\'s own project', async () => {
+it('resumes a conversation the SDK holds, written under the folder\'s own project', async () => {
   written(HERE, FOLDER);
+  sdk.held = [HERE];
   const options = await started({ resume: HERE });
   expect(options).toMatchObject({ resume: HERE });
   expect(options).not.toHaveProperty('sessionId');
 });
 
-it('resumes a conversation the CLI wrote under another folder\'s project, which its resume finds', async () => {
+it('resumes a conversation the SDK holds, written under another folder\'s project, which its resume finds', async () => {
   written(THERE, OTHER);
+  sdk.held = [THERE];
   const options = await started({ resume: THERE, forkAt: 'entry' });
   expect(options).toMatchObject({ resume: THERE, forkSession: true, resumeSessionAt: 'entry' });
 });
 
 /*
- * A transcript that holds no conversation goes through the SDK's own delete,
+ * A transcript the SDK holds no session in goes through the SDK's own delete,
  * as VS Code's Claude deletes one before it starts a conversation over.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
  */
-it('starts a conversation whose transcript holds no entry of one under its id, on a transcript the SDK cleared', async () => {
-  const file = leftBehind(LEFT, FOLDER);
+it('starts a conversation whose transcript the SDK holds no session in under its id, on a transcript the SDK cleared', async () => {
+  const file = unheld(LEFT, FOLDER);
   sdk.deleted = [];
+  sdk.held = [];
   const options = await started({ resume: LEFT });
   expect(options).not.toHaveProperty('resume');
   expect(options).toMatchObject({ sessionId: LEFT });
@@ -204,9 +213,10 @@ it('starts a conversation whose transcript holds no entry of one under its id, o
   expect(existsSync(file)).toBe(false);
 });
 
-it('has the SDK clear a transcript with no entry of a conversation under the id a session starts its own under', async () => {
-  const file = leftBehind(OWN, FOLDER);
+it('has the SDK clear a transcript it holds no session in under the id a session starts its own under', async () => {
+  const file = unheld(OWN, FOLDER);
   sdk.deleted = [];
+  sdk.held = [];
   const options = await started({ uri: `ahp-session:/${OWN}` });
   expect(options).toMatchObject({ sessionId: OWN });
   expect(sdk.deleted).toEqual([[OWN, FOLDER]]);
@@ -214,24 +224,22 @@ it('has the SDK clear a transcript with no entry of a conversation under the id 
 });
 
 /*
- * A record whose `writtenBy` is `getSessionInfo` asks the SDK whether the
- * conversation is written as the first CLI starts, as VS Code's Claude asks
- * before it materializes one: what the SDK holds is resumed, a transcript the
- * listing reads as no conversation included, and the rest start under their
- * own ids.
+ * The SDK is asked whether the conversation is written as the first CLI
+ * starts, as VS Code's Claude asks before it materializes one: what the SDK
+ * holds is resumed, and the rest start under their own ids.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1720-L1736
  */
-it('asks the SDK whether a conversation is written where the record says getSessionInfo', async () => {
+it('asks the SDK whether a conversation is written as its first CLI starts', async () => {
   sdk.asked = [];
   sdk.held = [];
-  const fresh = await started({ resume: VIA_SDK }, { writtenBy: 'getSessionInfo' });
+  const fresh = await started({ resume: VIA_SDK });
   expect(sdk.asked).toEqual([VIA_SDK]);
   expect(fresh).not.toHaveProperty('resume');
   expect(fresh).toMatchObject({ sessionId: VIA_SDK });
 
-  leftBehind(HELD, FOLDER);
+  written(HELD, FOLDER);
   sdk.held = [HELD];
-  const resumed = await started({ resume: HELD }, { writtenBy: 'getSessionInfo' });
+  const resumed = await started({ resume: HELD });
   expect(resumed).toMatchObject({ resume: HELD });
   expect(resumed).not.toHaveProperty('sessionId');
 });
@@ -254,11 +262,12 @@ it('clears a transcript only once the CLI of a closed session of the same conver
   };
   let exit: () => void = () => {};
   sdk.exiting = new Promise<void>((done) => { exit = done; });
+  sdk.held = [];
   const first = agent.create(start);
   first.sendMessage('t1', 'hello');
   await settle();
   const closed = first.close();
-  const file = leftBehind(EXITING, FOLDER);
+  const file = unheld(EXITING, FOLDER);
   sdk.deleted = [];
   agent.create(start).sendMessage('t1', 'again');
   await settle();
@@ -272,20 +281,53 @@ it('clears a transcript only once the CLI of a closed session of the same conver
 });
 
 /*
+ * A start the session's close overtook while it waited for the CLI before it
+ * to exit clears nothing: the start that runs the conversation clears it.
+ */
+it('clears nothing for a start its session\'s close overtook', async () => {
+  let exit: () => void = () => {};
+  sdk.exiting = new Promise<void>((done) => { exit = done; });
+  sdk.held = [];
+  const session = claude({ paths: [FOLDER] }).create({
+    uri: `ahp-session:/${OVERTAKEN}`,
+    chatUri: `ahp-chat:/${OVERTAKEN}`,
+    workingDirectory: FOLDER,
+    settings: {},
+    clientToolTimeoutMs: 0,
+    schema: () => ({ type: 'object', properties: {} }),
+    emit: () => {},
+  });
+  // The CLI the first send starts ends at once, and the one started after it
+  // waits for it to exit.
+  session.sendMessage('t1', 'hello');
+  await settle();
+  const closed = session.close();
+  const file = unheld(OVERTAKEN, FOLDER);
+  sdk.deleted = [];
+  exit();
+  await closed;
+  await settle();
+  expect(sdk.deleted).toEqual([]);
+  expect(existsSync(file)).toBe(true);
+  sdk.exiting = Promise.resolve();
+});
+
+/*
  * A path whose project name is longer than 200 characters: the CLI cuts the
  * name there and adds the whole path's hash, and that folder is the one cleared.
  * https://code.claude.com/docs/en/sessions#where-transcripts-are-stored
  */
-it('clears a transcript with no entry of a conversation in the folder the CLI names for a long path', async () => {
+it('clears a transcript the SDK holds no session in, in the folder the CLI names for a long path', async () => {
   const top = '/tmp/ahpd-claude-long-name';
   const long = join(top, 'a'.repeat(120), 'b'.repeat(120));
   mkdirSync(long, { recursive: true });
+  sdk.held = [];
   try {
     // The CLI's name for that path, its hash as CLI 2.1.301 computes it.
     const project = join(home, 'config', 'projects', `${long.replace(/[^A-Za-z0-9]/g, '-').slice(0, 200)}-nkqd48`);
     mkdirSync(project, { recursive: true });
     const file = join(project, `${LONG}.jsonl`);
-    writeFileSync(file, `${JSON.stringify({ type: 'last-prompt', lastPrompt: 'ok', sessionId: LONG })}\n`);
+    writeFileSync(file, `${JSON.stringify({ type: 'atis-latch', atis: '', sessionId: LONG })}\n`);
     const options = await started({ uri: `ahp-session:/${LONG}`, workingDirectory: long });
     expect(options).toMatchObject({ sessionId: LONG });
     expect(existsSync(file)).toBe(false);
@@ -293,9 +335,12 @@ it('clears a transcript with no entry of a conversation in the folder the CLI na
   finally { rmSync(top, { recursive: true, force: true }); }
 });
 
-it('keeps a conversation the CLI wrote under the id a session starts a new one under', async () => {
+it('keeps a conversation the SDK holds, asked of it, under the id a session starts a new one under', async () => {
   const file = written(KEPT, FOLDER);
+  sdk.asked = [];
+  sdk.held = [KEPT];
   const options = await started({ chatId: KEPT });
   expect(options).toMatchObject({ sessionId: KEPT });
+  expect(sdk.asked).toContain(KEPT);
   expect(existsSync(file)).toBe(true);
 });

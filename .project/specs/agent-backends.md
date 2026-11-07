@@ -92,21 +92,21 @@ The reason: the CLI writes a prompt under the `uuid` it carries and sends no fra
 A read after a restart names the turn by that uuid.
 See [`code://packages/agent-claude/src/session/turns.ts`](../../packages/agent-claude/src/session/turns.ts).
 
-### A Claude conversation the CLI never wrote
+### A Claude conversation the SDK does not hold
 
 WHEN the host starts a Claude session with `resume`
-AND no project folder holds a transcript of that id with an entry of a conversation in it
+AND the SDK's `getSessionInfo`, asked as the session's first CLI starts, holds no session under that id
 THEN the backend sends no `resume`, no fork point and no rewind point
 AND it starts a new conversation under the chat's own id, or under that id when the chat has none.
-WHEN a project folder holds the transcript with an entry in it, the folder's own or another one
+WHEN the SDK holds the session, in the folder's own project or another one
 THEN the backend resumes it.
 WHEN the backend starts a new conversation under an id
-AND the project folder of the session's folder holds a transcript of that id with no entry of a conversation in it
+AND the project folder of the session's folder holds a transcript of that id in which the SDK's `getSessionInfo` finds no session
 THEN the backend waits until the CLI that could write that transcript has exited
 AND it deletes the transcript through the SDK's `deleteSession` before the new CLI starts.
 The reason: the CLI writes a conversation when its first message reaches it.
-A CLI closed after its prompt arrived and before it wrote the prompt's entry leaves a transcript of its other lines alone.
-The CLI ends at startup when it is told to resume an id with no entry.
+VS Code's Claude agent asks `getSessionInfo` as it starts a chat's CLI at its first send, and resumes what the SDK holds.
+The CLI ends at startup when it is told to resume an id it holds no conversation under.
 It also ends at startup when it is told to start a conversation under an id that its folder's project holds a transcript for.
 See [`code://packages/agent-claude/src/catalog.ts`](../../packages/agent-claude/src/catalog.ts).
 
