@@ -148,18 +148,6 @@ export interface ChatMessage {
  */
 export interface TurnHandle {
   /**
-   * Begin a turn nobody in this chat said, and answer with the turn's id.
-   *
-   * What a turn somebody began in a back session is shown as here: the person
-   * typed there, and this chat shows a turn of its own waiting on that work.
-   * Nobody is told about it the way `onMessage` is told - nothing here woke a
-   * session, and the work the turn waits on is already running.
-   *
-   * Nothing where a turn is open: a chat runs one turn at a time, and a back
-   * turn with no turn to be shown in is one this chat does not show.
-   */
-  begin(text: string, from?: MessageFrom): string | undefined;
-  /**
    * Complete the open turn, the protocol's `chat/turnComplete`: with this as its
    * answer where one is given, and with what `responsePart` gave it otherwise.
    */
@@ -872,14 +860,6 @@ export function botChatAgent(
      * to answer has ended, and a second ending would be a second turn.
      */
     const handle: TurnHandle = {
-      begin: (text, from) => {
-        if (open !== undefined || handed.length > 0) return undefined;
-        const turnId = crypto.randomUUID();
-        const held = beginTurn(turnId, text, from);
-        // A turn of the chat's own, which no client sent, so its start is said here.
-        start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt: held.startedAt, message: held.message });
-        return turnId;
-      },
       complete: (text) => {
         const held = open;
         if (held === undefined) return;
@@ -964,11 +944,7 @@ export function botChatAgent(
      *
      * The line goes down before the turn is handed on, so a log that could not
      * be written fails the send, and every turn the chat answers is one a
-     * restart reads back.
-     *
-     * Nobody is told who answers it: `beginMessage` is a turn somebody's
-     * message starts, and `begin` on the handle is a turn another session's
-     * work is the answer to.
+     * restart reads back. Who answers it is told by `beginMessage`.
      */
     const beginTurn = (
       turnId: string,

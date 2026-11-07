@@ -1368,53 +1368,27 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
 });
 
 /*
- * A turn somebody began in a back session is a turn of this chat's own.
+ * A turn somebody began in a back session stays in that session's own chat.
  *
- * Nothing here said it and nothing here woke a session: the work the turn waits
- * on is already running elsewhere, so the handle opens the turn and leaves it
- * for that work's answer. A chat runs one turn at a time, so a second begin
- * while one is open is nothing.
+ * Nothing in the main chat waits on it, so the main chat gets no turn of its
+ * own for it: it shows the back session only as the call a main turn waits on,
+ * as a turn VS Code's host starts is the turn of the chat it was started on
+ * (agentHostTurnService.ts L126-L171 at 6b68d3fe).
  */
-it('begins a turn nobody here said, and tells no listener', async () => {
-  const { host } = made();
-  const client = await anyone(host);
-  await talkTo(client);
-  const chat = turns(HELD);
-  const heard: ChatMessage[] = [];
-  chat.onMessage = (message) => { heard.push(message); };
-
-  const id = chat.begin('typed on the back session');
-
-  expect(typeof id).toBe('string');
-  const running = await stateOf(client);
-  expect(running['activeTurn']).toMatchObject({ id, message: { text: 'typed on the back session' } });
-  // The turn is open and left open: nothing wakes a session over it.
-  expect(running['status']).toBe(Status.InProgress);
-  expect(heard).toEqual([]);
-  // The turn already open is the one this chat runs.
-  expect(chat.begin('and again')).toBeUndefined();
-
-  chat.complete('done');
-  expect((await stateOf(client))['activeTurn']).toBeUndefined();
-  expect(heard).toEqual([]);
-});
-
-/*
- * A back turn that ended before its main turn opened.
- *
- * The plugin reads the bot's rows and the back chat before it opens the main
- * turn, and a back turn that fails or is stopped at once ends during those
- * reads. Its `turn_end` comes first, and the main turn still opens and ends
- * with the back turn's words, rather than wait for the next back turn.
- */
-it('ends a main turn at once when its back turn ended while it opened', async () => {
-  const { host, records, contribution } = made();
+it('leaves a turn somebody began in a back session in that session\'s own chat', async () => {
+  const { host, records } = made();
   const client = await anyone(host);
   await talkTo(client);
   const backSession = 'ahp-session:/back';
   const backChat = chatUriFor(backSession);
   await client.handle({ method: 'createSession', params: { channel: backSession, provider: 'base' } });
   await client.handle({ method: 'subscribe', params: { channel: backChat } });
+  // The rows that make this the back session of the bot's chat with this host.
+  await (await records.collection(sessionsOf('backer'))).put({
+    id: rowId(['backer', 'test', 'work']), bot: 'backer', user: 'test', name: 'work', session: backSession,
+  });
+  await (await records.collection(chatsOf('backer'))).put({ id: rowId(['backer', 'root:test']), chat: HELD });
+
   await client.handle({
     method: 'dispatchAction',
     params: { channel: backChat, action: { type: 'chat/turnStarted', turnId: 'b1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'typed on the back session' } } },
@@ -1422,36 +1396,16 @@ it('ends a main turn at once when its back turn ended while it opened', async ()
   const backState = async (): Promise<Bag> => (await client.handle({ method: 'subscribe', params: { channel: backChat } }) as {
     snapshot: { state: Bag };
   }).snapshot.state;
-  const backTurn = await vi.waitFor(async () => {
-    const turnsHeld = (await backState())['turns'] as Bag[];
-    expect(turnsHeld).toHaveLength(1);
-    return turnsHeld[0] as Bag;
-  });
-  // The rows that make this the back session of the bot's chat with this host.
-  await (await records.collection(sessionsOf('backer'))).put({
-    id: rowId(['backer', 'test', 'work']), bot: 'backer', user: 'test', name: 'work', session: backSession,
-  });
-  await (await records.collection(chatsOf('backer'))).put({ id: rowId(['backer', 'root:test']), chat: HELD });
+  await vi.waitFor(async () => { expect((await backState())['turns']).toHaveLength(1); });
 
-  // The end arrives while the start is still reading.
-  const listeners = contribution.events as unknown as Record<string, { handle: (event: Bag) => unknown }[]>;
-  void listeners['turn_start']?.[0]?.handle({ type: 'turn_start', session: backSession, chat: backChat, turn: 'b1' });
-  void listeners['turn_end']?.[0]?.handle({ type: 'turn_end', session: backSession, chat: backChat, turn: 'b1', status: 'complete' });
-
-  const ended = await vi.waitFor(async () => {
+  // Watched for as long as a turn of the main chat's own took to open for it.
+  let shown = false;
+  for (let tries = 0; tries < 50 && !shown; tries++) {
     const state = await stateOf(client);
-    expect(state['activeTurn']).toBeUndefined();
-    expect(state['turns']).toHaveLength(1);
-    return (state['turns'] as Bag[])[0] as Bag;
-  });
-  expect(ended['message']).toMatchObject({ text: 'typed on the back session' });
-  const said = (backTurn['responseParts'] as Bag[]).filter((part) => part['kind'] === 'markdown').map((part) => part['content']).join('');
-  expect(said).not.toBe('');
-  // The back session as the one call the turn waited on, and the words it ended with.
-  expect(ended['responseParts']).toMatchObject([
-    { kind: 'toolCall', toolCall: { toolName: 'subagent', status: 'completed', _meta: { subagentChatUri: backChat } } },
-    { kind: 'markdown', content: said },
-  ]);
+    shown = state['activeTurn'] !== undefined || ((state['turns'] as Bag[] | undefined) ?? []).length > 0;
+    if (!shown) await new Promise((rest) => { setTimeout(rest, 10); });
+  }
+  expect(shown).toBe(false);
 });
 
 it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {

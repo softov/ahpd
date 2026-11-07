@@ -4,9 +4,9 @@ import { expandHome, mayUseAgentFor, ownershipOf, reason, Status } from '@ahpd/s
 import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { botAsk } from './ask.js';
 import { botCatalogue, CATALOGUE_SCHEME } from './catalogue.js';
-import { botChatAgent, turns } from './chat.js';
+import { botChatAgent } from './chat.js';
 import { prepareAgentsTemplate } from './folder.js';
-import { backSessions, BOTS_DIR, chatsOf, LEGACY_CHATS, LEGACY_SESSIONS, rowId, sessionsOf, whose } from './names.js';
+import { backSessions, BOTS_DIR, chatsOf, LEGACY_CHATS, LEGACY_SESSIONS, sessionsOf } from './names.js';
 import { postMessage } from './post.js';
 import { botProvider } from './provider.js';
 import { isSlug } from './record.js';
@@ -16,8 +16,7 @@ import { botWake, isMainTurnAbsence } from './wake.js';
 import type { InstructionsIn, Yaml } from './agents.js';
 import type { BotRecord } from './record.js';
 import type { MainTurnAbsence } from './wake.js';
-import type { Bag, MessageFrom, Owner, Plugin, PluginPeer, RecordCollection, TurnEndEvent } from '@ahpd/sdk';
-import type { TurnHandle } from './chat.js';
+import type { Bag, Owner, Plugin, PluginPeer, RecordCollection, TurnEndEvent } from '@ahpd/sdk';
 import type { BotSessions } from './provider.js';
 
 /**
@@ -403,34 +402,6 @@ const textOf = (state: unknown, turn: string): string => {
   return parts.filter((part) => part.kind === 'markdown').map((part) => String(part.content ?? '')).join('');
 };
 
-/**
- * The message one turn began with, read off a chat's state.
- *
- * The turn is the chat's `activeTurn` while it runs and one of its `turns` once
- * it has ended, and a turn that began and ended between the event and this read
- * is in both. Nothing where the state holds neither.
- */
-const messageOfTurn = (state: unknown, turn: string): Bag | undefined => {
-  const held = state as { activeTurn?: unknown; turns?: unknown } | undefined;
-  const seen = [held?.activeTurn, ...(Array.isArray(held?.turns) ? held.turns as unknown[] : [])];
-  for (const one of seen) {
-    if (typeof one !== 'object' || one === null) continue;
-    const line = one as Bag;
-    if (line['id'] !== turn) continue;
-    const message = line['message'];
-    return typeof message === 'object' && message !== null ? message as Bag : undefined;
-  }
-  return undefined;
-};
-
-/** One back turn whose main turn is not open yet, and how it ended where it already has. */
-interface Opening {
-  ended?: TurnEndEvent;
-}
-
-/** The key of one back turn in `opening`: its session and its id. */
-const openingKey = (session: string, turn: string): string => `${session}\n${turn}`;
-
 export const apply: Plugin['apply'] = (host, options) => {
   const asked = options.root as string | undefined;
   const chosen = expandHome(asked === undefined || asked.trim() === '' ? defaults.root : asked);
@@ -729,87 +700,18 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   host.registerTool(postMessage(wake));
   /*
-   * The back turns `turn_start` is still reading, by `openingKey`, and the
-   * `turn_end` of each one that ended during the reads.
-   */
-  const opening = new Map<string, Opening>();
-  /*
-   * The start of a turn somebody began in a back session.
+   * A turn of a back session a main turn waits on: the message it took up,
+   * where it was one the wake sent, waits no more, and the main turn is
+   * answered by the turn the last of them becomes.
    *
-   * A person who types in the back session itself, or whatever else drives that
-   * chat, begins a turn no main chat is waiting on. The main chat shows it as a
-   * turn of its own, so the person watching there sees the work and its answer;
-   * the wake holds it from then on, as it holds a turn a message woke.
-   *
-   * A turn this wake woke opens nothing: `woken` holds the main turn it is
-   * answering already, and is told the turn began. The back session is found
-   * from its row, which names the bot and the person, and the main chat from
-   * that bot's row for the person - the one chat a person has with a bot. A
-   * chat this host is not running opens nothing, and so does one that has a
-   * turn open.
-   *
-   * The reads take time, and a back turn that fails or is stopped at once ends
-   * before the main turn opens. Its `turn_end` is kept in `opening`, and the
-   * main turn ends with it as soon as it opens.
+   * A turn no main turn waits on - one a person typed in the back session
+   * itself - stays in the back session's own chat, which the main turn that
+   * woke the session links as its subagent call, as a turn VS Code's host
+   * starts is the turn of the chat it was started on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnService.ts#L126-L171
    */
   host.on('turn_start', (event) => {
-    /*
-     * A turn of a back session a main turn waits on: the message it took up,
-     * where it was one the wake sent, waits no more, and the main turn is
-     * answered by the turn the last of them becomes.
-     */
-    if (wake.main(event.session) !== undefined) {
-      wake.taken(event.session, event.turn, event.queuedMessageId);
-      return;
-    }
-    const key = openingKey(event.session, event.turn);
-    const note: Opening = {};
-    opening.set(key, note);
-    void (async (): Promise<void> => {
-      try {
-        await store.ready();
-        for (const bot of store.all()) {
-          const row = await backs.of(bot.id, event.session);
-          if (row === undefined) continue;
-          const owner = whose(row.user, host.hostName);
-          const chatRow = await chats(bot.id).get(rowId([bot.id, owner]));
-          const main = chatRow?.['chat'];
-          if (typeof main !== 'string' || main === '') return;
-          let handle: TurnHandle;
-          try {
-            handle = turns(main);
-          }
-          catch {
-            return;
-          }
-          const { channels } = await connection();
-          const message = await channels.hold(event.chat, (state) => messageOfTurn(state, event.turn));
-          if (message === undefined) return;
-          const text = typeof message['text'] === 'string' ? message['text'] : '';
-          /*
-           * Whose message it is: a person began this turn, as every turn a person
-           * types in a chat is theirs. Nothing where the event names nobody - a
-           * turn the back session's own backend began - and the message keeps the
-           * origin a person's has.
-           */
-          const from: MessageFrom | undefined = event.sender === undefined ? undefined : { origin: { kind: 'user' } };
-          const turnId = handle.begin(text, from);
-          if (turnId === undefined) return;
-          /*
-           * Nothing waits from here to the `finally` that drops the note, so a
-           * `turn_end` that comes later finds the main turn held, as any does.
-           */
-          wake.began(event.session, main, handle, turnId, event.chat, event.turn);
-          if (note.ended !== undefined) ended(note.ended);
-          return;
-        }
-      }
-      finally {
-        if (opening.get(key) === note) opening.delete(key);
-      }
-    })().catch((error: unknown) => {
-      host.problem(`${name}: the turn ${event.turn} in ${event.session} was not shown: ${reason(error)}`);
-    });
+    if (wake.main(event.session) !== undefined) wake.taken(event.session, event.turn, event.queuedMessageId);
   });
   /*
    * The end of a turn: the words it ended with, read off the session's chat.
@@ -822,7 +724,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * with no text, so a person waiting on it is not left waiting on an error
    * they cannot see.
    */
-  function ended(event: TurnEndEvent): void {
+  host.on('turn_end', (event: TurnEndEvent) => {
     const held = wake.main(event.session);
     if (held === undefined) return;
     /*
@@ -847,15 +749,6 @@ export const apply: Plugin['apply'] = (host, options) => {
       if (!still()) return;
       wake.finished(event.session, '');
     });
-  }
-  /* A back turn `turn_start` is still reading keeps its end for that read. */
-  host.on('turn_end', (event) => {
-    const note = opening.get(openingKey(event.session, event.turn));
-    if (note !== undefined) {
-      note.ended = event;
-      return;
-    }
-    ended(event);
   });
   /*
    * A chat with a bot: a session of its own that runs no model, one JSON line

@@ -10,7 +10,6 @@ import type { ChatMessage, TurnHandle } from '../src/chat.js';
 import type { BotSessions } from '../src/provider.js';
 import type { BotRecord } from '../src/record.js';
 import type { Bag } from '../../sdk/src/types/common.js';
-import type { MessageFrom } from '../../sdk/src/types/session.js';
 import type { SessionRequest } from '../../sdk/src/types/plugin.js';
 import type { Owner } from '../../sdk/src/types/usage.js';
 
@@ -87,8 +86,6 @@ interface Recorded {
   endings: string[];
   /** What the turn failed with. */
   failures: string[];
-  /** Each turn `begin` opened, with the text and the sender it was given. */
-  begun: { text: string; from?: MessageFrom }[];
   /**
    * The steers said to be sent on and those taken out, by the main chat's ids,
    * and whether the turn they went into has ended, which hands a steer back.
@@ -102,24 +99,15 @@ const turn = (): Recorded => {
   const notices: string[] = [];
   const endings: string[] = [];
   const failures: string[] = [];
-  const begun: { text: string; from?: MessageFrom }[] = [];
   const steering = { sent: [] as string[], consumed: [] as string[], ended: false };
-  let open = false;
   const handle: TurnHandle = {
-    begin: (text, from) => {
-      if (open) return undefined;
-      open = true;
-      begun.push({ text, ...(from === undefined ? {} : { from }) });
-      return `t${begun.length}`;
-    },
     complete: (text) => {
-      open = false;
       if (text === undefined) endings.push('ended');
       else replies.push(text);
     },
     responsePart: (text) => { posts.push(text); },
-    notice: (text) => { open = false; notices.push(text); },
-    fail: (message) => { open = false; failures.push(message); },
+    notice: (text) => { notices.push(text); },
+    fail: (message) => { failures.push(message); },
     steeringSent: (id) => {
       if (steering.ended) return false;
       steering.sent.push(id);
@@ -127,7 +115,7 @@ const turn = (): Recorded => {
     },
     steeringConsumed: (id) => { steering.consumed.push(id); },
   };
-  return { handle, replies, posts, notices, endings, failures, begun, steering };
+  return { handle, replies, posts, notices, endings, failures, steering };
 };
 
 /**
@@ -577,62 +565,11 @@ it('sends no message a stop finds still on its way to a starting back session', 
   expect(said.replies).toEqual([]);
 });
 
-/*
- * A turn the person began in the back session itself has a main turn too.
- *
- * Nothing woke this one - the person typed in the back session, or whatever
- * else drives that chat began it - so the main turn was opened by the handle
- * before the wake was told, and what the wake adds is the wait: the session's
- * `post_message` posts into it, and its turn's end ends it.
- */
-it('holds a main turn open on a turn somebody began in a back session', async () => {
-  const one = await sitting(bot(), [{ name: 'work', session: 'ahp-session:/1', chat: 'ahp-chat:/1' }]);
-  // The rows were read once when the wake was built; let that read finish, so
-  // the bot of the session is known.
-  await new Promise((rest) => setTimeout(rest, 0));
-  const said = turn();
-  one.wake.began('ahp-session:/1', CHAT, said.handle, 't1', 'ahp-chat:/1', 'back-t1');
-
-  expect(one.wake.main('ahp-session:/1')).toMatchObject({
-    session: CHAT, turnId: 't1', handle: said.handle, bot: 'Backer',
-  });
-  expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
-  expect(said.posts).toEqual(['done']);
-  // The back turn's end ends the main turn it posted into.
-  one.wake.finished('ahp-session:/1', 'done');
-  expect(said.endings).toEqual(['ended']);
-  expect(said.replies).toEqual([]);
-
-  // The next back turn opens a main turn of its own, and the end of it is what
-  // answers that one.
-  const again = turn();
-  one.wake.began('ahp-session:/1', CHAT, again.handle, 't2', 'ahp-chat:/1', 'back-t2');
-  one.wake.finished('ahp-session:/1', 'the second answer');
-  expect(again.replies).toEqual(['the second answer']);
-  expect(one.wake.main('ahp-session:/1')).toBeUndefined();
-});
-
-it('leaves the main turn a message woke alone when a back turn begins', async () => {
+it('stops the back turn a main turn waits on, with the time it ran', async () => {
   const one = await sitting();
   const said = turn();
   await one.wake.woken(message('t1', 'hello'), said.handle);
-  const other = turn();
-
-  one.wake.began('ahp-session:/1', CHAT, other.handle, 't2', 'ahp-chat:/1', 'back-t1');
-
-  // The turn the person's message began is still the one the main chat waits
-  // on: a back turn that starts while it waits is the work it is already
-  // waiting for.
-  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1', handle: said.handle });
-  expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
-  expect(said.posts).toEqual(['done']);
-  expect(other.posts).toEqual([]);
-});
-
-it('stops a back turn the main chat shows, with the time it ran', async () => {
-  const one = await sitting(bot(), [{ name: 'work', session: 'ahp-session:/1', chat: 'ahp-chat:/1' }]);
-  const said = turn();
-  one.wake.began('ahp-session:/1', CHAT, said.handle, 't1', 'ahp-chat:/1', 'back-t1');
+  one.wake.taken('ahp-session:/1', 'back-t1', String(one.sent[0]?.action['id']));
   one.running.set('ahp-session:/1', 'back-t1');
   // A turn that ends where it began is one no time is measured for.
   await new Promise((rest) => setTimeout(rest, 5));
