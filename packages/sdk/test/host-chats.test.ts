@@ -188,6 +188,12 @@ describe('dropping the turns after one', () => {
       params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } },
     });
     await settle();
+    // The next send starts the CLI on the cut.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't3', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
+    });
+    await settle();
     expect(sessionQueries().at(-1)?.options.resumeSessionAt).toBe('reply-1');
   });
 
