@@ -744,8 +744,6 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // And whether the query may load the person's own settings, which is the
       // other half of the same switch: absent is yes.
       ...(start.userSettings === undefined ? {} : { userSettings: start.userSettings }),
-      // The owner's command rules, read where a Bash call would otherwise ask.
-      ...(start.getAutoApproval === undefined ? {} : { getAutoApproval: start.getAutoApproval }),
       // Each one checked the way the first is: a directory this host does not
       // serve is not one an agent may be pointed at, however it arrived.
       ...(start.additional && start.additional.length > 0

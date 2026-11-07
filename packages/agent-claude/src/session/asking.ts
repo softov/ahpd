@@ -56,31 +56,6 @@ const NO_TURN = 'No turn is running to ask in';
 /** What the model is told about a question nobody answered, in VS Code's words. */
 const QUESTION_CANCELLED = CLAUDE_QUESTION_CANCELLED_MESSAGE;
 
-/**
- * A call's tool as the operator's rule names it.
- *
- * The CLI names an MCP tool `mcp__<server>__<tool>`, which is the same name
- * `stream.ts` reads a call's server back from. The rule is VS Code's, built
- * from `<server>/<tool>`, so that is the name the host is asked about; a tool
- * the CLI runs itself keeps its own name, which is what the rule names for it.
- *
- * `canUseTool` is told which server served the call, the SDK's `mcpServer`,
- * and that is the name the rule uses: the prefix can spell a server
- * differently, and a server's own name can contain the `__` a split would stop
- * at. A call no server is named for keeps the split, the best reading of a
- * name alone.
- */
-const referenceName = (toolName: string, server?: string): string => {
-  if (server !== undefined) {
-    const prefix = `mcp__${server}__`;
-    if (toolName.startsWith(prefix)) return `${server}/${toolName.slice(prefix.length)}`;
-    const after = /^mcp__(?:.+?)__(.+)$/.exec(toolName);
-    if (after !== null) return `${server}/${after[1]}`;
-  }
-  const named = /^mcp__(.+?)__(.+)$/.exec(toolName);
-  return named === null ? toolName : `${named[1]}/${named[2]}`;
-};
-
 /** What a person's answer to a held question settles, in the SDK's terms. */
 type Held = { behavior: 'allow'; updatedInput: Bag } | { behavior: 'deny'; message: string };
 
@@ -407,18 +382,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      */
     const id = str(about.toolUseID) ?? `req-${Date.now()}`;
     /*
-     * The operator's rule, read for every call the CLI asks about, before
-     * anything else, as VS Code's host applies its rules to the confirmations
-     * a provider raises.
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1698
-     *
-     * A match means the call asks every time, so the lists, a host tool's own
-     * `confirm` and the terminal rules are all skipped: each is a way not to
-     * ask, and the rule is the operator saying to ask. Read without a
-     * connection, because the rule is the host's rather than a window's.
-     */
-    const matched = ctx.options.getAutoApproval?.('tool', referenceName(toolName, str(bag(about.mcpServer).name))) === 'ask';
-    /*
      * A host tool that says nobody is asked about it, as VS Code's Claude
      * allows a server tool its host needs no confirmation for, unless a person
      * denied it: the flag is the host's claim about the tool, and a deny is a
@@ -428,7 +391,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * session's lists among what its chain reads.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L138-L145
      */
-    if (!matched && ctx.hostToolOf(toolName)?.confirm === false && !ctx.allowed.deny.includes(toolName)) {
+    if (ctx.hostToolOf(toolName)?.confirm === false && !ctx.allowed.deny.includes(toolName)) {
       return { behavior: 'allow', updatedInput: input };
     }
     /*
@@ -444,44 +407,11 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
     const agentId = str(about.agentID);
     const server = str(bag(about.mcpServer).name);
-    const confirmation = confirmationOf(toolName, input, about);
-    /*
-     * A matched call, put to a person as one a managed rule asks about: the
-     * rule is that the call asks every time, Allow Once and Skip alone.
-     */
-    if (matched) {
-      return await askPerson({
-        toolName,
-        input,
-        toolUseID: id,
-        confirmation: { ...confirmation, managedApprovalRequired: true },
-        ...(server !== undefined ? { server } : {}),
-        ...(agentId !== undefined ? { agentId } : {}),
-        ...(signal !== undefined ? { signal } : {}),
-      });
-    }
-    /*
-     * A shell command the owner's rules allow.
-     *
-     * The host answers from the rules the window that started this session
-     * pushed, and an approval alone settles the call here: a command a rule
-     * denied and a line no rule could read are put to the host. Read after the
-     * abort, because a cancelled call is not one to approve, and skipped for a
-     * shell a person denied, whose question the host refuses. Nothing is
-     * announced: the row the assistant message carries is already
-     * `not-needed`, a call no client is asked about.
-     */
-    if (toolName === 'Bash' && !ctx.allowed.deny.includes(toolName)) {
-      const command = str(input.command);
-      if (command !== undefined && (await ctx.options.getAutoApproval?.('shell', command, 'bash', toolName)) === 'not-needed') {
-        return { behavior: 'allow', updatedInput: input };
-      }
-    }
     return await askPerson({
       toolName,
       input,
       toolUseID: id,
-      confirmation,
+      confirmation: confirmationOf(toolName, input, about),
       ...(server !== undefined ? { server } : {}),
       ...(agentId !== undefined ? { agentId } : {}),
       ...(signal !== undefined ? { signal } : {}),

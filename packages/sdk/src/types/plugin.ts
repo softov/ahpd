@@ -1414,9 +1414,9 @@ export interface PluginHost extends PluginContext {
   /**
    * Set `HostOptions.commandParser`, or take the daemon's over with `'replace'`.
    *
-   * The reader `getAutoApproval` uses to split a command line before the
-   * terminal rules match it. A host with no plugin and no configuration entry
-   * reads with the sdk's own splitter, so a plugin that registers one is
+   * The reader the host's approval chain uses to split a command line before
+   * the terminal rules match it. A host with no plugin and no configuration
+   * entry reads with the sdk's own splitter, so a plugin that registers one is
    * saying it reads a command line better. The value is one function, `(line,
    * shell) => CommandSplit | undefined`; `undefined` says the line could not
    * be read, and the call asks.

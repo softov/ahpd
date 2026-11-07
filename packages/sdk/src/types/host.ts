@@ -950,8 +950,8 @@ export interface HostOptions {
   /**
    * How a session's shell commands are read before their rules are matched.
    *
-   * The port the sdk's own splitter fills by default: `getAutoApproval` reads
-   * every line with it, and a plugin takes it over with
+   * The port the sdk's own splitter fills by default: the host's approval
+   * chain reads every command line with it, and a plugin takes it over with
    * `registerCommandParser`. A parser that throws, or answers something that is
    * not a `CommandSplit`, is read as a line that nobody could read, so the call
    * asks rather than being approved on a reading it did not give.

@@ -1,7 +1,6 @@
 /** An agent backend, and everything the host asks one for. */
 
-import type { ActionOrigin, ToolCallConfirmationReason, Turn } from '@microsoft/agent-host-protocol';
-import type { CommandShell } from '../access/commandautoapprover.js';
+import type { ActionOrigin, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
 import type { ContentRef, FileEdit } from './changes.js';
 import type { WireTurn } from './wire.js';
@@ -154,9 +153,6 @@ export interface SessionAt {
   workingDirectory?: string;
 }
 
-/** The kinds of tool call the host's approval check answers for. */
-export type AutoApprovalKind = 'shell' | 'tool';
-
 /**
  * What a backend's question about a call carries for the host's decision,
  * beside the `chat/toolCallReady` it emits, as VS Code's agents raise a
@@ -186,16 +182,6 @@ export const PENDING_CONFIRMATION_FIELDS = [
   'permissionKind', 'permissionPath', 'permissionUrl', 'shellCommand', 'shellLanguage', 'requestSandboxBypass', 'managedApprovalRequired',
 ] as const;
 
-/**
- * What the host's approval check says about one tool call.
- *
- * `not-needed` is host/100's: the host's terminal rules approved the call, so
- * it runs without asking. `ask` is this plan's: the operator's
- * `eligibleForAutoApproval` rule names the tool, so the call asks every time
- * and the question offers no "always" option. `undefined` says the check has
- * no answer, which leaves the backend to ask as it would have.
- */
-export type AutoApproval = ToolCallConfirmationReason | 'ask';
 
 /**
  * One content a backend hands the host to keep, which a part then names by
@@ -265,36 +251,6 @@ export interface Start {
    * for.
    */
   trusted?: (folder: string) => boolean;
-  /**
-   * Whether a tool call of this session runs without asking its person.
-   *
-   * The host answers it from its one value of each rule, which the last push
-   * from any window set, whoever sent the turn and for a start nobody sent, as
-   * `trusted` reads the host's trust.
-   *
-   * The operator's rule is read first, the daemon's `eligibleForAutoApproval`
-   * setting, which names tools whose calls ask every time and which a backend
-   * also finds on `managedSettings`. A matched call is `ask`, whatever
-   * permission mode or terminal rule would otherwise let it run, and the
-   * question it is answered with must offer no "always" option. A rule matches
-   * a tool named exactly, and every tool of a server through `<server>/*`.
-   *
-   * `shell` is a command line, and `shell` the shell that runs it. `tool` is
-   * the backend's name for the tool that runs the line, where the backend has
-   * one to give: it is matched against the operator's rule before the host's
-   * terminal rules, so a rule that names the shell wins over a terminal rule
-   * that approves the line.
-   *
-   * `tool` is a call that is not a command line, and `line` is its tool's name:
-   * matched against the same rule, `ask` when it names the tool and nothing
-   * otherwise.
-   *
-   * `not-needed` is the whole of an approval. A command line no rule could read
-   * is `undefined`, which leaves the backend to ask as it would have without
-   * this field. Absent is a host that says nothing, and a backend must read
-   * that as a call that asks.
-   */
-  getAutoApproval?: (kind: AutoApprovalKind, line: string, shell?: CommandShell, tool?: string) => AutoApproval | undefined;
   /**
    * The managed settings the operator set for every session on the host, as
    * VS Code hands its runtime `managedSettings: { permissions }`, for a

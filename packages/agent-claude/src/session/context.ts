@@ -148,15 +148,6 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   trusted?: (folder: string) => boolean;
   /**
-   * Whether this session's shell commands are approved by its owner's rules,
-   * carried from `Start`.
-   *
-   * The rules are the connection's that started the session: what a window
-   * allows is that window's. Absent is a host that says nothing, and a command
-   * line no rule could read is a call that asks.
-   */
-  getAutoApproval?: Start['getAutoApproval'];
-  /**
    * Whether this session loads the settings of the person who runs the daemon,
    * carried from `Start`. Absent is yes.
    *

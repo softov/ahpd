@@ -2,7 +2,6 @@ import type { RunCommand } from '@cofold/agents';
 import { bag } from '@ahpd/sdk';
 import type { Bag, Session } from '@ahpd/sdk';
 import type { SessionContext } from './context.js';
-import { ruleName } from './tools.js';
 
 /**
  * The answers a client sent, in the shape cofold's questions want.
@@ -47,20 +46,12 @@ const answersOf = (given: Bag): Record<string, string | string[]> => {
 export interface Pauses {
   /** Stop the running turn's run, settling what it waits on, as VS Code's agent aborts a turn. */
   abort: (reason: string) => void;
-  /**
-   * Answer an approval the owner's rules already allow, and say whether it did.
-   *
-   * Reads the call cofold paused on, and answers the run itself when the
-   * command line is one the rules approve. False leaves the question to be
-   * opened as it would have been.
-   */
-  autoApprove: (requestId: string, name: string, input: unknown) => Promise<boolean>;
 }
 
 export const createPauses = (
   ctx: SessionContext,
 ): Pauses & { methods: Pick<Session, 'confirm' | 'answer'> } => {
-  const { start, pending } = ctx;
+  const { pending } = ctx;
 
   /**
    * Send a decision back into the run that is waiting on it.
@@ -135,45 +126,8 @@ export const createPauses = (
     abortNow(reason);
   };
 
-  /**
-   * The shell cofold runs a command through.
-   *
-   * `shell_exec` runs one command through the platform's own shell, which is
-   * what cofold's `DEFAULT_SHELL` names: PowerShell on Windows and `sh`
-   * everywhere else, read as bash. The check's two shells are those two, so a
-   * line is matched against the rules of the shell that will run it.
-   */
-  const shellOf = (): 'bash' | 'powershell' => (process.platform === 'win32' ? 'powershell' : 'bash');
-
-  /**
-   * Answer an approval the owner's rules already allow, and say whether it did.
-   *
-   * cofold raises `approval.requested` when its policy would put a call to a
-   * person, so this runs only where the run itself asked. A tool the operator's
-   * rule names is never answered here, whatever a terminal rule says of its
-   * command: it asks every time. A command line no rule matched, one a rule
-   * denied, one the input does not name and a host that says nothing all answer
-   * false, and the question is opened as it would have been.
-   *
-   * The approval goes back for this one command, and the rules are read again
-   * on the next call. Nothing is said on the wire here. The run's own
-   * `tool.started` readies the row `not-needed`, as it does for a call nobody
-   * was asked about.
-   */
-  const autoApprove = async (requestId: string, name: string, input: unknown): Promise<boolean> => {
-    // Only a command line has a terminal rule that could answer it.
-    if (name !== 'shell_exec') return false;
-    if (start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask') return false;
-    const command = bag(input).command;
-    if (typeof command !== 'string') return false;
-    if ((await start.getAutoApproval?.('shell', command, shellOf())) !== 'not-needed') return false;
-    route({ type: 'approve', requestId });
-    return true;
-  };
-
   return {
     abort,
-    autoApprove,
     methods: {
       /**
        * Answer a tool call the run is waiting on, with the host's answer, a

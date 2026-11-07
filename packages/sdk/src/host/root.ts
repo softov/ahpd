@@ -397,7 +397,7 @@ export function createRoot(ctx: HostContext): Root {
    * Each key this host decides by is read where the decision is made:
    * `defaultShell` where a client's terminal opens, `workspaceTrust` below,
    * the three terminal and edit rules, `permissions` and
-   * `autoApprovePolicyRestricted` where `spawn.ts` answers `getAutoApproval`,
+   * `autoApprovePolicyRestricted` where `spawn.ts` decides a tool question,
    * `globalAutoApproveEnabled` where `trust.ts` asks before a tool call runs,
    * `agentOrchestrationLimits` where the session tools count, `canvasesEnabled`
    * where a canvas opens, `chatMoves.enabled` where a chat moves, the two

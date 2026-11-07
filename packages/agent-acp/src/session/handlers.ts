@@ -25,10 +25,9 @@ import type {
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { hostPathOf, str, withSkillArgumentHintMeta } from '@ahpd/sdk';
-import type { Bag, BackgroundTask, BoundTool, OpenTerminal, PendingConfirmation, PermissionKind, Session } from '@ahpd/sdk';
-import { HOST_TOOLS, callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
+import type { Bag, BackgroundTask, OpenTerminal, PendingConfirmation, PermissionKind, Session } from '@ahpd/sdk';
+import { callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
 import type { AcpTurn, PermissionAnswer } from '../types.js';
-import { TOOL_USE_ID } from './clientcalls.js';
 import { bag } from './common.js';
 import { machineIdOf } from './opening.js';
 import type { HeldTerminal, SessionContext } from './context.js';
@@ -37,14 +36,6 @@ import type { HeldTerminal, SessionContext } from './context.js';
 export interface Handlers {
   sessionUpdate(sessionId: string, update: SessionUpdate): void;
   requestPermission(request: RequestPermissionRequest): Promise<PermissionAnswer>;
-  /**
-   * Whether a tool the host serves may run, asked before the tools server runs
-   * it.
-   *
-   * The agent calls that server directly, so this is the one place a question
-   * about such a call can be put before the tool has already done its work.
-   */
-  askTool(tool: BoundTool, input: Record<string, unknown>, meta: Record<string, unknown> | undefined): Promise<boolean>;
   askElicitation(request: CreateElicitationRequest, signal?: AbortSignal): Promise<CreateElicitationResponse>;
   heardElicitationComplete(notification: CompleteElicitationNotification): void;
   answerElicitation(requestId: string, accepted: boolean, answers: Bag, response?: 'accept' | 'decline' | 'cancel'): boolean;
@@ -67,17 +58,6 @@ export interface Handlers {
   settlePermissions(): void;
   confirm: Session['confirm'];
 }
-
-/**
- * The name the operator's rule matches a tool call by.
- *
- * A tool of an MCP server is `mcp__<server>__<tool>` on the wire, and a rule
- * names it `<server>/<tool>`, as VS Code does. Everything else is its own name.
- */
-const referenceName = (toolName: string): string => {
-  const named = /^mcp__(.+?)__(.+)$/.exec(toolName);
-  return named === null ? toolName : `${named[1]}/${named[2]}`;
-};
 
 /**
  * What each kind of call an ACP server asks about does, in VS Code's
@@ -606,8 +586,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * call's ACP kind, the path a read or a write names first among its
    * locations, the URL a fetch's input names, and a command's line, read as
    * bash, this host's reading of the line codex-acp sends as
-   * `rawInput.command`. A tool the operator's rule names is a question a
-   * managed rule asks. It offers no options of its own, so the host puts
+   * `rawInput.command`. It offers no options of its own, so the host puts
    * VS Code's, save a mode switch's, whose options are the switch's own
    * buttons, as VS Code's Claude agent puts its plan's approve and deny.
    *
@@ -625,35 +604,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       request.options.find((one) => one.kind === kind)?.optionId;
     const allow = option('allow_once');
     const reject = option('reject_once');
-    /*
-     * The rule, which makes the tool's question one a person answers on every
-     * call. Read without an await, because the question has to be on the
-     * session before an update that arrives behind this request can ready the
-     * call itself.
-     */
     const called = request.toolCall.name ?? request.toolCall.title ?? request.toolCall.toolCallId;
-    const matched = start.getAutoApproval?.('tool', referenceName(called)) === 'ask';
-    /*
-     * A shell command the owner's rules already allow.
-     *
-     * An ACP server asks about a command as a call of kind `execute`, and
-     * codex-acp 1.13.1 sends the line as `rawInput.command` beside its folder.
-     * The host answers from the rules the window that started this session
-     * pushed, and only an approval reaches here: a rule that denied it and a
-     * line no rule could read both answer nothing, and the question is put as
-     * it always was. The server's `allow_once` is selected rather than an
-     * "always", which would change this session's policy from one command;
-     * a server offering no `allow_once` is not answered by the check at all.
-     *
-     * A call the rule names is not the shell check's: the rule wins over every
-     * terminal allow, so its question is put anyway.
-     */
-    if (!matched && request.toolCall.kind === 'execute') {
-      const command = str(bag(request.toolCall.rawInput).command);
-      if (command !== undefined && (await start.getAutoApproval?.('shell', command, 'bash')) === 'not-needed') {
-        if (allow !== undefined) return { optionId: allow };
-      }
-    }
     /*
      * A question with no turn running is one nobody can be shown: the chat has
      * no turn to hold the call. It is refused at once, as VS Code's host
@@ -677,7 +628,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
       ...((permissionKind === 'read' || permissionKind === 'write') && path !== undefined ? { permissionPath: path } : {}),
       ...(permissionKind === 'url' && url !== undefined ? { permissionUrl: url } : {}),
       ...(permissionKind === 'shell' && line !== undefined ? { shellCommand: line, shellLanguage: 'bash' as const } : {}),
-      ...(matched ? { managedApprovalRequired: true } : {}),
     };
 
     const answered = new Promise<PermissionAnswer>((resolve) => {
@@ -776,57 +726,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
     if (held !== undefined) held.entry = entry;
     emit('session', { type: 'session/inputNeededSet', request: entry });
     return answered;
-  };
-
-  /**
-   * Whether a tool the host serves may run, asked by the tools server first.
-   *
-   * The agent calls the host's tools over the MCP server this session handed
-   * it, so the call never passes through this bridge and the server has to be
-   * the one that asks. A tool the rule does not name answers at once, which is
-   * every call in a session with no rule.
-   *
-   * A tool it names is asked about on the call the agent reported for it, as
-   * VS Code's host asks on the agent's own call, which then runs and
-   * completes: the call the request names in its `_meta`, and otherwise the
-   * latest call of the running turn that names this tool as the host offers
-   * it, put as the question the rule makes it, and the MCP call held on the
-   * answer. A call a person has answered for already, on the agent's own
-   * question, runs on that answer. A call the agent never reported is one no
-   * client draws a question on, and is refused.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1770-L1790
-   */
-  const askTool = async (tool: BoundTool, input: Record<string, unknown>, meta: Record<string, unknown> | undefined): Promise<boolean> => {
-    const name = tool.definition.name;
-    if (start.getAutoApproval?.('tool', `${HOST_TOOLS}/${name}`) !== 'ask') return true;
-    const calls = [...(ctx.mapping?.calls.values() ?? [])];
-    const reported = calls.find((call) => call.toolCallId === meta?.[TOOL_USE_ID])
-      ?? calls.findLast((call) => (call.contributor === undefined
-        ? [call.toolName, call.displayName].some((one) => referenceName(one) === `${HOST_TOOLS}/${name}`)
-        : `${call.contributor}__${call.toolName}` === name));
-    if (reported === undefined || ctx.mapping === undefined) {
-      ctx.options.log?.(`${provider}: refusing ${HOST_TOOLS}/${name}: the agent reported no call for it to ask on`);
-      return false;
-    }
-    if (reported.asked) {
-      return bag(bag(callPartOf(ctx.mapping, reported.toolCallId)).toolCall).confirmed === 'user-action';
-    }
-    const answered = await requestPermission({
-      sessionId: ctx.acpSessionId ?? '',
-      toolCall: {
-        toolCallId: reported.toolCallId,
-        title: reported.displayName,
-        name: reported.toolName,
-        kind: 'other',
-        status: 'pending',
-        rawInput: input,
-      },
-      options: [
-        { optionId: 'approve', name: 'Approve', kind: 'allow_once' },
-        { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
-      ],
-    });
-    return answered !== 'cancelled' && answered.optionId === 'approve';
   };
 
   /** How many forms this session has asked for, for the ones with no name of their own. */
@@ -1096,7 +995,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
   return {
     sessionUpdate,
     requestPermission,
-    askTool,
     readTextFile,
     writeTextFile,
     createTerminal,

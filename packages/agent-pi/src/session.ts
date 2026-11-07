@@ -519,47 +519,11 @@ export function piSession(
     (typeof input.path === 'string' ? input.path : input.cwd);
 
   /**
-   * Whether the owner's rules already allow this shell call.
-   *
-   * The host answers from the rules the window that started this session
-   * pushed, and only an approval reaches here: a rule that denied the line, a
-   * line no rule could read and a host that says nothing all answer
-   * `undefined`, and the question is put as it always was. `bash` and
-   * `powershell` are pi's two shells and the check's two, and each carries its
-   * own rules; the command is the one the model wrote, which is the input pi
-   * is about to run. A call whose input names no command line is not one the
-   * check can read, so it asks.
+   * What to do about one call: run it, put it to the host as a question, or
+   * refuse it, by the siblings' six modes. A question is the host's to decide,
+   * its chain reading the owner's rules on it.
    */
-  const allowedByRule = async (toolName: string, input: Bag): Promise<boolean> => {
-    const shell = toolName === 'bash' ? 'bash' : toolName === 'powershell' ? 'powershell' : undefined;
-    const command = input.command;
-    if (shell === undefined || typeof command !== 'string') return false;
-    return (await start.getAutoApproval?.('shell', command, shell)) === 'not-needed';
-  };
-
-  /**
-   * What to do about one call: run it, ask a person, ask as a managed rule
-   * asks, or refuse it.
-   *
-   * The operator's rule is read first, by the tool's name, because it is the
-   * host's own setting: a matched call is `managed` in every mode,
-   * `bypassPermissions` included, and `dontAsk`, which never asks, refuses
-   * it. Otherwise the modes are the siblings' six. A shell command the
-   * owner's rules already allow is taken out of the ones a mode would ask
-   * about; the check narrows the questions and adds none, so a mode that
-   * refuses a call still refuses it and a mode that runs one still runs it
-   * without consulting the rules.
-   */
-  const decide = async (toolName: string, input: Bag): Promise<ToolCallEventResult | 'ask' | 'managed' | undefined> => {
-    // A tool the host offered is `host/<name>` to the rule, the name Claude and
-    // ACP give it on the host's MCP server, which VS Code names `host`; pi's
-    // own tools keep their own.
-    const ruled = offering.some((one) => one.definition.name === toolName) ? `host/${toolName}` : toolName;
-    if (start.getAutoApproval?.('tool', ruled) === 'ask') {
-      return modeOf(values.permissionMode) === 'dontAsk'
-        ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
-        : 'managed';
-    }
+  const decide = (toolName: string, input: Bag): ToolCallEventResult | 'ask' | undefined => {
     const effects = effectsOf(toolName);
     /** Whether the modes that ask before a change ask about this call. */
     const asks = (): boolean => {
@@ -573,35 +537,28 @@ export function piSession(
       return false;
     };
     const onEffects = (): ToolCallEventResult | 'ask' | undefined => (asks() ? 'ask' : undefined);
-    const byMode = (): ToolCallEventResult | 'ask' | undefined => {
-      switch (modeOf(values.permissionMode)) {
-        case 'bypassPermissions':
-          return undefined;
-        case 'plan':
-          return effects.writes === true || effects.destructive === true
-            ? { block: true, reason: `${toolName} would change something and the mode is plan` }
-            : onEffects();
-        case 'auto':
-          return effects.destructive === true ? 'ask' : undefined;
-        case 'acceptEdits':
-          // An edit is a write that does not destroy, and only one that names a
-          // path inside the working directory is let through.
-          return effects.writes === true && effects.destructive !== true && insideWorkspace(input.path)
-            ? undefined
-            : onEffects();
-        case 'dontAsk':
-          return asks()
-            ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
-            : undefined;
-        default:
-          return onEffects();
-      }
-    };
-    const decided = byMode();
-    // Only an ask is narrowed: a refusal is a mode's answer about the call,
-    // and a run is one nobody was going to be asked about.
-    if (decided !== 'ask') return decided;
-    return (await allowedByRule(toolName, input)) ? undefined : 'ask';
+    switch (modeOf(values.permissionMode)) {
+      case 'bypassPermissions':
+        return undefined;
+      case 'plan':
+        return effects.writes === true || effects.destructive === true
+          ? { block: true, reason: `${toolName} would change something and the mode is plan` }
+          : onEffects();
+      case 'auto':
+        return effects.destructive === true ? 'ask' : undefined;
+      case 'acceptEdits':
+        // An edit is a write that does not destroy, and only one that names a
+        // path inside the working directory is let through.
+        return effects.writes === true && effects.destructive !== true && insideWorkspace(input.path)
+          ? undefined
+          : onEffects();
+      case 'dontAsk':
+        return asks()
+          ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
+          : undefined;
+      default:
+        return onEffects();
+    }
   };
 
   /*
@@ -656,16 +613,15 @@ export function piSession(
       });
     };
 
-    const decided = await decide(event.toolName, input);
-    if (decided === 'ask' || decided === 'managed') {
+    const decided = decide(event.toolName, input);
+    if (decided === 'ask') {
       const title = `Run ${displayName}?`;
       /*
        * What the host decides the question by, said beside its ready, as VS
        * Code's agents raise a pending confirmation: the kind by pi's tool, the
        * path a read or a write names in the session's folder, and a command
        * in the shell its tool is named for, as VS Code's Copilot agent names
-       * the language of a shell tool it knows; and the operator's rule as the
-       * managed approval it asks for.
+       * the language of a shell tool it knows.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L7983-L7991
        */
@@ -677,7 +633,6 @@ export function piSession(
         ...(permissionKind === 'shell' && typeof input.command === 'string'
           ? { shellCommand: input.command, shellLanguage: event.toolName === 'powershell' ? 'powershell' as const : 'bash' as const }
           : {}),
-        ...(decided === 'managed' ? { managedApprovalRequired: true } : {}),
       };
       return await new Promise<ToolCallEventResult | undefined>((settle) => {
         ready({ confirmationTitle: title, ...confirmation });

@@ -13,7 +13,7 @@ import type { SessionContext } from './context.js';
  * nothing else, so this is the only thing in one that says which of two
  * identical concurrent calls it was made for.
  */
-export const TOOL_USE_ID = 'claudecode/toolUseId';
+const TOOL_USE_ID = 'claudecode/toolUseId';
 
 /**
  * The prefix of an id this bridge made up for a call.

@@ -369,15 +369,13 @@ it('ends a call the host refused before anybody was asked, as pi reports it fail
 /*
  * A question says what the host decides it by, beside its ready, as VS Code's
  * agents raise a pending confirmation: the kind by pi's tool, the path a read
- * or a write names in the session's folder, a command in the shell its tool
- * is named for, and the operator's rule as the managed approval it asks for.
+ * or a write names in the session's folder, and a command in the shell its
+ * tool is named for, as VS Code's Copilot agent names a known shell tool's.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L7983-L7991
  */
 it('says what the host decides a question by on its ready', async () => {
-  const { session, pi, sent } = opened({
-    settings: { permissionMode: 'default' },
-    getAutoApproval: (kind: string, line: string) => (kind === 'tool' && line === 'write' ? 'ask' : undefined),
-  } as unknown as Partial<Start>);
+  const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
   session.sendMessage('t1', 'hello');
   await settled();
@@ -388,6 +386,11 @@ it('says what the host decides a question by on its ready', async () => {
   expect(readyOf('c1')).toMatchObject({ permissionKind: 'shell', shellCommand: 'make test', shellLanguage: 'bash' });
   session.confirm('c1', false);
   await shell;
+  const powershell = driveCall(pi, 'c4', 'powershell', { command: 'Get-ChildItem' });
+  await settled();
+  expect(readyOf('c4')).toMatchObject({ permissionKind: 'shell', shellCommand: 'Get-ChildItem', shellLanguage: 'powershell' });
+  session.confirm('c4', false);
+  await powershell;
   const read = driveCall(pi, 'c2', 'read', { path: '/elsewhere/a.txt' });
   await settled();
   expect(readyOf('c2')).toMatchObject({ permissionKind: 'read', permissionPath: '/elsewhere/a.txt' });
@@ -395,7 +398,7 @@ it('says what the host decides a question by on its ready', async () => {
   await read;
   const write = driveCall(pi, 'c3', 'write', { path: 'notes/b.txt', content: 'x' });
   await settled();
-  expect(readyOf('c3')).toMatchObject({ permissionKind: 'write', permissionPath: join(root, 'notes', 'b.txt'), managedApprovalRequired: true });
+  expect(readyOf('c3')).toMatchObject({ permissionKind: 'write', permissionPath: join(root, 'notes', 'b.txt') });
   session.confirm('c3', false);
   await write;
 });

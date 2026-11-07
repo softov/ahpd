@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { chatReducer } from '@microsoft/agent-host-protocol';
-import type { ChatAction, ChatState, ErrorInfo, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
+import type { ChatAction, ChatState, ErrorInfo } from '@microsoft/agent-host-protocol';
 import { CommandAutoApprover, DEFAULT_TERMINAL_AUTO_APPROVE_RULES, splitCommand } from '../access/commandautoapprover.js';
-import type { CommandShell, CommandSplit, CommandSplitter, SensitiveEditLocation, TerminalAutoApprovePatterns, TerminalAutoApproveRules } from '../access/commandautoapprover.js';
+import type { CommandSplit, CommandSplitter, SensitiveEditLocation, TerminalAutoApprovePatterns, TerminalAutoApproveRules } from '../access/commandautoapprover.js';
 import { RpcError, INTERNAL_ERROR } from '../rpc.js';
 import { reason } from '../utils/values.js';
 import { computerId, computersFor } from '../machines/computers.js';
@@ -20,7 +20,7 @@ import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.
 import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
 import {
-  alwaysAsks, asksForTool, confirmationOptions, getAutoApproval as autoApprovalOf, isDeniedByPermissions, isForbiddenSnapshotWrite, managedDecision,
+  alwaysAsks, confirmationOptions, getAutoApproval as autoApprovalOf, isDeniedByPermissions, isForbiddenSnapshotWrite, managedDecision,
   mcpServerOf, permissionRulesOf,
 } from './permissions.js';
 import type { ToolApproval } from './permissions.js';
@@ -31,7 +31,7 @@ import { sameFolder, trusted } from './trust.js';
 import { isWorktreeUnderRepository } from '../repo/worktrees.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
-import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
+import type { Agent, Start } from '../types/agent.js';
 import type { TurnEndEvent, TurnEndReason } from '../types/events.js';
 import type { Owner } from '../types/usage.js';
 import type { Connection } from '../types/host.js';
@@ -92,10 +92,7 @@ export interface Spawn {
    * Start one backend's session, and the worker chats it goes on to ask for.
    *
    * `sender` is the connection that sent the turn this start is for, when a
-   * client sent it. It is what the start's `trusted` and `getAutoApproval` are
-   * read from and nothing else is, so a start nobody's connection asked for -
-   * an automation, a host tool, a daemon restarting what it held - is a start
-   * with no trust and no rules at all.
+   * client sent it.
    *
    * `askedInstructions` is what the request that asked for this session says,
    * added to `Start.instructions` after what the host's tools say. It is not
@@ -1147,65 +1144,6 @@ export function createSpawn(ctx: HostContext): Spawn {
         || (made !== undefined && sameFolder(made.path, folder) && isWorktreeUnderRepository(made.path, made.repository) && trusted(made.repository, trust));
     };
     /*
-     * Whether a command or tool this session runs is answered by the host's
-     * rules, or asks every time because the operator said so.
-     *
-     * The operator's `eligibleForAutoApproval` setting is read first: it is
-     * the daemon's, so it applies to every session on the host, an
-     * automation's among them. A tool it sets to `false` is `ask`, which is a
-     * call that asks every time and offers no "always" option - before any
-     * terminal rule could approve it.
-     *
-     * The terminal rules and the edit patterns are the host's one value each,
-     * which the last push from any window set, read for every line whoever
-     * sent its turn, as the reference host reads them for every question.
-     * Where no window pushed rules the daemon's setting applies - VS Code's
-     * table or none - and a pushed empty table is a table with no rules in it.
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380
-     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L875
-     *
-     * Only `approved` is an approval. A command a deny rule named, and a line no
-     * rule could read, are both `undefined`, which leaves the backend to ask.
-     */
-    const getAutoApproval = (kind: AutoApprovalKind, line: string, shell?: CommandShell, tool?: string): AutoApproval | undefined => {
-      /* The tool's name: its own for `tool`, and the one that runs the line for `shell`. */
-      const named = kind === 'tool' ? line : tool;
-      if (named !== undefined && asksForTool(options.eligibleForAutoApproval, named)) return 'ask';
-      if (kind === 'tool') return undefined;
-      if (shell === undefined) return undefined;
-      if (ctx.rootConfig['terminalAutoApproveEnabled'] === false) return undefined;
-      const pushed = ctx.rootConfig['terminalAutoApproveRules'];
-      const rules = pushed !== null && typeof pushed === 'object'
-        ? pushed as TerminalAutoApproveRules
-        : options.terminalAutoApproveDefaults === 'none' ? {} : DEFAULT_TERMINAL_AUTO_APPROVE_RULES;
-      const patterns = ctx.rootConfig['editAutoApprovePatterns'];
-      /*
-       * The session's sensitive edit locations, and a write into one asks.
-       * Read whole, as the reference host reads a key: the value is the
-       * locations where every entry has the string `path` and the boolean
-       * `isDirectory` its property requires, and any other value is skipped
-       * for the root's config, which declares no such key here, so it is none.
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentConfigurationService.ts#L544-L566
-       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentHostSchema.ts#L194-L230
-       */
-      const held: unknown = sessions.get(uri)?.config['sensitiveEditLocations'];
-      const sensitive = Array.isArray(held) && held.every((one: unknown) => typeof one === 'object' && one !== null && !Array.isArray(one)
-        && typeof (one as Bag).path === 'string' && typeof (one as Bag).isDirectory === 'boolean')
-        ? held as SensitiveEditLocation[]
-        : [];
-      const result = approver.evaluate(line, {
-        rules,
-        ...(patterns !== null && typeof patterns === 'object' ? { editPatterns: patterns as TerminalAutoApprovePatterns } : {}),
-        shell,
-        ...(workingDirectory === undefined ? {} : { workingDirectory }),
-        sensitive,
-      });
-      // The protocol's enum is ambient, so its one value is written out rather
-      // than reached for: `verbatimModuleSyntax` will not let this file import
-      // a const enum at runtime.
-      return result === 'approved' ? ('not-needed' as ToolCallConfirmationReason) : undefined;
-    };
-    /*
      * What the model is told before it starts, in the order it is told.
      *
      * The host's tools' own instructions come first, because they are about
@@ -1253,7 +1191,6 @@ export function createSpawn(ctx: HostContext): Spawn {
       uri,
       chatUri,
       trusted: trustedBy,
-      getAutoApproval,
       ...(options.managedSettingsPermissions === undefined && options.eligibleForAutoApproval === undefined ? {} : {
         managedSettings: {
           ...(options.managedSettingsPermissions === undefined ? {} : { permissions: options.managedSettingsPermissions }),

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
 import { defaultStoreRoot, modelOf, modelReferenceOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
-import { cofoldTools, describe, ruleName } from './tools.js';
+import { cofoldTools, describe } from './tools.js';
 import type { ClientToolCall, ClientToolRelay } from './tools.js';
 import type { HarnessConfig } from './config.js';
 import type { SessionContext } from './context.js';
@@ -388,29 +388,10 @@ export const createTurnAgent = (
        * order, because cofold runs this hook before it announces the call.
        */
       hooks: {
-        beforeTool: async ({ call, tool, run }) => {
+        beforeTool: ({ call, tool }) => {
           const path = editPathOf(where, tool, call.input);
           if (path !== undefined) announceEdit(call.callId, path);
-          if (start.getAutoApproval?.('tool', ruleName(ctx.offered, call.name)) !== 'ask') {
-            return { decision: 'allow' };
-          }
-          /*
-           * A matched call asks in every mode, VS Code's managed approval.
-           * `dontAsk` is the one mode that answers a question by refusing it,
-           * so the refusal is made here, with the words the model reads, where
-           * the policy would allow a tool it sees no reason to ask about.
-           */
-          if (modeOf(values) === 'dontAsk') {
-            return { decision: 'deny', reason: `${call.name} asks every time and the mode is dontAsk` };
-          }
-          /*
-           * cofold answers an ask from the approval it remembered at
-           * `approvals/<session>/<tool>`, and a hook's `approval` is skipped by
-           * one. The entry goes, so the question is put again however the tool
-           * was allowed for the session before the rule named it.
-           */
-          await run.kv.agent.delete(`approvals/${run.sessionId}/${tool.name}`);
-          return { decision: 'approval' };
+          return { decision: 'allow' };
         },
         afterTool: ({ call, output }) => {
           settleEdit(call.callId);

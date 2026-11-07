@@ -5,7 +5,7 @@ import type { Bag, Chosen, MessageAttachment, MessageFrom, TurnOptions } from '@
 import { modelReferenceOf } from './agent.js';
 import { mapTurn } from './mapping.js';
 import type { SendFailure, TurnMapping } from './mapping.js';
-import { confirmationOf, ruleName } from './tools.js';
+import { confirmationOf } from './tools.js';
 import { AGENT_ID } from './turnagent.js';
 import type { SessionContext } from './context.js';
 
@@ -131,12 +131,8 @@ export const createTurns = (ctx: SessionContext): Turns => {
     },
     ownerOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.owner,
     cancelled: () => ctx.cancelRequested,
-    // What the host decides a question by, the operator's rule among it: a
-    // matched tool's question is one a managed rule asks.
-    confirmationOf: (name, input) => ({
-      ...confirmationOf(name, input, ctx.where),
-      ...(start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask' ? { managedApprovalRequired: true } : {}),
-    }),
+    // What the host decides a question by.
+    confirmationOf: (name, input) => confirmationOf(name, input, ctx.where),
     // A failed turn can be put back when there is a point to truncate to: the
     // last message of the turn before, or, for a conversation's first turn, no
     // session at all. A turn before it that nobody named a point for is one

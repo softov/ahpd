@@ -85,8 +85,7 @@ export interface TurnMappingOptions {
   cancelled(): boolean;
   /**
    * What the host decides a question about a call by, said beside its ready:
-   * VS Code's pending confirmation fields, the operator's rule among them as
-   * the managed approval a matched tool asks for.
+   * VS Code's pending confirmation fields.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
    */
   confirmationOf?(name: string, input: unknown): PendingConfirmation;

@@ -881,7 +881,7 @@ it('continues a paused run when a client resumes its turn, writing the input onc
   expect(messages.filter((one: Message) => one.role === 'user' && textOf(one) === 'hi')).toHaveLength(1);
 });
 
-it('replays a paused shell command as the question it was, whatever the rules say now', async () => {
+it('replays a paused shell command as the question it was', async () => {
   const { root, sweep } = place();
   const asks: Partial<Policy> = {
     decide: ({ tool }) => (tool.name === 'shell_exec' ? { behavior: 'ask' } : { behavior: 'allow' }),
@@ -897,20 +897,12 @@ it('replays a paused shell command as the question it was, whatever the rules sa
   await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
   await pausedRun(root, 'rules');
 
-  // The restarted host now has a rule that allows the command.
-  const asked: string[] = [];
+  // The restarted host resumes the turn, and the replay puts the question again.
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
-  const after = await resumedTurn(second, 'rules', sweep, 't1', {
-    getAutoApproval: (kind, line) => {
-      if (kind === 'shell') asked.push(line);
-      return 'not-needed' as NonNullable<ReturnType<NonNullable<Start['getAutoApproval']>>>;
-    },
-  });
+  const after = await resumedTurn(second, 'rules', sweep, 't1');
   await until(() => after.view.said('session', 'session/inputNeededSet') !== undefined);
 
-  // The replay asks again and never consults the rules for what was asked then.
   expect((after.view.said('session', 'session/inputNeededSet')?.request as Bag | undefined)?.kind).toBe('toolConfirmation');
-  expect(asked).toEqual([]);
   after.session.confirm('call-1', false);
   await until(() => ended(after.view));
   expect(ended(after.view)).toBe(true);

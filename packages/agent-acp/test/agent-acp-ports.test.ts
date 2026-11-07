@@ -284,7 +284,7 @@ it('refuses a permission and a question asked with no turn running, and an empty
   const ctx = {
     emit: (_channel: string, action: Bag) => { said.push(action); },
     provider: 'acp',
-    start: { chatUri: 'ahp-chat:/none', getAutoApproval: () => undefined },
+    start: { chatUri: 'ahp-chat:/none' },
     cwd: tmpdir(),
     seeds: [],
     replay: [],
@@ -631,9 +631,9 @@ it('answers the permission a cancel withdrew with `cancelled`, and takes the ent
 /*
  * A shell command the server asks about, in the shape codex-acp 1.13.1 sends:
  * an `execute` call whose raw input carries the command beside its folder.
- * An allowed line is answered with the server's `allow_once` before anybody is
- * asked; an unmatched one, one with no command line and one whose choices have
- * no `allow_once` all put the question as they always did.
+ * The host's chain answers a line the window's rules allow, and the server is
+ * sent its `allow_once` with nobody asked; an unmatched line and a call with no
+ * command line are put to a person.
  */
 
 it('answers an allowed shell command without asking the person', async () => {
@@ -704,7 +704,7 @@ it('says what the host decides a question by on its ready, and offers no options
   const ctx = {
     emit: (_channel: string, action: Bag) => { said.push(action); },
     provider: 'acp',
-    start: { chatUri: 'ahp-chat:/fields', getAutoApproval: () => undefined },
+    start: { chatUri: 'ahp-chat:/fields' },
     cwd: tmpdir(),
     seeds: [],
     replay: [],

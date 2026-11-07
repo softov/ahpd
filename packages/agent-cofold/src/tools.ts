@@ -25,18 +25,6 @@ import type { Bag, BoundTool, PendingConfirmation, PermissionKind } from '@ahpd/
 type CofoldInput = Parameters<typeof createTool>[0]['input'];
 
 /**
- * A call's tool as the operator's `eligibleForAutoApproval` rule names it.
- *
- * A tool the host offered is `host/<name>`, which is the name Claude and ACP
- * give the same tool on the host's MCP server, named `host` as VS Code names
- * the server carrying its host's tools, so one rule reaches it in every
- * backend. cofold's own tools keep their own names.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
- */
-export const ruleName = (offered: readonly BoundTool[], name: string): string =>
-  offered.some((one) => one.definition.name === name) ? `host/${name}` : name;
-
-/**
  * What each of cofold's own tools asks to do, and the field of its input
  * naming the path or the URL it acts on, as VS Code's Claude table rows the
  * CLI's tools: cofold's standard tools at ee481964 (packages/tools/src

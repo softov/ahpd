@@ -483,6 +483,30 @@ it('names an MCP call\'s contributor by its server\'s customization, and none fo
 });
 
 /*
+ * A question names the server serving its call as the CLI names it, the SDK's
+ * `mcpServer` on `canUseTool`: the server's configured name, which the tool's
+ * prefix can spell otherwise, and which a name holding `__` keeps whole.
+ */
+it('names a question\'s MCP server by the server the CLI names, where the tool prefix spells it otherwise', async () => {
+  sdk.mcp = [{ name: 'my server', status: 'connected' }, { name: 'my__desk', status: 'connected' }];
+  sdk.hold = new Promise(() => {});
+  const { sent, session } = await live([], () => {
+    void sdk.canUseTool?.('mcp__my_server__move', { id: 1 }, { toolUseID: 'toolu_renamed', mcpServer: { name: 'my server', source: 'user' } });
+    void sdk.canUseTool?.('mcp__my__desk__move', { id: 2 }, { toolUseID: 'toolu_double', mcpServer: { name: 'my__desk', source: 'user' } });
+  });
+  sdk.hold = Promise.resolve();
+  sdk.mcp = [];
+  const servers = (session.customizations() as Bag[])
+    .flatMap((one) => [one, ...((one.children ?? []) as Bag[])])
+    .filter((one) => one.type === 'mcpServer');
+  const idOf = (name: string): unknown => servers.find((one) => one.name === name)?.id;
+  expect(idOf('my server')).toBeDefined();
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_renamed')?.contributor).toEqual({ kind: 'mcp', customizationId: idOf('my server') });
+  expect(actionOf(sent, 'chat/toolCallStart', 'toolu_double')?.contributor).toEqual({ kind: 'mcp', customizationId: idOf('my__desk') });
+  await session.close();
+});
+
+/*
  * A call blocked on its server's sign-in is the session's entry under the id
  * VS Code's host gives a tool's sign-in.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L220
