@@ -164,9 +164,12 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const chatSummary = (session: string, uri: string, chat: Session): Bag => {
     const state = ctx.stateOf(uri);
     if (state !== undefined) return summaryIn(state, uri);
+    const foreign = sessions.get(session)?.backends.get(uri);
     return {
       resource: uri,
       ...startedBy(uri),
+      // Its agent, where it is not its session's, as its state says it.
+      ...(foreign === undefined ? {} : { provider: foreign.agent.provider }),
       // The title its state opens with: a default chat's own, or none.
       title: sessions.get(session)?.defaultChat === uri ? ctx.titleOf(session, uri) ?? '' : chat.title(),
       // What the backend is doing, with the client's own bits laid over it. A
@@ -190,6 +193,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const summaryIn = (state: Bag, uri: string): Bag => ({
     resource: uri,
     ...(state.origin !== undefined ? { origin: state.origin } : {}),
+    ...(state.provider !== undefined ? { provider: state.provider } : {}),
     title: String(state.title ?? ''),
     status: Number(state.status ?? Status.Idle),
     modifiedAt: String(state.modifiedAt ?? ''),

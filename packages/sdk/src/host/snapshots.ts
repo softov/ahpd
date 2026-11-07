@@ -222,21 +222,15 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       ...(canvases === undefined ? {} : { canvases }),
     };
     /*
-     * The backend that serves this chat, where it is not the session's own.
-     *
-     * A chat opened on another harness is still a chat of this session - its
-     * channel, its row and its place among the session's chats - so what it
-     * runs on is said in `_meta` and not in `provider`: `ChatState` declares
-     * no provider, and the session must go on answering the provider it was
-     * started on. Laid over whatever the backend put there itself, which is
-     * where a harness speaks its own keys, and left off for the session's own
-     * chats, whose backend is the one the session already names.
+     * The agent that serves this chat, where it is not the session's own, as
+     * VS Code's host gives a chat its own `provider` only where it differs
+     * from its session's: a chat opened on another harness is still a chat of
+     * this session, and the session goes on answering the provider it was
+     * started on.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L128-L131
      */
     const foreign = owner?.backends.get(talking.chat.chatUri);
-    if (foreign !== undefined) {
-      const meta = (typeof state._meta === 'object' && state._meta !== null ? state._meta : {}) as Bag;
-      state._meta = { ...meta, 'ahpd.provider': foreign.agent.provider };
-    }
+    if (foreign !== undefined) state.provider = foreign.agent.provider;
     // Every turn the backend holds, with each worker linked from its call and
     // the sender on each message; the window a subscribe asks for is cut from
     // these when it is served.

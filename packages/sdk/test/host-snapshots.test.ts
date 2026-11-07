@@ -1503,29 +1503,28 @@ describe('a chat another backend serves', () => {
     return answer.snapshot.state;
   };
 
-  it("says the chat's backend, and leaves the session on its own", async () => {
+  /*
+   * A chat on another agent than its session's says that agent as its own
+   * `provider`, on its state and on its session's list of chats, as VS Code's
+   * host gives a chat a provider only where it differs from its session's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L128-L131
+   */
+  it("says the chat's agent as its provider, and leaves the session on its own", async () => {
     const { client, session, chatUri } = await chatsOnAnother();
     expect(chatUri).toMatch(/^ahp-chat:\/[0-9a-f-]+$/);
 
-    // The chat says which backend serves it, in `_meta` because `ChatState`
-    // declares no provider.
-    const chat = await stateOf(client,chatUri);
-    expect((chat._meta as Record<string, unknown> | undefined)?.['ahpd.provider']).toBe('other');
+    const chat = await stateOf(client, chatUri);
+    expect(chat.provider).toBe('other');
+    expect((chat._meta as Record<string, unknown> | undefined)?.['ahpd.provider']).toBeUndefined();
+    const listed = (await stateOf(client, session)).chats as { resource: string; provider?: string }[];
+    expect(listed.find((one) => one.resource === chatUri)?.provider).toBe('other');
 
     // And the session keeps its own: a chat on another harness does not
-    // rename the session it is a chat of.
-    const one = await stateOf(client,session);
+    // rename the session it is a chat of, and a chat of the session's own
+    // agent carries none, the session already saying `claude`.
+    const one = await stateOf(client, session);
     expect(one.provider).toBe('claude');
-  });
-
-  it("leaves a chat of the session's own backend without the key", async () => {
-    const { client, session } = await chatsOnAnother();
-    const chatUri = (await stateOf(client,session)).defaultChat as string;
-    const chat = await stateOf(client,chatUri);
-    // The session already says `claude`; a key repeating it on every chat would
-    // be two answers to one question, and could disagree with the session.
-    expect(Object.prototype.hasOwnProperty.call((chat._meta as object | undefined) ?? {}, 'ahpd.provider'))
-      .toBe(false);
+    expect(await stateOf(client, String(one.defaultChat))).not.toHaveProperty('provider');
   });
 });
 
