@@ -305,7 +305,10 @@ it('prices a real endpoint\'s turn from the price its catalogue published', asyn
   begin(client, chatUri, 't1', 'hello');
   await until(() => ended(p, chatUri));
 
+  // A listing at each probe, this case's own and the host's as it starts, and
+  // the turn's request after them.
   expect(endpoint.calls).toEqual([
+    'https://openrouter.ai/api/v1/models',
     'https://openrouter.ai/api/v1/models',
     'https://openrouter.ai/api/v1/chat/completions',
   ]);
