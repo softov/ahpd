@@ -229,11 +229,15 @@ it('waits the record\'s exitGraceMs for the exit of a server that closed its str
     handlers: { update: () => {} },
     exitGraceMs: 50,
   });
-  const began = Date.now();
-  await expect(connection.initialize()).rejects.toThrow();
-  // Well inside the 1000 ms a record that names none waits.
-  expect(Date.now() - began).toBeLessThan(800);
-  await connection.close();
+  try {
+    const began = Date.now();
+    await expect(connection.initialize()).rejects.toThrow();
+    // Well inside the 1000 ms a record that names none waits.
+    expect(Date.now() - began).toBeLessThan(800);
+  }
+  finally {
+    await connection.close();
+  }
 });
 
 it('kills a server that takes no SIGTERM once the record\'s killGraceMs has passed', async () => {
@@ -248,7 +252,7 @@ it('kills a server that takes no SIGTERM once the record\'s killGraceMs has pass
   await connection.close();
   // Well inside the 5000 ms a record that names none grants.
   expect(Date.now() - began).toBeLessThan(2_000);
-});
+}, 15_000);
 
 it('settles a close once the server process has gone, and never rejects', async () => {
   const connection = connectAcp({
