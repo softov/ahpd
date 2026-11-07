@@ -331,7 +331,7 @@ it('installs a package pinned at its own version, and moves the tag with it', ()
   expect(tagOf(part, undefined, file)).toMatch(/^ahpd-part\/claude:0\.85\.1-2\.1\.291-[0-9a-f]{12}$/u);
 
   expect(() => read([node(), npm({ packages: ['@anthropic-ai/claude-code@^2.1.291'] })]))
-    .toThrow(/the package @anthropic-ai\/claude-code@\^2.1.291, whose version is a range/);
+    .toThrow(`Refusing to use @anthropic-ai/claude-code@^2.1.291 from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
 });
 
 it('installs an archive part\'s npm packages beside its download, each at its own version', () => {
