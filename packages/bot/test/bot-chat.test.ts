@@ -14,7 +14,7 @@ import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { sdkVersion } from '../../sdk/src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { botChatAgent, CHAT_PROVIDER } from '../src/chat.js';
-import { BOTS_DIR, chatsOf, rowId, sessionsOf } from '../src/names.js';
+import { BOTS_DIR, rowId, sessionsOf } from '../src/names.js';
 import { apply } from '../src/plugin.js';
 import { botStore } from '../src/store.js';
 import type { ChatMessage, TurnHandle } from '../src/chat.js';
@@ -357,7 +357,7 @@ it('holds a turn open until the handle answers it', async () => {
   expect(lines(configDir, 'one')).toHaveLength(1);
   expect(actions(notes, CHAT).map((one) => one['type'])).not.toContain('chat/turnComplete');
   // And whoever answers this chat was told what was said, and in which turn.
-  expect(heard).toEqual([{ session: HELD, chat: CHAT, turnId: 't1', text: 'hello' }]);
+  expect(heard).toEqual([{ session: HELD, chat: CHAT, bot: 'backer', turnId:'t1', text: 'hello' }]);
 
   chat().complete('hello yourself');
 
@@ -416,7 +416,7 @@ it('tells whoever answers the chat the words and the chat they were said in, and
       },
     },
   });
-  expect(heard).toEqual([{ session: HELD, chat: CHAT, turnId: 't1', text: 'read this' }]);
+  expect(heard).toEqual([{ session: HELD, chat: CHAT, bot: 'backer', turnId:'t1', text: 'read this' }]);
   expect((await stateOf(client))['activeTurn']).toMatchObject({ message: { text: 'read this', model: { id: 'opus' }, attachments } });
 });
 
@@ -567,8 +567,8 @@ it('steers a message into the open turn, which goes on, and keeps it pending unt
   const life = actions(notes, CHAT).filter((one) => String(one['type']).startsWith('chat/turn'));
   expect(life.map((one) => one['type'])).toEqual(['chat/turnStarted']);
   expect(heard).toEqual([
-    { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
-    { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that', steering: 's1' },
+    { session: HELD, chat: CHAT, bot: 'backer', turnId:'t1', text: 'hello' },
+    { session: HELD, chat: CHAT, bot: 'backer', turnId:'t1', text: 'stop that', steering: 's1' },
   ]);
   const pending = (): unknown[] => actions(notes, CHAT)
     .filter((one) => String(one['type']).startsWith('chat/pendingMessage'))
@@ -945,7 +945,7 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   expect(waiting['activeTurn']).toMatchObject({ id: 't1', message: { text: 'hello' } });
   expect(waiting['turns']).toEqual([]);
   expect(waiting['queuedMessages']).toMatchObject([{ id: 'q1', message: { text: 'and then this' } }]);
-  expect(heard).toEqual([{ session: HELD, chat: CHAT, turnId: 't1', text: 'hello' }]);
+  expect(heard).toEqual([{ session: HELD, chat: CHAT, bot: 'backer', turnId:'t1', text: 'hello' }]);
   expect(lines(configDir, 'one')).toHaveLength(1);
 
   chat.complete('one');
@@ -959,8 +959,8 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   expect(started['turns']).toMatchObject([{ id: 't1', state: 'complete' }]);
   expect(next).toMatchObject({ message: { text: 'and then this' } });
   expect(heard).toEqual([
-    { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
-    { session: HELD, chat: CHAT, turnId: String(next['id']), text: 'and then this' },
+    { session: HELD, chat: CHAT, bot: 'backer', turnId:'t1', text: 'hello' },
+    { session: HELD, chat: CHAT, bot: 'backer', turnId:String(next['id']), text: 'and then this' },
   ]);
   // And the client is told by the turn the entry became, which names it, as VS
   // Code's host starts a queued message (queueDrainContribution.ts L291-L297 at
@@ -1410,11 +1410,10 @@ it('leaves a turn somebody began in a back session in that session\'s own chat',
   const backChat = chatUriFor(backSession);
   await client.handle({ method: 'createSession', params: { channel: backSession, provider: 'base' } });
   await client.handle({ method: 'subscribe', params: { channel: backChat } });
-  // The rows that make this the back session of the bot's chat with this host.
+  // The row that makes this the back session of the bot for this host.
   await (await records.collection(sessionsOf('backer'))).put({
     id: rowId(['backer', 'test', 'work']), bot: 'backer', user: 'test', name: 'work', session: backSession,
   });
-  await (await records.collection(chatsOf('backer'))).put({ id: rowId(['backer', 'root:test']), chat: HELD });
 
   await client.handle({
     method: 'dispatchAction',
@@ -1531,7 +1530,7 @@ it('tells a resumed chat\'s messages to the agent\'s listener, as it does a new 
 
   session.sendMessage('t1', 'hello');
 
-  expect(heard).toEqual([{ session: 'bot-chat:/again', chat: 'ahp-chat:/again', turnId: 't1', text: 'hello' }]);
+  expect(heard).toEqual([{ session: 'bot-chat:/again', chat: 'ahp-chat:/again', bot: 'backer', turnId: 't1', text: 'hello' }]);
 });
 
 /*

@@ -6,7 +6,7 @@ import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { sdkVersion } from '../../sdk/src/version.js';
-import { backSessions, chatsOf, rowId, sessionsOf } from '../src/names.js';
+import { backSessions, sessionsOf } from '../src/names.js';
 import { apply, defaults } from '../src/plugin.js';
 import { postMessage } from '../src/post.js';
 import { botStore } from '../src/store.js';
@@ -14,7 +14,7 @@ import { botWake } from '../src/wake.js';
 import manifest from '../package.json' with { type: 'json' };
 import type { MainTurnAbsence } from '../src/wake.js';
 import type { ChatMessage, TurnHandle } from '../src/chat.js';
-import type { BotSessions } from '../src/provider.js';
+import type { BotSessions } from '../src/wake.js';
 import type { BotRecord } from '../src/record.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { ToolCall } from '../../sdk/src/types/host.js';
@@ -67,7 +67,7 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
 });
 
 /** One message in a main chat, as `chat.ts` hands the plugin one. */
-const message = (turnId: string, text: string): ChatMessage => ({ session: CHAT, chat: 'ahp-chat:/main', turnId, text });
+const message = (turnId: string, text: string): ChatMessage => ({ session: CHAT, chat: 'ahp-chat:/main', bot: 'backer', turnId, text });
 
 /** A handle over a main turn, and what was said through it. */
 interface Recorded {
@@ -126,15 +126,13 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
     () => {},
   );
   await store.put(record);
-  const chats = await records.collection(chatsOf(record.id));
-  await chats.put({ id: rowId([record.id, PERSON]), bot: record.id, owner: PERSON, chat: CHAT });
   const backsRows = await records.collection(sessionsOf(record.id));
   const backs = backSessions(() => backsRows);
 
   /** The default chat of each back session, by the session's URI. */
   const at = new Map<string, string>();
-  /** Whose each session is: a URI absent here is one this host no longer has. */
-  const owners = new Map<string, Owner>();
+  /** Whose each session is, the main chat the person's: a URI absent here is one this host no longer has. */
+  const owners = new Map<string, Owner>([[CHAT, PERSON]]);
   /** What the wake sent the back sessions. */
   const sent: Bag[] = [];
   let minted = 0;
@@ -152,7 +150,6 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
 
   const wake = botWake({
     store,
-    chats: () => chats,
     backs,
     sessions,
     // What a first wake writes into the folder: the real plugin fills the

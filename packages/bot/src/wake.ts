@@ -4,11 +4,10 @@ import { contextBlock, timeWithOffset } from './context.js';
 import { prepareFolder } from './folder.js';
 import { userOf } from './names.js';
 import { isFilledName, TURN_WORD } from './record.js';
-import type { Bag, CreatedBy, Owner, RecordCollection, SessionRequest } from '@ahpd/sdk';
+import type { Bag, CreatedBy, Owner, SessionRequest } from '@ahpd/sdk';
 import type { ChatMessage, TurnHandle } from './chat.js';
 import type { BackSessions } from './names.js';
 import type { BotRecord } from './record.js';
-import type { BotSessions } from './provider.js';
 import type { BotStore } from './store.js';
 
 /**
@@ -46,8 +45,8 @@ import type { BotStore } from './store.js';
  * main turn gets - the session's last words, a notice that none came, or
  * nothing. Both are said through `answering` - the map from a back session to
  * the turn that woke it - which is also what lets the turn go. A message that
- * never reached a session is the one ending this file makes itself, with a
- * notice naming the cause.
+ * never reached a session is the one ending this file makes itself, failed
+ * with the cause.
  */
 
 /** One back session's chat, as the host answers it. */
@@ -58,19 +57,30 @@ export interface Looked {
   turn?: string;
 }
 
+/**
+ * The sessions this host keeps, as much of them as a bot's wake is about.
+ *
+ * Read through the host rather than held here, the way the bots' store lives
+ * beside the daemon: a back session is a session this host holds, and one it
+ * no longer holds - a daemon that restarted - is a back session started again.
+ */
+export interface BotSessions {
+  /** Whose the session at this URI is, or nothing where this host has none. */
+  owner(uri: string): Promise<Owner | undefined>;
+  /**
+   * Start a session for the owner the request names, and answer its URI.
+   *
+   * `named` is called with the URI before the session is made, which is what
+   * lets the wake answer for it - its connectors - from the first tool list the
+   * backend is spawned with.
+   */
+  start(wanted: SessionRequest, named?: (uri: string) => void): Promise<string>;
+}
+
 /** What the wake reads and sends through. */
 export interface WakeSeams {
   /** The bots, whose record names the back session. */
   store: BotStore;
-  /**
-   * The main chat rows of one bot, which say which bot a chat is with and whose
-   * it is.
-   *
-   * One collection per bot, in `bots/<slug>/chats`, so a message finds the bot
-   * it was said to by asking each bot's collection for the row that names its
-   * chat.
-   */
-  chats(bot: string): RecordCollection;
   /** The bot's own `sessions` rows, which say which session a name is on. */
   backs: BackSessions;
   /** This host's sessions, where a back session is looked for and started. */
@@ -421,29 +431,6 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
   const nameFor = (bot: BotRecord, message: ChatMessage): string =>
     bot.session.replaceAll(TURN_WORD, message.turnId.toLowerCase());
 
-  /**
-   * The bot a main chat is with, and whose the chat is.
-   *
-   * Each bot's own `chats` collection is asked for the row that names the
-   * session, and the row answers both: a main chat is one person's with one
-   * bot, and where the rows live is which bot it was said to. The session the
-   * message was said in is what it is found by, rather than anything the
-   * message carries: a message is text a person typed, and only the chat it was
-   * typed in says who they are talking to. A chat no row names is a chat this
-   * plugin did not open - one a client started by itself - and nothing about it
-   * says which bot it is for.
-   */
-  const chatOf = async (session: string): Promise<{ bot: BotRecord; owner: Owner } | undefined> => {
-    await seams.store.ready();
-    for (const bot of seams.store.all()) {
-      const row = (await seams.chats(bot.id).find({ chat: session }))[0];
-      if (row === undefined) continue;
-      const held = row['owner'];
-      if (typeof held !== 'string') return undefined;
-      return { bot, owner: held as Owner };
-    }
-    return undefined;
-  };
 
   /**
    * The session one name is on.
@@ -451,8 +438,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * The row first, and then the session it names: a name this host still has a
    * session for is what a person comes back to, and one whose session has gone
    * is started afresh and the row written over. Two messages that arrive
-   * together for one name start one session, which is the same guard `chatOf` in
-   * the provider keeps over the main chats.
+   * together for one name start one session.
    */
   const sessionNamed = async (bot: BotRecord, owner: Owner, user: string, name: string, createdBy?: CreatedBy): Promise<string> => {
     /*
@@ -689,18 +675,25 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
           if (handle.fail !== undefined) handle.fail(words);
           else handle.notice(words);
         };
-        const chat = await chatOf(message.session);
-        if (chat === undefined) {
-          /*
-           * A chat no read of a bot opened, so nothing says which bot the person
-           * is talking to. The turn ends here rather than staying open: there is
-           * nothing behind this chat to answer it.
-           */
-          seams.problem(`${message.session} is a chat no bot on this host opened`);
-          failed(`${message.session} is a chat no bot on this host opened`);
+        /*
+         * The bot is the one the chat was made with, which the message carries
+         * from the chat's own config, and whose the chat is is the host's to
+         * say: the owner of the session it is in, as the host recorded it at
+         * the create. The words a person typed decide neither. A bot that has
+         * gone, and a session this host no longer holds, end the turn: there is
+         * nothing behind the chat to answer it.
+         */
+        await seams.store.ready();
+        const bot = seams.store.get(message.bot);
+        if (bot === undefined) {
+          failed(`There is no bot ${message.bot}.`);
           return;
         }
-        const { bot, owner } = chat;
+        const owner = await seams.sessions.owner(message.session);
+        if (owner === undefined) {
+          failed(`${message.session} is a session this host does not hold`);
+          return;
+        }
         const name = nameFor(bot, message);
         if (!isFilledName(name)) {
           failed(`${name} is not a name a back session can have: lowercase letters, digits and a dash, at most eighty`);
@@ -734,7 +727,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
          * person's own words, which is what the main chat keeps and shows.
          */
         const block = contextBlock([
-          ['main chat', `bot:/${bot.id}/${userOf(owner)}`],
+          ['main chat', message.chat],
           ['from', userOf(owner)],
           ['time', timeWithOffset(new Date())],
         ]);

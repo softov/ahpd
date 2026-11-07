@@ -284,7 +284,7 @@ The data's `connector` is the connector's id, set by the plugin, and no body fie
 
 ## A call to a bot
 
-A call to a bot endpoint queues its text as a message in its thread's own chat with the bot. The caller names a thread, and each thread is a conversation of its own, as the spec gives a separate conversation its own chat: the first call of a thread opens a chat in the plugin's session with the bot, the session a read of the bot answers the plugin, with `createChat`, which the session says as `session/chatAdded`, and every later call of the thread talks there.
+A call to a bot endpoint queues its text as a message in its thread's own chat with the bot. The caller names a thread, and each thread is a conversation of its own, as the spec gives a separate conversation its own chat: the first call of a thread opens a chat in the plugin's session with the bot with `createChat`, which the session says as `session/chatAdded`, and every later call of the thread talks there. The session is the plugin's own chat with the bot, made the way a person makes one: `createSession` on the `bot-chat` provider, naming the bot in its config, the first time a call to that bot needs it, and again where the host no longer holds it - [BOTS.md](BOTS.md#the-chat-and-its-back-sessions).
 
 The message is a `chat/pendingMessageSet` of kind `queued`, with the origin `agent`, as [VS Code's router](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L270-L282) sends a message into another session's chat. The host takes it up as a turn once the chat runs nothing, so the calls of one thread are answered in the order they came. The turn is the host's, and names the message as its `queuedMessageId`, which is how the plugin knows which turn answers the call.
 
@@ -318,7 +318,7 @@ A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugi
 ```json
 {
   "plugins": [
-    { "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 30, "maxBodyBytes": 1048576 }, "grants": ["bot:get", "bot:chat", "session:read", "session:create", "session:write", "chat:create"] }
+    { "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 30, "maxBodyBytes": 1048576 }, "grants": ["session:read", "session:create", "session:write", "chat:create"] }
   ]
 }
 ```
@@ -326,7 +326,7 @@ A `sync` call waits for `syncTimeoutSeconds`: the endpoint's field, or the plugi
 | Answer | When |
 | --- | --- |
 | 400 | The call has no thread or no text, or its callback URL is missing or outside the prefix |
-| 409 | The plugin may not read the bot, the read answered no chat for it, the host opened no chat for the thread, or the host refused the message. The answer's `message` is the host's reason. The first three are also a problem in the daemon's log: the read's refusal names the grants `bot:chat` and `session:create`, and the chat's the grant `chat:create` |
+| 409 | The host made the plugin no session with the bot, opened no chat for the thread, or refused the message. The answer's `message` is the host's reason. The first two are also a problem in the daemon's log: the session's refusal names the grant `session:create`, and the chat's the grant `chat:create` |
 | 504 | The host did not confirm the message within 10 seconds, so its delivery is unconfirmed rather than taken or refused, as VS Code's router reads a send it never heard back on: `{ thread, queuedMessageId, message }`, the message `Remote message delivery was not confirmed. It may already be queued; do not retry automatically.` The daemon's log gets a problem line, and no callback is posted |
 
 ### The grants
@@ -335,14 +335,12 @@ On a host with a users directory, the plugin acts as `plugin:webhook`, with the 
 
 | Grant | What it is for |
 | --- | --- |
-| `bot:get` | Read the bot |
-| `bot:chat` | Be answered a chat by it, which the read starts |
 | `session:read` | Read the session's state, which names the chat, and the turn's text |
-| `session:create` | Start a session for an owner, which a read of the bot does |
+| `session:create` | Make the plugin's own session with the bot |
 | `session:write` | Queue the message |
 | `chat:create` | Open a thread's chat in the session |
 
-The chat is the plugin's own, started as the owner `plugin:webhook`, so `session:create` is asked of nobody here: it is in the list because those two are the grants the plugin's problem line prints when a read is answered no chat.
+The session is the plugin's own, owned by `plugin:webhook`, and its work is the bot's: the bot plugin's own entry needs what a wake needs - [BOTS.md](BOTS.md).
 
 The plugin opens its connection when the daemon listens, and hears each turn's start and end from the host. It holds a subscription to a thread's chat while a message there needs one, for the echo of the message and the read of its turn's end, and unsubscribes once the last such message's turn has ended or the host refused it, as VS Code's router holds a chat's subscription for one delivery.
 

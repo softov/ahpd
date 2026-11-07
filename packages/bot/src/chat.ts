@@ -11,9 +11,8 @@ import type { BotStore } from './store.js';
  *
  * A bot is a record on `bot://` and the work it does runs in a session of its
  * own, so what a person says *to* it needs a place to be said. That place is a
- * chat: one session of this provider per bot and person, started by a read of
- * the bot (see `provider.ts`), titled with the bot's name, working in the bot's
- * folder.
+ * chat: a session of this provider a client makes with `createSession`, naming
+ * the bot in its config, as a session of any agent is made.
  *
  * No model runs here either, but something answers: a turn this chat begins
  * stays open until the chat's listener ends it, through the handle each
@@ -114,6 +113,8 @@ export interface ChatMessage {
   session: string;
   /** The URI of the chat it was said in. */
   chat: string;
+  /** The bot the chat is with, by slug, as the chat's config names it. */
+  bot: string;
   /** The turn that began, or the open turn the message was steered into. */
   turnId: string;
   /** What was said. */
@@ -983,7 +984,7 @@ export function botChatAgent(
         finish(held, 'error', [{ kind: 'error', error: { errorType: 'noAgent', message: 'No agent found for session' } }]);
         return;
       }
-      handle.onMessage({ session: start.uri, chat: start.chatUri, turnId, text });
+      handle.onMessage({ session: start.uri, chat: start.chatUri, bot: bot.id, turnId, text });
     };
 
     /** The next turn sent while another was open, handed on once none is. */
@@ -1117,7 +1118,7 @@ export function botChatAgent(
         // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L369-L373
         return new Promise<boolean>((answer) => {
           steers.set(pendingId, { turn: held.id, message, answer });
-          handle.onMessage?.({ session: start.uri, chat: start.chatUri, turnId: held.id, text, steering: pendingId });
+          handle.onMessage?.({ session: start.uri, chat: start.chatUri, bot: bot.id, turnId: held.id, text, steering: pendingId });
         });
       },
 
@@ -1320,7 +1321,6 @@ export function botChatAgent(
       const asked = start.settings['bot'];
       const slug = typeof asked === 'string' ? asked.trim() : '';
       // The store's cache, which is what a read of `bot://` answers from too.
-      // A chat is started by one of those reads, so the bot is here by then.
       const bot = slug === '' ? undefined : store.get(slug);
       // A plain sentence rather than a coded refusal: the host answers whatever
       // a backend throws out of `create` as its own `INVALID_PARAMS`, keeping

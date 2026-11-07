@@ -28,7 +28,7 @@ type Ending = Omit<TurnEnd, 'text'>;
 export interface BotSeams {
   /** The `webhook-threads` collection. */
   threads: RecordCollection;
-  /** The plugin's session with the bot, which a read of the bot answers, or nothing when it answers none. */
+  /** The plugin's session with the bot, made with `createSession` where it has none, or nothing when the host made none. */
   session(bot: string): Promise<string | undefined>;
   /**
    * Open a chat of its own in that session, as a client opens one with

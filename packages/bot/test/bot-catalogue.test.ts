@@ -220,12 +220,8 @@ it('answers each reader the bots it may read, each as a read of it answers', asy
   const read = await call(ana, 'resourceRead', { uri: 'bot://mine' });
   if (!('result' in answer) || !('result' in read)) throw new Error('refused');
   const record = (answer.result.snapshot.state.bots as Bag[]).find((one) => one.id === 'mine');
-  // The entry is the bot, and a read answers it with `chat` beside it: the chat
-  // is the reader's own, opened by the read, so the catalogue holds a bot and
-  // not a conversation with one.
-  const bot = JSON.parse(String(read.result.data)) as Bag;
-  delete bot['chat'];
-  expect(record).toEqual(bot);
+  // The entry is the bot, the same record a read of it answers.
+  expect(record).toEqual(JSON.parse(String(read.result.data)) as Bag);
 });
 
 it('sends a make, an edit and a delete to the readers each concerns', async () => {

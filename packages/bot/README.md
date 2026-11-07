@@ -39,7 +39,7 @@ The plugin's own entry needs `session:read` and `session:write`: a message is se
 { "plugins": [{ "name": "@ahpd/bot", "grants": ["session:read", "session:write"], "options": { "root": "/srv/bots" } }] }
 ```
 
-A bot is a record of the host's record store, so the daemon keeps each one in a folder of its own: `<configDir>/bots/<slug>/bot.md`, the fields as YAML frontmatter, with the tombstones in `<configDir>/bots-gone/`. Beside the record are `chats/` for the main chat rows, `sessions/` for the back session rows and `logs/` for the chat logs. A file there that cannot be read is reported and skipped, and every other bot is kept. A bot's `AGENTS.md` is not there: it is in the bot's work folder, `<root>/<slug>/`.
+A bot is a record of the host's record store, so the daemon keeps each one in a folder of its own: `<configDir>/bots/<slug>/bot.md`, the fields as YAML frontmatter, with the tombstones in `<configDir>/bots-gone/`. Beside the record are `sessions/` for the back session rows and `logs/` for the chat logs. A file there that cannot be read is reported and skipped, and every other bot is kept. A bot's `AGENTS.md` is not there: it is in the bot's work folder, `<root>/<slug>/`.
 
 The record store is a port, so a plugin that takes it over with `registerRecords(store, 'replace')` - a sqlite or a postgresql store - keeps the bots there instead of in files, and nothing in this plugin changes. [`docs/plugins/BOTS.md`](https://github.com/softov/ahpd/blob/main/docs/plugins/BOTS.md#the-record-file) shows one bot file and what a hand edit may change.
 
@@ -73,18 +73,15 @@ A bot is addressed by its slug, which is the URI path and the record's own `id`:
 | --- | --- |
 | `resourceWrite bot://<slug>` with `createOnly` | Makes a bot. The body is the record, and `name` is the only field it must carry. |
 | `resourceWrite bot://<slug>` with `ifMatch` | Edits one. `ifMatch` is the `etag` the last `resourceResolve` answered, so a write against a bot somebody else has changed is refused `-32011`. |
-| `resourceRead bot://<slug>` | The record, as JSON, with `chat` where the reader may talk to it. |
-| `resourceRead bot://<slug>/<user>` | That person's main chat with the bot, as `{ chat }`. |
-| `resourceList bot://<slug>/<user>/` | The names of that person's back sessions. |
-| `resourceRead bot://<slug>/<user>/<name>` | One back session, as `{ session }`. |
-| `resourceResolve bot://<slug>` | Its metadata: its record's times, and `etag`. A time is answered where it is known, so the root, a person's chat and their back sessions carry none. |
+| `resourceRead bot://<slug>` | The record, as JSON. A read starts nothing. |
+| `resourceResolve bot://<slug>` | Its metadata: its record's times, and `etag`. A time is answered where it is known, so the root carries none. |
 | `resourceList bot://` | The bots the reader may see, by slug. |
 | `resourceDelete bot://<slug>` | Deletes one, and leaves a tombstone. |
 | `createResourceWatch bot://` or `bot://<slug>` | Tells the reader when a bot it may read is made, edited or deleted. |
 
 A slug is lowercase letters, digits and dashes, one to forty of them, starting with a letter. Anything else is refused `-32602`: the slug is a folder name and a URI path at once.
 
-A body may carry `name`, `labels`, `description`, `body`, `color`, `instructions`, `template`, `provider`, `model`, `preset`, `session`, `workspace`, `computer` and `owner`. `id`, `createdAt` and `updatedAt` are read but never obeyed - what they name is the host's, and a write that names another `id` is refused rather than followed. `owner` may be named by a make, as the maker or a team or project the maker belongs to; a write naming anybody else is refused `-32009`, and an edit may not move it. A read answers one key more, `chat`, the reader's own conversation with the bot: it is answered and never obeyed, so a client that writes a record it read back is writing back a bot.
+A body may carry `name`, `labels`, `description`, `body`, `color`, `instructions`, `template`, `provider`, `model`, `preset`, `session`, `workspace`, `computer` and `owner`. `id`, `createdAt` and `updatedAt` are read but never obeyed - what they name is the host's, and a write that names another `id` is refused rather than followed. `owner` may be named by a make, as the maker or a team or project the maker belongs to; a write naming anybody else is refused `-32009`, and an edit may not move it.
 
 A bot's `session` is the name of the back session a message to it wakes. It is a slug, or a slug holding `{turn}` where the turn id of each message takes that word's place - so a bot that names `{turn}` is a session per message rather than one a person comes back to. A body that names none has `work`, a body that names something that is no name is refused `-32602`, and a file an older daemon wrote without the line is read as the bot that named none.
 
@@ -99,10 +96,9 @@ A bot is drawn in one of fifteen bodies and in one of eleven colours or a hex co
 | `bot:get` | Read any bot |
 | `bot:list` | List every bot |
 | `bot:put` | Make a bot in the scheme, edit their own |
-| `bot:chat` | Be answered a chat by any bot they may read |
 | `*:*`, or a root connection | Any of it, on any bot |
 
-A listing shows what a read would allow: a list that showed a bot the reader cannot open would be a list of names they cannot use. A read that opens a chat also needs the reader's own `session:create`, because the chat is theirs rather than the bot's.
+A listing shows what a read would allow: a list that showed a bot the reader cannot open would be a list of names they cannot use. A chat with a bot is a session, so opening one needs what any session needs: the person's own `session:create`.
 
 ### The catalogue
 
@@ -114,9 +110,9 @@ A bot works in a folder of its own, `<root>/<slug>` unless the body named one, a
 
 ### The chat and its back sessions
 
-A person talks to a bot in a chat: one session of the `bot-chat` provider per bot and person. The provider runs no model, and a turn it begins stays open until the reply arrives. Each turn is one JSON line under `<configDir>/bots/<slug>/logs/`, so a chat is still readable after the daemon restarts. Nothing about a chat is kept in memory past the process that made it.
+A person talks to a bot in a chat: a session of the `bot-chat` provider, made with `createSession` naming the bot in its config, `{ "provider": "bot-chat", "config": { "bot": "<slug>" } }`, under the URI the client names. The provider runs no model, and a turn it begins stays open until the reply arrives. Each turn is one JSON line under `<configDir>/bots/<slug>/logs/`, so a chat is still readable after the daemon restarts. Nothing about a chat is kept in memory past the process that made it. A chat works in the bot's `workspace` and is titled with the bot's `name`.
 
-The chat is the person's main chat, `bot:/<bot>/<user>`, where `<user>` is the id after `user:` and the machine's name for a reader who is nobody. A message in it wakes a back session, named `bot:/<bot>/<user>/<name>`, which is an ordinary session on the bot's agent, in the bot's folder, owned by the person of the main chat. `bot:/` and `bot://` are the same address.
+A message in a chat wakes a back session, which is an ordinary session on the bot's agent, in the bot's folder, owned by the chat's owner.
 
 The name comes from the bot's `session`: `work` unless the bot says otherwise, and a name holding `{turn}` takes the turn id of each message, so that bot starts a new back session per message. A message is a turn in an idle back session and a steer in a working one. The session a name is on is kept with the bot, and a name whose session is gone is started again.
 
@@ -125,10 +121,6 @@ Each message is sent with a `<context>` block in front of the person's words, na
 The back session answers with `post_message`, whose text is added to the main turn; it may post more than once, and the main turn ends when the back session's turn ends. The tool is offered only to a back session and posts only to the main chat that woke the session; it runs without asking for a confirmation. A question asked with the harness's question tool, or an approval, is shown in the main chat, and the answer given there goes back to the back session. A back session that ends its turn without posting leaves the main turn to `mainTurnPostMessageAbsent`: `post` (the default) answers with the turn's last words, `notice` with a notice, `silence` with nothing, and `postNotice` with the last words or the notice where there are none.
 
 A back session's system prompt says only how to answer; the bot's rules are its `AGENTS.md`, made from its template when the bot is made and at the first wake where the folder has none.
-
-A chat is opened by a read. `resourceRead bot://<slug>` answers the record with `chat`, the URI of the reader's own conversation with that bot, and the first read by a reader who may chat starts it and keeps the row. Reading the same bot again answers the same chat, and two people reading one bot are answered two different chats. A reader who may not chat is answered the record alone, with no `chat` and no refusal. A read of `bot://<slug>/<user>` answers `{ chat }` and a read of `bot://<slug>/<user>/<name>` answers `{ session }`; both are answered to the person named, the bot's owner and this host.
-
-A chat works in the bot's `workspace` and is titled with the bot's `name`. Starting one asks the reader's own `session:create`, by the host's own road, and a refusal there is the read's refusal.
 
 A bot may name a `template`, the text its `AGENTS.md` is made from, and a bot that names none gets the default one the plugin ships. A make or an edit that names a template that does not exist is refused `-32602`.
 

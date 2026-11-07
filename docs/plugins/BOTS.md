@@ -24,7 +24,6 @@ A bot is not a backend of its own. It names whichever agent the host already has
 | `computer` | The machine it runs in, where it names one |
 | `connectors` | The connectors a session of it may use, by alias: `{ "work": "connectors://ap-resend/account-123" }`. An alias is a lowercase slug, and a value names one connector. Each back session the bot started reads the map live, so an edit reaches a session that is already running, and a call after an alias is taken out fails - [An action offered as a tool](PLUGINS.md#an-action-offered-as-a-tool) |
 | `owner` | Whose it is: `user:<id>`, `team:<team>`, `project:<team>:<project>` or `root:<host>`. A make may name the maker, or a team or project the maker belongs to; a holder of `*:*` may name any owner, this host's own `root:<host>` among them. A body naming anybody else is refused `-32009`, and an edit may not move it. Any `root:` is this host, whatever name follows it: one a make names is written under the host's name today, and a renamed machine keeps its bots. The manifest gives this host's own owner as a `const` in `owner`, so a client sends it as given |
-| `chat` | The reader's own chat with this bot. Answered by a read and never obeyed: it is a different conversation for each reader, so what a body carries is not kept - [The chat and its back sessions](#the-chat-and-its-back-sessions) |
 | `createdAt`, `updatedAt` | The times. Read but never obeyed: what they hold is the host's |
 
 Three of the fields in that table are the `AGENTS.md`'s rather than `bot.md`'s: `name`, `description` and `instructions`. The file is their one copy, a read answers them from it, and a make or an edit writes them there - [The persona](#the-persona). A bot on a computer keeps the three in its record, because its file is not on this host, and so does every bot of a store the host gives no YAML parser, which writes no file. Everything else that is the bot's is in the record file; `chat` belongs to the reader, and is not kept in the record.
@@ -129,26 +128,15 @@ A make that names neither gets a body at random and the first colour.
 
 ## The chat and its back sessions
 
-A person talks to a bot in a **chat**: one session of the `bot-chat` provider per bot and person. That provider runs no model, and keeps each turn as one JSON line under `<configDir>/bots/<slug>/logs/`, so a chat is still readable after a daemon restarts. A turn it begins stays open until the plugin ends it, which is what the work behind the chat answers into.
+A person talks to a bot in a **chat**: a session of the `bot-chat` provider, which a client makes with `createSession`, naming the bot in its config, as a session of any agent is made:
 
-A message said in the chat wakes a **back session**: an ordinary session of the host, on the bot's agent, which does the work and replies. The chat is the person's main chat with the bot, and each back session is behind it. Their two names are:
+```json
+{ "method": "createSession", "params": { "channel": "ahp-session:/<uuid>", "provider": "bot-chat", "config": { "bot": "motion" } } }
+```
 
-| Name | What it is |
-| --- | --- |
-| `bot:/<bot>/<user>` | One person's main chat with one bot. A read answers `{ chat }`, the session the chat is in |
-| `bot:/<bot>/<user>/<name>` | One back session behind that chat. A read answers `{ session }`, the session that name is on today, and "not found" when no row has the name |
+The chat is addressed by the URI the client names, and it is the session's owner's: a person may open as many chats with a bot as they like, and lists them as they list any session. A read of `bot://<slug>` answers the bot's record and starts nothing, as VS Code's reads answer content. The provider runs no model, and keeps each turn as one JSON line under `<configDir>/bots/<slug>/logs/`, so a chat is still readable after a daemon restarts. It works in the bot's `workspace` and is titled with the bot's `name`. A turn it begins stays open until the plugin ends it, which is what the work behind the chat answers into.
 
-`bot:/<bot>/<user>/` is a directory, and a list of it answers the names of that person's back sessions. `bot:/` and `bot://` are the same address.
-
-`<user>` is the id after `user:`, so `user:ana` is `ana` in the path. A reader who is nobody is this host, named after the machine, so a host with no users directory has a main chat of its own.
-
-A read of the main chat is answered to the person it is named for, to the bot's owner and to this host. A reader who is none of those is refused, because a chat is one person's conversation rather than part of the record. Reading one's own main chat also needs `bot:chat` unless the bot is theirs, as a read of the bot does, and the first read starts the chat the way a read of the bot does. A back session and a list of the names are answered to those same three.
-
-A chat is opened by a **read**. `resourceRead bot://<slug>` answers the record with one more key, `chat`, the URI of the reader's own conversation with that bot, and the first read by a reader who may chat starts it and keeps the row. Reading the same bot again answers the same chat, and two people reading one bot are answered two different chats. A reader who may not chat is answered the record alone: no `chat` key and no refusal, because there is nothing wrong with their read - there is simply no conversation of theirs to name.
-
-A chat is the reader's own session: it works in the bot's `workspace`, it is titled with the bot's `name`, and starting one needs the reader's own `session:create`, asked by the host the way it is asked at the door. A refusal there is the read's refusal.
-
-`chat` is answered and never obeyed. A client that read a bot and writes the record back, `chat` and all, is writing what it was given, and the key is dropped rather than kept: a chat is the reader's, and the next reader's read answers the next reader's chat.
+A message said in the chat wakes a **back session**: an ordinary session of the host, on the bot's agent, which does the work and replies. Which bot a chat is with is its config's, and whose it is is the host's: the owner of the session, as the host recorded it at the create.
 
 A chat's log is the whole of its state. Nothing about a chat is kept in memory past the process that made it, so a daemon that starts again lists, opens and replays the chats it has logs for. A turn the log shows begun and never ended, one a daemon went down in, reads back as an error, as VS Code reads back a turn its record shows started and never ended: `executionInterrupted`, "The agent was interrupted before this request finished."
 
@@ -160,13 +148,13 @@ The bot's `session` names the back session a message goes to. It is `work` unles
 
 A message that reaches the wake is sent to its back session as a **queued** `chat/pendingMessageSet`, whatever the session is doing, as VS Code's Agents window sends a message from one session into another: the back session's host takes it up at once when the session is idle, and after the turn in front of it otherwise. The message is an agent's (`origin: { kind: 'agent' }`), and its `_meta['vscode.chat.delegation']` names the main chat's session and chat. It names no model, agent or attachments, so the back session runs it on its own defaults; the main chat keeps those with the person's message. The main turn is answered by the turn the last message it sent becomes, and a stop of the main turn takes back the messages still waiting in the back session. A back session is started on the bot's `preset`, or its `provider` and `model`, in the bot's folder, owned by the person of the main chat, and titled with the bot's name. It loads none of the settings of the person who runs the daemon: the bot's rules are its own `AGENTS.md`, not the operator's.
 
-The session a name is on is kept in the bot's own `sessions/` rows, so a message that comes back to an idle name continues the session it started. A name whose session the host no longer has - a daemon that restarted - is started again and the row written over. Two messages that arrive together for one name start one session.
+The session a name is on is kept in the bot's own `sessions/` rows, one per bot, person and name, so a message that comes back to an idle name continues the session it started, from whichever of the person's chats with the bot it comes. A name whose session the host no longer has - a daemon that restarted - is started again and the row written over. Two messages that arrive together for one name start one session.
 
 Each woken message carries a context block in front of what the person said:
 
 ```text
 <context>
-main chat: bot:/<bot>/<user>
+main chat: <the URI of the chat the person is waiting in>
 from: <the person's id>
 time: <ISO time with the host's offset>
 </context>
@@ -193,7 +181,7 @@ A back session may also end its turn without posting. What the main turn does th
 
 A value outside those four is reported and `post` is used.
 
-A message the wake cannot hand to a back session ends the main turn failed, with `chat/error` and the reason, as VS Code ends a turn whose send failed: a chat no read of a bot opened, a name a message fills into one no session can have, a back session the host would not start, a send the host refused, and a send the host did not answer in ten seconds, which ends the turn with VS Code's words for a message it sent into another session and did not hear back about: `Remote message delivery was not confirmed. It may already be queued; do not retry automatically.` It is not sent again. A back session's turn that failed fails the main turn the same way, typed `sendFailed`. A steer the wake cannot hand on is dropped instead, with the reason in the daemon's log, and the main turn goes on waiting on the work it already waited on - [CHATS.md](../sdk/CHATS.md).
+A message the wake cannot hand to a back session ends the main turn failed, with `chat/error` and the reason, as VS Code ends a turn whose send failed: a chat whose bot has gone or whose session the host no longer holds, a name a message fills into one no session can have, a back session the host would not start, a send the host refused, and a send the host did not answer in ten seconds, which ends the turn with VS Code's words for a message it sent into another session and did not hear back about: `Remote message delivery was not confirmed. It may already be queued; do not retry automatically.` It is not sent again. A back session's turn that failed fails the main turn the same way, typed `sendFailed`. A steer the wake cannot hand on is dropped instead, with the reason in the daemon's log, and the main turn goes on waiting on the work it already waited on - [CHATS.md](../sdk/CHATS.md).
 
 ### The bot's rules
 
@@ -232,13 +220,12 @@ A bot names it as `template: short`. A make or an edit that names a template tha
 | `bot:get` | Read any bot |
 | `bot:list` | List every bot |
 | `bot:put` | Make a bot in the scheme, edit their own |
-| `bot:chat` | Be answered a chat by any bot they may read |
 | `*:*` | Any of it, on any bot, and make a bot for any owner |
 | A root connection | Any of it, on any bot |
 
 A listing shows what a read would allow: a list that showed a bot the reader cannot open would be a list of names they cannot use.
 
-A read that opens a chat also needs the reader's own `session:create`, because the chat is theirs rather than the bot's - [USERS.md](../sdk/USERS.md#roles).
+A chat with a bot is a session, so opening one needs what any session needs: the person's own `session:create`, and the use of the `bot-chat` agent, which is the host's - [USERS.md](../sdk/USERS.md#roles).
 
 ## A watch
 
@@ -257,7 +244,7 @@ A watch needs `bot:watch`, or a bot the reader may read: a watch on `bot://` is 
 
 A client that subscribes to `x-ahpd-bots://` gets every bot it may read in one snapshot, then an action for each change. It reads the bots without one `resourceRead` per bot, and it hears changes that other clients make.
 
-The snapshot state is `{ bots: BotRecord[] }`. Each record is the bot's own, the JSON object a write takes and a read answers, without `chat` - a chat belongs to whoever read the bot, and the catalogue is one snapshot for the whole client. Three actions follow it:
+The snapshot state is `{ bots: BotRecord[] }`. Each record is the bot's own, the JSON object a write takes and a read answers. Three actions follow it:
 
 | Action | When the client gets it |
 | --- | --- |
@@ -320,7 +307,7 @@ The plugin's own entry needs `session:read` and `session:write`. A message is se
 { "plugins": [{ "name": "@ahpd/bot", "grants": ["session:read", "session:write"], "options": { "root": "/srv/bots" } }] }
 ```
 
-All the data of one bot is in `<configDir>/bots/<slug>/`: its record is `bot.md` - [The record file](#the-record-file) shows one - its main chat rows are in `chats/`, its back session rows in `sessions/`, and its chat logs in `logs/`. A delete removes that folder. The tombstones are in `<configDir>/bots-gone/`. Named templates are in `<configDir>/templates/<name>.md`, and the default `AGENTS.md` template is `<configDir>/templates/bots/AGENTS.md`. A bot's `AGENTS.md` is not in the configuration folder: it is in the bot's work folder, which the `root` option places - [The persona](#the-persona). A plugin that takes the record store over keeps the records and the tombstones wherever that store keeps them; the work folder and its `AGENTS.md` stay where they are.
+All the data of one bot is in `<configDir>/bots/<slug>/`: its record is `bot.md` - [The record file](#the-record-file) shows one - its back session rows are in `sessions/`, and its chat logs in `logs/`. A delete removes that folder. The tombstones are in `<configDir>/bots-gone/`. Named templates are in `<configDir>/templates/<name>.md`, and the default `AGENTS.md` template is `<configDir>/templates/bots/AGENTS.md`. A bot's `AGENTS.md` is not in the configuration folder: it is in the bot's work folder, which the `root` option places - [The persona](#the-persona). A plugin that takes the record store over keeps the records and the tombstones wherever that store keeps them; the work folder and its `AGENTS.md` stay where they are.
 
 ## See also
 

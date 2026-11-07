@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
-import { backSessions, chatsOf, sessionsOf } from '../src/names.js';
 import { botProvider } from '../src/provider.js';
 import { botStore } from '../src/store.js';
 import type { BotProvider } from '../src/provider.js';
@@ -85,28 +84,10 @@ async function made() {
   const bots: RecordCollection = await records.collection('bots');
   const graves: RecordCollection = await records.collection('bots-gone');
   const store: BotStore = botStore(bots, graves, (line) => problems.push(line), { yaml, agents });
-  /*
-   * One collection per bot, opened up front because the provider's seams are
-   * synchronous: every slug these cases use is named here.
-   */
-  const chatRows = new Map<string, RecordCollection>();
-  const sessionRows = new Map<string, RecordCollection>();
-  for (const slug of ['flame', 'motion', 'other']) {
-    chatRows.set(slug, await records.collection(chatsOf(slug)));
-    sessionRows.set(slug, await records.collection(sessionsOf(slug)));
-  }
-  const rowsOf = (held: Map<string, RecordCollection>, slug: string): RecordCollection => {
-    const one = held.get(slug);
-    if (one === undefined) throw new Error(`this case opened no collection for ${slug}`);
-    return one;
-  };
   const provider = botProvider({
     root: folder,
     botsDir: join(config, 'bots'),
     store,
-    sessions: { owner: async () => undefined, start: async () => 'echo:/one' },
-    chats: (bot) => rowsOf(chatRows, bot),
-    backSessions: backSessions((bot) => rowsOf(sessionRows, bot)),
     hostName: 'test',
     templates: { text: async () => undefined },
     yaml,

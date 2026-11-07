@@ -215,10 +215,6 @@ const FIELDS = [
   // bot and wrote the whole record back is writing what it was given. Neither
   // is read: what they hold is the host's.
   'createdAt', 'updatedAt',
-  // The reader's own chat, which a read answers and the host keeps. A body that
-  // carries it back is writing what it was given, and it is not read: a chat is
-  // the reader's, so it is the same key for two people reading one bot.
-  'chat',
   // Whether the agent it names is one this host serves. Answering a read and
   // never a record the host keeps, so a body that carries it back changes
   // nothing and a bot that names a missing agent is still a bot someone made.

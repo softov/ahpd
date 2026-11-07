@@ -3,11 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
-import { backSessions, chatsOf, rowId, sessionsOf } from '../src/names.js';
+import { backSessions, sessionsOf } from '../src/names.js';
 import { botStore } from '../src/store.js';
 import { botWake, sessionFor } from '../src/wake.js';
 import type { ChatMessage, TurnHandle } from '../src/chat.js';
-import type { BotSessions } from '../src/provider.js';
+import type { BotSessions } from '../src/wake.js';
 import type { BotRecord } from '../src/record.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { SessionRequest } from '../../sdk/src/types/plugin.js';
@@ -63,7 +63,7 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
 const MAIN = 'ahp-chat:/main';
 
 /** One message in a main chat, as `chat.ts` hands the plugin one. */
-const message = (turnId: string, text: string, session = CHAT): ChatMessage => ({ session, chat: MAIN, turnId, text });
+const message = (turnId: string, text: string, session = CHAT): ChatMessage => ({ session, chat: MAIN, bot: 'backer', turnId, text });
 
 /**
  * The text a woken message carries: the context block, one blank line, then
@@ -71,7 +71,7 @@ const message = (turnId: string, text: string, session = CHAT): ChatMessage => (
  * is `bot-context.test.ts`; here it is only in the way of the words.
  */
 const carrying = (said: string): RegExp =>
-  new RegExp(`^<context>\\nmain chat: bot:/backer/ana\\nfrom: ana\\ntime: [^\\n]+\\n</context>\\n\\n${said}$`);
+  new RegExp(`^<context>\\nmain chat: ahp-chat:/main\\nfrom: ana\\ntime: [^\\n]+\\n</context>\\n\\n${said}$`);
 
 /** A handle over a main turn, and what was said through it. */
 interface Recorded {
@@ -141,15 +141,16 @@ async function sitting(
     () => {},
   );
   await store.put(record);
-  const chats = await records.collection(chatsOf(record.id));
-  await chats.put({ id: rowId([record.id, PERSON]), bot: record.id, owner: PERSON, chat: CHAT });
   const backsRows = await records.collection(sessionsOf(record.id));
   const backs = backSessions(() => backsRows);
 
   /** The default chat of each back session, by the session's URI. */
   const at = new Map<string, string>();
-  /** Whose each session is: a URI absent here is one this host no longer has. */
-  const owners = new Map<string, Owner>();
+  /**
+   * Whose each session is: a URI absent here is one this host no longer has.
+   * The main chat is the person's, as the host recorded it at its create.
+   */
+  const owners = new Map<string, Owner>([[CHAT, PERSON]]);
   /** The turn running in a back session, where a case names one. */
   const running = new Map<string, string>();
   const starts: SessionRequest[] = [];
@@ -204,7 +205,6 @@ async function sitting(
 
   const wake = botWake({
     store,
-    chats: () => chats,
     backs,
     sessions,
     // What a first wake writes into the folder: the real plugin fills the
@@ -695,19 +695,23 @@ it('ends the main turn with the host\'s own words when it refuses the message', 
   expect(one.wake.main('ahp-session:/1')).toBeUndefined();
 });
 
-it('ends a turn in a chat no bot opened, and says so', async () => {
+/*
+ * Whose a chat is is the host's to say, as it recorded the session's owner at
+ * its create, and which bot is the chat's config's. A chat in a session this
+ * host does not hold, and one whose bot has gone, have nothing behind them:
+ * the turn ends failed with why, as VS Code ends a turn with nothing to send
+ * it to, rather than left open for an answer.
+ */
+it('ends a turn in a chat whose session the host does not hold, or whose bot has gone', async () => {
   const one = await sitting();
-  const said = turn();
+  const stray = turn();
+  await one.wake.woken(message('t1', 'hello', 'bot-chat:/stray'), stray.handle);
+  expect(stray.failures).toEqual(['bot-chat:/stray is a session this host does not hold']);
 
-  await one.wake.woken(message('t1', 'hello', 'bot-chat:/stray'), said.handle);
-
-  // No row says which bot this chat is with, so there is nothing to wake and
-  // nobody coming: the turn ends failed with why, as VS Code ends a turn with
-  // nothing to send it to, rather than left open for an answer.
-  expect(said.failures).toEqual(['bot-chat:/stray is a chat no bot on this host opened']);
-  expect(said.endings).toEqual([]);
-  expect(said.notices).toEqual([]);
-  expect(one.problems).toEqual(['bot-chat:/stray is a chat no bot on this host opened']);
+  const gone = turn();
+  await one.wake.woken({ ...message('t2', 'hello'), bot: 'nobody' }, gone.handle);
+  expect(gone.failures).toEqual(['There is no bot nobody.']);
+  expect([...stray.endings, ...stray.notices, ...gone.endings, ...gone.notices]).toEqual([]);
   expect(one.sent).toEqual([]);
 });
 

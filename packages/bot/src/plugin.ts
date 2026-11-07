@@ -6,7 +6,7 @@ import { botAsk } from './ask.js';
 import { botCatalogue, CATALOGUE_SCHEME } from './catalogue.js';
 import { botChatAgent } from './chat.js';
 import { prepareAgentsTemplate } from './folder.js';
-import { backSessions, BOTS_DIR, chatsOf, LEGACY_CHATS, LEGACY_SESSIONS, sessionsOf } from './names.js';
+import { backSessions, BOTS_DIR, LEGACY_CHATS, LEGACY_SESSIONS, sessionsOf } from './names.js';
 import { postMessage } from './post.js';
 import { botProvider } from './provider.js';
 import { isSlug } from './record.js';
@@ -17,7 +17,7 @@ import type { InstructionsIn, Yaml } from './agents.js';
 import type { BotRecord } from './record.js';
 import type { MainTurnAbsence } from './wake.js';
 import type { Bag, Owner, Plugin, PluginPeer, RecordCollection, TurnEndEvent } from '@ahpd/sdk';
-import type { BotSessions } from './provider.js';
+import type { BotSessions } from './wake.js';
 
 /**
  * The package as a plugin.
@@ -29,8 +29,8 @@ import type { BotSessions } from './provider.js';
  * to the host, and where it works is the operator's to choose.
  *
  * All the data of one bot is in `<configDir>/bots/<slug>/`: its record is
- * `bot.md`, its main chat rows are in `chats/`, its back session rows in
- * `sessions/` and its chat logs in `logs/`. A delete removes that folder, and
+ * `bot.md`, its back session rows are in `sessions/` and its chat logs in
+ * `logs/`. A delete removes that folder, and
  * the bot's work folder under the plugin root - `<root>/<slug>` by default - is
  * not in it and stays.
  *
@@ -155,10 +155,11 @@ const botOfLog = (file: string): string | undefined => {
  * Move the data an older daemon kept into the folder each bot has now.
  *
  * Everything about one bot is `<configDir>/bots/<slug>/`: its record is
- * `bot.md`, its main chat rows are in `chats/`, its back session rows in
- * `sessions/` and its logs in `logs/`. Before that, the record was
- * `bots/<slug>.md`, and the rows and logs were in the two collections
- * `bot-chats/` and `bot-sessions/`.
+ * `bot.md`, its back session rows are in `sessions/` and its logs in `logs/`.
+ * Before that, the record was `bots/<slug>.md`, and the rows and logs were in
+ * the two collections `bot-chats/` and `bot-sessions/`; the rows of the chats
+ * an older daemon opened move with the bot too, into `chats/`, so a delete of
+ * the bot takes them with the rest.
  *
  * This runs at load, before anything opens one of those collections: the
  * record store reads a collection's folder when it opens it, so a file moved
@@ -499,8 +500,8 @@ export const apply: Plugin['apply'] = (host, options) => {
    * touched.
    *
    * Opened once and kept, so a call that writes a row and a call that reads it
-   * back answer the same collection: the main chat a read of a bot writes is
-   * the one a wake of its chat finds.
+   * back answer the same collection: the back session a wake writes down is the
+   * one the next wake finds.
    */
   const byName = new Map<string, RecordCollection>();
   const collection = (which: string): RecordCollection => {
@@ -511,11 +512,6 @@ export const apply: Plugin['apply'] = (host, options) => {
     }
     return one;
   };
-  /*
-   * One row per bot and person, holding the chat they talk in. What makes a
-   * read of `bot://` answer the same chat the second time as the first.
-   */
-  const chats = (bot: string): RecordCollection => collection(chatsOf(bot));
   /*
    * One row per back session: the bot, the person and the name a message
    * addresses, and the session that name is on. What makes a name a session a
@@ -549,7 +545,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     opened.catch(failed);
     return opened;
   };
-  /** This host's own sessions, where a chat and a back session are started, and read for the one a bot has. */
+  /** This host's own sessions, where a back session is started, and read for whose a session is. */
   const sessions: BotSessions = {
     owner: (uri) => host.sessionOwner(uri),
     start: (wanted, named) => host.startSession(wanted, named),
@@ -599,27 +595,15 @@ export const apply: Plugin['apply'] = (host, options) => {
     yaml,
     instructionsIn,
     agents,
-    chats,
-    backSessions: backs,
-    sessions,
     mayUse,
     available,
   }));
   /*
-   * The one grant a bot asks for: talking to it. The provider's own entry on
-   * `ahpd.grants` takes its title, description and groups from the `bot` row
-   * of the host's table, so this says only that the operation exists.
-   */
-  host.registerGrants('bot', { operations: ['chat'] });
-  /*
-   * The wake: every turn one of those chats begins, and every message steered
-   * into an open one, goes to the back session the bot's record names. A chat
-   * this plugin did not open - one a client started by itself - names no bot
-   * in the rows and is left as it was.
+   * The wake: every turn a chat with a bot begins, and every message steered
+   * into an open one, goes to the back session the bot's record names.
    */
   const wake = botWake({
     store,
-    chats,
     backs,
     sessions,
     /*

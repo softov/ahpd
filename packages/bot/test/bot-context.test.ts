@@ -5,11 +5,11 @@ import { expect, it } from 'vitest';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { botChatAgent } from '../src/chat.js';
 import { contextBlock, timeWithOffset } from '../src/context.js';
-import { backSessions, chatsOf, rowId, sessionsOf } from '../src/names.js';
+import { backSessions, sessionsOf } from '../src/names.js';
 import { botStore } from '../src/store.js';
 import { botWake } from '../src/wake.js';
 import type { ChatMessage, TurnHandle } from '../src/chat.js';
-import type { BotSessions } from '../src/provider.js';
+import type { BotSessions } from '../src/wake.js';
 import type { BotRecord } from '../src/record.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { Start } from '../../sdk/src/types/agent.js';
@@ -56,7 +56,7 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
 });
 
 /** One message in a main chat, as `chat.ts` hands the plugin one. */
-const message = (turnId: string, text: string): ChatMessage => ({ session: CHAT, chat: 'ahp-chat:/main', turnId, text });
+const message = (turnId: string, text: string): ChatMessage => ({ session: CHAT, chat: 'ahp-chat:/main', bot: 'backer', turnId, text });
 
 /** A handle over a main turn, and what was said through it. */
 interface Recorded {
@@ -107,15 +107,13 @@ async function sitting(record: BotRecord = bot()) {
     () => {},
   );
   await store.put(record);
-  const chats = await records.collection(chatsOf(record.id));
-  await chats.put({ id: rowId([record.id, PERSON]), bot: record.id, owner: PERSON, chat: CHAT });
   const backsRows = await records.collection(sessionsOf(record.id));
   const backs = backSessions(() => backsRows);
 
   /** The default chat of each back session, by the session's URI. */
   const at = new Map<string, string>();
-  /** Whose each session is: a URI absent here is one this host no longer has. */
-  const owners = new Map<string, Owner>();
+  /** Whose each session is, the main chat the person's: a URI absent here is one this host no longer has. */
+  const owners = new Map<string, Owner>([[CHAT, PERSON]]);
   const sent: { channel: string; action: Bag }[] = [];
   let minted = 0;
 
@@ -132,7 +130,6 @@ async function sitting(record: BotRecord = bot()) {
 
   const wake = botWake({
     store,
-    chats: () => chats,
     backs,
     sessions,
     // What a first wake writes into the folder: the real plugin fills the
@@ -155,12 +152,12 @@ async function sitting(record: BotRecord = bot()) {
 
 it('writes one line for each field, between its tags', () => {
   expect(contextBlock([
-    ['main chat', 'bot:/backer/ana'],
+    ['main chat', 'ahp-chat:/main'],
     ['from', 'ana'],
     ['time', '2026-10-17T12:00:00.000-03:00'],
   ])).toBe([
     '<context>',
-    'main chat: bot:/backer/ana',
+    'main chat: ahp-chat:/main',
     'from: ana',
     'time: 2026-10-17T12:00:00.000-03:00',
     '</context>',
@@ -170,12 +167,12 @@ it('writes one line for each field, between its tags', () => {
 it('leaves out a field whose value is empty', () => {
   // A line with nothing after it says nothing, so it is not written at all.
   expect(contextBlock([
-    ['main chat', 'bot:/backer/ana'],
+    ['main chat', 'ahp-chat:/main'],
     ['from', ''],
     ['time', '2026-10-17T12:00:00.000-03:00'],
   ])).toBe([
     '<context>',
-    'main chat: bot:/backer/ana',
+    'main chat: ahp-chat:/main',
     'time: 2026-10-17T12:00:00.000-03:00',
     '</context>',
   ].join('\n'));
@@ -207,7 +204,7 @@ it('puts the context block in front of a turn that wakes a session', async () =>
   // the three lines the wake knows about the message.
   expect(rest).toEqual([]);
   expect(words).toBe('hello');
-  expect(block).toMatch(/^<context>\nmain chat: bot:\/backer\/ana\nfrom: ana\ntime: [^\n]+\n<\/context>$/);
+  expect(block).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nfrom: ana\ntime: [^\n]+\n<\/context>$/);
   expect(block).toMatch(/time: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/m);
 });
 
@@ -221,7 +218,7 @@ it('puts the context block in front of a message the main chat steers into its o
   const action = one.sent[1]?.action ?? {};
   expect(action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'queued' });
   const text = textOf(action);
-  expect(text).toMatch(/^<context>\nmain chat: bot:\/backer\/ana\nfrom: ana\ntime: [^\n]+\n<\/context>\n\nstop that$/);
+  expect(text).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nfrom: ana\ntime: [^\n]+\n<\/context>\n\nstop that$/);
 });
 
 it('keeps the block out of the text the main chat shows', async () => {
