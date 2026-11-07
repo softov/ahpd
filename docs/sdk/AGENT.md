@@ -278,14 +278,17 @@ The host checks a change against the schema and says it in the client's own
 keys, then hands each key to `setConfig`, as VS Code's host says a client's
 config action and then applies it to its agents
 ([agentService.ts L13576-L13679](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13576-L13679)).
-`setConfig` answers `true` for a value taken as it was sent, or a sentence in
-your words for one you could not take, which the host logs: the change stands as
-every client was told it.
+`setConfig` answers `true` for a value taken as it was sent, or a sentence for
+one you could not take, which the host logs: the change stands as every client
+was told it. A key you do not take and a value you do not offer are refused in
+VS Code's two sentences, and any other failure in your runtime's own words, as
+VS Code passes a provider's message through
+([sessionConfigProperties.ts L136-L147](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L147)).
 
 ```ts
 setConfig: (key, value) => {
-  if (key !== 'ask') return `${key} is not a config key this backend takes`;
-  if (value !== 'writes' && value !== 'always' && value !== 'never') return `ask takes writes, always or never`;
+  if (key !== 'ask') return `Session configuration '${key}' is not writable.`;
+  if (value !== 'writes' && value !== 'always' && value !== 'never') return `Session configuration '${key}' does not offer '${String(value)}'.`;
   settings.ask = value;
   return true;
 },

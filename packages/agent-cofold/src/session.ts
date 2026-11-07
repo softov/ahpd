@@ -476,13 +476,15 @@ export function cofoldSession(
 
     /*
      * Take a config value. A key in the schema is kept and applied to the
-     * next turn's agent; anything else is refused in this backend's words,
-     * because the host reads the schema for how a key behaves and knows
-     * nothing about what one means.
+     * next turn's agent. Any other key is refused in VS Code's sentence for a
+     * key it cannot write, and a value of another kind in this backend's
+     * words, as VS Code passes a provider's own message through.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13593
      */
     setConfig: (key, value) => {
       const declared = bag(bag(start.schema()).properties);
-      if (declared[key] === undefined) return `${provider}: ${key} is not a config key this backend takes`;
+      if (declared[key] === undefined) return `Session configuration '${key}' is not writable.`;
       if (typeof value !== 'string') return `${provider}: ${key} takes a string`;
       values[key] = value;
       return true;

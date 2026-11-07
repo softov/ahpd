@@ -144,6 +144,27 @@ it('offers VS Code\'s five approval modes when the record turns dontAsk off', as
   });
 });
 
+/*
+ * A permission mode the record does not offer is refused in VS Code's sentence
+ * for a value not offered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L147
+ */
+it('refuses a permission mode the record does not offer in VS Code\'s sentence', async () => {
+  const engine = await engineOf();
+  const session = startedNow(engine.open(viewOf('claude', () => ({ dontAsk: false }))).create({
+    uri: 'ahp-session:/declared',
+    chatUri: 'ahp-chat:/declared',
+    settings: {},
+    clientToolTimeoutMs: 60_000,
+    schema: () => ({ type: 'object', properties: {} }),
+    emit: () => {},
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
+  }));
+  expect(await session.setConfig?.('permissionMode', 'dontAsk')).toBe('Session configuration \'permissionMode\' does not offer \'dontAsk\'.');
+  expect(await session.setConfig?.('permissionMode', 'plan')).toBe(true);
+  await session.close();
+});
+
 it('builds a session query from the declared values of its record', async () => {
   const options = await queried({ sandbox: 'on', thinking: 'disabled', outputStyle: 'concise' });
   expect(options.settings).toEqual({ sandbox: { enabled: true } });

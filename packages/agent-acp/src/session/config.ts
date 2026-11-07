@@ -471,8 +471,12 @@ export function createConfig(ctx: SessionContext): Config {
    * `model` is its model, set here even though it is not a schema property,
    * because a model belongs to the turn and a client may still send one. Every
    * other option the server offers is a control of its own under
-   * `<provider>.<id>`, a choice or a switch, and a key naming none of these is
-   * refused by name, because only this backend knows what the server serves.
+   * `<provider>.<id>`, a choice or a switch. A key naming none of these is
+   * refused in VS Code's sentence for a key it cannot write, and a value of
+   * another kind in this backend's words, as VS Code passes a provider's own
+   * message through.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L147
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13593
    */
   const refusalOf = (key: string, value: unknown): string | undefined => {
     if (key === 'permissionMode' || key === 'model') {
@@ -481,7 +485,7 @@ export function createConfig(ctx: SessionContext): Config {
     if (key.startsWith(prefix)) {
       return typeof value === 'string' || typeof value === 'boolean' ? undefined : `${provider}: ${key} takes a string or true or false`;
     }
-    return `${provider}: ${key} is not a config key this backend serves`;
+    return `Session configuration '${key}' is not writable.`;
   };
 
   /**
@@ -498,8 +502,11 @@ export function createConfig(ctx: SessionContext): Config {
    * answer is said as an update's options are, so an option the server moved
    * with it reaches every client once.
    *
-   * `true` when the server took it, and otherwise the reason in the backend's
-   * words.
+   * `true` when the server took it, and otherwise the reason: VS Code's
+   * sentences for a key the server names no option for and a model it does
+   * not list, and the backend's or the server's own words for a value of
+   * another kind and a request the server refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L147
    */
   const applyConfig = async (
     held: { connection: AcpConnection; sessionId: string },
@@ -511,11 +518,11 @@ export function createConfig(ctx: SessionContext): Config {
     const option = key === 'permissionMode' ? modeOption()
       : key === 'model' ? modelOption()
         : controlOptions().find((one) => keyOf(one) === key);
-    if (key.startsWith(prefix) && option === undefined) return `${provider}: this ACP server names no "${key.slice(prefix.length)}" option`;
+    if (key.startsWith(prefix) && option === undefined) return `Session configuration '${key}' is not writable.`;
     if (option?.type === 'boolean' && typeof value !== 'boolean') return `${provider}: ${key} takes true or false`;
     if (option?.type === 'select' && typeof value !== 'string') return `${provider}: ${key} takes a string`;
     if (key === 'model' && option === undefined && !(listedModels ?? []).some((one) => one.id === value)) {
-      return `${provider}: this ACP server names no model option, so model cannot be set`;
+      return `Session configuration '${key}' does not offer '${String(value)}'.`;
     }
     const before = values[key];
     values[key] = value;

@@ -993,11 +993,17 @@ it('fails the turn with what went wrong when pi cannot run it', async () => {
   expect(session.status()).toBe(2);
 });
 
-it('refuses a setting it does not serve in words that say which of the two went wrong', async () => {
+/*
+ * A key the schema does not declare and a value it does not offer, refused in
+ * VS Code's two sentences.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L147
+ */
+it('refuses a setting it does not serve, and a value it does not offer, in VS Code\'s two sentences', async () => {
   const { session } = opened();
   expect(await session.setConfig?.('projectTrust', 'deny')).toBe(true);
-  expect(await session.setConfig?.('projectTrust', 'maybe')).toBe('projectTrust is "trust" or "deny"');
-  expect(await session.setConfig?.('somethingElse', 'plan')).toBe('pi sessions have no "somethingElse" setting');
+  expect(await session.setConfig?.('projectTrust', 'maybe')).toBe('Session configuration \'projectTrust\' does not offer \'maybe\'.');
+  expect(await session.setConfig?.('permissionMode', 'yolo')).toBe('Session configuration \'permissionMode\' does not offer \'yolo\'.');
+  expect(await session.setConfig?.('somethingElse', 'plan')).toBe('Session configuration \'somethingElse\' is not writable.');
 });
 
 /** Where pi's loader says it found a resource. */

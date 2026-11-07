@@ -132,6 +132,27 @@ it('omits a control this backend would not honour', async () => {
   expect((await withAdapter.probe?.())?.models).toEqual([{ id: 'stub', name: 'stub' }]);
 });
 
+/*
+ * A key the schema does not declare is refused in VS Code's sentence for a key
+ * it cannot write, and a value of another kind in this backend's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
+ */
+it('refuses a key its schema does not declare in VS Code\'s sentence', async () => {
+  const agent = cofoldAgent({ memory: true });
+  const session: Session = startedNow(agent.create({
+    uri: 'ahp-session:/modes-config',
+    chatUri: 'ahp-chat:/modes-config',
+    settings: agent.defaults(),
+    workingDirectory: place(),
+    schema: () => agent.schema(),
+    emit: channels().emit,
+  } as unknown as Start));
+  expect(await session.setConfig?.('nonsense', 'x')).toBe('Session configuration \'nonsense\' is not writable.');
+  expect(await session.setConfig?.('permissionMode', 'plan')).toBe(true);
+  expect(String(await session.setConfig?.('permissionMode', 3))).toContain('takes a string');
+  await session.close();
+});
+
 it('runs a write under auto, which is the default, and under bypassPermissions', async () => {
   const chosen = await turn(undefined);
   expect(chosen.ran).toEqual(['a.txt']);

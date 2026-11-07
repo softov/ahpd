@@ -1258,7 +1258,12 @@ it('reads back a part for a message that was only whitespace, with the ids the l
   expect(parts.map(idOf)).toEqual(['t1:0', 't1:1', 'call-2', 't1:3', 't1:4']);
 });
 
-it('reaches the server for permissionMode and model, and refuses another key naming it', async () => {
+/*
+ * A key the backend does not serve is refused in VS Code's sentence for a key
+ * it cannot write.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
+ */
+it('reaches the server for permissionMode and model, and refuses another key in VS Code\'s sentence', async () => {
   const { agent, log } = backend();
   const { session, watch } = await start(agent, 'config');
   await runTurn(session, watch, 't1', 'hi');
@@ -1266,9 +1271,7 @@ it('reaches the server for permissionMode and model, and refuses another key nam
   expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
   expect(await session.setConfig?.('model', 'thorough')).toBe(true);
 
-  const refused = await session.setConfig?.('nonsense', 'x');
-  expect(typeof refused).toBe('string');
-  expect(String(refused)).toContain('nonsense');
+  expect(await session.setConfig?.('nonsense', 'x')).toBe('Session configuration \'nonsense\' is not writable.');
 
   const asked = requests(log);
   expect(asked.find((one) => one.method === 'session/set_mode')?.params).toMatchObject({ modeId: 'code' });
@@ -1314,10 +1317,10 @@ it('draws every option of its own as a control, and sets each through the server
   expect(asked.find((one) => one.params?.configId === 'telemetry')?.params).toMatchObject({ type: 'boolean', value: true });
   expect(configOf(session).values).toMatchObject({ 'acp.thinking': 'deep', 'acp.telemetry': true });
 
-  // A key the server named no option for is refused, and so is the wrong kind
-  // of value for one it did.
+  // A key the server named no option for is refused in VS Code's sentence, and
+  // the wrong kind of value for one it did in this backend's words.
   expect(String(await session.setConfig?.('acp.telemetry', 'yes'))).toContain('true or false');
-  expect(String(await session.setConfig?.('acp.nothing', true))).toContain('nothing');
+  expect(await session.setConfig?.('acp.nothing', true)).toBe('Session configuration \'acp.nothing\' is not writable.');
 });
 
 /*
@@ -1335,7 +1338,7 @@ it('keeps the server\'s own options under the agent\'s provider id', async () =>
   expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
     .toMatchObject({ configId: 'thinking', value: 'deep' });
   // Another agent's prefix is no key of this one's.
-  expect(typeof await session.setConfig?.('acp.thinking', 'deep')).toBe('string');
+  expect(await session.setConfig?.('acp.thinking', 'deep')).toBe('Session configuration \'acp.thinking\' is not writable.');
 });
 
 /*
@@ -1401,7 +1404,12 @@ it('runs with the server value when one the session was created with is not offe
   expect(changed(watch)).toEqual([{ 'acp.thinking': 'off' }]);
 });
 
-it('sets the model through the older call on a server with no options', async () => {
+/*
+ * A model the server's list does not name is refused in VS Code's sentence for
+ * a value not offered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L147
+ */
+it('sets the model through the older call on a server with no options, and refuses one it does not list in VS Code\'s sentence', async () => {
   const { agent, log } = backend(['--legacy']);
   const { session, watch } = await start(agent, 'legacy');
   await runTurn(session, watch, 't1', 'hi');
@@ -1413,6 +1421,7 @@ it('sets the model through the older call on a server with no options', async ()
   expect(asked.some((one) => one.method === 'session/set_config_option')).toBe(false);
   expect(asked.find((one) => one.method === 'session/set_model')?.params)
     .toMatchObject({ modelId: 'thorough' });
+  expect(await session.setConfig?.('model', 'slow')).toBe('Session configuration \'model\' does not offer \'slow\'.');
 });
 
 /**

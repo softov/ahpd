@@ -1643,20 +1643,26 @@ export function piSession(
       return true;
     },
 
+    /*
+     * Take a config value: the two keys the schema declares, each at a value
+     * it offers. A value it does not offer and any other key are refused in
+     * VS Code's two sentences.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L147
+     */
     setConfig: async (key, value) => {
       if (key === 'projectTrust') {
-        if (value !== 'trust' && value !== 'deny') return 'projectTrust is "trust" or "deny"';
+        if (value !== 'trust' && value !== 'deny') return `Session configuration '${key}' does not offer '${String(value)}'.`;
         values[key] = value;
         return true;
       }
       if (key === 'permissionMode') {
         if (typeof value !== 'string' || !(PERMISSION_MODES as readonly string[]).includes(value)) {
-          return `permissionMode is one of ${PERMISSION_MODES.join(', ')}`;
+          return `Session configuration '${key}' does not offer '${String(value)}'.`;
         }
         values[key] = value;
         return true;
       }
-      return `pi sessions have no "${key}" setting`;
+      return `Session configuration '${key}' is not writable.`;
     },
     settings: () => ({ ...values }),
 
