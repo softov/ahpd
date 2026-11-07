@@ -4,13 +4,14 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { botAsk } from '../src/ask.js';
-import { botChatAgent, turns } from '../src/chat.js';
+import { botChatAgent } from '../src/chat.js';
 import { botStore } from '../src/store.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { Start } from '../../sdk/src/types/agent.js';
 import type { RecordStore } from '../../sdk/src/types/records.js';
 import type { Session } from '../../sdk/src/types/session.js';
 import type { Answering } from '../src/wake.js';
+import type { ChatMessage, TurnHandle } from '../src/chat.js';
 
 /*
  * A back session's question is asked where the person is talking.
@@ -42,15 +43,15 @@ const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
-/** A chat backend over a store holding one bot. */
-async function backend(configDir: string, records: RecordStore) {
+/** A chat backend over a store holding one bot, with the listener a plugin gives it. */
+async function backend(configDir: string, records: RecordStore, heard: (message: ChatMessage, handle: TurnHandle) => void) {
   const store = botStore(
     await records.collection('bots', { body: 'instructions' }),
     await records.collection('bots-gone'),
     () => {},
   );
   await store.ready();
-  return botChatAgent(configDir, store);
+  return botChatAgent(configDir, store, heard);
 }
 
 /** A main chat with a turn open, and what it is told. */
@@ -58,14 +59,15 @@ interface Sitting {
   session: Session;
   /** The actions the backend emitted on the main chat, in order. */
   sent: Bag[];
+  /** The handle over the open turn, as the chat handed it to its listener with the message. */
+  handle: TurnHandle;
 }
 
 /**
  * One main chat, one bot, and one open turn.
  *
  * Nothing is started through a host: the turn is the main chat's own, and the
- * handle a wake would hold is the one `turns` answers with. The person hears
- * from it as `onMessage`, which is what a plugin sets.
+ * handle a wake would hold is the one the message hands its listener.
  */
 async function sitting(): Promise<Sitting> {
   const configDir = mkdtempSync(join(tmpdir(), 'ahpd-bot-ask-'));
@@ -85,7 +87,8 @@ async function sitting(): Promise<Sitting> {
     color: 'blue',
     labels: [],
   });
-  const agent = await backend(configDir, records);
+  let handle: TurnHandle | undefined;
+  const agent = await backend(configDir, records, (_message, given) => { handle = given; });
   const sent: Bag[] = [];
   const start: Start = {
     uri: MAIN,
@@ -96,14 +99,14 @@ async function sitting(): Promise<Sitting> {
     clientToolTimeoutMs: 0,
   };
   const session = agent.create(start);
-  turns(MAIN).onMessage = () => {};
   session.sendMessage('t1', 'hello');
-  return { session, sent };
+  if (handle === undefined) throw new Error('the message reached no listener');
+  return { session, sent, handle };
 }
 
 /** The asking over one main turn, with the back session's chat recording what it is sent. */
-function asking(session: Session, entries: Map<string, Bag>, toBack: Bag[]): ReturnType<typeof botAsk> {
-  const held: Answering = { session: MAIN, turnId: 't1', handle: turns(MAIN), bot: 'Backer', waiting: new Map() };
+function asking(handle: TurnHandle, entries: Map<string, Bag>, toBack: Bag[]): ReturnType<typeof botAsk> {
+  const held: Answering = { session: MAIN, turnId: 't1', handle, bot: 'Backer', waiting: new Map() };
   return botAsk({
     main: (back) => (back === 'bot:/backer/ana/work' ? held : undefined),
     request: async (back, id) => (back === 'bot:/backer/ana/work' ? entries.get(id) : undefined),
@@ -147,9 +150,9 @@ const question = (): Bag => ({
 });
 
 it('sends an approval from the main chat to the back session', async () => {
-  const { session, sent } = await sitting();
+  const { session, sent, handle } = await sitting();
   const toBack: Bag[] = [];
-  const ask = asking(session, new Map([['toolu_run', approval()]]), toBack);
+  const ask = asking(handle, new Map([['toolu_run', approval()]]), toBack);
   await ask.asked('bot:/backer/ana/work', 'toolu_run');
 
   // The open main turn shows the back session's approval, with its own title.
@@ -190,9 +193,9 @@ it('sends an approval from the main chat to the back session', async () => {
 });
 
 it('sends a question answered in the main chat to the back session', async () => {
-  const { session, sent } = await sitting();
+  const { session, sent, handle } = await sitting();
   const toBack: Bag[] = [];
-  const ask = asking(session, new Map([['ask-1', question()]]), toBack);
+  const ask = asking(handle, new Map([['ask-1', question()]]), toBack);
   await ask.asked('bot:/backer/ana/work', 'ask-1');
 
   // The question is a part of the open turn, with the back session's fields.
@@ -222,10 +225,10 @@ it('sends a question answered in the main chat to the back session', async () =>
  * it would be answering a question nobody is asking any more.
  */
 it('takes the copy out of the main chat when the back session withdraws its question', async () => {
-  const { session, sent } = await sitting();
+  const { session, sent, handle } = await sitting();
   const toBack: Bag[] = [];
   const entries = new Map([['ask-1', question()]]);
-  const ask = asking(session, entries, toBack);
+  const ask = asking(handle, entries, toBack);
   await ask.asked('bot:/backer/ana/work', 'ask-1');
 
   // The back session settled the request some other way and no longer asks.

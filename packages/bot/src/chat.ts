@@ -16,13 +16,13 @@ import type { BotStore } from './store.js';
  * folder.
  *
  * No model runs here either, but something answers: a turn this chat begins
- * stays open until whoever started the chat ends it, through the handle
- * `turns` answers with. The answer is the bot's own - a markdown part when its
- * session posts one, a notice when there is nothing to say, and a cancelled
- * turn when somebody stops it - and until then the turn is the chat's
- * `activeTurn`. A chat nobody is listening to is a chat with no bot behind it,
- * and its turn ends the moment it begins, which is what this backend did before
- * there was a handle.
+ * stays open until the chat's listener ends it, through the handle each
+ * message hands it with the message. The answer is the bot's own - a markdown
+ * part when its session posts one, a notice when there is nothing to say, and
+ * a cancelled turn when somebody stops it - and until then the turn is the
+ * chat's `activeTurn`. A chat nobody is listening to is a chat with no bot
+ * behind it, and its turn ends the moment it begins, in VS Code's words for a
+ * turn it has no agent for.
  *
  * One turn at a time, then. A turn sent while one is open is said at once and
  * handed on when that one ends; a message a client queues is the host's, which
@@ -130,9 +130,9 @@ export interface ChatMessage {
 /**
  * The handle over one chat's open turn: what ends it, and what hears about it.
  *
- * Held by whoever started the chat, which is the plugin: nothing in this
- * package knows what a bot's answer is, and nothing here would ever end a turn
- * by itself. The verbs are the protocol's words for what each says:
+ * Held by the chat's listener, which is the plugin, handed over with each
+ * message: nothing in this package knows what a bot's answer is, and nothing
+ * here would ever end a turn by itself. The verbs are the protocol's words for what each says:
  * `complete` ends the turn, with that answer where it is given one, `notice`
  * ends it with something that happened instead of an answer, and `fail` ends
  * it in an error - each ends the turn it finds open, and does nothing at all
@@ -471,31 +471,6 @@ const rowOf = (dir: string, id: string, store: BotStore): Listed | undefined => 
     ...(meta === undefined ? {} : { _meta: meta }),
   };
 };
-
-/**
- * The handles of the chats this process has open, by the URI of their session.
- *
- * A chat is started by the host, which answers with a session URI and nothing
- * else - a `Session` never leaves this package - so a URI is all the plugin
- * that started a chat has to reach the turn in it by. The URI is the one the
- * *host* made for the session, which is the one a backend is started with:
- * a client names an id and the host names the scheme, so the URI a client
- * sent is an alias of this one and not this one.
- */
-const handles = new Map<string, TurnHandle>();
-
-/**
- * The handle over one chat's open turn, by the URI of the session it is in.
- *
- * Throws for a session that is not a chat of this provider's: a URI nothing
- * here answers to names something else, which is a different thing from a chat
- * with no turn open in it.
- */
-export function turns(session: string): TurnHandle {
-  const held = handles.get(session);
-  if (held === undefined) throw new Error(`${session} is not a chat this host is running`);
-  return held;
-}
 
 /**
  * The `bot-chat` agent, over one daemon's configuration folder and its bots.
@@ -937,7 +912,6 @@ export function botChatAgent(
     };
     if (heard !== undefined) handle.onMessage = (message) => { heard(message, handle); };
     if (cancelled !== undefined) handle.onCancel = cancelled;
-    handles.set(start.uri, handle);
 
     /**
      * Open a turn in this chat with what it began with, and write it down.
@@ -1250,15 +1224,8 @@ export function botChatAgent(
 
       settings: () => ({ ...start.settings }),
 
-      /*
-       * Nothing runs between turns: no process to stop and no timer to clear.
-       * What there is to let go of is the handle, which is nobody's once this
-       * chat is one this host no longer runs - and a chat started again, under
-       * the same URI, registers a handle of its own.
-       */
-      close: () => {
-        if (handles.get(start.uri) === handle) handles.delete(start.uri);
-      },
+      // Nothing runs between turns: no process to stop and no timer to clear.
+      close: () => {},
     };
   }
 
