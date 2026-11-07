@@ -1553,12 +1553,11 @@ describe('a summary that did not change', () => {
   });
 
   /**
-   * A host whose directories say one file, and remember how to say it again.
+   * A host whose directories say four files, and remember how to say it again.
    *
-   * A row nobody is running takes its `changes` from the directory it is in,
-   * and the directory is read at boot and again for every watcher a client
-   * opened on it - so the same `{ status, changes }` comes back more than once
-   * for a row that did not move. Which is the case this is here for.
+   * A directory is read at boot and again for every watcher a client opened on
+   * it, so the same answer comes back more than once about a row that did not
+   * move. Which is the case this is here for.
    */
   const counted = () => {
     const watching: (() => void)[] = [];
@@ -1574,39 +1573,50 @@ describe('a summary that did not change', () => {
     };
   };
 
+  /*
+   * A row carries the session's own counts, kept where the next daemon reads
+   * them, and none of its folder's, so the startup read of a stored session's
+   * folder says nothing of its row; a re-read a client showing its diff makes
+   * says the row once, with its own counts, and not again for the same read,
+   * and a flag on it is said once.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L480-L493
+   */
   it('sends a listed row once, and not again for the same read of it', async () => {
     // The host's own path, and every directory its backend claims, is browsed
     // before the stored rows are read - so the row has to live somewhere else
-    // for there to be a second read of it to be suppressed.
+    // for the startup read of its folder to be one of its own.
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/github/elsewhere' });
+    // A session this host ran, under the name it was made with, and the two
+    // files its own work came to.
+    const store = memorySessions();
+    store.setProvider('old', 'claude');
+    store.setUri?.('old', 'ahp-session:/old');
+    store.setChanges('old', { files: 2 });
     const counted_ = counted();
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), changes: counted_.source,
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), changes: counted_.source, sessions: store,
     });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
-    await showExternal(client);
-    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    // Reading the directory at boot is one read of it, and the summary that
-    // comes out is the row's `status` and its counts and nothing else. Waited
-    // for by the clock: a read on Windows outlasts a count of ticks.
-    await vi.waitFor(() => { expect(rowsMoved(p, 'ahp-session:/old')).not.toHaveLength(0); }, { timeout: 3000 });
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; changes?: { files?: number } }[];
+    };
+    expect(listed.items.find((one) => one.resource === 'ahp-session:/old')?.changes).toEqual({ files: 2 });
     await settle(12);
-    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(1);
-    expect(rowsMoved(p, 'ahp-session:/old')[0]).toMatchObject({ status: 1, changes: { files: 4 } });
+    expect(rowsMoved(p, 'ahp-session:/old')).toEqual([]);
 
     // A client showing the row's diff re-reads the directory on every change
-    // the source reports, which is the same answer for a working tree nobody
-    // touched.
+    // the source reports: the row is said once, with its own counts, and the
+    // same read again says nothing.
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old/changeset/uncommitted' } });
     await vi.waitFor(() => { expect(counted_.watching).toHaveLength(1); }, { timeout: 3000 });
-    await settle(12);
-    const read = rowsMoved(p, 'ahp-session:/old').length;
-    expect(counted_.watching).toHaveLength(1);
     counted_.watching[0]?.();
     await settle(12);
-    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(read);
+    expect(rowsMoved(p, 'ahp-session:/old')).toEqual([{ status: 1, changes: { files: 2 } }]);
+    counted_.watching[0]?.();
+    await settle(12);
+    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(1);
 
     // And a flag is a change, so it goes out - once, and not twice.
     client.handle({
@@ -1614,37 +1624,11 @@ describe('a summary that did not change', () => {
       params: { channel: 'ahp-session:/old', action: { type: 'session/isReadChanged', isRead: true } },
     });
     await settle();
-    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(read + 1);
+    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(2);
     expect(rowsMoved(p, 'ahp-session:/old').at(-1)?.status).toBe(33);
     counted_.watching[0]?.();
     await settle(12);
-    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(read + 1);
-  });
-
-  it('sends zero counts for a listed row once its folder has no changes', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/github/elsewhere' });
-    const counted_ = counted();
-    let files = 4;
-    counted_.source.summary = () => ({ files });
-    const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), changes: counted_.source,
-    });
-    const p = peer();
-    const client = host.accept(p);
-    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
-    await showExternal(client);
-    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    await vi.waitFor(() => { expect(rowsMoved(p, 'ahp-session:/old').at(-1)).toMatchObject({ changes: { files: 4 } }); }, { timeout: 3000 });
-
-    // Everything committed: the folder has no changes, and the partial has to
-    // say so, because a partial without `changes` keeps the client's old counts.
-    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old/changeset/uncommitted' } });
-    await vi.waitFor(() => { expect(counted_.watching).toHaveLength(1); }, { timeout: 3000 });
-    files = 0;
-    counted_.watching[0]?.();
-    await vi.waitFor(() => {
-      expect(rowsMoved(p, 'ahp-session:/old').at(-1)?.changes).toEqual({ files: 0, additions: 0, deletions: 0 });
-    }, { timeout: 3000 });
+    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(2);
   });
 
   it('measures the first move of a session re-created under the same URI against its new row', async () => {
@@ -1842,6 +1826,20 @@ describe("a row's counts are the session's own", () => {
     // Said once the session's moves are quiet, on VS Code's 100 ms debounce.
     await flushed();
     expect(countsOf(p, 'ahp-session:/live')).toMatchObject({ files: 6 });
+  });
+
+  it('says zero counts once a session\'s own work comes to nothing', async () => {
+    let files = 4;
+    const source = { ...ownWork({ live: 4 }), sessionSummary: async () => ({ files }) };
+    const { client, peer: p, chatUri } = await turned({ changes: source }, 'live');
+    expect(countsOf(p, 'ahp-session:/live')).toMatchObject({ files: 4 });
+
+    // Everything committed: the change has to say so, because a change
+    // without `changes` keeps the counts the client holds.
+    files = 0;
+    await turn(client, chatUri, 't2');
+    await flushed();
+    expect(countsOf(p, 'ahp-session:/live')).toEqual({ files: 0, additions: 0, deletions: 0 });
   });
 
   it('moves a row with the work a turn did before it failed', async () => {
