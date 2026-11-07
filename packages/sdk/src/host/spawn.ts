@@ -399,18 +399,20 @@ export function createSpawn(ctx: HostContext): Spawn {
    * A question is a `chat/toolCallReady` with a `confirmationTitle` and no
    * `confirmed`. The options are VS Code's where the backend put none of its
    * own, and Allow Once and Skip, whatever the backend offered, for a tool the
-   * operator's rule names. A tool the session's `permissions` deny is turned
-   * away: the question is said with this host's refusal behind it, and the
-   * backend is handed the refusal. A tool they allow is answered here, unless
-   * the operator's rule names it: the call is said running with `confirmed:
-   * not-needed`, and the backend is handed the approval with no option. A
-   * client's tool keeps its question, marked `autoApproveBySetting`, which the
-   * client that runs it answers, as VS Code's host leaves that answer to the
-   * client. The backend is handed an answer once its own question is in place.
+   * operator's rule names. A tool the session's `permissions` deny is refused
+   * before its question reaches any client: nothing is said, and the backend
+   * is handed the refusal, as VS Code's host answers a call its permissions
+   * deny. A tool they allow is answered here, unless the operator's rule
+   * names it: the call is said running with `confirmed: not-needed`, and the
+   * backend is handed the approval with no option. A client's tool keeps its
+   * question, marked `autoApproveBySetting`, which the client that runs it
+   * answers, as VS Code's host leaves that answer to the client. The backend
+   * is handed an answer once its own question is in place. Undefined is a
+   * question said to nobody.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1684-L1766
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L610
    */
-  const toolReady = (session: string, chat: string, action: Bag, backend: () => Session | undefined): Bag => {
+  const toolReady = (session: string, chat: string, action: Bag, backend: () => Session | undefined): Bag | undefined => {
     if (action.type !== 'chat/toolCallReady' || typeof action.confirmationTitle !== 'string' || action.confirmed !== undefined) return action;
     const toolCallId = String(action.toolCallId ?? '');
     const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
@@ -425,16 +427,8 @@ export function createSpawn(ctx: HostContext): Spawn {
     const options = managed ? MANAGED_CONFIRMATION_OPTIONS.slice() : Array.isArray(action.options) ? action.options : CONFIRMATION_OPTIONS.slice();
     const answer = toolName === undefined ? undefined : answeredInSession(owning?.config.permissions, toolName);
     if (answer === 'deny') {
-      queueMicrotask(() => {
-        const refusal = {
-          type: 'chat/toolCallConfirmed', turnId: action.turnId, toolCallId, approved: false,
-          reason: 'denied', reasonMessage: `${toolName} is denied for this session`,
-        };
-        if (subagents.has(chat)) sendSubagent(chat, refusal);
-        else dispatch(chat, refusal);
-        backend()?.confirm(toolCallId, false);
-      });
-      return { ...action, options };
+      queueMicrotask(() => { backend()?.confirm(toolCallId, false); });
+      return undefined;
     }
     if (answer !== 'allow' || managed) return { ...action, options };
     const contributor = (action.contributor ?? call?.contributor) as Bag | undefined;
@@ -463,7 +457,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       const owning = sessions.get(ref.session);
       return owning === undefined ? undefined : ctx.leadOf(owning);
     });
-    if (decidedAlready(uri, action)) return;
+    if (action === undefined || decidedAlready(uri, action)) return;
     const was = ctx.stateOf(uri)?.status;
     // Whether this ends the turn the worker's chat runs, whose end is then raised as every chat's is.
     const turn = String(action.turnId ?? '');
@@ -1406,7 +1400,11 @@ export function createSpawn(ctx: HostContext): Spawn {
         }
         // A client's decision on a call is said once, as the client's.
         if (channel === 'chat' && decidedAlready(chatUri, action)) return;
-        if (channel === 'chat') action = toolReady(uri, chatUri, action, () => sessions.get(uri)?.chats.get(chatUri));
+        if (channel === 'chat') {
+          const put = toolReady(uri, chatUri, action, () => sessions.get(uri)?.chats.get(chatUri));
+          if (put === undefined) return;
+          action = put;
+        }
         // A turn the chat began, under its own id: the id a read after a
         // restart holds it by, unless the backend says it wrote it otherwise.
         if (channel === 'chat' && action.type === 'chat/turnStarted') ctx.turnRecordedAs(uri, chatUri, turn, turn);

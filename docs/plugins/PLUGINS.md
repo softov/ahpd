@@ -376,7 +376,7 @@ A tool the operator's `eligibleForAutoApproval` names is offered `allow-once` an
 An approval that picked "Allow in this Session" is kept in the session's `permissions`, VS Code's session property: the tool's name is added to `allow`.
 The host says that change as its own `session/configChanged`, keeps it with the session, and hands it to every backend of the session through `setConfig`.
 The host then answers a question about a tool that `allow` names, and `ask` does not, itself: the call is said running with `confirmed: not-needed`, and the backend is handed `confirm(toolCallId, true)` with no option.
-A question about a tool that `deny` names is said and then refused by the host, with the reason `denied`, and the backend is handed `confirm(toolCallId, false)`.
+A question about a tool that `deny` names is refused by the host before any client is asked: nothing is said, and the backend is handed `confirm(toolCallId, false)`.
 A tool that `eligibleForAutoApproval` names is never answered from `permissions`.
 The option a person picks arrives as the third argument of `Session.confirm(toolCallId, approved, optionId?)`, from the `selectedOptionId` a client sent, and a client that sends no option gets a plain approve or deny.
 Claude offers Allow once, an "always" choice labelled by what the SDK's suggestions for the call do, and Deny, when the SDK suggested something; the "always" choice returns those suggestions as `updatedPermissions`.

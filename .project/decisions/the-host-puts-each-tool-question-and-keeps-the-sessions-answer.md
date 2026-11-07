@@ -32,7 +32,7 @@ The host puts every question a backend asks about a tool call.
 Where the backend offers no options of its own, the question offers VS Code's three, in VS Code's words.
 An Allow in this Session answer adds the tool's name to `allow` in the session's `permissions`, VS Code's session property.
 The host answers a later question about a tool that `allow` names, and `ask` does not, itself.
-It refuses a question about a tool that `deny` names.
+It refuses a question about a tool that `deny` names before any client is asked, and says nothing of it.
 One exception: a tool that the host root config key `eligibleForAutoApproval` sets to `false` asks on every call, in every backend.
 Its question offers Allow Once and Skip alone, and no rule of the session answers it.
 Every permission mode asks, `bypassPermissions` included, and `dontAsk` refuses the call.

@@ -181,17 +181,21 @@ it('keeps an Allow in this Session answer in the session\'s permissions, and ans
   await host.close();
 });
 
-it('turns a question about a tool the session\'s permissions deny away, and hands its backend the refusal', async () => {
+/*
+ * A call the permissions deny is refused before its question reaches any
+ * client: no question and no confirmation is said, and the backend is handed
+ * the refusal, as VS Code's host answers its agent.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1696-L1733
+ */
+it('refuses a call the session\'s permissions deny before any client is asked, and hands its backend the refusal', async () => {
   const answers: Answer[] = [];
-  const { host, p, dispatch, turn } = await serving(asking(answers));
+  const { host, p, dispatch } = await serving(asking(answers));
   await dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: ['bash'], deny: ['bash'] } } });
-  await turn('t1');
+  await dispatch(CHAT, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } });
+  await until(() => answers.length > 0, 'the refusal');
   await settle();
-  const refused = p.heard.filter((one) => one.channel === CHAT && one.action.type === 'chat/toolCallConfirmed');
-  expect(refused.map((one) => [one.action, one.origin])).toEqual([[{
-    type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-t1', approved: false,
-    reason: 'denied', reasonMessage: 'bash is denied for this session',
-  }, undefined]]);
   expect(answers).toEqual([['call-t1', false, undefined]]);
+  expect(p.heard.filter((one) => one.channel === CHAT
+    && (one.action.type === 'chat/toolCallReady' || one.action.type === 'chat/toolCallConfirmed'))).toEqual([]);
   await host.close();
 });
