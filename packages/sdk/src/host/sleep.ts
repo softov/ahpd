@@ -421,7 +421,7 @@ export function createSleep(ctx: HostContext): Sleep {
     const lead = served.find(({ one }) => one.default === true);
     // The chat it starts again as: the store's default where that is not the
     // session's own chat, which is a first chat closed under `hidden`.
-    const other = lead === undefined || lead.one.backendId === id || lead.one.uri === chatUriFor(named) ? undefined : lead;
+    const other = lead === undefined || ctx.ownChat(named, lead.one.uri) ? undefined : lead;
     const back = other === undefined
       ? undefined
       : await ctx.transcriptOf(other.agent, other.one.backendId, at, named, other.one.uri);

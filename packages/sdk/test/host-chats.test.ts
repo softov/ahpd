@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import type { WireTurn } from '../src/types/wire.js';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, flushed, hello, machine, open, peer, sdk, serving,
+  resetSdk, actions, claude, createHost, defaultChatOf, echo, emit, flushed, hello, machine, open, peer, sdk, serving,
   sessionQueries, settle, running, wrote,
 } from './support/host.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
@@ -19,9 +19,6 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 beforeEach(resetSdk);
 
 describe('two people on one chat', () => {
-  /** The chat of `ahp-session:/live` both of them watch. */
-  const LIVE = chatUriFor('ahp-session:/live');
-
   it('shows each other what is being typed', async () => {
     const host = serving('/home/softov');
     const one = peer();
@@ -32,6 +29,8 @@ describe('two people on one chat', () => {
       await client.handle(hello(['0.9.0']));
     }
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    // The chat of `ahp-session:/live` both of them watch.
+    const LIVE = await defaultChatOf(a, 'ahp-session:/live');
     for (const client of [a, b]) {
       await client.handle({ method: 'subscribe', params: { channel: LIVE } });
     }
@@ -68,6 +67,7 @@ describe('two people on one chat', () => {
     await a.handle(hello(['0.9.0'], { clientId: 'one' }));
     await b.handle(hello(['0.9.0'], { clientId: 'two' }));
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    const LIVE = await defaultChatOf(a, 'ahp-session:/live');
     for (const client of [a, b]) {
       await client.handle({ method: 'subscribe', params: { channel: LIVE } });
     }
@@ -1429,6 +1429,9 @@ describe('more than one chat in a session', () => {
         { uri: chatUriFor('echo:/inner'), backendId: 'inner', default: true },
         { uri: PEER, backendId: UUID },
       ]);
+      // And the provider, which running a session records: a session this
+      // host ran is no external one.
+      seeding.setProvider('inner', 'echo');
       seeding.close?.();
 
       const { client } = await hostAt(dir, backend([]));
@@ -2963,7 +2966,7 @@ describe('a turn naming a model its agent does not offer', () => {
     const client = host.accept(p);
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
-    const chat = chatUriFor('ahp-session:/one');
+    const chat = await defaultChatOf(client, 'ahp-session:/one');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     const ask = async (turnId: string, model: string): Promise<void> => {
       await client.handle({

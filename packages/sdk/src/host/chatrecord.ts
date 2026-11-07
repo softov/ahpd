@@ -34,9 +34,10 @@ export interface ChatRecord {
   recordedChat(id: string, chatUri: string): StoredChat | undefined;
   /**
    * Whether a chat is the session's own conversation, which a backend names by
-   * the session and is handed no name of its own: the chat its record keeps
-   * under the session's id, or for a chat no record holds, the default chat
-   * derived from the session's URI.
+   * the session and is handed no name of its own: the default chat derived
+   * from the session's URI, or the chat its record keeps under the session's
+   * id where that id is not the name the chat's URI carries. A chat moved to a
+   * session named after its conversation carries that name, and keeps it.
    */
   ownChat(session: string, chatUri: string): boolean;
   /**
@@ -264,8 +265,9 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
 
   const ownChat = (session: string, chatUri: string): boolean => {
     const id = idOf(session);
-    const held = heldChats(id).find((one) => one.uri === chatUri);
-    return held === undefined ? chatIdFor(session, chatUri) === undefined : held.backendId === id;
+    const named = chatIdFor(session, chatUri);
+    if (named === undefined) return true;
+    return named !== id && heldChats(id).some((one) => one.uri === chatUri && one.backendId === id);
   };
 
   return {

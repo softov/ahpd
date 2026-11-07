@@ -83,7 +83,9 @@ export function createRouting(ctx: HostContext): Routing {
    */
   const defaultChatOf = (session: string): string | undefined =>
     sessions.get(session)?.defaultChat
-      ?? (owners.has(session) ? ctx.recordedChats(idOf(session)).find((one) => one.default === true)?.uri : undefined);
+      ?? (owners.has(session) && ctx.kept.nested?.(idOf(session)) === undefined
+        ? ctx.recordedChats(idOf(session)).find((one) => one.default === true)?.uri
+        : undefined);
 
   /**
    * The session a default or a worker chat's URI belongs to, under the name

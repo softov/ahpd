@@ -648,7 +648,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       ? undefined
       : recordedChat(id, channel);
     const stamp = moves.get(owning) ?? new Date().toISOString();
-    if (opened !== undefined && opened.backendId !== id && opened.uri !== chatUriFor(nameOf(id))) {
+    if (opened !== undefined && !ctx.ownChat(nameOf(id), opened.uri)) {
       const own = await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), nameOf(id), opened.uri);
       return {
         kind: 'chat',
@@ -693,9 +693,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         },
       };
     }
-    // The session's own chat; a worker's name the record does not hold is no
-    // chat here.
-    if (sessionOfChat(channel) !== undefined && toolCallOfSubagentChat(channel) === undefined) {
+    // The session's own chat, the one its record keeps under the session's id
+    // or the default derived from it; a worker's name the record does not hold
+    // is no chat here.
+    if (opened !== undefined || (sessionOfChat(channel) !== undefined && toolCallOfSubagentChat(channel) === undefined)) {
       return {
         kind: 'chat',
         state: {
