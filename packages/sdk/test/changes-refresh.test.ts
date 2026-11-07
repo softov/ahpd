@@ -8,6 +8,7 @@ import { basename, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { gitChanges } from '../src/sessions/changes.js';
+import { memorySessions } from '../src/sessions/sessions.js';
 import { gitBranches } from '../src/repo/git.js';
 import { gitWorktrees } from '../src/repo/worktrees.js';
 import { createHost } from '../src/host.js';
@@ -1098,6 +1099,14 @@ const storing = (home: string, dir: string): Agent => {
   return { ...base, list: async () => [row] };
 };
 
+/** A store recording `storing`'s session as one this host ran, under the name it was made with. */
+const ranHere = () => {
+  const store = memorySessions();
+  store.setProvider('stored', 'echo');
+  store.setUri?.('stored', 'ahp-session:/stored');
+  return store;
+};
+
 /** A changes source that counts its re-reads per directory. */
 const perDirectory = (): { reads: Map<string, number>; source: ChangesetSource } => {
   const base = gitChanges();
@@ -1127,7 +1136,7 @@ it('lists a stored session outside the path with no counts of its folder\'s, its
   const { reads, source } = perDirectory();
   const host = createHost({
     path: home, agents: [storing(home, dir)], resources: fileResources(), terminals: shellTerminals(),
-    changes: source, directories: gitBranches(),
+    changes: source, directories: gitBranches(), sessions: ranHere(),
   });
   const client = host.accept(peer());
   await client.handle(hello);
@@ -1145,7 +1154,7 @@ it('says nothing of a stored session\'s folder counts to a client already connec
   const { source } = perDirectory();
   const host = createHost({
     path: home, agents: [storing(home, dir)], resources: fileResources(), terminals: shellTerminals(),
-    changes: source, directories: gitBranches(),
+    changes: source, directories: gitBranches(), sessions: ranHere(),
   });
   const p = peer();
   const client = host.accept(p);
