@@ -244,8 +244,9 @@ WHEN the Claude backend gets a `compact_boundary` message during a turn
 THEN it adds a `systemNotification` part in the CLI's own words for the boundary: "Conversation compacted"
 AND it does not send `chat/truncated`, so the earlier turns stay.
 
-The cofold backend says "Context compacted" or "Context compacted automatically", live and when it reads a transcript back.
-It adds ": X tokens to Y." when it knows the token counts.
+The cofold backend says it in cofold's own app's words, live and when it reads a transcript back.
+It says "Context compacted: X tokens to Y." when it knows the token counts.
+It says "Context compacted: the conversation so far was folded into this summary; the model continues from it." when it does not.
 A Claude transcript read back skips the summary frame and shows no notice.
 
 ### A listed session belongs to the provider the host recorded

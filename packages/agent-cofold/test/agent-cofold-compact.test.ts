@@ -294,10 +294,7 @@ it('runs /compact as a command, and reads it back as the turn drew it', async ()
   const model = createFakeModel({ script: [{ text: 'first answer' }, { text: 'the summary so far' }], stream: true });
   const { store, view } = await run({ ...CONFIG, memory: true }, holding(model, WINDOW), ['hello', '/compact']);
 
-  /*
-   * One notice, for a compaction the person asked for: the command's own
-   * "Compacted" says the same thing again, and "automatically" would be wrong.
-   */
+  // One notice: the command's own "Compacted" says the same thing again.
   const notices = drawn(view).filter((part) => part.kind === 'systemNotification').map((part) => part.content);
   expect(notices).toHaveLength(1);
   expect(notices[0]).toMatch(/^Context compacted: \d+ tokens to \d+\.$/);
@@ -317,11 +314,13 @@ it('runs /compact as a command, and reads it back as the turn drew it', async ()
   expect(noticesRead).toEqual(notices);
 });
 
-it('words the notice the way the Claude backend does', () => {
-  expect(compactionNotification({ before: 9000, after: 2000 })).toBe('Context compacted automatically: 9000 tokens to 2000.');
-  expect(compactionNotification()).toBe('Context compacted automatically.');
-  expect(compactionNotification({ before: 9000, after: 2000 }, { asked: true })).toBe('Context compacted: 9000 tokens to 2000.');
-  expect(compactionNotification(undefined, { asked: true })).toBe('Context compacted.');
+/*
+ * The notice in cofold's own app's words, papo's `compactedNotice`.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/blocks.ts#L50-L55
+ */
+it('words the notice as cofold\'s own app does', () => {
+  expect(compactionNotification({ before: 9000, after: 2000 })).toBe('Context compacted: 9000 tokens to 2000.');
+  expect(compactionNotification()).toBe('Context compacted: the conversation so far was folded into this summary; the model continues from it.');
 });
 
 it('runs no summary step for a session that stays under the point', async () => {

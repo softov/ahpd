@@ -158,26 +158,16 @@ const usageOf = (usage: Usage, model: string | undefined, cost?: number): Bag =>
 };
 
 /**
- * What a compaction is said as, in a live turn and in a transcript alike.
- *
- * The Claude backend words its own compaction this way, and a person reading
- * two hosts should read one sentence for one thing. The numbers are cofold's
- * own estimate of the history before the summary and after it, and a call with
- * neither says the compaction happened rather than nothing about it.
- *
- * `asked` is for a compaction a runtime command ran, such as a typed
- * `/compact`: the person asked for it, so the sentence does not call it
- * automatic.
+ * What a compaction is said as, in a live turn and in a transcript alike, in
+ * cofold's own app's words, papo's `compactedNotice`: the tokens before the
+ * summary and after it where cofold estimated them, and else what the summary
+ * is.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/blocks.ts#L50-L55
  */
-export const compactionNotification = (
-  tokens?: { before: number; after: number },
-  { asked = false }: { asked?: boolean } = {},
-): string => {
-  const said = asked ? 'Context compacted' : 'Context compacted automatically';
-  return tokens === undefined
-    ? `${said}.`
-    : `${said}: ${String(tokens.before)} tokens to ${String(tokens.after)}.`;
-};
+export const compactionNotification = (tokens?: { before: number; after: number }): string =>
+  tokens === undefined
+    ? 'Context compacted: the conversation so far was folded into this summary; the model continues from it.'
+    : `Context compacted: ${String(tokens.before)} tokens to ${String(tokens.after)}.`;
 
 /**
  * The stages a turn's send fails at before the runtime runs it, by the error
@@ -362,8 +352,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
   let held: { kind: 'reasoning' | 'text'; text: string }[] = [];
   /** How many compactions this turn has reported, after which a command's own output says nothing new. */
   let compactions = 0;
-  /** Whether a runtime command started this turn, which words its compaction as asked for. */
-  let commanded = false;
 
   /** Write what the last step's reply was held for, if anything. */
   const flush = (): Bag[] => {
@@ -517,10 +505,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           compactions += 1;
           const part: Bag = {
             kind: 'systemNotification',
-            content: compactionNotification(
-              { before: event.estimatedTokens, after: event.afterTokens },
-              { asked: commanded },
-            ),
+            content: compactionNotification({ before: event.estimatedTokens, after: event.afterTokens }),
           };
           parts.push(part);
           return only([{ type: 'chat/responsePart', turnId, part: { ...part } }]);
@@ -535,7 +520,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * own output would say again.
          */
         case 'command.started':
-          commanded = true;
           return only([]);
         case 'command.finished': {
           if (event.output === undefined || event.output === '' || compactions > 0) return only([]);

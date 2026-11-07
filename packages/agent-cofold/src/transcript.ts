@@ -171,8 +171,6 @@ interface Building {
   usage: WireUsage | undefined;
   state: WireState;
   duration: number | undefined;
-  /** Whether a runtime command's typed line began this turn, which words its compaction as asked for. */
-  commanded: boolean;
   /** Whether this turn holds a compaction notice, which stands for the command's own output. */
   compacted: boolean;
   /** The id of the last message read into this turn, which is where it ended. */
@@ -355,7 +353,6 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
       usage: usage.get(message.id),
       state: ending.get(message.id) ?? 'complete',
       duration: duration.get(message.id),
-      commanded: message.source === 'command',
       compacted: false,
       end: message.id,
     };
@@ -395,8 +392,7 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
      * stays a turn of its own - `summarizes` says what a request no longer
      * carries, not what the conversation has lost.
      *
-     * A summary in a turn a runtime command began is worded as asked for, and
-     * that command's notice is left out of a turn that already holds the
+     * A runtime command's notice is left out of a turn that already holds the
      * compaction's, as the live turn drew them.
      */
     if (message.role === 'user' || message.role === 'system') {
@@ -409,7 +405,7 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
       live.end = message.id;
       if (message.source === 'notice' && live.compacted) continue;
       const summary = message.source === 'summary';
-      const said = summary ? compactionNotification(compacted.get(message.id), { asked: live.commanded }) : textOf(message);
+      const said = summary ? compactionNotification(compacted.get(message.id)) : textOf(message);
       if (summary) live.compacted = true;
       if (said !== '') live.parts.push({ kind: 'systemNotification', content: said });
       continue;

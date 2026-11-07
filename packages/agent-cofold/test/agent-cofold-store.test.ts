@@ -1340,7 +1340,7 @@ it('reads a compacted session\'s summary as the notice the live turn sent', asyn
   const parts = (turns[1]?.responseParts ?? []) as Bag[];
   expect(parts[0]).toMatchObject({
     kind: 'systemNotification',
-    content: 'Context compacted automatically: 9000 tokens to 2000.',
+    content: 'Context compacted: 9000 tokens to 2000.',
   });
   // The notice is where the summary was written, before the answer that follows it.
   expect(parts[1]).toMatchObject({ kind: 'markdown', content: 'answer two' });
@@ -1357,7 +1357,10 @@ it('says a compaction happened when the store kept no numbers for it', async () 
 
   const turns = await turnsOf(store, 'one');
   const parts = (turns[0]?.responseParts ?? []) as Bag[];
-  expect(parts[0]).toMatchObject({ kind: 'systemNotification', content: 'Context compacted automatically.' });
+  expect(parts[0]).toMatchObject({
+    kind: 'systemNotification',
+    content: 'Context compacted: the conversation so far was folded into this summary; the model continues from it.',
+  });
   expect(JSON.stringify(turns)).not.toContain('everything so far');
 });
 
