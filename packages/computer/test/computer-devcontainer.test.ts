@@ -1889,7 +1889,7 @@ it('stops the container a folder is, ending the window\'s relay first', async ()
     method: 'vscode/devContainers/relaySend',
     params: { connectionId: 'one', data: '{}' },
   }).then(() => undefined, (error: unknown) => error as Error);
-  expect(ended?.message).toContain('one is not a dev container this client opened');
+  expect(ended?.message).toBe('Dev Container connection is not owned by this client');
 
   // The machine is stopped and the folder and its definition stay: a dev
   // container is that folder made into a machine, and stopping the machine is

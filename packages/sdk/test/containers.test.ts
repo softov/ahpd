@@ -216,6 +216,10 @@ it('answers the reference shape, and carries frames both ways', async () => {
     .toMatchObject({ code: -32008 });
 });
 
+/*
+ * A connection another client opened is refused in VS Code's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L151-L157
+ */
 it('keeps one client\'s names to itself', async () => {
   const fake = launcher();
   const first = await open({ containers: fake.port });
@@ -224,21 +228,22 @@ it('keeps one client\'s names to itself', async () => {
   expect((await call(first.client, 'vscode/devContainers/connect', connect)).result).toBeDefined();
   // The other client never opened `a`, whatever the first one did.
   expect(await call(second.client, 'vscode/devContainers/relaySend', { connectionId: 'a', data: '{}' }))
-    .toMatchObject({ code: -32008 });
+    .toMatchObject({ code: -32008, message: 'Dev Container connection is not owned by this client' });
   expect(await call(second.client, 'vscode/devContainers/disconnect', { connectionId: 'a' }))
-    .toMatchObject({ code: -32008 });
+    .toMatchObject({ code: -32008, message: 'Dev Container connection is not owned by this client' });
   // The same name is the second client's own to use, and the port sees two.
   expect((await call(second.client, 'vscode/devContainers/connect', connect)).result).toBeDefined();
   expect(fake.opened).toBe(2);
 });
 
+// In VS Code's words for the same refusal.
+// https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L159-L162
 it('refuses a second container under a name the client is already using', async () => {
   const fake = launcher();
   const { client } = await open({ containers: fake.port });
   await call(client, 'vscode/devContainers/connect', connect);
   const again = await call(client, 'vscode/devContainers/connect', connect);
-  expect(again).toMatchObject({ code: -32602 });
-  expect(again.message).toContain('already in use');
+  expect(again).toMatchObject({ code: -32602, message: 'Dev Container connectionId is already in use' });
   expect(fake.opened).toBe(1);
 });
 

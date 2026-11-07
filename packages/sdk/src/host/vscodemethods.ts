@@ -743,8 +743,10 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     'vscode/devContainers/connect': async (params) => {
       const launcher = need(options.containers, 'vscode/devContainers/connect');
       const one = containerAsk(params);
+      // In VS Code's words for a connection id this client holds.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L159-L162
       if (conn.containers.has(one.connectionId)) {
-        throw new RpcError(INVALID_PARAMS, `Dev Container connectionId ${one.connectionId} is already in use`);
+        throw new RpcError(INVALID_PARAMS, 'Dev Container connectionId is already in use');
       }
       // Held before the first await, so a second connect under the same
       // name cannot slip in while this one is building an image.
@@ -835,8 +837,10 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     'vscode/devContainers/disconnect': async (params) => {
       const launcher = need(options.containers, 'vscode/devContainers/disconnect');
       const id = namedContainer(params);
+      // A connection this client does not hold, in VS Code's words.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L151-L157
       if (!conn.containers.delete(id)) {
-        throw new RpcError(-32008, `${id} is not a dev container this client opened`);
+        throw new RpcError(-32008, 'Dev Container connection is not owned by this client');
       }
       // Nothing is notified: the client asked for this, and the reference
       // host's own client forgets the connection on its side as it does.
@@ -845,8 +849,9 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     'vscode/devContainers/relaySend': async (params) => {
       const launcher = need(options.containers, 'vscode/devContainers/relaySend');
       const id = namedContainer(params);
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L151-L157
       if (!conn.containers.has(id)) {
-        throw new RpcError(-32008, `${id} is not a dev container this client opened`);
+        throw new RpcError(-32008, 'Dev Container connection is not owned by this client');
       }
       const data = stringParam(params, 'data');
       // The frame is written and not read: the nested host is the one that
