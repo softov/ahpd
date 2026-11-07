@@ -140,13 +140,14 @@ const about = (told: Told, folder: string): boolean | undefined =>
  * when the host asks it a question, which is where a trust question lands.
  */
 function serving({
-  store, automations = false, listed = false, people = true, worktrees, folders = [...FOLDERS], answer = () => ({}),
+  store, automations = false, listed = false, people = true, worktrees, worktreesRoot, folders = [...FOLDERS], answer = () => ({}),
 }: {
   store?: SessionStore;
   automations?: boolean;
   listed?: boolean;
   people?: boolean;
   worktrees?: Worktrees;
+  worktreesRoot?: string | undefined;
   folders?: string[];
   answer?: (method: string, params: unknown) => unknown;
 } = {}) {
@@ -158,6 +159,7 @@ function serving({
     ...(store === undefined ? {} : { sessions: store }),
     ...(automations ? { automations: memoryAutomations() } : {}),
     ...(worktrees === undefined ? {} : { worktrees }),
+    ...(worktreesRoot === undefined ? {} : { worktreesRoot }),
   });
   /** Everything the host put to a client, which is where a trust question lands. */
   const asked: { method: string; params: unknown }[] = [];
@@ -382,10 +384,11 @@ it('tells an automation on a host with no people directory the folders the host 
 });
 
 /*
- * A worktree lives beside its repository - `<repo>.worktrees/<branch>` - so it
- * is never a folder under one a window vouched for, and a window cannot be
- * asked about a folder it has never opened. One the host made is trusted
- * exactly when the repository it was cut from is.
+ * A worktree this host made in its repository's `<repo>.worktrees` reads its
+ * repository's trust beside its own, and one under a configured root reads
+ * its own alone, as VS Code's host grants a session's working directory its
+ * trust.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L512-L520
  */
 
 /**
@@ -403,11 +406,11 @@ const worktreesMaking = (made: string[], make?: (path: string) => void): Worktre
   gitDir: async () => undefined,
 });
 
-/** A session started in a worktree of `A`, and what its backend was told. */
-const inWorktree = async (vouching: string[]) => {
+/** A session started in a worktree of `A`, under `worktreesRoot` where one is given, and what its backend was told. */
+const inWorktree = async (vouching: string[], worktreesRoot?: string) => {
   const made: string[] = [];
   const folders = [...FOLDERS];
-  const { signedIn, told } = serving({ folders, worktrees: worktreesMaking(made, (path) => folders.push(path)) });
+  const { signedIn, told } = serving({ folders, worktrees: worktreesMaking(made, (path) => folders.push(path)), worktreesRoot });
   const ana = await signedIn('ana');
   await trusting(ana, vouching);
   await settle();
@@ -440,6 +443,86 @@ it('trusts the worktree of a repository the window vouched for', async () => {
 it('tells a session in a worktree nothing is trusted when the repository is not', async () => {
   const { tree, told } = await inWorktree([]);
   expect(about(told(), tree)).toBe(false);
+});
+
+it('tells a session in a worktree under a configured root that it is not trusted, its repository trusted or not', async () => {
+  const { tree, told } = await inWorktree([A], join(DIR, 'trees'));
+  expect(tree.startsWith(join(DIR, 'trees'))).toBe(true);
+  expect(about(told(), tree)).toBe(false);
+});
+
+/*
+ * The question goes to the window whose action needs it every time it is
+ * required, nothing looked up first, as VS Code's host requires workspace
+ * trust of the client that started a conversion: a window that trusts the
+ * folder already answers at once.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L862-L873
+ */
+it('asks the window about a folder its pushed trust names already', async () => {
+  const { signedIn, questions } = serving({ answer: () => ({ trusted: true }) });
+  const ana = await signedIn('ana');
+  await trusting(ana, [A, B]);
+  await opening(ana, 'ana-one', A);
+  await saying(ana, 'ana-one', 't1');
+
+  await ana.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-session:/ana-one', action: { type: 'session/workingDirectorySet', directory: uriOf(B) } },
+  });
+  await settle(60);
+
+  expect(questions()).toEqual([{ method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(B) } }]);
+});
+
+/*
+ * A move that makes a worktree asks about it before it is made: with its
+ * repository as the trusted parent a window trusts it by where it is in the
+ * repository's `<repo>.worktrees`, and as itself under a configured root, as
+ * VS Code's host asks the client that started a conversion.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L975-L977
+ */
+describe('a move that makes a worktree', () => {
+  /** A worktree session in A moved to B by its window, and the questions its window was put. */
+  const moved = async (worktreesRoot?: string) => {
+    const made: string[] = [];
+    const folders = [...FOLDERS];
+    const { signedIn, questions } = serving({
+      folders, worktrees: worktreesMaking(made, (path) => folders.push(path)), worktreesRoot, answer: () => ({ trusted: true }),
+    });
+    const ana = await signedIn('ana');
+    await trusting(ana, [A]);
+    await ana.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/tree', provider: 'echo', config: { isolation: 'worktree' }, workingDirectories: [uriOf(A)] },
+    });
+    await saying(ana, 'tree', 't1');
+    // The session works in the tree its first message made, which is the
+    // folder its window moves.
+    await ana.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/tree', action: { type: 'session/workingDirectoryReplaced', directory: uriOf(made[0] as string), replacement: uriOf(B) } },
+    });
+    await settle(60);
+    return { tree: made.at(-1) as string, questions: questions() };
+  };
+
+  it('asks about a worktree in its repository\'s <repo>.worktrees with the repository as its trusted parent', async () => {
+    const { tree, questions } = await moved();
+    expect(tree.startsWith(`${B}.worktrees`)).toBe(true);
+    expect(questions).toEqual([
+      { method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(B) } },
+      { method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(tree), trustedParent: uriOf(B) } },
+    ]);
+  });
+
+  it('asks about a worktree under a configured root as itself', async () => {
+    const { tree, questions } = await moved(join(DIR, 'trees'));
+    expect(tree.startsWith(join(DIR, 'trees'))).toBe(true);
+    expect(questions).toEqual([
+      { method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(B) } },
+      { method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(tree) } },
+    ]);
+  });
 });
 
 /*

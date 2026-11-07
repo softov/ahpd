@@ -121,7 +121,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L166-L169
    */
   const vouchedFor = async (folder: string, refusal: string): Promise<void> => {
-    await requireTrust({ folder, sender: connection, trust: ctx.rootConfig.workspaceTrust, autoApproved: false })
+    await requireTrust({ folder, sender: connection, autoApproved: false })
       .catch(() => { throw new RpcError(AhpErrorCodes.PermissionDenied, refusal); });
   };
 

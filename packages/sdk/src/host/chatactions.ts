@@ -6,7 +6,7 @@ import { filesOf, needsAsyncRewrite, snapshot } from './attachments.js';
 import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { grantOf, withGrant } from './permissions.js';
-import { autoApproved, requireTrust } from './trust.js';
+import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { Session } from '../types/session.js';
@@ -1088,7 +1088,7 @@ export function chatAction(
           // The window is asked about a folder the session enters, before
           // anything is written, and an answer of no means it never went there.
           if (type === 'session/workingDirectorySet') {
-            await requireTrust({ folder: one, sender: connection, trust: rootConfig.workspaceTrust, autoApproved: auto });
+            await requireTrust({ folder: one, sender: connection, autoApproved: auto });
           }
           owner.additional = root === undefined ? next : next.slice(1);
           const due = ctx.relaunches.get(uri);
@@ -1164,8 +1164,8 @@ export function chatAction(
        * The folder this action puts the session into, if any: the window is
        * asked about it before anything is written, the question a move asks,
        * and an answer of no means the session never went there. A worktree
-       * the restart makes from it needs no question of its own, since one the
-       * host made is trusted exactly when its repository is.
+       * the restart makes from it is asked about before it is made, as a
+       * move's is.
        */
       const entering = next.find((entry) => !was.includes(entry));
       const moving = root !== undefined && next[0] !== root;
@@ -1173,7 +1173,7 @@ export function chatAction(
       void (async () => {
         try {
           if (entering !== undefined) {
-            await requireTrust({ folder: entering, sender: connection, trust: rootConfig.workspaceTrust, autoApproved: auto });
+            await requireTrust({ folder: entering, sender: connection, autoApproved: auto });
           }
           /*
            * A new first folder is a move, made as `set_workspace` makes one:
@@ -1187,7 +1187,7 @@ export function chatAction(
             conn.tokensFor(owner.agent.provider),
             { additional: owner.additional, ...(moving ? { directory: next[0] } : {}) },
             connection,
-            undefined,
+            (repository, path) => requireWorktreeTrust({ folder: next[0] ?? repository, repository, path, sender: connection, autoApproved: auto }),
             conn.tokensFor,
           );
           dispatch(uri, action, origin);

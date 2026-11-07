@@ -2,7 +2,7 @@
 
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { cp, lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import type { Worktree, Worktrees } from '../types/worktrees.js';
 import { gitArgv } from './hardened.js';
@@ -73,6 +73,18 @@ export const worktreesOf = (repository: string, root?: string): string =>
   root === undefined
     ? join(dirname(repository), `${basename(repository)}.worktrees`)
     : join(root, basename(repository));
+
+/**
+ * Whether `candidate` is one of a repository's own worktrees: a folder under
+ * its `<repo>.worktrees`, and never that folder itself, as VS Code decides
+ * which working directory may inherit its repository's trust. A tree under a
+ * configured root is outside the layout.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/worktreePaths.ts#L26-L42
+ */
+export const isWorktreeUnderRepository = (candidate: string, repository: string): boolean => {
+  const inside = relative(resolve(worktreesOf(repository)), resolve(candidate));
+  return inside !== '' && inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside);
+};
 
 /** The directory name for a branch: no slashes, since it has to be one segment. */
 export const worktreeFor = (branch: string): string =>

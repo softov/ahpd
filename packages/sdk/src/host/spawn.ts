@@ -28,6 +28,7 @@ import { vscodeRootProperties } from '../vscoderootconfig.js';
 import { PENDING_CONFIRMATION_FIELDS } from '../types/agent.js';
 import type { PendingConfirmation } from '../types/agent.js';
 import { sameFolder, trusted } from './trust.js';
+import { isWorktreeUnderRepository } from '../repo/worktrees.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
@@ -1103,15 +1104,17 @@ export function createSpawn(ctx: HostContext): Spawn {
      * What this backend is told about the folders it is handed.
      *
      * Read from the host's one `workspaceTrust`, which the last push from any
-     * window set. Every start reads it, whoever sent the turn and when nobody did, as VS
-     * Code's host reads its one trust value for every session it starts and
-     * every hook it runs.
+     * window set. Every start reads it, whoever sent the turn and when nobody
+     * did, as VS Code's host reads its one trust value for every session it
+     * starts and every hook it runs.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L166-L169
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8621
      *
-     * A worktree this host made is read as the repository it was cut from: it
-     * is a folder the window has never opened and so cannot have pushed, and
-     * one the host made is trusted exactly when its repository is.
+     * A folder is trusted by its own trust, and a worktree this host made in
+     * its repository's `<repo>.worktrees` by its repository's as well, as VS
+     * Code's host grants a session's working directory its trust. A worktree
+     * under a configured root is read by its own alone.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L512-L520
      *
      * One folder is trusted without a connection: the one a plugin asked for
      * with `session:trust`, kept with the session. Nobody at the keyboard
@@ -1123,9 +1126,10 @@ export function createSpawn(ctx: HostContext): Spawn {
     const trustedBy = (folder: string): boolean => {
       const asked = kept.trustedFolder?.(idOf(uri));
       if (asked !== undefined && sameFolder(asked, folder)) return true;
+      const trust = ctx.rootConfig.workspaceTrust;
       const made = ctx.worktreeOf(uri);
-      const vouched = made !== undefined && sameFolder(made.path, folder) ? made.repository : folder;
-      return trusted(vouched, ctx.rootConfig.workspaceTrust);
+      return trusted(folder, trust)
+        || (made !== undefined && sameFolder(made.path, folder) && isWorktreeUnderRepository(made.path, made.repository) && trusted(made.repository, trust));
     };
     /*
      * Whether a command or tool this session runs is answered by the host's

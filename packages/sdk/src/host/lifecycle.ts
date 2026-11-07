@@ -14,7 +14,7 @@ import { openLink } from '../tools/session.js';
 import { readCreatedBy, readMultiRoot, readOrigin } from '../sessions/remotesession.js';
 import { HOSTS_OWN, bangCommand, noProvider } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
-import { autoApproved, requireTrust } from './trust.js';
+import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Chosen, Session, MessageAttachment, MessageFrom } from '../types/session.js';
 import type { MessageChatAttachment } from '@microsoft/agent-host-protocol';
@@ -1016,34 +1016,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (!held) return;
     /*
      * The window that asked is asked about the folder, before anything is
-     * moved or made.
-     *
-     * The same question a client adding a folder is asked, and answered from
-     * the same value: a folder the host's `workspaceTrust` already trusts is
-     * entered without a round trip, and any other only on the asking window's
-     * yes.
+     * moved or made, the same question a client adding a folder is asked.
      */
     const effective = { ...held.agent.defaults(), ...contributedDefaults(), ...held.config };
     const auto = autoApproved(effective, rootConfig);
     try {
-      await requireTrust({ folder: move.directory, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
+      await requireTrust({ folder: move.directory, sender: move.sender, autoApproved: auto });
       decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
       offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
-      await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, async (repository) => {
-        /*
-         * The repository the worktree is cut from, when it is not the folder the
-         * move asked for - a subdirectory of a repository the window may never
-         * have opened.
-         *
-         * The worktree itself is not asked about: the host makes it, and one the
-         * host made is trusted exactly when its repository is. The repository the window
-         * vouches for here is remembered on its connection, so the backend
-         * started in the worktree is told the same thing.
-         */
-        if (repository !== move.directory) {
-          await requireTrust({ folder: repository, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
-        }
-      });
+      await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, (repository, path) =>
+        requireWorktreeTrust({ folder: move.directory, repository, path, sender: move.sender, autoApproved: auto }));
     }
     catch (error) {
       /*

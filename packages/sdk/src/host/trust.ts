@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, parse, sep } from 'node:path';
 import { localPath, uriOf } from '../resources/fileuri.js';
+import { isWorktreeUnderRepository } from '../repo/worktrees.js';
 import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 
@@ -148,10 +149,10 @@ export const trustRefused = (folder: string): string => `Workspace trust was not
 /**
  * Whether this session is one nobody is asked about.
  *
- * VS Code's own test, `sessionWorkspaceConversionService.ts:169-170`: a window
- * with global auto-approve on, or a session set to auto-approve, is one where
- * the question would be answered by the setting rather than by a person - so
+ * VS Code's own test: a window with global auto-approve on, or a session set
+ * to auto-approve, is one where the question is answered by the setting - so
  * there is nothing to ask and nothing to wait for.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L701-L702
  *
  * `config` is the session's value in effect, defaults and all, and `rootConfig`
  * is the host's own record, which is where a pushed `globalAutoApproveEnabled`
@@ -163,11 +164,11 @@ export const autoApproved = (config: Record<string, unknown>, rootConfig: Record
 /**
  * Ask one window whether it trusts one folder, and answer what it said.
  *
- * The request VS Code's host puts to its window: `workspace` is the folder and
- * the answer is `{ trusted: boolean }`. `trustedParent`, which VS Code sends
- * for a folder that does not exist yet, is not sent: the one folder this host
- * asks about before it exists is a worktree, and a worktree is vouched for by
- * the repository it was cut from rather than by a window.
+ * The request VS Code's host puts to its window: `workspace` is the folder,
+ * `trustedParent` the repository a worktree in its `<repo>.worktrees` layout
+ * was cut from, which a window trusts the worktree by where it trusts the
+ * repository, and the answer is `{ trusted: boolean }`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L862-L873
  *
  * Whatever comes back that is not `{ trusted: true }` is a no, and so is a
  * client that does not serve the method at all - it answers `-32601`, which
@@ -176,8 +177,11 @@ export const autoApproved = (config: Record<string, unknown>, rootConfig: Record
  * they take, and a client that never answers holds the move until it
  * disconnects, which rejects it.
  */
-const granted = async (sender: Connection, folder: string): Promise<boolean> => {
-  const answer = await sender.peer.request('vscode/requestWorkspaceTrust', { workspace: uriOf(folder) });
+const granted = async (sender: Connection, folder: string, trustedParent?: string): Promise<boolean> => {
+  const answer = await sender.peer.request('vscode/requestWorkspaceTrust', {
+    workspace: uriOf(folder),
+    ...(trustedParent === undefined ? {} : { trustedParent: uriOf(trustedParent) }),
+  });
   const held = (typeof answer === 'object' && answer !== null ? answer : {}) as Bag;
   return held.trusted === true;
 };
@@ -185,12 +189,14 @@ const granted = async (sender: Connection, folder: string): Promise<boolean> => 
 /**
  * The question, put to whoever asked for the move, or a refusal.
  *
- * A folder the host's `workspaceTrust` already trusts, which `trust` carries,
- * is not asked about again: asking a window what has already been said is a
- * round trip for nothing. Any other folder no window asked about - an
- * automation's session, a host tool acting for nobody - is refused without a
- * question, because there is nobody to vouch for it and a folder nobody
- * vouched for is untrusted.
+ * Put to the client whose action needs it every time it is required, as VS
+ * Code's host requires workspace trust of the client that started a
+ * conversion: a window that already trusts the folder answers at once. A
+ * folder no window asked about - an automation's session, a host tool acting
+ * for nobody - is refused without a question, because there is nobody to
+ * vouch for it, as VS Code's host refuses a request for a client it does not
+ * hold.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostClientConnectionService.ts#L131-L138
  *
  * The answer lets the action that asked go on, and the host records nothing of
  * it, as VS Code's host uses a trust answer for the conversion that asked. A
@@ -205,19 +211,42 @@ const granted = async (sender: Connection, folder: string): Promise<boolean> => 
 export const requireTrust = async (asked: {
   folder: string;
   sender: Connection | undefined;
-  trust: unknown;
   autoApproved: boolean;
+  /** The repository a worktree in its `<repo>.worktrees` layout was cut from. */
+  trustedParent?: string;
 }): Promise<void> => {
   if (asked.autoApproved) return;
   /*
-   * The folder as it names itself rather than as it was written: `..` inside a
-   * path that begins like a trusted folder is a folder outside it, and it has
-   * to be asked about as the folder it resolves to. A path that resolves to
-   * nothing is kept as written, so the question and the refusal name what the
-   * caller asked for.
+   * The folder as it names itself: `..` inside a path that begins like a
+   * trusted folder is a folder outside it, and it is asked about as the folder
+   * it resolves to. A path that resolves to nothing is kept as written, so the
+   * question and the refusal name what the caller asked for.
    */
   const folder = settled(asked.folder) ?? asked.folder;
   const sender = asked.sender;
-  if (trusted(folder, asked.trust)) return;
-  if (sender === undefined || !(await granted(sender, folder))) throw new Error(trustRefused(folder));
+  if (sender === undefined || !(await granted(sender, folder, asked.trustedParent))) throw new Error(trustRefused(folder));
+};
+
+/**
+ * The questions a move asks before it makes a worktree, as VS Code's host asks
+ * the client that started a conversion: about the repository the worktree is
+ * cut from, where it is not the folder the move asked for, and then about the
+ * worktree, with the repository as its trusted parent where the worktree is in
+ * the repository's `<repo>.worktrees`, which a window trusts it by, and as
+ * itself under a configured root.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L975-L977
+ */
+export const requireWorktreeTrust = async (asked: {
+  folder: string;
+  repository: string;
+  path: string;
+  sender: Connection | undefined;
+  autoApproved: boolean;
+}): Promise<void> => {
+  const { folder, repository, path, sender, autoApproved } = asked;
+  if (repository !== folder) await requireTrust({ folder: repository, sender, autoApproved });
+  await requireTrust({
+    folder: path, sender, autoApproved,
+    ...(isWorktreeUnderRepository(path, repository) ? { trustedParent: repository } : {}),
+  });
 };

@@ -1243,7 +1243,13 @@ describe('a session entering a folder nobody vouched for', () => {
     expect(cwd()).toBe(there);
   });
 
-  it('asks about the folder and nothing about the worktree it makes from it', async () => {
+  /*
+   * The worktree a move makes is asked about before it is made, with the
+   * repository it is cut from as the trusted parent a window trusts it by, as
+   * VS Code's host asks the client that started a conversion.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L975-L977
+   */
+  it('asks about the folder and then the worktree it makes from it, the folder its trusted parent', async () => {
     const { here, there } = folders();
     const created: { repository: string; path: string }[] = [];
     const worktrees: Worktrees = {
@@ -1257,14 +1263,15 @@ describe('a session entering a folder nobody vouched for', () => {
     const { asked, move, cwd } = await hosted(here, { trusts: [here], worktrees });
     await move(there, true);
 
-    // Once: the folder the session was sent to. The worktree is made beside the
-    // repository rather than under it, so it is a folder no window could have
-    // vouched for - and one the host made is trusted when the repository it was
-    // cut from is, which is what the window was just asked about.
-    expect(asked).toEqual([{ method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(there) } }]);
+    // The folder the session was sent to, and then the worktree in that
+    // folder's `<repo>.worktrees`, with the folder as its trusted parent.
     expect(created).toHaveLength(1);
     expect(created[0]?.repository).toBe(there);
-    // And the session runs in it, with nothing asked about it.
+    expect(asked).toEqual([
+      { method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(there) } },
+      { method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(String(created[0]?.path)), trustedParent: uriOf(there) } },
+    ]);
+    // And the session runs in it.
     expect(String(cwd())).toContain('two.worktrees');
   });
 

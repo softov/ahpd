@@ -62,10 +62,11 @@ The pi backend trusts the project only when the folder is trusted and its own tr
 ### A move asks the window
 
 WHEN a client moves a session to a folder, or adds a working directory to it
-AND the host's trust does not cover the folder
 THEN the host sends `vscode/requestWorkspaceTrust` with the folder as `workspace`
 AND only the answer `{trusted: true}` lets the move go on.
 
+The host asks every time, as VS Code's host asks the client that started the move.
+A window that trusts the folder already answers at once.
 A client that does not serve the method gives an error, and the host reads that as a no.
 There is no timeout, as in VS Code, because a person may take time to answer.
 A refusal says "Workspace trust was not granted for '<folder>'".
@@ -86,17 +87,28 @@ See [`code://packages/sdk/src/host/gate.ts`](../../packages/sdk/src/host/gate.ts
 ### No window asked
 
 WHEN a move or a new working directory comes from no connection, for example from an automation
-AND the host's trust does not cover the folder
 THEN the host refuses it without a question, because nobody can vouch for the folder.
 
-### A worktree inherits its repository's trust
+### A move that makes a worktree asks about it
 
-WHEN a backend asks about a worktree that this host made for the session
-THEN the host answers for the repository that the worktree was cut from.
+WHEN a move makes a worktree
+THEN the host asks about the repository when it is not the move folder
+AND then it asks about the worktree, before the worktree exists.
 
-The reason: a window never opened the worktree, so it cannot have pushed trust for it.
-The host does not send `trustedParent`, which VS Code sends for a folder that does not exist yet.
-When a move names a repository other than the move folder, the host asks about the repository too.
+A worktree in the repository's `<repo>.worktrees` is asked about with the repository as `trustedParent`.
+A window trusts such a worktree by its trusted parent.
+A worktree under a configured worktrees root is asked about as itself, since a window takes `trustedParent` only in that layout.
+See [`code://packages/sdk/src/host/trust.ts`](../../packages/sdk/src/host/trust.ts).
+
+### A worktree in its repository's layout reads its repository's trust
+
+WHEN a backend asks about a worktree that this host made in the repository's `<repo>.worktrees`
+THEN the worktree is trusted when it or its repository is trusted.
+
+WHEN the worktree is under a configured worktrees root
+THEN only its own trust counts.
+
+This is how VS Code's host grants a session's working directory its trust.
 See [`code://packages/sdk/src/host/spawn.ts`](../../packages/sdk/src/host/spawn.ts).
 
 ### The host's trust decides for every turn
