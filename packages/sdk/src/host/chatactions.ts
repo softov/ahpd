@@ -1922,9 +1922,10 @@ export function chatAction(
     /*
      * A server started or stopped, said as the client asked, and then asked of
      * the backend. A start the backend does not make leaves the server in an
-     * error naming why, unless it is ready or failed already; a stop it does
-     * not make is logged. The reference host does the same with its agent's
-     * answers.
+     * error naming why, unless it is ready or failed already: a backend that
+     * cannot start one in VS Code's words for a provider that cannot, and one
+     * whose start failed in its own. A stop it does not make is logged. The
+     * reference host does the same with its agent's answers.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2026-L2065
      */
     case 'session/mcpServerStartRequested': {
@@ -1940,7 +1941,7 @@ export function chatAction(
         dispatch(channel, { type: 'session/mcpServerStateChanged', id, state: { kind: 'error', error: { errorType: 'mcp-server-start-failed', message: why } } });
       };
       void session.startMcpServer(id).then(
-        (took) => { if (!took) failed(`${id} is not a server this backend can start`); },
+        (took) => { if (!took) failed('The session provider does not support starting MCP servers.'); },
         (error: unknown) => { failed(error instanceof Error ? error.message : String(error)); },
       );
       break;
