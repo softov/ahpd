@@ -238,6 +238,14 @@ AND its default is the level pi starts a session on for that model, where offere
 WHEN a pi session shows its approvals
 THEN it offers the pi `permissionMode` property.
 
+### pi's customizations
+
+WHEN pi has loaded skills, prompt templates and extensions for a session
+THEN the session lists a directory for each folder pi loaded a kind from, holding that kind
+AND an installed pi package as a plugin holding its kinds, each customization named by its URI.
+WHEN a client switches one of them, or its folder or package
+THEN pi is built again before the next turn and its loader leaves out what is off.
+
 ### A pi session from disk
 
 WHEN a client opens a pi session that this process did not watch

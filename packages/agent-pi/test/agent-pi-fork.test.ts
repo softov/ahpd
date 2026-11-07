@@ -60,6 +60,7 @@ function fakePi() {
     promptAfter: () => undefined,
     levels: () => ['off'],
     startsOn: () => undefined,
+    resources: () => ({ skills: [], prompts: [], extensions: [] }),
     modelSelection: () => undefined,
     supportsVision: () => false,
     setModel: async () => true,

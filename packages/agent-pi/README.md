@@ -137,10 +137,11 @@ Some of pi lands on the protocol without adaptation:
 - **The session file** is a real path, so the reference client's "open session state file" opens the conversation pi actually wrote.
 - **Host and client tools.** The tools the host contributes to a session are offered to pi's model, and one of the host's own runs in the host. A tool a connected client provides is offered too, and a call to it is reported against that client and waits for its answer. A client's tools take effect from the next turn, because pi fixes its custom tools when the session starts and the session is restarted on the same file with the new set.
 - **Tool confirmation.** A session asks a person before a call its `permissionMode` says to ask about: the call is shown `pending-confirmation`, the session is `InputNeeded`, and the answer runs the call or blocks it with a reason the model reads. A tool that declares no effects runs, a read outside the working directory asks, and the six modes carry the meanings Claude and cofold advertise, with `default` as pi's default.
+- **Customizations.** The skills, prompt templates and extensions pi loaded for a session are its customizations: a directory per folder pi loads a kind from, holding that kind, and an installed pi package a plugin holding its kinds. A skill is a `skill`, a prompt template a `prompt` and an extension a `hook`, pi's extensions being its hooks and custom tools in one, and each is named by its URI. A switch takes effect from the next turn, as a tool change does: pi is built again on the same file, its loader's own overrides leaving out what is off.
 
 Some of it does not, and the backend does not advertise it:
 
-- **Turning a customization on or off, and MCP servers.** pi loads its extensions and skills when it opens and has no runtime switch for them, and MCP in pi is an extension's job. Both answer `false`.
+- **MCP servers.** MCP in pi is an extension's job, so a start or a stop answers `false`.
 - **Several directories per session.** pi's `AgentSession` has a single `cwd`, which its tools, project resources and session store all use.
 
 ## The catalogue

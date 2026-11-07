@@ -34,6 +34,8 @@ import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
 import { openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
+import { piCustomizations, switchedOffPaths } from './customizations.js';
+import type { PiResources } from './customizations.js';
 import { addUsage, callPartOf, describe, mapEvent, readyRow, stampStart, untime } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
@@ -176,6 +178,15 @@ export function piSession(
   /** Finished turns. The running one is `active` and is deliberately not here. */
   const turns: Bag[] = [...(start.seed ?? [])];
   const seeds: Bag[] = [...(start.seedCustomizations ?? [])];
+  /*
+   * pi's own skills, prompt templates and extensions, as the last pi built for
+   * this session found them, and the ids of those this session switched off.
+   */
+  let found: PiResources | undefined;
+  let own: Bag[] = [];
+  const off = new Set<string>();
+  /** The list as this session last said it. */
+  let saidCustomizations = JSON.stringify(seeds);
   let active: Bag | undefined;
   /** The running turn's mapping, so an event knows what it belongs to. */
   let mapping: PiTurn | undefined;
@@ -993,8 +1004,21 @@ export function piSession(
        * same answer.
        */
       trustProject: trust !== 'deny' && start.trusted?.(where) === true,
+      // What this session switched off, left out of what pi loads.
+      ...(found === undefined || off.size === 0 ? {} : { switchedOff: switchedOffPaths(found, off) }),
     });
     live = backend;
+    /*
+     * What pi loaded, listed and said where it moved, as the CLI's own list is
+     * said once it answers.
+     */
+    found = backend.resources();
+    own = piCustomizations(found, off);
+    const listing = [...seeds, ...own];
+    if (JSON.stringify(listing) !== saidCustomizations) {
+      saidCustomizations = JSON.stringify(listing);
+      emit('session', { type: 'session/customizationsChanged', customizations: listing });
+    }
     unsubscribe = backend.subscribe(heard);
     record = watch(provider, {
       id: backend.id,
@@ -1307,7 +1331,7 @@ export function piSession(
     // included, so it cuts where the turn ended rather than where it began.
     forkPoint: (turnId) => ends.get(turnId),
     endPoint: (turnId) => ends.get(turnId),
-    customizations: () => [...seeds],
+    customizations: () => [...seeds, ...own],
     allTurns: () => turns,
 
     status: (): number => statusOf(bits()),
@@ -1352,7 +1376,7 @@ export function piSession(
       defaultChat: start.chatUri,
       chats: [{ resource: start.chatUri, title }],
       workingDirectories: [uriOf(where)],
-      customizations: [...seeds],
+      customizations: [...seeds, ...own],
       // The requests still waiting - the questions and the calls a client has
       // to run - each as `session/inputNeededSet` sent it, so a client that
       // subscribes while one waits can answer it.
@@ -1632,12 +1656,22 @@ export function piSession(
     settings: () => ({ ...values }),
 
     /*
-     * pi's extensions and skills are loaded when it opens and have no runtime
-     * switch, and its MCP servers are an extension's business rather than
-     * pi's. False and false are the real answers, and a control that reported
-     * success and changed nothing would be worse.
+     * A skill, a prompt template or an extension of pi's own, or the folder or
+     * package that holds it, switched for the pi built before the next turn,
+     * which leaves what is off out through pi's loader overrides: pi loads them
+     * when it is built, as it fixes its custom tools, so a switch reaches it as
+     * a tool change does. Anything else is no customization of pi's.
      */
-    setCustomizationEnabled: async () => false,
+    setCustomizationEnabled: async (id, enabled) => {
+      const ids = own.flatMap((one) => [String(one.id), ...((one.children as Bag[] | undefined) ?? []).map((child) => String(child.id))]);
+      if (!ids.includes(id)) return false;
+      if (enabled) off.delete(id);
+      else off.add(id);
+      if (found !== undefined) own = piCustomizations(found, off);
+      if (opening !== undefined || live !== undefined) stale = true;
+      return true;
+    },
+    // pi's MCP servers are its extensions' business.
     startMcpServer: async () => false,
     stopMcpServer: async () => false,
 

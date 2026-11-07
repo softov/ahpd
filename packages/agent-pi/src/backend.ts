@@ -18,13 +18,18 @@ import type {
   AgentSession,
   AgentSessionEvent,
   ExtensionAPI,
+  LoadExtensionsResult,
+  PromptTemplate,
+  ResourceDiagnostic,
   SessionEntry,
   SessionManager,
+  Skill,
   ToolCallEvent,
   ToolCallEventResult,
   ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
 import type { ImageContent, Provider } from '@earendil-works/pi-ai';
+import type { PiResources } from './customizations.js';
 import type { PiModel } from './models.js';
 import { idOf, modelFor, THINKING_KEY } from './models.js';
 import { loadPi } from './pi.js';
@@ -75,6 +80,11 @@ export interface PiBackend {
   promptAfter(entryId: string | undefined): string | undefined;
   /** The thinking levels a model offers, which is pi's own rule. */
   levels(model: PiModel): string[];
+  /**
+   * What pi's loader found for this session, its skills, its prompt templates
+   * and its extensions, the ones switched off among them.
+   */
+  resources(): PiResources;
   /**
    * The level pi starts a session on for a model, as its settings name it: the
    * model's own `modelThinkingLevels` entry, else `defaultThinkingLevel`.
@@ -186,6 +196,11 @@ export interface BackendOptions {
    * the policy says to ask.
    */
   onToolCall?: (event: ToolCallEvent) => Promise<ToolCallEventResult | undefined>;
+  /**
+   * The files of the skills, prompt templates and extensions this session has
+   * switched off, which pi's loader leaves out through its own overrides.
+   */
+  switchedOff?: ReadonlySet<string>;
 }
 
 /**
@@ -217,6 +232,13 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
    * whatever the project trust says; it is loaded after the file extensions,
    * so its `tool_call` handler sees the input the others left.
    */
+  /*
+   * What pi's loader found, kept whole, and what this session switched off
+   * left out of what pi loads, through the loader's own overrides: each
+   * override is handed the whole list and answers the list pi keeps.
+   */
+  const switchedOff = options.switchedOff ?? new Set<string>();
+  const found: PiResources = { skills: [], prompts: [], extensions: [] };
   const loaderOptions = {
     ...(instructions.length > 0
       ? { appendSystemPromptOverride: (base: string[]) => [...base, ...instructions] }
@@ -232,18 +254,30 @@ export async function openPi(options: BackendOptions): Promise<PiBackend> {
           }],
         }
       : {}),
+    skillsOverride: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
+      found.skills = base.skills;
+      return { ...base, skills: base.skills.filter((one) => !switchedOff.has(one.filePath)) };
+    },
+    promptsOverride: (base: { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] }) => {
+      found.prompts = base.prompts;
+      return { ...base, prompts: base.prompts.filter((one) => !switchedOff.has(one.filePath)) };
+    },
+    extensionsOverride: (base: LoadExtensionsResult) => {
+      found.extensions = base.extensions;
+      return { ...base, extensions: base.extensions.filter((one) => !switchedOff.has(one.path)) };
+    },
   };
   const services = await sdk.createAgentSessionServices({
     cwd: options.cwd,
     settingsManager,
-    ...(Object.keys(loaderOptions).length > 0 ? { resourceLoaderOptions: loaderOptions } : {}),
+    resourceLoaderOptions: loaderOptions,
   });
   const { session } = await sdk.createAgentSessionFromServices({
     services,
     sessionManager,
     ...(options.tools !== undefined && options.tools.length > 0 ? { customTools: options.tools } : {}),
   });
-  return wrap(sdk, session);
+  return wrap(sdk, session, found);
 }
 
 /**
@@ -398,8 +432,8 @@ const INPUT_SOURCE = 'rpc' as const;
  */
 const STILL = new AbortController().signal;
 
-/** The narrow surface, over the session pi built. */
-function wrap(sdk: Pi, session: AgentSession): PiBackend {
+/** The narrow surface, over the session pi built and what its loader found. */
+function wrap(sdk: Pi, session: AgentSession, found: PiResources): PiBackend {
   const models = async (): Promise<PiModel[]> => {
     const available = await session.modelRuntime.getAvailable();
     return available as unknown as PiModel[];
@@ -466,6 +500,7 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
      * the current model's would offer a control the other rows do not have.
      */
     levels: (model) => sdk.getSupportedThinkingLevels(model as never) as string[],
+    resources: () => found,
     startsOn: (model) => session.settingsManager.getModelThinkingLevel(model.provider, model.id) ?? session.settingsManager.getDefaultThinkingLevel(),
     // The model pi is on, with the level it is on in the config the model's
     // schema puts it in, wherever pi moved it.

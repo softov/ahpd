@@ -1000,10 +1000,101 @@ it('refuses a setting it does not serve in words that say which of the two went 
   expect(await session.setConfig?.('somethingElse', 'plan')).toBe('pi sessions have no "somethingElse" setting');
 });
 
-it('reports no runtime switch for a customization rather than pretending', async () => {
-  const { session } = opened();
+/** Where pi's loader says it found a resource. */
+const source = (path: string, baseDir: string, scope: 'user' | 'project', origin: 'top-level' | 'package' = 'top-level') =>
+  ({ path, source: origin === 'package' ? 'npm:pi-tools' : 'local', scope, origin, baseDir });
+
+/** What pi's loader finds under `home`: a user skill, a package's skill, a project prompt template and a user extension. */
+const RESOURCES = (home: string) => ({
+  skills: [
+    {
+      name: 'review', description: 'Reviews a change', filePath: join(home, 'agent', 'skills', 'review', 'SKILL.md'), baseDir: join(home, 'agent', 'skills', 'review'),
+      sourceInfo: source(join(home, 'agent', 'skills', 'review', 'SKILL.md'), join(home, 'agent', 'skills'), 'user'), disableModelInvocation: false,
+    },
+    {
+      name: 'lint', description: '', filePath: join(home, 'pkg', 'skills', 'lint', 'SKILL.md'), baseDir: join(home, 'pkg', 'skills', 'lint'),
+      sourceInfo: source(join(home, 'pkg', 'skills', 'lint', 'SKILL.md'), join(home, 'pkg'), 'user', 'package'), disableModelInvocation: true,
+    },
+  ],
+  prompts: [{
+    name: 'fix', description: 'Fixes it', content: 'Fix it.', filePath: join(home, 'work', '.pi', 'prompts', 'fix.md'),
+    sourceInfo: source(join(home, 'work', '.pi', 'prompts', 'fix.md'), join(home, 'work', '.pi', 'prompts'), 'project'),
+  }],
+  extensions: [
+    {
+      path: join(home, 'agent', 'extensions', 'guard.ts'), resolvedPath: join(home, 'agent', 'extensions', 'guard.ts'),
+      sourceInfo: source(join(home, 'agent', 'extensions', 'guard.ts'), join(home, 'agent', 'extensions'), 'user'),
+    },
+    // This host's own, which pi was handed inline, and is no customization of the person's.
+    { path: '<inline:ahpd>', resolvedPath: '<inline:ahpd>', hidden: true, sourceInfo: { path: '<inline:ahpd>', source: 'inline', scope: 'temporary', origin: 'top-level' } },
+  ],
+}) as unknown as Parameters<ReturnType<typeof fakePi>['find']>[0];
+
+/*
+ * pi's skills, prompt templates and extensions in the customization model: a
+ * directory per folder pi loads from, holding the kind found there, as VS
+ * Code's discovery groups customizations, and a package a plugin holding its
+ * kinds, each by its URI.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/sessionCustomizationDiscovery.ts#L1041-L1078
+ */
+it('lists pi\'s skills, prompt templates and extensions, a directory per folder and a package as a plugin', async () => {
+  const pi = fakePi();
+  pi.find(RESOURCES(root));
+  const { session, last } = opened({}, {}, pi.open);
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const folder = (...parts: string[]) => uriOf(join(root, ...parts));
+  const listed = [
+    {
+      type: 'directory', id: folder('agent', 'skills'), uri: folder('agent', 'skills'), name: 'skills', enabled: true, contents: 'skill', writable: true,
+      load: { kind: 'loaded' },
+      children: [{ type: 'skill', id: folder('agent', 'skills', 'review', 'SKILL.md'), uri: folder('agent', 'skills', 'review', 'SKILL.md'), name: 'review', description: 'Reviews a change' }],
+    },
+    {
+      type: 'plugin', id: folder('pkg'), uri: folder('pkg'), name: 'pkg', enablement: [{ kind: 'session', enabled: true }], load: { kind: 'loaded' },
+      children: [{ type: 'skill', id: folder('pkg', 'skills', 'lint', 'SKILL.md'), uri: folder('pkg', 'skills', 'lint', 'SKILL.md'), name: 'lint', disableModelInvocation: true }],
+    },
+    {
+      type: 'directory', id: folder('work', '.pi', 'prompts'), uri: folder('work', '.pi', 'prompts'), name: 'prompts', enabled: true, contents: 'prompt', writable: true,
+      load: { kind: 'loaded' },
+      children: [{ type: 'prompt', id: folder('work', '.pi', 'prompts', 'fix.md'), uri: folder('work', '.pi', 'prompts', 'fix.md'), name: 'fix', description: 'Fixes it' }],
+    },
+    {
+      type: 'directory', id: folder('agent', 'extensions'), uri: folder('agent', 'extensions'), name: 'extensions', enabled: true, contents: 'hook', writable: true,
+      load: { kind: 'loaded' },
+      children: [{ type: 'hook', id: folder('agent', 'extensions', 'guard.ts'), uri: folder('agent', 'extensions', 'guard.ts'), name: 'guard' }],
+    },
+  ];
+  expect(session.customizations()).toEqual(listed);
+  expect(last('session/customizationsChanged')).toEqual({ type: 'session/customizationsChanged', customizations: listed });
+});
+
+/*
+ * A switch reaches pi as a tool change does: the pi built before the next turn
+ * leaves what is off out through its loader's own overrides.
+ */
+it('switches a skill or a package off for the pi built before the next turn, and refuses an id that is no customization of pi\'s', async () => {
+  const pi = fakePi();
+  pi.find(RESOURCES(root));
+  const { session } = opened({}, {}, pi.open);
+  session.sendMessage('t1', 'hello');
+  await settled();
+  pi.raise({ type: 'agent_settled' } as never);
+  await settled();
+  const review = uriOf(join(root, 'agent', 'skills', 'review', 'SKILL.md'));
+  expect(await session.setCustomizationEnabled(review, false)).toBe(true);
+  expect(await session.setCustomizationEnabled(uriOf(join(root, 'pkg')), false)).toBe(true);
   expect(await session.setCustomizationEnabled('skill', true)).toBe(false);
   expect(await session.startMcpServer('one')).toBe(false);
+  const skills = (session.customizations() as Bag[]).flatMap((one) => (one.children as Bag[]).filter((child) => child.type === 'skill'));
+  expect(skills.map((one) => [one.name, one.enabled])).toEqual([['review', false], ['lint', undefined]]);
+  expect((session.customizations() as Bag[]).find((one) => one.type === 'plugin')?.enablement).toEqual([{ kind: 'session', enabled: false }]);
+  session.sendMessage('t2', 'again');
+  await settled();
+  expect([...(pi.opens.at(-1)?.switchedOff ?? [])].sort()).toEqual([
+    join(root, 'agent', 'skills', 'review', 'SKILL.md'),
+    join(root, 'pkg', 'skills', 'lint', 'SKILL.md'),
+  ]);
 });
 
 // The agent ---------------------------------------------------------------
