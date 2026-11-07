@@ -235,7 +235,7 @@ export function createAutomations(ctx: HostContext): Automations {
     options, sessions, byChat, senders, charged, origins, kept,
     dispatch, log, fire, statusOf, principalFor, admitted, placedIn,
     resolveCreatedSessionConfig, createProviderSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
-    turnInstructions,
+    scratchFolder, turnInstructions,
   } = ctx;
 
   /**
@@ -758,11 +758,12 @@ export function createAutomations(ctx: HostContext): Automations {
       }
     }
     const config = wanted.config ?? {};
-    // The same steps a client's `createSession` takes: the host's own keys
-    // are not the backend's to read, and a worktree is made at the first send,
+    // The same steps a client's `createSession` takes: the folder the daemon's
+    // `workspacelessFolder` says where none is named, the host's own keys are
+    // not the backend's to read, and a worktree is made at the first send,
     // which a run makes at once.
-    const where = wanted.workingDirectory;
-    await resolveCreatedSessionConfig(uri, wanted.workingDirectory, config);
+    const where = wanted.workingDirectory ?? await scratchFolder(uri);
+    await resolveCreatedSessionConfig(uri, where, config);
     /*
      * The two checks a client's `createSession` makes, asked here too and before
      * anything runs in the machine - an automation is nobody at the keyboard to

@@ -299,6 +299,14 @@ export interface Config {
    */
   unofferedModel?: 'fail' | 'keep';
   /**
+   * Where a session that names no folder works.
+   *
+   * `first`, the default, is the first folder this daemon serves. `scratch` is
+   * VS Code's: a folder of its own under `~/.copilot/chats`, made when the
+   * session is and removed with it.
+   */
+  workspacelessFolder?: 'first' | 'scratch';
+  /**
    * Whether a turn's sender is said on what clients read.
    *
    * `said`, the default, puts who sent each turn on its start and its message.

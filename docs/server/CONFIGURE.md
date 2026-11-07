@@ -98,6 +98,7 @@ An unknown key is logged and ignored:
 | `toolResultResourceLimitBytes` | `--tool-result-resource-limit-bytes` | `8388608` | The most bytes kept of one content a tool result or an agent's message carries inline, which a client reads back by a `session-db-resource` URI; larger content is left out, as VS Code keeps nothing over its bound; `0` sets no limit |
 | `closedChats` | `--closed-chats` | `hidden` | `delete` removes a closed chat from the backend |
 | `unofferedModel` | `--unoffered-model` | `fail` | `keep` keeps a chat's model when a turn names one its agent does not offer, as VS Code does |
+| `workspacelessFolder` | `--workspaceless-folder` | `first` | `scratch` works a session that names no folder in a folder of its own, `~/.copilot/chats/<session id>`, made with the session and removed with it, as VS Code does |
 | `turnSenders` | `--turn-senders` | `said` | `kept` keeps each turn's sender on the host and says it in no action, as VS Code does |
 | `backendBackgroundWork` | `--backend-background-work` | `drop` | `say` says a backend's own background work actions as the host's, as VS Code does |
 | `agentOrchestrationLimitsScope` | `--agent-orchestration-limits-scope` | `sessionTree` | `session` keeps the session tools' counts per session, as VS Code does |

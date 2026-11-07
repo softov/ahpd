@@ -786,6 +786,17 @@ export interface HostOptions {
    */
   unofferedModel?: 'fail' | 'keep';
   /**
+   * Where a session that names no folder works.
+   *
+   * `first`, the default, names it none, so it works in the first folder this
+   * host serves. `scratch` is VS Code's: a folder of its own,
+   * `<home>/.copilot/chats/<session id>`, made when the session is, made again
+   * when a start finds it gone, and removed with the session, as VS Code's
+   * host works a workspace-less session in its scratch folder.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/workspacelessScratchDir.ts#L14-L20
+   */
+  workspacelessFolder?: 'first' | 'scratch';
+  /**
    * Whether a turn's sender is said on what clients read.
    *
    * `said`, the default, puts who sent each turn under `_meta['ahpd.sender']`

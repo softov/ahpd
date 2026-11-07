@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState, ErrorInfo, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
@@ -39,6 +39,7 @@ import type { Session, SubagentChat, SubagentRequest } from '../types/session.js
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
+import { workspacelessScratchDir } from './lifecycle.js';
 import type { Move } from './lifecycle.js';
 import type { HostContext } from './context.js';
 import type { Origin } from './state.js';
@@ -1011,6 +1012,14 @@ export function createSpawn(ctx: HostContext): Spawn {
       : agent;
     if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
     if (resuming?.resume !== undefined) restoredSessions.add(uri);
+    /*
+     * A session's own scratch folder, made again when a start finds it gone,
+     * as VS Code's agent makes a recorded scratch folder again before a chat
+     * runs in it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1785-L1791
+     */
+    const scratch = workspacelessScratchDir(uri);
+    if (scratch !== undefined && workingDirectory === scratch) mkdirSync(scratch, { recursive: true });
     /*
      * What this session's turns cost, kept against each turn until it ends.
      *

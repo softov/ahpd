@@ -98,6 +98,8 @@ export interface Options {
   closedChats: 'hidden' | 'delete';
   /** What a turn naming a model its chat's agent does not offer does. */
   unofferedModel: 'fail' | 'keep';
+  /** Where a session that names no folder works. */
+  workspacelessFolder: 'first' | 'scratch';
   /** Whether a turn's sender is said on what clients read. */
   turnSenders: 'said' | 'kept';
   /** What a backend's own background work actions come to. */
@@ -660,6 +662,11 @@ export const serverFields = {
     type: 'string',
     enum: ['fail', 'keep'],
     description: 'What a turn naming a model its chat\'s agent does not offer does: fail ends the turn, keep keeps the chat\'s model as VS Code does.',
+  },
+  workspacelessFolder: {
+    type: 'string',
+    enum: ['first', 'scratch'],
+    description: 'Where a session that names no folder works: first, the first folder this daemon serves; scratch, a folder of its own under ~/.copilot/chats, removed with the session, as VS Code does.',
   },
   turnSenders: {
     type: 'string',
@@ -1360,6 +1367,7 @@ const noCwd = input['noCwd'] === true;
     sessionToolsProviders: given('sessionToolsProviders') ?? [],
     closedChats: given('closedChats') ?? 'hidden',
     unofferedModel: given('unofferedModel') ?? 'fail',
+    workspacelessFolder: given('workspacelessFolder') ?? 'first',
     turnSenders: given('turnSenders') ?? 'said',
     backendBackgroundWork: given('backendBackgroundWork') ?? 'drop',
     agentOrchestrationLimitsScope: given('agentOrchestrationLimitsScope') ?? 'sessionTree',

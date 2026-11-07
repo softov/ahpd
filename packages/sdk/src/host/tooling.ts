@@ -422,7 +422,7 @@ export function createTooling(ctx: HostContext): Tooling {
     activeClientsOf, leadOf, clientResources, listSessions, setArtifacts, forWhom,
     principalFor, senderOf, senders,
     chatSummary, persistChatTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
-    resolveCreatedSessionConfig, createProviderSession, backendsOwn, removeSession, spawn,
+    resolveCreatedSessionConfig, createProviderSession, backendsOwn, removeSession, scratchFolder, spawn,
   } = ctx;
   ctx.agentOrchestrationLimitsScope = options.agentOrchestrationLimitsScope ?? 'sessionTree';
   /**
@@ -1981,9 +1981,10 @@ export function createTooling(ctx: HostContext): Tooling {
       };
       // The same steps `createSession` takes for a client, in the same order:
       // the host's keys kept apart from the backend's, and a worktree made at
-      // the first send.
-      const where = asked.workingDirectory;
-      await resolveCreatedSessionConfig(made, asked.workingDirectory, config);
+      // the first send. None named, the daemon's `workspacelessFolder` says
+      // where it works.
+      const where = asked.workingDirectory ?? await scratchFolder(made);
+      await resolveCreatedSessionConfig(made, where, config);
       // The owner of the session this one was made inside, which is what a
       // tool acting for somebody means: the work is theirs whichever session
       // it ends up running in. And the session, chat and turn it was made
@@ -2208,8 +2209,9 @@ export function createTooling(ctx: HostContext): Tooling {
           ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
           ...(asked.model !== undefined ? { model: asked.model } : {}),
         };
-        const where = asked.workingDirectory;
-        await resolveCreatedSessionConfig(made, asked.workingDirectory, config);
+        // None named, the daemon's `workspacelessFolder` says where it works.
+        const where = asked.workingDirectory ?? await scratchFolder(made);
+        await resolveCreatedSessionConfig(made, where, config);
         createProviderSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
           sender === undefined ? undefined : forWhom(sender, caller.principal));
         ctx.oweTree(made, {}, undefined, () => ({}));

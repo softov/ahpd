@@ -64,7 +64,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     forWhom, forgetSendersIn, formOrdered, hold,
     isolating, keepChat, recordSessionProvider, kept, leadOf, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
     isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, hasActiveTurn, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
-    ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
+    ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, scratchFolder, seeded,
     projectActionForClient, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
     snapshotOf, spawn, subagentSummary, subagents, markSummaryDirty, unheld, visible, unavailableProvider, wake,
   } = ctx;
@@ -1089,7 +1089,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           .filter((entry): entry is string => typeof entry === 'string')
           .map((entry) => localPath(entry));
         const asked = wanted[0];
-        const where = asked;
+        // None named, the daemon's `workspacelessFolder` says where it works.
+        const where = asked ?? await scratchFolder(uri);
         // The peers of the first, which the protocol says are equal to each
         // other and to it in everything but which one the process is rooted
         // at. A backend that cannot take them is told none.

@@ -324,6 +324,13 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   unofferedModel: 'fail' | 'keep';
   /**
+   * Where a session that names no folder works: the first folder this host
+   * serves, `first`, or a scratch folder of its own, `scratch`, as VS Code's
+   * host works one. A daemon key that takes hold while the daemon runs, read
+   * as each session is made.
+   */
+  workspacelessFolder: 'first' | 'scratch';
+  /**
    * Whether a turn's sender is said on what clients read, `said`, or kept by
    * the host alone, `kept`, as VS Code's host keeps it. A daemon key that
    * takes hold while the daemon runs, read as each start is said and each

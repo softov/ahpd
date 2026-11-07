@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
@@ -9,7 +9,7 @@ import { uriOf } from '../src/resources/resources.js';
 import type { Start } from '../src/types/agent.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
-import type { WorkspaceFiles } from '../src/types/host.js';
+import type { HostOptions, WorkspaceFiles } from '../src/types/host.js';
 import {
   resetSdk, actions, claude, complete, createHost, emit, firstMessage, hello, hostTools, list, machine, open,
   peer, read, resolve, serving, sessionQueries, settle, running, wrote,
@@ -30,11 +30,23 @@ const REPO = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, 
 beforeEach(resetSdk);
 
 describe('where the agent works', () => {
-  const opened = async (also: string[] = []) => {
-    const host = serving('/home/softov', also);
+  const opened = async (also: string[] = [], over: Partial<HostOptions> = {}) => {
+    const host = serving('/home/softov', also, over);
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     return client;
+  };
+
+  /** A home of the case's own, so a scratch folder is made where nothing else lives. */
+  const homed = (): string => {
+    const home = mkdtempSync(join(tmpdir(), 'ahpd-home-'));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    onTestFinished(async () => {
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    });
+    return home;
   };
 
   it('runs a session in the directory the client named', async () => {
@@ -113,6 +125,71 @@ describe('where the agent works', () => {
     });
     await settle();
     expect(sessionQueries().at(-1)?.options.cwd).toBe('/home/softov');
+  });
+
+  /*
+   * VS Code's host works a session that names no folder in a scratch folder
+   * of its own under `~/.copilot/chats`, made when the session is, made again
+   * when it is gone, and removed with the session; `scratch` is that.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/workspacelessScratchDir.ts#L14-L20
+   */
+  it('works one that names none in a scratch folder of its own, removed with it, when the daemon says scratch', async () => {
+    const home = homed();
+    const client = await opened([], { workspacelessFolder: 'scratch' });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'claude' } });
+    await settle();
+    const folder = join(home, '.copilot', 'chats', 'a');
+    expect(sessionQueries().at(-1)?.options.cwd).toBe(folder);
+    expect(existsSync(folder)).toBe(true);
+
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/a' } });
+    expect(existsSync(folder)).toBe(false);
+  });
+
+  it('makes a session\'s scratch folder again when a start finds it gone', async () => {
+    const home = homed();
+    const client = await opened([], { workspacelessFolder: 'scratch' });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'claude' } });
+    await settle();
+    const folder = join(home, '.copilot', 'chats', 'a');
+    await rm(folder, { recursive: true });
+
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/a', chat: 'ahp-chat:/side' } });
+    await settle();
+    expect(existsSync(folder)).toBe(true);
+  });
+
+  it('refuses a session whose id names no folder of its own under the chats folder', async () => {
+    const home = homed();
+    const client = await opened([], { workspacelessFolder: 'scratch' });
+    await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/..', provider: 'claude' } }))
+      .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('names no folder of its own') });
+    expect(sessionQueries()).toHaveLength(0);
+    expect(existsSync(join(home, '.copilot', 'chats'))).toBe(false);
+  });
+
+  it('takes a push of workspacelessFolder for the next session', async () => {
+    const home = homed();
+    // A daemon that holds the one key, so what it holds is what the push left.
+    const held: Record<string, unknown> = {};
+    const rootConfig: NonNullable<HostOptions['rootConfig']> = {
+      schema: () => ({
+        type: 'object',
+        properties: { workspacelessFolder: { type: 'string', enum: ['first', 'scratch'], title: 'Workspaceless folder' } },
+      }),
+      values: async () => ({ ...held }),
+      write: async (values) => { Object.assign(held, values); return {}; },
+    };
+    const client = await opened([], { rootConfig });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { workspacelessFolder: 'scratch' } } },
+    });
+    await settle();
+    expect(held.workspacelessFolder).toBe('scratch');
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'claude' } });
+    await settle();
+    expect(sessionQueries().at(-1)?.options.cwd).toBe(join(home, '.copilot', 'chats', 'a'));
   });
 });
 
