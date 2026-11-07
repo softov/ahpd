@@ -84,12 +84,20 @@ describe('driving a turn', () => {
     };
     const actionOf = (frame: { params: unknown } | undefined) => (frame?.params as { action: Record<string, unknown> } | undefined)?.action;
 
-    it('offers allow once, always allow and deny, and returns the suggestions when always is picked', async () => {
+    /*
+     * Claude puts its question with no options of its own, whatever the SDK
+     * suggested, and the host offers VS Code's; an answer keeps nothing in the
+     * CLI's own settings, the host keeping an "Allow in this Session" itself.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L167-L180
+     */
+    it('offers VS Code\'s options whatever the SDK suggested, and hands the CLI no suggestion back', async () => {
       const { p, chatUri, decision, ready, needed, answer } = await asking(rule);
+      // A shell command's, as Claude says the call is one and names its command.
       const offered = [
-        { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
-        { id: 'allow-always', label: 'Always allow Bash(ls:*), kept in local settings', kind: 'approve', group: 1 },
-        { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
+        { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+        { id: 'allow-session-rules:["Shell(ls *)"]', label: 'Allow `ls …` in this Session', kind: 'approve', group: 1 },
+        { id: 'allow-always-rules:["Shell(ls *)"]', label: 'Always Allow `ls …`', kind: 'approve', group: 1 },
+        { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
       ];
       expect(actionOf(ready)?.options).toEqual(offered);
       expect((actionOf(needed)?.request as { toolCall: { options?: unknown } }).toolCall.options).toEqual(offered);
@@ -98,11 +106,11 @@ describe('driving a turn', () => {
       expect([ready, needed].flatMap((frame) => check.frame(frame)).map((one) => `${one.def} ${one.at} ${one.what}`))
         .toEqual([]);
 
-      await answer({ approved: true, confirmed: 'user-action', selectedOptionId: 'allow-always' });
-      expect(await decision).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' }, updatedPermissions: rule });
+      await answer({ approved: true, confirmed: 'user-action', selectedOptionId: 'allow-once' });
+      expect(await decision).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
       const echoed = p.notes.find((n) => n.method === 'action'
         && (n.params as { channel: string }).channel === chatUri && actionOf(n)?.type === 'chat/toolCallConfirmed');
-      expect(actionOf(echoed)?.selectedOptionId).toBe('allow-always');
+      expect(actionOf(echoed)?.selectedOptionId).toBe('allow-once');
 
       expect(check.frame(echoed).map((one) => `${one.def} ${one.at} ${one.what}`)).toEqual([]);
     });
@@ -117,37 +125,35 @@ describe('driving a turn', () => {
       expect(await once.decision).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
     });
 
-    it('says what a mode suggestion does', async () => {
-      const { ready } = await asking([{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]);
-      const options = actionOf(ready)?.options as { id: string; label: string }[];
-      expect(options.find((one) => one.id === 'allow-always')?.label).toBe('Allow edits for the rest of the session');
-    });
-
     /*
-     * An "Allow in this Session" answer is the host's, kept in the session's
-     * `permissions` and handed to Claude, whose next call to the tool runs
-     * without a question, as VS Code's host keeps one for its agents.
+     * An "Allow in this Session" answer is the host's: the command's rule is
+     * kept in the session's `permissions`, and the next call it matches is
+     * answered from it with nobody asked, as VS Code's host keeps one for its
+     * agents.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L619-L650
      */
     it('keeps an Allow in this Session answer, and the next call to the tool runs without a question', async () => {
       const { p, decision, answer } = await asking();
-      await answer({ approved: true, confirmed: 'user-action', selectedOptionId: 'allow-session' });
+      await answer({ approved: true, confirmed: 'user-action', selectedOptionId: 'allow-session-rules:["Shell(ls *)"]' });
       expect(await decision).toEqual({ behavior: 'allow', updatedInput: { command: 'ls' } });
       await settle();
       const kept = p.notes.filter((n) => n.method === 'action' && actionOf(n)?.type === 'session/configChanged');
-      expect(kept.map((n) => actionOf(n)?.config)).toEqual([{ permissions: { allow: ['Bash'], deny: [] } }]);
+      expect(kept.map((n) => actionOf(n)?.config)).toEqual([{ permissions: { allow: ['Shell(ls *)'], deny: [] } }]);
       const before = p.notes.length;
       expect(await sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'c10' })).toMatchObject({ behavior: 'allow' });
-      expect(p.notes.slice(before).some((n) => n.method === 'action' && actionOf(n)?.type === 'chat/toolCallReady')).toBe(false);
+      // Answered by the host from what it kept: the call is said running, and nobody is asked.
+      expect(p.notes.slice(before).some((n) => n.method === 'action' && actionOf(n)?.type === 'chat/toolCallReady'
+        && actionOf(n)?.confirmed === undefined)).toBe(false);
     });
 
-    // The host's options, in VS Code's words, where the backend offers none of its own.
+    // The host's options for a shell command, in VS Code's words, where the backend offers none of its own.
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L67-L76
     it('offers VS Code\'s options when the SDK suggested nothing', async () => {
       const { ready } = await asking();
       expect(actionOf(ready)?.options).toEqual([
-        { id: 'allow-session', label: 'Allow in this Session', kind: 'approve', group: 1 },
         { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+        { id: 'allow-session-rules:["Shell(ls *)"]', label: 'Allow `ls …` in this Session', kind: 'approve', group: 1 },
+        { id: 'allow-always-rules:["Shell(ls *)"]', label: 'Always Allow `ls …`', kind: 'approve', group: 1 },
         { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
       ]);
     });

@@ -73,7 +73,11 @@ const settle = async (times = 30): Promise<void> => {
 };
 
 /** A session holding `tools`, and what it said on the wire. */
-async function sessionWith(tools: BoundTool[], settings: Bag = {}): Promise<{ canUseTool: NonNullable<typeof sdk.canUseTool>; sent: Bag[] }> {
+async function sessionWith(tools: BoundTool[], settings: Bag = {}): Promise<{
+  canUseTool: NonNullable<typeof sdk.canUseTool>;
+  sent: Bag[];
+  session: ReturnType<typeof createSession>;
+}> {
   sdk.frames = [];
   const sent: Bag[] = [];
   const session = createSession({
@@ -88,7 +92,7 @@ async function sessionWith(tools: BoundTool[], settings: Bag = {}): Promise<{ ca
   // A turn running, as the CLI asks about a call only inside one.
   session.sendMessage('t1', 'go');
   await settle();
-  return { canUseTool: sdk.canUseTool!, sent };
+  return { canUseTool: sdk.canUseTool!, sent, session };
 }
 
 it('runs a host tool that needs no confirmation, without asking anybody', async () => {
@@ -112,15 +116,55 @@ it('asks about a host tool that says nothing, as it always has', async () => {
   expect(sent.filter((one) => one.type === 'session/inputNeededSet')).toHaveLength(1);
 });
 
-it('still refuses a tool the deny list names', async () => {
-  const { canUseTool, sent } = await sessionWith(
+/*
+ * The flag is the host's claim about the tool; the deny list is a person's
+ * answer, and it wins: the call is put to the host, whose chain refuses a tool
+ * the session's lists deny before any client is asked, and the CLI is answered
+ * the refusal in VS Code's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L167-L180
+ */
+it('puts a tool the deny list names to the host, and answers the CLI its refusal', async () => {
+  const { canUseTool, sent, session } = await sessionWith(
     [offered({ confirm: false })],
     { permissions: { allow: [], deny: [CALLED] } },
   );
 
-  // The flag is the host's claim about the tool; the deny list is a person's
-  // answer, and it wins, refused in VS Code's words.
-  expect(await canUseTool(CALLED, { text: 'hello' }, { toolUseID: 'toolu_denied' }))
-    .toEqual({ behavior: 'deny', message: 'User declined' });
-  expect(sent.filter((one) => one.type === 'session/inputNeededSet')).toEqual([]);
+  const answered = canUseTool(CALLED, { text: 'hello' }, { toolUseID: 'toolu_denied' });
+  await settle();
+  expect(sent.filter((one) => one.type === 'chat/toolCallReady').map((one) => one.toolCallId)).toEqual(['toolu_denied']);
+  expect(session.confirm('toolu_denied', false)).toBe(true);
+  expect(await answered).toEqual({ behavior: 'deny', message: 'User declined' });
+});
+
+/*
+ * A question carries what the host decides it by, beside its ready, and no
+ * options of its own: the kind, the path (the CLI's `blockedPath` first) or
+ * the URL, and a shell call's command in bash, as VS Code's Claude fills its
+ * pending confirmation; and the sandbox bypass and the managed approval VS
+ * Code's Copilot agent carries from its runtime, read from the CLI's
+ * `dangerouslyDisableSandbox`, a policy's `matchedAskRule` and
+ * `suppressAlwaysAllowRule`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8105-L8112
+ */
+it('says what the host decides a question by on its ready, and offers no options of its own', async () => {
+  const { canUseTool, sent } = await sessionWith([]);
+  const readyOf = (id: string): Bag | undefined => sent.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === id);
+  void canUseTool('Bash', { command: 'rm -rf build', dangerouslyDisableSandbox: true }, {
+    toolUseID: 'c-shell', suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash' }], behavior: 'allow', destination: 'localSettings' }],
+  });
+  void canUseTool('Read', { file_path: '/work/a.txt' }, { toolUseID: 'c-read', blockedPath: '/etc/passwd', suppressAlwaysAllowRule: true });
+  void canUseTool('WebFetch', { url: 'https://example.com/x' }, { toolUseID: 'c-url', matchedAskRule: { source: 'policySettings', toolName: 'WebFetch' } });
+  void canUseTool('Edit', { file_path: '/work/b.txt' }, { toolUseID: 'c-edit', matchedAskRule: { source: 'userSettings', toolName: 'Edit' } });
+  await settle();
+
+  expect(readyOf('c-shell')).toMatchObject({
+    permissionKind: 'shell', shellLanguage: 'bash', shellCommand: 'rm -rf build', requestSandboxBypass: true,
+  });
+  expect(readyOf('c-shell')).not.toHaveProperty('options');
+  expect(readyOf('c-read')).toMatchObject({ permissionKind: 'read', permissionPath: '/etc/passwd', managedApprovalRequired: true });
+  expect(readyOf('c-url')).toMatchObject({ permissionKind: 'url', permissionUrl: 'https://example.com/x', managedApprovalRequired: true });
+  expect(readyOf('c-url')).not.toHaveProperty('permissionPath');
+  expect(readyOf('c-edit')).toMatchObject({ permissionKind: 'write', permissionPath: '/work/b.txt' });
+  expect(readyOf('c-edit')).not.toHaveProperty('managedApprovalRequired');
 });

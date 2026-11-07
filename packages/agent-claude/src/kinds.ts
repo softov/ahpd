@@ -1,3 +1,5 @@
+import type { PermissionKind } from '@ahpd/sdk';
+
 /**
  * What kind of thing a tool call is, said where the reference client reads it.
  *
@@ -51,6 +53,57 @@ export const toolMetaOf = (name: string): Record<string, unknown> | undefined =>
 
 /** The prefix the CLI calls an MCP server's tool under, `mcp__<server>__<tool>`. */
 const MCP_TOOL_PREFIX = 'mcp__';
+
+/**
+ * What each of the CLI's tools asks to do, and the field of its input naming
+ * the path or the URL it acts on, as VS Code's Claude table rows them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L117
+ */
+const PERMISSION_ROWS: Readonly<Record<string, { kind: PermissionKind; pathField?: string }>> = {
+  Bash: { kind: 'shell' },
+  BashOutput: { kind: 'shell' },
+  KillBash: { kind: 'shell' },
+  Read: { kind: 'read', pathField: 'file_path' },
+  Glob: { kind: 'read', pathField: 'path' },
+  Grep: { kind: 'read', pathField: 'path' },
+  LS: { kind: 'read', pathField: 'path' },
+  NotebookRead: { kind: 'read', pathField: 'notebook_path' },
+  Write: { kind: 'write', pathField: 'file_path' },
+  Edit: { kind: 'write', pathField: 'file_path' },
+  MultiEdit: { kind: 'write', pathField: 'file_path' },
+  NotebookEdit: { kind: 'write', pathField: 'notebook_path' },
+  TodoWrite: { kind: 'write' },
+  WebFetch: { kind: 'url', pathField: 'url' },
+  Task: { kind: 'custom-tool' },
+  Agent: { kind: 'custom-tool' },
+  ExitPlanMode: { kind: 'custom-tool' },
+  AskUserQuestion: { kind: 'custom-tool' },
+  Skill: { kind: 'skill' },
+  TaskCreate: { kind: 'custom-tool' },
+  TaskUpdate: { kind: 'custom-tool' },
+  TaskList: { kind: 'custom-tool' },
+  TaskGet: { kind: 'custom-tool' },
+};
+
+/**
+ * What a tool call asks to do: its row's kind, an MCP server's tool `mcp`, and
+ * any other tool `custom-tool`, as VS Code's `getClaudePermissionKind`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L125-L134
+ */
+export const getClaudePermissionKind = (toolName: string): PermissionKind =>
+  PERMISSION_ROWS[toolName]?.kind ?? (toolName.startsWith(MCP_TOOL_PREFIX) ? 'mcp' : 'custom-tool');
+
+/**
+ * The path or the URL a call acts on, from the field its row names, as VS
+ * Code's `getClaudeToolPath`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L187-L194
+ */
+export const getClaudeToolPath = (toolName: string, input: unknown): string | undefined => {
+  const field = PERMISSION_ROWS[toolName]?.pathField;
+  if (field === undefined || typeof input !== 'object' || input === null) return undefined;
+  const value = (input as Record<string, unknown>)[field];
+  return typeof value === 'string' ? value : undefined;
+};
 
 /** VS Code's Claude display table, by the CLI's own tool names. */
 const DISPLAY_NAMES: Readonly<Record<string, string>> = {

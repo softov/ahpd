@@ -1,9 +1,11 @@
 import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
-import type { Bag } from '@ahpd/sdk';
+import type { Bag, PendingConfirmation } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { getClaudeInvocationMessage, getClaudePastTenseMessage, getClaudeToolInputString, questionRequest, writeOf } from '../input.js';
-import { CLAUDE_QUESTION_CANCELLED_MESSAGE, CLAUDE_USER_DECLINED_MESSAGE, getClaudeConfirmationTitle, toolMetaOf } from '../kinds.js';
+import {
+  CLAUDE_QUESTION_CANCELLED_MESSAGE, CLAUDE_USER_DECLINED_MESSAGE, getClaudeConfirmationTitle, getClaudePermissionKind, getClaudeToolPath, toolMetaOf,
+} from '../kinds.js';
 interface PendingInput {
   id: string;
   /** The question as it was raised on the session's `inputNeeded`: the spec's `SessionInputRequest`. */
@@ -24,11 +26,7 @@ interface PendingInput {
    * session see the form being filled in.
    */
   answers: Map<string, Bag>;
-  /** The choices a tool confirmation offered, when the SDK suggested a rule to keep. */
-  options?: Bag[];
-  /** The SDK's `suggestions` for this call, returned as `updatedPermissions` when "always" is picked. */
-  suggestions?: unknown[];
-  settle(result: { behavior: 'allow'; updatedInput: Bag; updatedPermissions?: unknown[] } | { behavior: 'deny'; message: string }): void;
+  settle(result: { behavior: 'allow'; updatedInput: Bag } | { behavior: 'deny'; message: string }): void;
 }
 
 /**
@@ -58,14 +56,6 @@ const NO_TURN = 'No turn is running to ask in';
 /** What the model is told about a question nobody answered, in VS Code's words. */
 const QUESTION_CANCELLED = CLAUDE_QUESTION_CANCELLED_MESSAGE;
 
-/** Where a kept permission lands, as a person reads it. */
-const KEPT_IN: Record<string, string> = {
-  session: ' for the rest of the session',
-  localSettings: ', kept in local settings',
-  projectSettings: ', kept in project settings',
-  userSettings: ', kept in user settings',
-};
-
 /**
  * A call's tool as the operator's rule names it.
  *
@@ -92,7 +82,7 @@ const referenceName = (toolName: string, server?: string): string => {
 };
 
 /** What a person's answer to a held question settles, in the SDK's terms. */
-type Held = { behavior: 'allow'; updatedInput: Bag; updatedPermissions?: unknown[] } | { behavior: 'deny'; message: string };
+type Held = { behavior: 'allow'; updatedInput: Bag } | { behavior: 'deny'; message: string };
 
 /** What the question both callers await needs to know about one call. */
 interface Question {
@@ -106,58 +96,44 @@ interface Question {
   agentId?: string;
   /** The SDK's own abort for the call. */
   signal?: AbortSignal;
-  /** What the SDK suggested be kept, which the question offers as "always". */
-  suggestions: unknown[];
+  /** What the host decides the question by, said on the call's ready and sent to no client. */
+  confirmation: PendingConfirmation;
+  /** The MCP server the CLI says serves the call, by its configured name: the SDK's `mcpServer.name`. */
+  server?: string;
 }
 
 /**
- * What a set of the SDK's permission suggestions does, in one line.
+ * What the host decides a question about a call by, from what the CLI says of
+ * it.
  *
- * The label of the "always" choice, so it says what is kept and where: the
- * rules added, the mode set or the directories added, each followed by where
- * it is kept, joined when there are several. Rules with the same behavior kept
- * in the same place are one phrase, and a rule or phrase said twice is said
- * once: the SDK suggests a rule per command of a compound one, so `a && a`
- * comes as two suggestions of the same rule.
+ * The kind of thing the call does, the path or the URL it acts on (the CLI's
+ * `blockedPath` first) and the command a shell call runs, in bash, as VS
+ * Code's Claude agent fills its pending confirmation.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175
+ *
+ * The two flags VS Code's Copilot agent carries from its runtime's own
+ * request, read here from the CLI's: a command asking to leave its sandbox
+ * (`dangerouslyDisableSandbox`) asks for a sandbox bypass, and a question a
+ * managed rule raised (`matchedAskRule` from policy settings) or one the CLI
+ * says may offer no persistent answer (`suppressAlwaysAllowRule`) needs a
+ * person's approval.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L7848-L7852
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8105-L8112
  */
-export function keptLabel(suggestions: unknown[]): string {
-  /** The rules of each behavior and place, in the order first suggested. */
-  const rules = new Map<string, { behavior: string; where: string; said: string[] }>();
-  const said: (string | { rules: string })[] = [];
-  for (const one of suggestions) {
-    const update = bag(one);
-    const where = KEPT_IN[str(update.destination) ?? ''] ?? '';
-    if (update.type === 'addRules' || update.type === 'replaceRules') {
-      const behavior = str(update.behavior) ?? 'allow';
-      const key = `${behavior}\u0000${where}`;
-      let group = rules.get(key);
-      if (group === undefined) {
-        group = { behavior, where, said: [] };
-        rules.set(key, group);
-        said.push({ rules: key });
-      }
-      for (const entry of list(update.rules)) {
-        const rule = bag(entry);
-        const content = str(rule.ruleContent);
-        const text = content === undefined ? str(rule.toolName) ?? '' : `${str(rule.toolName) ?? ''}(${content})`;
-        if (!group.said.includes(text)) group.said.push(text);
-      }
-    } else if (update.type === 'setMode') {
-      const mode = str(update.mode) ?? '';
-      said.push(`${mode === 'acceptEdits' ? 'Allow edits' : `Switch to ${mode} mode`}${where}`);
-    } else if (update.type === 'addDirectories') {
-      said.push(`Allow access to ${list(update.directories).map((entry) => String(entry)).join(', ')}${where}`);
-    } else {
-      said.push(`Always allow${where}`);
-    }
-  }
-  const phrases = said.map((one) => {
-    if (typeof one === 'string') return one;
-    const group = rules.get(one.rules)!;
-    return `Always ${group.behavior} ${group.said.join(', ')}${group.where}`;
-  });
-  return [...new Set(phrases)].join('; ');
-}
+const confirmationOf = (toolName: string, input: Bag, about: Bag): PendingConfirmation => {
+  const permissionKind = getClaudePermissionKind(toolName);
+  const target = getClaudeToolPath(toolName, input);
+  const path = str(about.blockedPath) ?? target;
+  const asked = bag(about.matchedAskRule);
+  const command = str(input.command);
+  return {
+    permissionKind,
+    ...(permissionKind === 'url' ? (target === undefined ? {} : { permissionUrl: target }) : (path === undefined ? {} : { permissionPath: path })),
+    ...(permissionKind === 'shell' ? { shellLanguage: 'bash' as const, ...(command === undefined ? {} : { shellCommand: command }) } : {}),
+    ...(toolName === 'Bash' && input.dangerouslyDisableSandbox === true ? { requestSandboxBypass: true } : {}),
+    ...(str(asked.source) === 'policySettings' || about.suppressAlwaysAllowRule === true ? { managedApprovalRequired: true } : {}),
+  };
+};
 
 /** What this area offers the rest of the session, and its `Session` methods. */
 export interface Asking {
@@ -217,19 +193,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
   // ------------------------------------------------------ asking a person
 
   /**
-   * Which tools a person has already answered for, for this session.
-   *
-   * Deny wins over allow, because the two lists are answers to different
-   * questions: allow says "stop asking me", deny says "never do this", and a
-   * tool in both is one somebody has forbidden and also once approved.
-   */
-  const settled = (toolName: string): 'allow' | 'deny' | undefined => {
-    if (ctx.allowed.deny.includes(toolName)) return 'deny';
-    if (ctx.allowed.allow.includes(toolName)) return 'allow';
-    return undefined;
-  };
-
-  /**
    * Put one call to a person, and settle on their answer: `canUseTool`
    * awaits this as the CLI's own question.
    *
@@ -238,7 +201,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
    * the SDK has abandoned.
    */
   const askPerson = async (asked: Question): Promise<Held> => {
-    const { toolName, input, toolUseID: id, agentId, signal, suggestions } = asked;
+    const { toolName, input, toolUseID: id, agentId, signal, confirmation } = asked;
     if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
     /*
      * The conversation the tool is running in.
@@ -361,7 +324,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const held = scope.parts.get(id);
       const meta = toolMetaOf(toolName);
       // Whose tool it is, said where the call starts as the stream says it.
-      const contributor = ctx.contributorOf(toolName);
+      const contributor = ctx.contributorOf(toolName, asked.server);
       const call = held ? bag(held.toolCall) : {
         toolCallId: id,
         toolName: shownName,
@@ -370,17 +333,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         ...(toolInput !== undefined ? { toolInput } : {}),
         ...(meta ? { _meta: meta } : {}),
       } as Bag;
-      /*
-       * The choices, when the SDK suggested a permission to keep.
-       *
-       * Allow once, the "always" the suggestions describe, and deny. With no
-       * suggestion there is nothing to keep and the call is approve or deny.
-       */
-      const options: Bag[] | undefined = suggestions.length === 0 ? undefined : [
-        { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
-        { id: 'allow-always', label: keptLabel(suggestions), kind: 'approve', group: 1 },
-        { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
-      ];
       // A call still streaming has only its half-written json, and the
       // assistant message that would complete it skips a call no longer
       // streaming: the whole input is given here, as the action gives it.
@@ -390,7 +342,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       }
       call.status = 'pending-confirmation';
       call.confirmationTitle = confirmationTitle;
-      if (options !== undefined) call.options = options;
       // The same sentence the action carries, so a client reading the snapshot
       // has one too. See the call built in `assistant`.
       call.invocationMessage = invocationMessage;
@@ -409,6 +360,13 @@ export function createAsking(ctx: SessionContext): Asking {  /**
           ...(meta ? { _meta: meta } : {}),
         });
       }
+      /*
+       * The question, which the host puts with VS Code's options and decides by
+       * the confirmation's fields, read off the action and sent to no client,
+       * as VS Code's Claude agent raises a pending confirmation for its host's
+       * permission chain to answer.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L167-L178
+       */
       ctx.emitOn(scope, {
         type: 'chat/toolCallReady',
         turnId: turn.id,
@@ -416,8 +374,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         invocationMessage,
         confirmationTitle,
         ...(toolInput !== undefined ? { toolInput } : {}),
-        ...(options !== undefined ? { options } : {}),
         ...(edits !== undefined ? { edits } : {}),
+        ...confirmation,
       });
 
       // `chat` and `turnId` are both required on a tool confirmation.
@@ -428,10 +386,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         toolName,
         asked: new Map(),
         answers: new Map(),
-        ...(options !== undefined ? { options, suggestions } : {}),
-        settle: (result) => done(result.behavior === 'allow'
-          ? { behavior: 'allow', updatedInput: input, ...(result.updatedPermissions === undefined ? {} : { updatedPermissions: result.updatedPermissions }) }
-          : result),
+        settle: (result) => done(result.behavior === 'allow' ? { behavior: 'allow', updatedInput: input } : result),
       });
       ctx.inputNeededSet(sessionRequest);
     });
@@ -463,30 +418,18 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * connection, because the rule is the host's rather than a window's.
      */
     const matched = ctx.options.getAutoApproval?.('tool', referenceName(toolName, str(bag(about.mcpServer).name))) === 'ask';
-    if (!matched) {
-      /*
-       * Answered from the lists, before anybody is asked.
-       *
-       * The SDK was handed the same lists when the query was built, so in the
-       * ordinary case it never calls this at all. This is what makes a list set
-       * *during* a session take effect: the query cannot be told, and this can.
-       * Nothing is announced either way - a tool nobody was asked about is not
-       * a question that was answered, and drawing one would put a row on screen
-       * for a decision made before the turn began.
-       */
-      const already = settled(toolName);
-      if (already === 'allow') return { behavior: 'allow', updatedInput: input };
-      if (already === 'deny') return { behavior: 'deny', message: DECLINED };
-      /*
-       * A host tool that says nobody is asked about it.
-       *
-       * Read after the lists, so a deny still refuses it: the flag is the host's
-       * claim about the tool, and a deny list is a person's answer about it.
-       * The CLI calls a contributed tool by the name of the server offering it,
-       * so both the bound tools and the call are read under that name. Nothing
-       * is announced for a call nobody was asked about, as with an allow list.
-       */
-      if (ctx.hostToolOf(toolName)?.confirm === false) return { behavior: 'allow', updatedInput: input };
+    /*
+     * A host tool that says nobody is asked about it, as VS Code's Claude
+     * allows a server tool its host needs no confirmation for, unless a person
+     * denied it: the flag is the host's claim about the tool, and a deny is a
+     * person's answer about it. The CLI calls a contributed tool by the name of
+     * the server offering it, so both the bound tools and the call are read
+     * under that name. Every other question is the host's to answer, the
+     * session's lists among what its chain reads.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L138-L145
+     */
+    if (!matched && ctx.hostToolOf(toolName)?.confirm === false && !ctx.allowed.deny.includes(toolName)) {
+      return { behavior: 'allow', updatedInput: input };
     }
     /*
      * The SDK's own abort for this call, which is the one thing that says the
@@ -500,33 +443,35 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     const signal = about.signal as AbortSignal | undefined;
     if (signal?.aborted === true) return { behavior: 'deny', message: ABORTED };
     const agentId = str(about.agentID);
+    const server = str(bag(about.mcpServer).name);
+    const confirmation = confirmationOf(toolName, input, about);
     /*
-     * A matched call, put to a person as approve or deny with no suggestion
-     * kept: the rule is that the call asks every time, and a suggestion is a
-     * way to stop asking.
+     * A matched call, put to a person as one a managed rule asks about: the
+     * rule is that the call asks every time, Allow Once and Skip alone.
      */
     if (matched) {
       return await askPerson({
         toolName,
         input,
         toolUseID: id,
-        suggestions: [],
+        confirmation: { ...confirmation, managedApprovalRequired: true },
+        ...(server !== undefined ? { server } : {}),
         ...(agentId !== undefined ? { agentId } : {}),
         ...(signal !== undefined ? { signal } : {}),
       });
     }
     /*
-     * A shell command the owner's rules already allow.
+     * A shell command the owner's rules allow.
      *
      * The host answers from the rules the window that started this session
-     * pushed, and only an approval reaches here: a command a rule denied and a
-     * line no rule could read both answer nothing, and the question is put as
-     * it always was. Read after the abort, because a cancelled call is not one
-     * to approve. Nothing is announced either, as with an allow list: the row
-     * the assistant message carries is already `not-needed`, and there is no
-     * question for a client to draw.
+     * pushed, and an approval alone settles the call here: a command a rule
+     * denied and a line no rule could read are put to the host. Read after the
+     * abort, because a cancelled call is not one to approve, and skipped for a
+     * shell a person denied, whose question the host refuses. Nothing is
+     * announced: the row the assistant message carries is already
+     * `not-needed`, a call no client is asked about.
      */
-    if (toolName === 'Bash') {
+    if (toolName === 'Bash' && !ctx.allowed.deny.includes(toolName)) {
       const command = str(input.command);
       if (command !== undefined && (await ctx.options.getAutoApproval?.('shell', command, 'bash', toolName)) === 'not-needed') {
         return { behavior: 'allow', updatedInput: input };
@@ -536,14 +481,23 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       toolName,
       input,
       toolUseID: id,
-      suggestions: list(about.suggestions),
+      confirmation,
+      ...(server !== undefined ? { server } : {}),
       ...(agentId !== undefined ? { agentId } : {}),
       ...(signal !== undefined ? { signal } : {}),
     });
   };
 
   const methods: Asking['methods'] = {
-    confirm: (toolCallId, approved, optionId) => {
+    /*
+     * The host's answer to a question, which the CLI is given as its own: an
+     * approval runs the call, and a refusal, the host's own or a person's, is
+     * the CLI's decline, whose result ends the call failed, as VS Code's Claude
+     * answers its runtime from its host's permission chain. The option a
+     * person picked is the host's to act on, the rules it keeps included.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L177-L180
+     */
+    confirm: (toolCallId, approved) => {
       // Found by id rather than assumed to be the only one. This used to
       // compare against whichever question happened to be held and return
       // silently when it did not match - which, with two tool calls open, is
@@ -558,17 +512,12 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // The call's own conversation, a worker's chat or the lead's, whose held
       // call moves with the confirmation the host said there.
       const scope = ctx.scopeOfCall(toolCallId) ?? ctx.mainScope;
-      // The choice picked, when it is one this call offered and of the
-      // answer's kind; anything else is a plain approve or deny.
-      const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
       const part = scope.parts.get(toolCallId);
       if (part) {
         const call = bag(part.toolCall);
         call.status = approved ? 'running' : 'cancelled';
         // And how it was approved, which is required on the call.
         if (approved) call.confirmed = 'user-action';
-        delete call.options;
-        if (picked !== undefined) call.selectedOption = picked;
         /*
          * A call starts running now, and not at the ready that came before the
          * question: the wait for a person is not work. A call refused never
@@ -599,9 +548,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // leave is on no disk, and the file itself is the copy every client can
       // read once it has run.
       settleEdits(toolCallId);
-      settle(approved
-        ? { behavior: 'allow', updatedInput: {}, ...(picked?.id === 'allow-always' && held.suggestions !== undefined ? { updatedPermissions: held.suggestions } : {}) }
-        : { behavior: 'deny', message: DECLINED });
+      settle(approved ? { behavior: 'allow', updatedInput: {} } : { behavior: 'deny', message: DECLINED });
       return true;
     },
 

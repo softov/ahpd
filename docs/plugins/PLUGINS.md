@@ -396,9 +396,9 @@ That check is ahpd's own, carrying the enforcement [VS Code's policy inventory](
 Every backend is also handed them on `Start.managedSettings`, as VS Code hands its runtime `managedSettings: { permissions }`, so a runtime that enforces managed settings itself does so for the calls it never asks the host about.
 The lock takes the host's Allow All away from every session.
 The option a person picks arrives as the third argument of `Session.confirm(toolCallId, approved, optionId?)`, from the `selectedOptionId` a client sent, and a client that sends no option gets a plain approve or deny.
-Claude offers Allow once, an "always" choice labelled by what the SDK's suggestions for the call do, and Deny, when the SDK suggested something; the "always" choice returns those suggestions as `updatedPermissions`.
-With no suggestion it offers nothing, and the host's three are put.
-Claude also reads the session's `permissions` itself, and a tool they allow runs without a question.
+Claude offers none, so the host's are put, and says what each call asks for as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175) does: its kind and its path or URL by VS Code's table of the CLI's tools, a `Bash` command in `bash`, a call with `dangerouslyDisableSandbox` as `requestSandboxBypass`, and a question a policy's ask rule raised (`matchedAskRule` from `policySettings`) or one the CLI says may offer no persistent answer (`suppressAlwaysAllowRule`) as `managedApprovalRequired`.
+The CLI is given the host's answer: an approval runs the call as it was asked, and a refusal is VS Code's decline.
+Claude also hands the session's `permissions.allow` to the CLI when a query starts, and a tool it allows runs without a question.
 An ACP server's own options are offered as it listed them, approvals first, and the one picked is the `optionId` the server receives.
 cofold offers Allow once, Allow the tool for this session, and Deny, and the session choice is sent as `alwaysApprove`, which cofold keeps for that session and tool.
 pi offers none, so the host's three are put.

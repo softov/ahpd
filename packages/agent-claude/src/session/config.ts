@@ -190,13 +190,13 @@ export function createConfig(ctx: SessionContext): Config {
      */
     setConfig: async (key, value) => {
       /*
-       * The lists, which really do move on a running session.
+       * The lists, which move on a running session.
        *
-       * The SDK takes `allowedTools` / `disallowedTools` when the query is
-       * built and has nowhere to put a later change, so a list set halfway
-       * through would be a control that reported success and did nothing.
-       * `canUseTool` is the other half and reads `allowed` on every call -
-       * which is where a change made now takes effect.
+       * The SDK takes `allowedTools` when the query is built and has nowhere
+       * to put a later change. A change made now takes effect at the host,
+       * whose chain reads the session's lists on every question the CLI
+       * raises; kept here, it is the next query's allow list and the deny a
+       * host tool's own flag yields to.
        */
       if (key === 'permissions') {
         const held = listsOf(value);

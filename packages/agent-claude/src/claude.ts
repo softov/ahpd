@@ -370,9 +370,9 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * The platform's key as VS Code declares it: what the reference client's
        * permission picker writes when somebody approves a tool "in this
        * session", and what its Claude host advertises unchanged because the
-       * SDK takes `allowedTools` / `disallowedTools` natively. Live: the SDK
-       * takes the lists when the query is built, and `canUseTool` is where
-       * this host sits between the agent and the person.
+       * SDK takes `allowedTools` / `disallowedTools` natively. The SDK takes
+       * the allow list when the query is built, and every question the CLI
+       * raises is the host's, whose chain reads the lists as they stand.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L277-L310
        */
       permissions: {

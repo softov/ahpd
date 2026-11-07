@@ -194,7 +194,7 @@ It starts the [Claude agent SDK](https://www.npmjs.com/package/@anthropic-ai/cla
 
 Turns and streaming, tool calls and approvals, questions from the agent, model and effort selection, permission modes, MCP servers and OAuth sign-in, skills and slash commands, multiple chats per session, forking a chat from a turn, truncating a chat back to a turn, resuming a failed turn, session titles, token usage, and context compaction.
 
-An approval offers Allow once, an "always" choice and Deny when the SDK suggests a permission to keep for the call. The "always" choice is labelled by what the suggestions do, and picking it returns them to the SDK as `updatedPermissions`. With no suggestion, the approval is approve or deny.
+An approval is the host's. Claude says what the call asks for beside its question, as VS Code's Claude agent does, and offers no options of its own, so the host's are put; the CLI is given the host's answer.
 
 A subagent Claude runs is its own chat. Every `Task` and `Agent` call opens one through the host's `Start.subagent`, read-only and named `ahp-chat://subagent/…`, and the subagent's text, thinking, tool calls and permission asks are drawn there instead of in the turn that spawned it. A stop given in the subagent's chat stops that subagent through the SDK's `stopTask`, and the turn that started it goes on and sees the call end. Before Claude has named the subagent's task, the stop stops nothing else. On a host without `Start.subagent` the subagent's output stays inline. A session read back from disk rebuilds each subagent's chat from the CLI's `subagents/*.meta.json` and `.jsonl` files.
 

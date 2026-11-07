@@ -37,8 +37,8 @@ export interface Stream {
   rounds: Map<string, { answered: boolean; stopped?: string }>;
   /** The line each call's row draws once it has ended, by its call id, made from its input. */
   pastLines: Map<string, StringOrMarkdown>;
-  /** Whose tool a call runs, as its start says it: a client's, an MCP server's, or nobody's. */
-  contributorOf: (toolName: string) => Contributor | undefined;
+  /** Whose tool a call runs, as its start says it: a client's, an MCP server's, or nobody's; `server` the configured one, where the CLI named it. */
+  contributorOf: (toolName: string, server?: string) => Contributor | undefined;
   /** The name a call's row is drawn under. */
   displayNameOf: (toolName: string) => string;
   /** Every file an edit call began changing, recorded as it is now, for a stop that aborts the query that would have ended the call. */
@@ -66,8 +66,10 @@ export function createStream(ctx: SessionContext): Stream {
   /**
    * Whose tool a call runs, as the call's start says it: the client whose own
    * tool it is, or else the MCP server of this session's customizations whose
-   * it is, by the customization's id, as VS Code's Claude session stamps it.
-   * A call of a server the session lists no customization for names none.
+   * it is, by the customization's id, as VS Code's Claude session stamps it:
+   * the server the CLI's `canUseTool` names, the configured one, where it is
+   * asked about the call, and else the one its name is under. A call of a
+   * server the session lists no customization for names none.
    *
    * A client's own beats the server it is offered through: the tools a client
    * provides reach the model on this host's in-process `client` server, so by
@@ -78,10 +80,10 @@ export function createStream(ctx: SessionContext): Stream {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L427-L441
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/mcpCustomizationController.ts#L692-L710
    */
-  const contributorOf = (toolName: string): Contributor | undefined => {
+  const contributorOf = (toolName: string, named?: string): Contributor | undefined => {
     const own = ctx.clientToolOf(toolName);
     if (own !== undefined) return { kind: 'client', clientId: own.owner };
-    const from = serverOf(toolName);
+    const from = named ?? serverOf(toolName);
     if (from === undefined) return undefined;
     const server = [...ctx.customizations, ...ctx.customizations.flatMap((one) => list(one.children).map(bag))]
       .find((one) => str(one.type) === 'mcpServer' && str(one.name) === from);

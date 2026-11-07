@@ -17,7 +17,6 @@ import { createStream } from './session/stream.js';
 import { createTurns } from './session/turns.js';
 import { createWorkers } from './session/workers.js';
 
-export { keptLabel } from './session/asking.js';
 export { INTERNAL_AGENT, customizationsOf, resolveClaudeAgentName } from './session/customizations.js';
 export { EFFORT_DESCRIPTIONS, EFFORT_LABELS, EFFORTS, SDK_DEFAULT_MODEL_VALUE } from './session/config.js';
 export type { ClaudeSessionOptions } from './session/context.js';

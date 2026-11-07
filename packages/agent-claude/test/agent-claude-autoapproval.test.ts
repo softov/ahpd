@@ -255,15 +255,19 @@ it('asks the check about every tool, and about a command\'s line', async () => {
   expect(sent.filter((one) => one.type === 'session/inputNeededSet')).toHaveLength(1);
 });
 
-it('still refuses a command the deny list names', async () => {
+it('puts a command the deny list names to the host, and answers the CLI its refusal', async () => {
   const { check } = approving(['make test']);
-  const { canUseTool } = await sessionWith(check, { permissions: { allow: [], deny: ['Bash'] } });
+  const { canUseTool, session, sent } = await sessionWith(check, { permissions: { allow: [], deny: ['Bash'] } });
 
   // The rules are the window's answer about a command; a deny list is a
-  // person's answer about the tool, and it wins, refused in VS Code's words.
+  // person's answer about the tool, and it wins: the call is the host's to
+  // answer, whose chain refuses it, in VS Code's words.
   // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDenial.ts#L6-L10
-  expect(await canUseTool('Bash', { command: 'make test' }, { toolUseID: 'toolu_denied_list' }))
-    .toEqual({ behavior: 'deny', message: 'User declined' });
+  const answered = canUseTool('Bash', { command: 'make test' }, { toolUseID: 'toolu_denied_list' });
+  await settle();
+  expect(sent.filter((one) => one.type === 'chat/toolCallReady').map((one) => one.toolCallId)).toEqual(['toolu_denied_list']);
+  expect(session.confirm('toolu_denied_list', false)).toBe(true);
+  expect(await answered).toEqual({ behavior: 'deny', message: 'User declined' });
 });
 
 it('still answers a call the SDK has already cancelled', async () => {

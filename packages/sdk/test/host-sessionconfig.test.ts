@@ -212,10 +212,14 @@ describe('choosing a model', () => {
 
     /*
      * The live half. The query was built before the list existed, so the SDK
-     * cannot have been told - `canUseTool` is the only thing that can answer,
-     * and a control that reported success and changed nothing is what this
-     * would otherwise be.
+     * cannot have been told: the question the CLI raises in a turn is the
+     * host's to answer, and its chain answers it from the list, as VS Code's
+     * host answers a question its session's permissions settle.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L286-L308
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L397-L425
      */
+    await sendTurn(client, uri, 'again');
+    await settle();
     expect(await sdk.canUseTool?.('Read', { path: 'x' }, { toolUseID: 'c1' }))
       .toMatchObject({ behavior: 'allow' });
     expect(await sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'c2' }))
