@@ -361,29 +361,28 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   /*
    * The echo, which is every frame of this action the host sent back.
    *
-   * One action, one echo: the keys this host declares go through, and the four
-   * 1.140 dropped are refused by name, so a client older than this host loses
-   * the keys that no longer exist and nothing else.
+   * One action, one echo, every key in it: the host applies a root patch
+   * whatever keys it carries, as VS Code's host does, the four 1.140 dropped
+   * among them.
    */
   const echoed = wire.slice(before)
     .filter((one) => one.method === 'action' && (one.params as { action?: { type?: string } }).action?.type === 'root/configChanged')
     .map((one) => (one.params as { action: { config: Record<string, unknown> } }).action.config);
   expect(echoed).toHaveLength(1);
-  expect(Object.keys(echoed[0] ?? {}).sort()).toEqual([...declared].sort());
-  expect(Object.keys(echoed[0] ?? {}).length).toBe(43);
+  expect(Object.keys(echoed[0] ?? {}).sort()).toEqual(Object.keys(patch).sort());
+  expect(declared.length).toBe(43);
 
   const rootState = await ask('subscribe', { channel: 'ahp-root://' }) as {
     snapshot: { state: { config: { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> } } };
   };
   const held = rootState.snapshot.state.config;
-  // Every value this host holds has a property a client can draw it from. A
-  // value with no property is a setting nobody can see and nobody can read
-  // back, which is what this file exists to catch.
-  expect(Object.keys(held.values).filter((key) => !(key in held.schema.properties))).toEqual([]);
-  // The 43 are held, the four the client no longer has are not, and the
-  // daemon's own keys are beside them.
+  // Every value this host holds has a property a client can draw it from but
+  // the four keys VS Code dropped, kept as pushed, which no client draws a
+  // control for.
+  expect(Object.keys(held.values).filter((key) => !(key in held.schema.properties)).sort()).toEqual([...OLD].sort());
+  // The 43 are held, and the four beside them, with the daemon's own keys.
   expect(declared.filter((key) => !(key in held.values))).toEqual([]);
-  expect(OLD.filter((key) => key in held.values)).toEqual([]);
+  expect(OLD.filter((key) => !(key in held.values))).toEqual([]);
   await ask('subscribe', { channel: uri });
   await ask('subscribe', { channel: chatUri });
 

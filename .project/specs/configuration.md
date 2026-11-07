@@ -7,7 +7,7 @@ covers:
   - packages/server/src/commands/config.ts
   - packages/server/src/commands/options.ts
 decisions:
-  - decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md
+  - decisions/root-config-declares-what-vscode-pushes-and-keeps-every-key.md
 refs:
   - "[code://packages/server/src/config.ts#L618-L643](../../packages/server/src/config.ts#L618-L643) - `loadConfig`, the user file, `$AHPD_CONFIG` or one named file"
   - "[code://packages/server/src/commands/options.ts#L858-L877](../../packages/server/src/commands/options.ts#L858-L877) - `checkConfig`, which warns on an unknown key and stops on a bad value"

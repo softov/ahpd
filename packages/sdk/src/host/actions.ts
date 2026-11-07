@@ -10,7 +10,7 @@ import { ANNOTATIONS_PATH_SEGMENT, AUTOMATIONS, chatUriFor, isAutomationResource
 import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './sessionlifecycle.js';
-import { RESTART_KEY } from './root.js';
+import { accountKey, RESTART_KEY } from './root.js';
 import { claimOf } from './terminals.js';
 import type { HeldCopies, TemplatePlugin } from '../types/clientplugins.js';
 import type { Bag } from '../types/common.js';
@@ -47,7 +47,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    * read that took one would say so only by being wrong.
    */
   const {
-    agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided, declaresConfigKey,
+    agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided,
     dir, dispatch, homeId, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
     ownerFor, owners, restoreSession, permitted, presence, restart, retool,
     rootConfig, served, sessionFor, sessions, shown, starting, subagents, markSummaryDirty, terminals, toolDefinitions,
@@ -283,27 +283,24 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         ? action.config
         : {}) as Record<string, unknown>;
       /*
-       * The keys nobody declares, taken out before anything is applied.
+       * Every key pushed is applied and kept, as VS Code's host applies a root
+       * patch whatever keys it carries, a client learning what the host has
+       * from the properties the schema declares. A start brings back the
+       * declared keys alone: the daemon's from its configuration, as VS Code's
+       * host restores its persisted values by its schemas.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2878-L2898
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1399
        *
-       * A value with no property in the schema is one no client can draw a
-       * control for, so keeping it would be reporting a setting that is not
-       * one - the opposite of the reason a declared key this host does not act
-       * on is kept. It is a log line rather than a refusal while any declared
-       * key is left, because a client newer than this host sends its whole
-       * patch at connect and one unknown key must not lose the other forty.
-       *
-       * A key is offered here whether or not this connection is *shown* it:
-       * `seesConfig` decides what a connection reads, not what exists, and the
-       * daemon's keys are the ones that difference is about.
+       * Except a backend's account, which the harness says and no client may:
+       * a push that moves one is refused in the words VS Code's host refuses a
+       * remote client's change to a property the host holds read-only.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2830-L2840
        */
-      const refused = Object.keys(pushed).filter((key) => !declaresConfigKey(key));
-      if (Object.keys(pushed).length > 0 && refused.length === Object.keys(pushed).length) {
-        // The path a refused daemon write takes: `behind` logs it and answers
-        // the sender with this reason, and nobody else hears it.
-        return Promise.reject(new Error(`root config does not declare ${refused.join(', ')}`));
-      }
-      if (refused.length > 0) log(`root config: refused ${refused.join(', ')}`);
-      const config = Object.fromEntries(Object.entries(pushed).filter(([key]) => declaresConfigKey(key)));
+      const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
+      const account = Object.keys(pushed).find((key) => [...agents.values()].some((agent) => accountKey(agent.provider) === key)
+        && !isDeepStrictEqual(pushed[key], held[key]));
+      if (account !== undefined) return Promise.reject(new Error(`Host configuration property is read-only: ${account}`));
+      const config = pushed;
       /*
        * A `changeWords` naming a backend this host cannot ask, refused before
        * anything is applied.

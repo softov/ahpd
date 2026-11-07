@@ -9,7 +9,7 @@ requires: []
 changes: []
 creates: []
 decisions:
-  - ../../../decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md
+  - ../../../decisions/root-config-declares-what-vscode-pushes-and-keeps-every-key.md
 refs:
   - code://.project/review/2026-09-19-upstream-pass-4.md#L32-L38 - the two items this plan takes: the compact artifact wording and deferred title generation with the title that survives
   - code://packages/sdk/src/host.ts#L3352-L3369 - `rootConfig` and `ROOT_CONFIG_SCHEMA`, which declare `defaultShell` and nothing else
@@ -87,7 +87,7 @@ client session/titleChanged | rename_chat -> renameChat -> chat.setTitle + dispa
 
 | # | Decision | Rationale / source |
 | --- | --- | --- |
-| 1 | [The root config grows the artifact prompt switch and deferred title generation](../../../decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md) | Softov, 2026-09-19: "Both, and implement deferred title generation too." |
+| 1 | [The root config grows the artifact prompt switch and deferred title generation](../../../decisions/root-config-declares-what-vscode-pushes-and-keeps-every-key.md) | Softov, 2026-09-19: "Both, and implement deferred title generation too." |
 
 | What | Source | Task |
 | --- | --- | --- |

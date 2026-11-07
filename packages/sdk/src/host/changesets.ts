@@ -369,8 +369,7 @@ export function createChangesets(ctx: HostContext): Changesets {
    * ask: the source falls back to the session title and says what went
    * without, which is the whole answer rather than a refusal. The mode is
    * checked here as well as at the push, because the schema's enum is not what
-   * holds a value off the wire - `declaresConfigKey` asks whether a key
-   * exists, and a client may put anything under it.
+   * holds a value off the wire: a client may put anything under a key.
    */
   const changeWordsOf = (
     uri: string,

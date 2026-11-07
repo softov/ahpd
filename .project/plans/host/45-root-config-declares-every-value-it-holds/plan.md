@@ -10,7 +10,7 @@ requires:
   - plans/host/43-p1-the-wire-test-checks-every-frame/plan.md
   - plans/host/43-p3-the-root-config-schema-conforms/plan.md
 decisions:
-  - decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md
+  - decisions/root-config-declares-what-vscode-pushes-and-keeps-every-key.md
 refs:
   - "[code://packages/sdk/src/host/root.ts#L113-L142](../../../../packages/sdk/src/host/root.ts#L113-L142) - `rootConfig`, kept for every pushed key, and `ROOT_CONFIG_SCHEMA`, three keys"
   - "[code://packages/sdk/src/host/root.ts#L245-L252](../../../../packages/sdk/src/host/root.ts#L245-L252) - `rootState`'s `config`: the host's schema with the daemon's beside it, and every value in `rootConfig`"
@@ -69,7 +69,7 @@ That is [Daemon and plugin keys reach only connections with config:read, and a w
 
 | Decision | Source |
 | --- | --- |
-| [The root config declares every key VS Code pushes, as the reference declares it, and refuses a key nobody declares](../../../decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md) | Softov, 2026-10-03, "Declare them, as upstream" |
+| [The root config declares every key VS Code pushes, as the reference declares it, and refuses a key nobody declares](../../../decisions/root-config-declares-what-vscode-pushes-and-keeps-every-key.md) | Softov, 2026-10-03, "Declare them, as upstream" |
 
 | What | Source | Task |
 | --- | --- | --- |

@@ -11,7 +11,7 @@ covers:
   - packages/server/src/commands/configure.ts
   - packages/server/src/commands/options.ts
 decisions:
-  - decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md
+  - decisions/root-config-declares-what-vscode-pushes-and-keeps-every-key.md
 refs:
   - "[code://packages/sdk/src/host/trust.ts#L106-L143](../../packages/sdk/src/host/trust.ts#L106-L143) - `trusted`, whether one folder is trusted"
   - "[code://packages/sdk/src/host/trust.ts#L165-L222](../../packages/sdk/src/host/trust.ts#L165-L222) - `granted` and `requireTrust`, the question to a window"
