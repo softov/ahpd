@@ -195,7 +195,8 @@ it('refuses a param of the wrong shape, and a directory refusal with its sentenc
   await expect(ask('mint', { scope: 7 }, ana)).rejects.toMatchObject({ code: -32602, message: 'x-ahpd/tokens/mint takes scope as a string' });
   await expect(ask('mint', { meta: 'env=prod' }, ana)).rejects.toMatchObject({ code: -32602, message: 'x-ahpd/tokens/mint takes meta as an object of names to values' });
   // The bounds are the proxy header's, so a name it would refuse is refused here.
-  await expect(ask('mint', { meta: { 'a b': '1' } }, ana)).rejects.toMatchObject({ code: -32602, message: 'A meta\'s name a b is 1 to 64 characters of A to Z, a to z, 0 to 9, _, . and -' });
+  const long = 'n'.repeat(65);
+  await expect(ask('mint', { meta: { [long]: '1' } }, ana)).rejects.toMatchObject({ code: -32602, message: `A meta's name ${long} is 1 to 64 characters` });
   // The directory refuses a grant the person does not hold and an expiry in the
   // past; its own sentence is the answer.
   await expect(ask('mint', { grants: ['proxy:write'] }, ana)).rejects.toMatchObject({

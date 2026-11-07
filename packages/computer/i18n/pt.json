@@ -14,7 +14,7 @@
       "description": "Argumentos colocados antes dos do programa, para um wrapper ou um contexto do Docker."
     },
     "ssh": {
-      "description": "Máquinas que este host alcança por ssh. Elas são listadas, nunca criadas, iniciadas ou removidas aqui."
+      "description": "Máquinas que este host alcança por ssh. Elas são listadas, nunca criadas, iniciadas ou removidas aqui. Uma sessão em uma delas inicia seu host com o ahpd que este host instala na pasta do usuário lá."
     },
     "libvirt": {
       "description": "VMs para perfis com runtime 'libvirt': clones vinculados de um disco modelo no libvirt do servidor, acessados por ssh através desse servidor."

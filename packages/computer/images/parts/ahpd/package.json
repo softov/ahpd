@@ -1,0 +1,8 @@
+{
+  "name": "ahpd-part-ahpd",
+  "private": true,
+  "dependencies": {
+    "@ahpd/sdk": "0.8.0",
+    "@ahpd/server": "0.8.0"
+  }
+}

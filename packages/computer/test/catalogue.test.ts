@@ -10,6 +10,7 @@ import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { ComputerRuntime } from '../src/runtime.js';
 import type { HostTool, ToolCall } from '../../sdk/src/types/host.js';
@@ -223,10 +224,10 @@ it('tells a subscriber of a machine the plugin makes and releases on its own', a
   // The tools a model calls go through the same wrapper a disposable machine's
   // timer removes by.
   const tool = (name: string) => (options.tools ?? []).find((one) => one.definition.name === name) as HostTool;
-  await tool('request_disposable_computer').run({ name: 'box' }, {} as ToolCall);
+  await tool('request_disposable_computer').run({ name: 'box' }, hostCall());
   await until(1);
   expect(heard()).toEqual(['added box running']);
-  await tool('release_computer').run({ id: 'box' }, {} as ToolCall);
+  await tool('release_computer').run({ id: 'box' }, hostCall());
   await until(2);
   expect(heard()).toEqual(['added box running', 'removed box']);
 }, 30000);

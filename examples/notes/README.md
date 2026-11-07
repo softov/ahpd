@@ -30,9 +30,8 @@ write <name> <text>    writes one. It asks before it does
 ```
 
 Notes live in `./notes`, made on demand. `--path` puts them somewhere else.
-Set **Ask before** on the composer to `Everything` or `Nothing` and the same
-two commands stop asking, or start; `help` says which asks under the setting in
-force.
+Set **Approvals** on the composer to `Allow all` and writing stops asking;
+`help` says what asks under the level in force.
 
 A stop ends the turn and whatever it was waiting on, and nothing more of that
 turn is said. A turn whose work fails ends in `chat/error` with the failure as
@@ -116,13 +115,13 @@ the other end, is a person pressing Approve and nothing at all happening.
 that announced the question is behind a client that opened the session after it
 was asked.
 
-### Say it back
+### Said back by the host
 
-`chat/toolCallConfirmed` is dispatched by a client and emitted again by the
-backend. Nothing in a client applies what it sent itself, so without the echo
-the row stays `pending-confirmation` on every screen watching it - including
-the one that just answered. `chat/inputCompleted` is said back by the host once
-`answer` returns true, so the backend does not emit it.
+`chat/toolCallConfirmed` is dispatched by a client, and the host says it to
+every client of the chat before it hands the decision to `confirm`, as VS
+Code's host echoes a confirmation and hands it to its agent. The backend moves
+the call in its own state and says nothing of its own. `chat/inputCompleted` is
+said back by the host the same way once `answer` returns true.
 
 ### Cancelling answers as well as stops
 
@@ -136,11 +135,15 @@ clamps it with `Math.max(0, duration)` and adds it to the turn's start, so an
 absent one is `NaN` and the reducer throws building a timestamp - which stops
 that client reading the channel at all, over a turn somebody merely cancelled.
 
-### One config key, of this backend's own invention
+### VS Code's approvals key
 
-The schema key is `ask` and the values are `writes`, `always`, `never`. Nothing
-in the protocol or the host has heard of any of them, and it is still
-`sessionMutable: true`.
+The schema key is `autoApprove`, titled **Approvals**, and its values are VS
+Code's levels with VS Code's words: `default` (Manual permissions), `assisted`
+(Assisted permissions) and `autoApprove` (Allow all), so a VS Code client draws
+its own control for it. Reading runs at every level, and writing waits unless
+the level is `autoApprove`: the write is this backend's one risky tool. It is
+`sessionMutable: true`. `tone` is the backend's own key, fixed once a session
+starts.
 
 `permissionMode`, `model`, `effortLevel` and `outputStyle` have setters of their
 own on `Session`, because they mean something to the host - it applies a
@@ -151,11 +154,11 @@ schema move something when somebody moves it.
 
 ```ts
 setConfig: (key, value) => {
-  if (key !== 'ask') return `${key} is not a config key this backend takes`;
-  if (value !== 'writes' && value !== 'always' && value !== 'never') {
-    return `ask is one of writes, always or never - not ${String(value)}`;
+  if (key !== 'autoApprove') return `${key} is not a config key this backend takes`;
+  if (value !== 'default' && value !== 'assisted' && value !== 'autoApprove') {
+    return `autoApprove is one of default, assisted or autoApprove - not ${String(value)}`;
   }
-  settings.ask = value;
+  settings.autoApprove = value;
   return true;
 },
 ```
@@ -164,7 +167,7 @@ A sentence for a key or a value this backend does not have is a real answer,
 and says which of the two it was: a setter that reported success and changed
 nothing would leave a client showing a session in a mode it is not in. A value
 the schema's list does not offer is refused by the host before it gets here,
-in VS Code's words: `Session configuration 'ask' does not offer 'sometimes'.`
+in VS Code's words: `Session configuration 'autoApprove' does not offer 'sometimes'.`
 
 ## What keeps it honest
 

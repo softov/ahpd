@@ -299,7 +299,7 @@ describe('a recorded --plugin-option that overrides a set', () => {
       configFile: config,
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
       turning: () => [],
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     };
     const handler = apiHandler({
       registry: servedRegistry(facts),
@@ -355,7 +355,7 @@ describe('plugin config, served', () => {
       configFile: config,
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
       turning: () => [],
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     };
     const handler = apiHandler({
       registry: servedRegistry(facts),
@@ -434,7 +434,7 @@ describe('the same mask in the other served answers', () => {
       configFile: config,
       running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
       turning: () => [],
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
     };
     const handler = apiHandler({
       registry: servedRegistry(facts),
@@ -519,7 +519,7 @@ describe('a plugin switched off', () => {
         configFile: config,
         running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
         turning: () => [],
-        restart: () => {},
+        restart: () => ({ restartDelayMs: 0 }),
       };
       const handler = apiHandler({
         registry: servedRegistry(facts),

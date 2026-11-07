@@ -8,7 +8,7 @@
 
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
-import { STOP_WAIT_MS, stop as stopDaemon } from '../daemon.js';
+import { STOP_WAIT_MS, configuredMs, stop as stopDaemon } from '../daemon.js';
 import { conflict, flagFields } from './options.js';
 
 export const declareStop = (registry: Registry<object>): Command => registry.action({
@@ -32,7 +32,7 @@ export const declareStop = (registry: Registry<object>): Command => registry.act
       // `Stopped` is the line for a process that is gone, so the one that had
       // to be killed says which it was rather than reading as a clean stop.
       stopped.killed
-        ? `Killed ${url} (pid ${String(pid)}): it did not stop within ${String(STOP_WAIT_MS / 1000)} seconds.\n`
+        ? `Killed ${url} (pid ${String(pid)}): it did not stop within ${String(configuredMs('stopWaitMs', STOP_WAIT_MS) / 1000)} seconds.\n`
         : `Stopped ${url} (pid ${String(pid)}).\n`,
     );
   },

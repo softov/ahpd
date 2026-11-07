@@ -19,7 +19,7 @@
 
 import type { RequestHandler } from '@cofold/remote';
 import {
-  chargeFor, countCall, decide, keyRowOf, type ConnectorModel, type ConnectorModels, type Cost, type MinuteMeter, type ModelPricing, type ModelUse, type Owner, type PayOrder, type Policies, type ProviderConnector,
+  chargeFor, checkMeta, countCall, decide, isRecord, keyRowOf, type ConnectorModel, type ConnectorModels, type Cost, type MinuteMeter, type ModelPricing, type ModelUse, type Owner, type PayOrder, type Policies, type ProviderConnector,
   type ProviderModel, type Scope, type Usage, type Users,
 } from '@ahpd/sdk';
 import { foreign, guarded, isUnder, json, originRefusal, PROXY_PREFIX, type ApiOrigins } from '../http.js';
@@ -753,8 +753,30 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
     if ('refusal' in read) return refuse(read.refusal);
     const name = read.model;
 
+    /*
+     * A call's meta may ride in its body as well, as LiteLLM takes
+     * `metadata.spend_logs_metadata` beside its header
+     * (https://docs.litellm.ai/docs/proxy/cost_tracking). It is taken out of
+     * what the provider is sent, and held under the header's entries and the
+     * key's, which win a name the two share.
+     */
+    let metered = caller;
+    const metadata = read.kind === 'json' ? read.body['metadata'] : undefined;
+    if (read.kind === 'json' && isRecord(metadata) && Object.hasOwn(metadata, 'spend_logs_metadata')) {
+      let fromBody: Record<string, string>;
+      try {
+        fromBody = checkMeta(metadata['spend_logs_metadata']);
+        if (caller.kind === 'person') metered = { ...caller, meta: checkMeta({ ...fromBody, ...(caller.meta ?? {}) }) };
+      }
+      catch (error) {
+        return refuse({ status: 400, message: error instanceof Error ? error.message : String(error) });
+      }
+      delete metadata['spend_logs_metadata'];
+      if (Object.keys(metadata).length === 0) delete read.body['metadata'];
+    }
+
     const proxy = options.proxy();
-    const charged = chargedAs(caller, options, proxy);
+    const charged = chargedAs(metered, options, proxy);
     const check = policyFor(options, charged, name, zone);
     const catalog = options.catalog?.();
     const providers = options.providers();
@@ -854,8 +876,14 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
        * configuration, and the caller is told so with this host's error, not
        * sent to another provider to be refused again - the loop retries only
        * a connection that never arrived, a 429 and a 5xx.
+       *
+       * That is `modelProxy.keyRefusal` at `hostError`, the default. At
+       * `passthrough` the provider's status and error reach the caller as they
+       * came, as VS Code's Claude proxy re-emits an upstream error verbatim
+       * (src/vs/platform/agentHost/node/claude/anthropicErrors.ts L16-L18,
+       * L48-L61 at 6b68d3fe).
        */
-      if (response.status === 401 || response.status === 403) {
+      if ((response.status === 401 || response.status === 403) && proxy.keyRefusal === 'hostError') {
         const words = await refusalWords(response, candidate.key === undefined ? [] : [candidate.key]);
         left.push({
           connector: candidate.connector,

@@ -21,6 +21,8 @@ import { isRecord, secretRef } from '@ahpd/sdk';
 import type { IssuerVerify, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
 import type { Config, HttpSetting, RoutesSetting } from '../config.js';
 import { asSpec, configDir, configPath, loadConfig, shellEnvProblems } from '../config.js';
+import { READY_TIMEOUT_MS } from '../daemon.js';
+import { ICON_LIMIT, ICON_TIMEOUT_MS } from '../icons.js';
 import { sourceOf, pluginIdOf, pluginIdsOf, runPlugins } from '../plugins.js';
 import { proxyConfiguration, proxyProblems, proxySchema, type ProxyConfiguration } from '../proxy/providers.js';
 
@@ -102,6 +104,18 @@ export interface Options {
   nodeRestart: 'end' | 'reconnect';
   /** How the merged sessions pass learns the state of a pull request. */
   pullRequestLookup: 'url' | 'branch';
+  /** How the zsh folder shell integration points zsh at is taken when it is there already. */
+  zshFolder: 'owned' | 'asFound';
+  /** How a plugin whose entry points outside its own package is taken. */
+  pluginEntryOutside: 'refuse' | 'warn';
+  /** How an object a client writes to root config is written: over what the key holds, or in its place. */
+  rootConfigWrite: 'merged' | 'replaced';
+  /** The most one plugin icon may be, in bytes; 0 sets no limit. */
+  iconLimitBytes: number;
+  /** How long one fetch of an `https:` plugin icon may take. */
+  iconTimeoutMs: number;
+  /** How long a start waits for the daemon to say where it listens; 0 waits for ever. */
+  readyTimeoutMs: number;
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
   /** The environment every shell this host starts is given, absent when the deployment named none. */
@@ -179,6 +193,8 @@ export interface Options {
    * daemon read.
    */
   serviceName?: string;
+  /** The `PATH` the unit or the agent gives the daemon: the installing shell's, or the manager's own. */
+  servicePath: 'shell' | 'manager';
   /** A file every frame is appended to, both directions, one JSON line each. */
   wire?: string;
   /**
@@ -644,6 +660,54 @@ export const serverFields = {
     enum: ['url', 'branch'],
     description: 'How merged sessions learn the state of a pull request: url asks for each pull request by its page, branch asks for the pull requests of the session\'s branch.',
   },
+  zshFolder: {
+    type: 'string',
+    enum: ['owned', 'asFound'],
+    description: 'How the folder shell integration points zsh at, under the temporary folder, is taken when it is there already: owned, the default, takes only a folder of this user\'s that is not a link, since another user can make the known name first; asFound sets its mode on whatever is there, as VS Code does.',
+  },
+  pluginEntryOutside: {
+    type: 'string',
+    enum: ['refuse', 'warn'],
+    description: 'How a plugin whose entry points outside its own package is taken: refuse, the default, so a manifest cannot point its own package at somebody else\'s code; warn loads it with a warning on its row, as VS Code loads an extension whose main is outside its folder.',
+  },
+  iconLimitBytes: {
+    type: 'integer',
+    minimum: 0,
+    description: 'The most one plugin icon may be, in bytes of image, a file, a data: URI or a fetched body, as VS Code bounds an icon\'s image. Default 262144; 0 sets no limit.',
+    cli: { value: 'BYTES' },
+  },
+  iconTimeoutMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long one fetch of an https: plugin icon may take before the icon is given up. Default 10000, VS Code\'s for an image request.',
+    cli: { value: 'MS' },
+  },
+  readyTimeoutMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long ahpd start, and a restart starting the next daemon, waits for it to say where it is listening before stopping it. Default 60000; 0 waits for ever.',
+    cli: { value: 'MS' },
+  },
+  stopWaitMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long ahpd stop gives the daemon to go before it is killed. Default 5000, as VS Code\'s CLI gives its agent host server; 0 waits for ever. Set in the configuration file only.',
+  },
+  rootConfigWrite: {
+    type: 'string',
+    enum: ['merged', 'replaced'],
+    description: 'How an object a client writes to root config is written: merged, the default, over what the key holds, a null taking a key back and a <set> leaving a credential as it is; replaced, each top-level key\'s value replaced whole, as the protocol\'s reducer applies a root config change.',
+  },
+  daemonRecord: {
+    type: 'string',
+    enum: ['fields', 'schemaVersion'],
+    description: 'How daemon.json, the record of the running daemon, is read by the verbs that find it: fields, the default, reads each field as it is there, so an older daemon\'s record still names its daemon in the middle of an upgrade; schemaVersion ignores a record of another schemaVersion, as VS Code\'s CLI ignores a registry entry of another version. Set in the configuration file only.',
+  },
+  onPath: {
+    type: 'string',
+    enum: ['runnable', 'findExecutable'],
+    description: 'How ahpd configure and ahpd doctor find a command on PATH: runnable, the default, takes a regular file with an execute bit and skips an empty entry; findExecutable is VS Code\'s lookup, any file that is not a folder, with an entry that is not absolute read against the working directory. Set in the configuration file only.',
+  },
   clientToolTimeoutMs: {
     type: 'integer',
     minimum: 0,
@@ -722,8 +786,9 @@ export const serverFields = {
     type: 'object',
     properties: {
       name: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,39}$' },
+      path: { type: 'string', enum: ['shell', 'manager'] },
     },
-    description: 'The service that holds this daemon, for a daemon that runs beside another in a configuration home of its own: name, a lowercase letter or digit and then up to 39 letters, digits and dashes, installs it as ahpd@<name> on systemd and dev.ahpd.daemon.<name> on launchd. Absent is the plain ahpd and dev.ahpd.daemon. Set in the configuration file only.',
+    description: 'The service that holds this daemon. name, for a daemon that runs beside another in a configuration home of its own, a lowercase letter or digit and then up to 39 letters, digits and dashes, installs it as ahpd@<name> on systemd and dev.ahpd.daemon.<name> on launchd; absent is the plain ahpd and dev.ahpd.daemon. path is the PATH the daemon is given: shell, the default, is the PATH of the shell that ran ahpd service install, and manager sets none, so the daemon runs on the manager\'s own, as VS Code\'s CLI writes its unit. Set in the configuration file only.',
   },
   httpApi: {
     type: ['object', 'boolean'],
@@ -790,7 +855,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['httpApi', 'modelApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts'] as const;
+const FILE_ONLY = ['httpApi', 'modelApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts', 'onPath', 'daemonRecord', 'stopWaitMs'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;
@@ -1281,6 +1346,12 @@ const noCwd = input['noCwd'] === true;
     archiveDirtyWorktree: given('archiveDirtyWorktree') ?? 'keep',
     nodeRestart: given('nodeRestart') ?? 'end',
     pullRequestLookup: given('pullRequestLookup') ?? 'url',
+    zshFolder: given('zshFolder') ?? 'owned',
+    pluginEntryOutside: given('pluginEntryOutside') ?? 'refuse',
+    rootConfigWrite: given('rootConfigWrite') ?? 'merged',
+    iconLimitBytes: given('iconLimitBytes') ?? ICON_LIMIT,
+    iconTimeoutMs: given('iconTimeoutMs') ?? ICON_TIMEOUT_MS,
+    readyTimeoutMs: given('readyTimeoutMs') ?? READY_TIMEOUT_MS,
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',
@@ -1297,6 +1368,7 @@ const noCwd = input['noCwd'] === true;
     policiesPayOrder: given('policies')?.payOrder ?? 'ending',
     policiesOwnLimits: given('policies')?.ownLimits ?? true,
     ...(serviceName === undefined ? {} : { serviceName }),
+    servicePath: given('service')?.path ?? 'shell',
     ...(wire === undefined ? {} : { wire }),
     ...(httpApi === undefined ? {} : { httpApi }),
     ...(modelApi === undefined ? {} : { modelApi }),

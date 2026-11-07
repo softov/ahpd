@@ -96,7 +96,11 @@ const served = (turning: string[] = []): {
     users,
     running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
     turning: () => turning,
-    restart: (argv, force) => { restarted.push({ argv: [...argv], force }); },
+    // As the daemon's restart answers: parked while a turn runs, unless forced.
+    restart: (argv, force) => {
+      restarted.push({ argv: [...argv], force });
+      return turning.length > 0 && !force ? { parked: turning } : { restartDelayMs: 3000 };
+    },
   };
   const host = createHost({
     path: home,
@@ -151,18 +155,19 @@ describe('x-ahpd/restart', () => {
     const { host, restarted } = served();
     const client = await root(host);
     const result = await client.handle({ method: 'x-ahpd/restart', params: {} });
-    expect(result).toEqual({ restarting: true, pid: process.pid });
+    // VS Code's upgrade answer carries how long until the server goes down.
+    expect(result).toEqual({ restarting: true, pid: process.pid, restartDelayMs: 3000 });
     expect(restarted).toEqual([{ argv: ARGV, force: false }]);
     await host.close();
   });
 
-  it('refuses while a turn runs, naming the session and the caller\'s way to force', async () => {
+  it('answers a restart parked while a turn runs, naming the session', async () => {
     started();
     const { host, restarted } = served(['ahp-session:/a']);
     const client = await root(host);
-    const refused = await answered(client.handle({ method: 'x-ahpd/restart', params: {} }));
-    expect(refused).toMatchObject({ message: 'A turn is running in ahp-session:/a; pass force: true to restart anyway.' });
-    expect(restarted).toEqual([]);
+    const result = await client.handle({ method: 'x-ahpd/restart', params: {} });
+    expect(result).toEqual({ restarting: false, pid: process.pid, parked: ['ahp-session:/a'] });
+    expect(restarted).toEqual([{ argv: ARGV, force: false }]);
     await host.close();
   });
 
@@ -171,7 +176,7 @@ describe('x-ahpd/restart', () => {
     const { host, restarted } = served(['ahp-session:/a']);
     const client = await root(host);
     const result = await client.handle({ method: 'x-ahpd/restart', params: { force: true } });
-    expect(result).toEqual({ restarting: true, pid: process.pid });
+    expect(result).toEqual({ restarting: true, pid: process.pid, restartDelayMs: 3000 });
     expect(restarted).toEqual([{ argv: ARGV, force: true }]);
     await host.close();
   });

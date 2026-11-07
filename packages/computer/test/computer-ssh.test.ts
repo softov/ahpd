@@ -10,6 +10,7 @@ import { fileResources } from '../../sdk/src/resources/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { raise } from '../../sdk/src/plugins/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import { isRunning } from '../src/runtime.js';
 import { routed } from '../src/router.js';
@@ -735,9 +736,9 @@ const holding = (values: Record<string, string>): Vault => ({
   list: async () => Object.keys(values),
 });
 
-/** A load with one box, and an agent whose need is the vault's. */
+/** A load with one box, which starts the ahpd on its PATH, and an agent whose need is the vault's. */
 const vaultedLoad = () => load(
-  { machines: { dev02: { destination: 'dev02', agents: ['vaulted'] } } },
+  { machines: { dev02: { destination: 'dev02', agents: ['vaulted'], host: ['ahpd'] } } },
   { agents: [vaultedAgent], vault: holding({ [HOST_TOKEN]: SECRET }) },
 );
 
@@ -807,7 +808,7 @@ it('refuses a command in the box when a value there is the vault own, and writes
   // The one check both roads go through: a command a tool runs, and the
   // descriptor a terminal or a backend spawning into the machine is given.
   const tool = (options.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  await expect(tool.run({ id: 'ssh.dev02', command: 'env' }, { provider: 'vaulted' } as never))
+  await expect(tool.run({ id: 'ssh.dev02', command: 'env' }, hostCall({ provider: 'vaulted' })))
     .rejects.toThrow(new RegExp(`ssh.dev02 is off this host, and ${BOX_TOKEN} comes from the vault`));
   await expect(options.computers?.how('ssh.dev02', { command: 'env', provider: 'vaulted' }))
     .rejects.toThrow(/a command over ssh carries its variables in the remote command/);
@@ -840,7 +841,6 @@ it('reaches a made machine through a jump, with a known-hosts file of its own', 
   // A box an operator wrote has neither.
   expect(sshReach({}, { destination: 'dev02', port: '2229' }).argv('true'))
     .toEqual(['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30', '-p', '2229', 'dev02', '--', 'true']);
-  expect(sshReach({}, { destination: 'dev02', host: ['/opt/ahpd/ahpd/bin/ahpd'] }).hostCommand()).toEqual(['/opt/ahpd/ahpd/bin/ahpd']);
 });
 
 it('makes the machine key once, however many machines ask for it at once', async () => {

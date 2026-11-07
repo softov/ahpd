@@ -316,7 +316,7 @@ describe('a first-party plugin', () => {
    * imported for them.
    */
   const schemas: [string, string[]][] = [
-    ['activepieces', ['pieces', 'networkMode', 'ssrfAllowList', 'sandboxPropagatedEnvVars']],
+    ['activepieces', ['pieces', 'networkMode', 'ssrfAllowList', 'sandboxPropagatedEnvVars', 'logoLimitBytes', 'logoTimeoutMs']],
     ['agent-acp', ['hostTools', 'toolsChanged']],
     ['agent-claude', [
       'paths', 'computerExecutable', 'computerCli', 'computerCliFallback', 'computerConfigDir',
@@ -327,7 +327,7 @@ describe('a first-party plugin', () => {
       'resource', 'autoCompactTokens', 'hostTools',
     ]],
     ['agent-pi', ['model', 'projectTrust', 'sessionDir', 'hostTools']],
-    ['bot', ['root', 'lastChats', 'mainTurnPostMessageAbsent']],
+    ['bot', ['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn']],
     ['computer', [
       'runtime', 'command', 'args', 'ssh', 'libvirt', 'proxmox', 'env', 'image', 'cpus', 'memory', 'max', 'label',
       'prefix', 'sessionSetting', 'sessionDefault', 'needs', 'mounts', 'profiles', 'bodyMounts', 'imageMounts',

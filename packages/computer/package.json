@@ -105,7 +105,7 @@
         "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments placed before the program's own, for a wrapper or a Docker context." },
         "ssh": {
           "type": "object",
-          "description": "Boxes this host reaches over ssh. They are listed, never created, started or removed here.",
+          "description": "Boxes this host reaches over ssh. They are listed, never created, started or removed here. A session on one starts its host from the ahpd this host installs in the user's folder there.",
           "properties": {
             "command": { "type": "string", "description": "The program that reaches a box. Defaults to 'ssh'." },
             "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments placed before ssh's own, for a wrapper or a jump host." },
@@ -121,7 +121,7 @@
                   "port": { "type": "string", "description": "The ssh port, when it is not ssh's own default." },
                   "identity": { "type": "string", "description": "The private key to connect with, when ssh would not pick one itself." },
                   "workdir": { "type": "string", "description": "Where commands start on the box. Defaults to the login directory, so paths from this host do not apply." },
-                  "host": { "type": "array", "items": { "type": "string" }, "description": "The command that starts a nested host on the box. Defaults to [\"ahpd\"]." },
+                  "host": { "type": "array", "items": { "type": "string" }, "description": "The command that starts a nested host on the box, run as written. Defaults to the ahpd this host installs in the user's folder there." },
                   "agents": { "type": "array", "items": { "type": "string" }, "description": "The agents the box is prepared for. Sessions of other agents are refused." }
                 }
               }

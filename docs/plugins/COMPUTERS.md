@@ -62,7 +62,7 @@ In place of `image`, a manifest may name a folder whose `devcontainer.json` make
 
 The Dev Container CLI reads the file, so the image, the features, the mounts, the `remoteUser` and the lifecycle commands are the repository's and this host decides none of them - decision [a dev container is made by the Dev Container CLI and reached by docker exec](../../.project/decisions/a-dev-container-is-reached-by-docker-exec.md).
 The folder is refused before the CLI runs when it is not there or has no `.devcontainer/devcontainer.json` or `.devcontainer.json`. The create then asks the CLI's `read-configuration` where the definition is and reads that file as VS Code's dev container host reads it, with VS Code's JSONC parser, so comments and trailing commas are the file's own; a definition that does not parse is refused `Invalid Dev Container configuration: <path>`. It runs `devcontainer up --workspace-folder <folder> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<folder> --config <definition> --override-config <override>`, the definition kept as the base for its own relative paths, as VS Code passes it beside an override.
-The machine's labels and limits reach the container as the override's `runArgs` for an image or Dockerfile definition. The CLI gives `runArgs` to those alone, so a definition with `dockerComposeFile` gets them as VS Code gives a Compose definition its sandbox's options: a `compose.json` of its service's `labels`, `cpus` and `mem_limit`, owner-only beside the override, carrying the first Compose file's `version`, and added after the definition's own files, or for `"dockerComposeFile": []` after the files the CLI finds, in `COMPOSE_FILE`. A Compose definition with no files or no service is refused `A computer requires a Dev Container Compose configuration with files and a service.`
+The machine's labels, its limits and its profile's OCI runtime reach the container as the override's `runArgs` for an image or Dockerfile definition. The CLI gives `runArgs` to those alone, so a definition with `dockerComposeFile` gets them as VS Code gives a Compose definition its sandbox's options: a `compose.json` of its service's `labels`, `cpus`, `mem_limit` and [`runtime`](https://github.com/compose-spec/compose-spec/blob/3a4a6995e4a971f6173dff9130cb3e38e6738651/container_spec.md#L1225-L1237), owner-only beside the override, carrying the first Compose file's `version`, and added after the definition's own files, or for `"dockerComposeFile": []` after the files the CLI finds, in `COMPOSE_FILE`. A Compose definition with no files or no service is refused `A computer requires a Dev Container Compose configuration with files and a service.`
 A body whose `source` is `image` reads the image fields and ignores the folder, and one whose `source` is `devcontainer` requires the folder and is refused without it; any other value for `source` is refused.
 The object form `{ "devcontainer": { "folder": "/path/to/repo" } }` still works for a client that writes it by hand, and a body with no `source` is read as it always was.
 `devcontainer.folders` in the plugin options is the allowlist: absolute host paths, compared resolved, of which a dev container may be made, with no list meaning any folder on a host with one person on it and no folder at all on a host that has a users directory - see [Security](#security).
@@ -88,9 +88,9 @@ A container someone made with `devcontainer up` by hand carries only the CLI's `
 | `resourceRead` on `computer://ssh.<name>/server` | What an ssh box can run, and the lines that fix what it lacks; see [What the box can run](#what-the-box-can-run) |
 | `resourceRead` / `resourceWrite` on `computer://<id>/state` | `running` or `stopped`; write `running`, `stopped` or `restarted` |
 | `resourceWrite` to `computer://<id>` | Make one |
-| `resourceDelete` on `computer://<id>` | Destroy it and everything in it |
+| `resourceDelete` on `computer://<id>` | Delete it and everything in it |
 
-Reading needs `computer:read`, and making, starting, stopping or destroying needs `computer:write`. No built-in role has `computer:write`, and `file:write` does not include it.
+Reading needs `computer:read`, and making, starting, stopping or deleting needs `computer:write`. The `capabilities` leaf of a Docker machine names its verbs as Docker Engine's API names the operations it serves them with, `create`, `start`, `stop`, `restart`, `exec` and `delete`, and its resources `state` and `stats` as ContainerInspect's State and ContainerStats answer them, beside `status` and `capabilities`; a VM's adds `suspend` and `resume`. No built-in role has `computer:write`, and `file:write` does not include it.
 
 ## How a client finds out
 
@@ -173,8 +173,8 @@ It loads the plugin with its defaults, and what holds inside a machine is its pr
 
 **The host comes from the `ahpd` part.**
 cofold and pi each declare the `ahpd` part as a need, so the machine has `/opt/ahpd/ahpd` mounted and `ahpd` on its `PATH`, run by the Node of the `node` part. The part holds `@ahpd/agent-cofold` and `@ahpd/agent-pi` in `/opt/ahpd/ahpd/plugins`, and its launcher sets `AHPD_PLUGIN_ROOT` to that directory, so the inner host finds both plugins with nothing in its configuration directory.
-Any glibc image runs it with nothing installed, `debian:bookworm-slim`, the default, among them. A checkout builds the part from its own packed packages and an installed daemon from npm at its own version; see [Parts](#parts).
-A machine whose part could not be built is refused for these sessions by name, like any part an agent needs.
+Any glibc image runs it with nothing installed, `debian:bookworm-slim`, the default, among them. The part is ahpd from npm at the version the versions file names, or a checkout's own packed packages where `AHPD_PART_AHPD_ROOT` names the checkout; see [Parts](#parts).
+A machine whose part could not be loaded is refused for these sessions by name, like any part an agent needs.
 
 **The image's user owns a writable `HOME` and `XDG_CONFIG_HOME`, with no mount under either.**
 The nested ahpd makes `$XDG_CONFIG_HOME/ahpd` when it starts, and exits with `EACCES` when it cannot.
@@ -237,18 +237,18 @@ The CLI runs with `CLAUDE_CONFIG_DIR=/ahpd/<variant>`: `/ahpd/claude` for the bu
 | `part` | The default. The `claude` part, so a session in a machine runs the pinned version and not the one installed on this host |
 | `host` | `claudeExecutable` in place of the part: what `~/.local/bin/claude` points at on this host, read-only, at `computerExecutable` when that is a path and `/usr/local/bin/claude` otherwise. It is resolved when the machine is made, so an update on this host is followed |
 
-`computerCliFallback` says what happens when the `claude` part cannot be built, offline or with a build that fails. It is read only with `computerCli: "part"`:
+`computerCliFallback` says what happens when the `claude` part cannot be loaded, offline or with a pull that fails. It is read only with `computerCli: "part"`:
 
 | Value | What happens |
 | --- | --- |
 | `refuse` | The default. The machine is made without the part, and a Claude session on it is refused with a sentence naming `claude`. A machine made for that one session is not made at all |
-| `host` | This host's binary is mounted where `computerCli: "host"` puts it, the daemon logs one line naming the part and the mount, and the machine is labelled `claude@host` in `ahpd.parts`, so the session runs |
+| `host` | This host's binary is mounted where `computerCli: "host"` puts it, the daemon logs one line naming the part and the mount, and the machine's `ahpd.parts` label names it at the version `host`, so the session runs |
 
 ```json
 { "plugins": [{ "name": "@ahpd/agent-claude", "options": { "computerCli": "part", "computerCliFallback": "host" } }] }
 ```
 
-The fallback mount is checked with every other mount when the machine is made, whether the part builds or not, so a mount at the same target is refused naming both. A host path that is not there is refused at create, naming the need and the path, instead of becoming an empty directory the session exits 127 in.
+The fallback mount is checked with every other mount when the machine is made, whether the part loads or not, so a mount at the same target is refused naming both. A host path that is not there is refused at create, naming the need and the path, instead of becoming an empty directory the session exits 127 in.
 
 **A variant takes its own `env` into the machine, and nothing of the daemon's.** The CLI in a machine runs with the record's own `env`, a credential a client pushed laid over it, and `CLAUDE_CONFIG_DIR` last. The daemon's `HOME`, `PATH` and `PWD` never cross, and its `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH_TOKEN` cross only when the variant's `env` names them, as `{ "fromEnv": "ANTHROPIC_API_KEY" }`. A variable the variant unsets with `null` is absent inside too. These travel by name on the one `docker exec` that starts the CLI, never as the container's own environment, because `docker exec` cannot unset a variable the container holds: so the built-in Claude and an OpenRouter variant on one machine each get only their own keys.
 
@@ -324,8 +324,8 @@ A key is never in the shipped block: a host record fills its variable in its own
 
 ## ssh machines
 
-A box that already runs ahpd is listed in the plugin's `ssh` option and reached over ssh.
-This host never makes, starts, stops or removes one: it lists it, runs commands on it, and starts a host on it for each session.
+A box is listed in the plugin's `ssh` option and reached over ssh.
+This host never makes, starts, stops or removes one: it lists it, runs commands on it, and starts a host on it for each session, from the ahpd it installs there in the user's own folder.
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": { "ssh": { "machines": {
@@ -347,7 +347,7 @@ This host never makes, starts, stops or removes one: it lists it, runs commands 
 | `ssh.machines.<name>.port` | The port, when it is not the one ssh would use. |
 | `ssh.machines.<name>.identity` | The private key, when ssh would not pick one itself. |
 | `ssh.machines.<name>.workdir` | Where a command and a session start on the box. The login directory when absent. |
-| `ssh.machines.<name>.host` | The command that starts a host on the box. `["ahpd"]` when absent. |
+| `ssh.machines.<name>.host` | The command that starts a host on the box, run as written, and nothing is installed. Absent, the host is the ahpd this host installs there; see [The ahpd on the box](#the-ahpd-on-the-box). |
 | `ssh.machines.<name>.agents` | The agents the box is prepared for. A session of another agent is refused. |
 
 The entry `deb` is the machine `computer://ssh.deb`.
@@ -356,10 +356,27 @@ A policy names every ssh machine with `computer: ["ssh.*"]`.
 
 ### What the box needs
 
-- ahpd at this host's version, and the plugins of the agents it serves, each configured in the box's own `config.json`. The host on the box loads a plugin with the options its own file gives it, and serves the agent records in its own `agents` folder, so cofold's `model` lives in the file and an ACP agent's in its record.
-- `ahpd` on the `PATH` of a non-interactive login, which a Node installed by nvm is not. Otherwise name its full path in `host`.
+- What the install below downloads with: Linux on x86_64 or aarch64, `curl`, `tar`, `xz` and `sha256sum`, and a route to nodejs.org and the npm registry. A box without them names in `host` the command that starts an ahpd of its own, by its full path where the `PATH` of a non-interactive login does not hold it, as it does not hold a Node installed by nvm.
+- The plugins of the agents it serves beyond cofold and pi, which the install brings, in the box's configuration folder, where `ahpd plugin install` run there puts them, each configured in the box's own `config.json`. The host on the box loads a plugin with the options its own file gives it, and serves the agent records in its own `agents` folder, so cofold's `model` lives in the file and an ACP agent's in its record.
 - Its own model credentials. Nothing is sent from this host: `host` above sources a file on the box, because a non-interactive ssh reads no profile.
 - This host's key in `authorized_keys`, and the box's host key known to this host. Every call passes `BatchMode=yes`, so a password prompt or an unknown host key fails with ssh's own sentence.
+
+### The ahpd on the box
+
+With no `host`, a session's host is ahpd at the version `versions.json` names, which this host installs on the box the first time a session starts there, as VS Code installs its CLI on a host it reaches over SSH.
+The install is in `$XDG_DATA_HOME/ahpd/server/<version>-<hash>`, under `~/.local/share` when that is unset, so it needs no `sudo` and leaves any other ahpd on the box as it is.
+It holds what a machine's `/opt/ahpd` holds of the `node` and `ahpd` parts: Node from its download, checked by its sha256, and `@ahpd/server` with cofold and pi, installed by `npm ci` from the ahpd part's lock (see [Parts](#parts)). The box downloads them itself.
+
+An install that is there is used again. A version, a download or a plugin that moves is a new folder, and the five installs used most recently are kept.
+The log says each install:
+
+```text
+computer: ahpd 0.8.0 was installed on deb at /home/me/.local/share/ahpd/server/0.8.0-1a2b3c4d5e6f/bin/ahpd
+```
+
+A box no download is made for, anything but Linux on x86_64 or aarch64, is refused before anything is installed, in the words VS Code [refuses one with](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sshRemoteAgentHostService.ts#L935-L938), `Unsupported remote platform: FreeBSD amd64`, and runs an ahpd of its own by naming it in `host`.
+A download that fails runs the newest other install of this host's there, as VS Code falls back to its [newest other CLI](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L111-L123), and the log says so and why; with none, the session is refused with the install's own last line.
+The folder the box answers is checked to be one of this host's installs, directly under its root and named `<version>-<hash>`, before anything runs from it.
 
 ### What the box can run
 
@@ -388,7 +405,7 @@ A policy names every ssh machine with `computer: ["ssh.*"]`.
 | `kvm` | `/dev/kvm` exists, and the user can read and write it. |
 | `libvirt` | `virsh` is on the box. |
 | `libvirtAccess` | `virsh -c qemu:///system list` works as the user. |
-| `ahpd` | `ahpd --version` answers, from the `PATH` or from `~/.local/node/bin`, where the install script puts it. |
+| `ahpd` | This host's install answers `--version`, or the box can download one. The fix is the packages the download needs, or on a system no download is made for, a `host` command for an ahpd of the box's own. A box whose `host` names that command is ok with it and is asked nothing about the install, which does not apply to it. |
 
 `fix` holds the lines to run on the box, in order. A line that starts with `#` is a note, so the list can be pasted into a shell as it is. The `apt` lines are for Debian and Ubuntu; on another system the fix names the package to install. A new group takes effect at the next login, so log in again before you read the leaf again.
 
@@ -565,7 +582,7 @@ Any other value refuses the plugin when the options are read.
 { "profiles": { "untrusted": { "ociRuntime": "runsc" } } }
 ```
 
-`runsc` is [gVisor](https://gvisor.dev), which gives the machine its own kernel in user space, so a system call cannot reach this host's kernel directly. Docker must have the runtime installed; a host without it refuses the create with Docker's own message, because the value is passed as given. Absent means no `--runtime` argument at all, and Docker's own default runs the machine. The field is the profile's alone. A manifest that names it is refused, because the boundary a machine is given is the operator's to choose. A machine made from a `devcontainer.json` is refused when its profile names the field. The Dev Container CLI makes that machine rather than `docker run`, so there is no flag to add. See [Security](#security).
+`runsc` is [gVisor](https://gvisor.dev), which gives the machine its own kernel in user space, so a system call cannot reach this host's kernel directly. Docker must have the runtime installed; a host without it refuses the create with Docker's own message, because the value is passed as given. Absent means no `--runtime` argument at all, and Docker's own default runs the machine. The field is the profile's alone. A manifest that names it is refused, because the boundary a machine is given is the operator's to choose. A machine made from a `devcontainer.json` takes it where its labels and limits go: `--runtime=<value>` in the override config's `runArgs`, or the service's `runtime` in the Compose override of a Compose definition. See [Security](#security).
 
 A manifest picks a profile with `"profile": "claude"`, and its own fields still win. Mounts add up in order: the plugin's `mounts`, then the profile's, then the manifest's (if allowed), then what the agents declared. Other fields come from the manifest, then the profile, then the host default.
 
@@ -602,7 +619,7 @@ The names are published in the create schema as an `enum` with each profile's ti
 } }] }
 ```
 
-The machine is made on the box's own Docker, which this host reaches as `DOCKER_HOST=ssh://<destination>`. The parts it mounts are built there too, because a part is mounted by its image and only the Docker that holds the image can mount it.
+The machine is made on the box's own Docker, which this host reaches as `DOCKER_HOST=ssh://<destination>`. The parts it mounts are pulled there too, because a part is mounted by its image and only the Docker that holds the image can mount it.
 
 This is one profile's Docker, not the plugin's. The plugin's `env.DOCKER_HOST` moves every machine to that Docker, and `server` moves only that profile's machines, which get ids such as `docker-<profile>.ahpd-computer-…`. A profile whose `server` is the plugin's own `env.DOCKER_HOST` makes its machines there, as any other profile does. Docker is given no key file, so a box with `identity` is left out: name the key for its destination in ssh's own configuration instead.
 
@@ -689,9 +706,11 @@ Either runtime refuses a VM when its option names neither `template` nor `image`
 3. The parts are copied into the helper at `/opt/ahpd`, and cloud-init forgets the helper's instance.
 4. The helper's disk is kept as the template, and the helper is gone.
 
-A change to `versions.json` or to the ahpd part is a new hash, so the next VM builds a new template and backs onto it. Two VMs asked for at once build the template once. An older template is named in the log and kept, because a VM may still back onto it: remove it by hand once none does.
+A change to `versions.json` or to the ahpd part is a new hash, so the next VM builds a new template and backs onto it. Two VMs asked for at once build the template once. An older template is kept while a VM backs onto it, and removed once none has for a week, as VS Code removes a [cached version](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L17-L78) unused for a week: each VM made on a server sweeps its older templates, the time one was first found with no VM is kept in `<configDir>/computer-templates.json` across restarts, and a removal is one line in the log.
 
 A VM is another host, so every backend of a session in one runs nested, and its login is reached with this host's own key, through the box. A box with an `identity` is left out, as it is for Docker: name the key for its destination in ssh's own configuration instead. A VM takes no bind mount, no copied file, no variable and no state volume, so a profile that needs one of them is refused at create, with what it needs named. Use `state: "host"`, or a Docker profile.
+
+A VM that does not come up (no address, no ssh, a cloud-init that failed, or a tree that was not seeded) is stopped and kept, and the make answers why, as VS Code stops a [container whose preparation failed](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L443-L456) and keeps it: start it again, or remove it, once its console has been read. A stop that fails too is one line in the log.
 
 A VM can be held: writing `suspended` to its [state](#state) pauses it where it is, and `running` lets it go on. A suspended VM is not up, so its up-time stretch closes when it is held and a new one opens when it goes on. Its owner pays only for the time it runs. Stopping a VM asks the guest to shut down, and cuts it off when it has not within a minute. Removing one brings its work back first, as [Disposable machines](#disposable-machines) says, then removes the VM and its disk.
 
@@ -831,7 +850,7 @@ Sizes are bytes. `cpu.percent` is percent of one core, so it can exceed 100; `co
 
 A client that subscribes to `x-ahpd-computers://` holds every machine with its state. Subscribing needs `computer:read`, and a reader without it is refused. The snapshot lists each machine as `{ id, record }`, where `record` is `{ state, status }`: `state` is what `computer://<id>/state` reads, where the runtime gives one, and `status` is what `computer://<id>/status` reads.
 
-The channel is read again after each change this plugin makes to a machine, and every five minutes for the changes made outside it, VS Code's periodic pass over a catalogue whose source changes without telling it. A runtime that does not answer a listing keeps the machines it last listed, as VS Code keeps the list it had when a refresh fails, and the daemon's log gets a line naming it.
+The channel is read again after each change this plugin makes to a machine, and every five minutes for the changes made outside it, VS Code's periodic pass over a catalogue whose source changes without telling it. A runtime that does not answer a listing keeps the machines it last listed, as VS Code keeps the list it had when a refresh fails, beside the machines of every runtime that answered, and the daemon's log says why in VS Code's words for a listing that failed, `Could not list the <runtime> machines, so the <n> it last listed are kept: <reason>`.
 
 ```json
 { "records": [
@@ -932,76 +951,92 @@ The versions file is `packages/computer/images/versions.json`, and it is the onl
 | --- | --- | --- |
 | `node` | The Node every npm part needs | One download per platform |
 | `npm` | A CLI published to npm | `packages`, installed onto the node part, each at the part's `version` or at its own when written `<package>@<version>` |
-| `archive` | A CLI published as a tarball | `archives`, one url and sha256 per platform, and any `packages` installed onto the node part beside it, each written `<package>@<version>` |
-| `ahpd` | ahpd itself | From npm, or from a checkout's own tarballs |
+| `archive` | A CLI published as a tarball | `archives`, one url and sha256 per platform, `paths`, where each command is in the download, and any `packages` installed onto the node part beside it, each written `<package>@<version>` |
+| `ahpd` | ahpd itself | From npm at its `version`, or a checkout's own packages where `AHPD_PART_AHPD_ROOT` names the checkout |
 
-A part is built the first time it is asked for and never again for that version: the tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than rebuilt. A package pinned at its own version adds that version to the tag, so `ahpd-part/claude:0.85.1-2.1.291` moves when either moves. A short hash of the Dockerfile that writes the image is in the tag after them, so an ahpd upgrade that changes how an image is written is a different image at the same versions and the part is built again. A part whose build fails is refused by name and every other part still builds.
+A part is built once, by the release workflow, for `linux/amd64` and `linux/arm64`, and pushed to the GitHub container registry of the repository `@ahpd/computer` names, `ghcr.io/<owner>/ahpd-part/<id>:<tag>`; a host pulls it at that tag the first time it is asked for and tags it `ahpd-part/<id>:<tag>`, as VS Code's build produces each agent SDK once per release and every host [downloads it at first use](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5). The tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than pulled again. A package pinned at its own version adds that version to the tag, so `ahpd-part/claude:0.85.1-2.1.291` moves when either moves. A short hash of the Dockerfile that writes the image is in the tag after them, so an ahpd upgrade that changes how an image is written is a different image at the same versions, and the release that carries the change publishes it. A part whose pull fails is refused by name and every other part still loads; a machine asking for it within 30 seconds is told the same failure without another pull, and the next ask after that pulls it again, as VS Code holds a [failed SDK load](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395). The hold is per Docker, so a failure on one refuses nothing on another.
+
+A part's npm packages are installed from a lock, as VS Code installs each agent SDK from the `package.json` and `package-lock.json` [committed beside it](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L48-L57): `packages/computer/images/parts/<id>` holds the two files of each `npm` part, of each `archive` part with `packages`, and of the `ahpd` part, whose are `@ahpd/sdk` and `@ahpd/server` at its version. The build copies them in, checks each against the sum its Dockerfile names, and runs `npm ci`, so the image is a function of its lock and a lock that moves moves the tag. Install scripts run, because several of these packages fetch their binary in a `postinstall`, and the peers each package names are installed with it, because dsh's own packages reach one another as peers.
+
+The `ahpd` part takes local code only when asked: `AHPD_PART_AHPD_ROOT` in the daemon's environment names a checkout of this repository, whose packages are packed with `pnpm pack`, which needs `pnpm build` first, and installed into a part built on this host, and the daemon logs one line naming the checkout. Without it a checkout runs the version the versions file names, as an installed daemon does, as VS Code takes an agent SDK's local code only from that SDK's [override variable](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L364-L370).
 
 ### Parts in a machine
 
-A machine asks for a part two ways: its profile's `parts`, and an agent's part need, `{ "part": "codex" }`, in what its `machine()` answers. A profile's or the plugin option's `needs` value for that need names another part id, which is how a profile pins another build. Every part asked for is built with the parts it requires before the machine is made, and each lands read-only at `/opt/ahpd/<id>`; the target is never the agent's to choose, and a mount at it is refused as any other shared target.
+A machine asks for a part two ways: its profile's `parts`, and an agent's part need, `{ "part": "codex" }`, in what its `machine()` answers. A profile's or the plugin option's `needs` value for that need names another part id, which is how a profile pins another build. Every part asked for is loaded with the parts it requires before the machine is made, and each lands read-only at `/opt/ahpd/<id>`; the target is never the agent's to choose, and a mount at it is refused as any other shared target.
 
 A part reaches the machine one of two ways:
 
 | Route | When | What Docker is given |
 | --- | --- | --- |
 | Image | Docker takes an image mount | `--mount type=image,source=ahpd-part/<id>:<version>,image-subpath=opt/ahpd/<id>,target=/opt/ahpd/<id>,readonly` |
-| Volume | Docker refuses one, or the option `imageMounts` is `false` | `-v ahpd-part-<id>-<version>:/opt/ahpd/<id>:ro` |
+| Volume | Docker does not take one, or the option `imageMounts` is `false` | `-v ahpd-part-<id>-<version>:/opt/ahpd/<id>:ro` |
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": { "imageMounts": false } }] }
 ```
 
-Whether Docker takes an image mount is asked once, on the first machine with a part, by creating and removing a container that mounts that part's own image. A refusal of the mount type is kept for the daemon's life; any other failure, such as the image missing, is asked again for the next machine. Docker 29 prints `WARNING: Image mount is an experimental feature`, which is not a failure.
+Whether Docker takes an image mount is the condition Docker documents, asked of the daemon once, on the first machine with a part: image mounts [require the containerd image store](https://github.com/docker/docs/blob/dc9729c35e9ce9d10eef9218bafde2b4214f6f3d/content/manuals/engine/storage/image-mounts.md#L70-L71), which `docker info` [reports](https://github.com/docker/docs/blob/6893b3aeddd346a4811ecb0cdc3fad88c4bc5893/content/manuals/engine/storage/containerd.md#L103-L104) as the driver type `io.containerd.snapshotter.v1`, on an Engine of 28.0.0 or later, the release that [added the mount type](https://github.com/docker/docs/blob/53953dc8d0df3810734edbbb5ec9e939cf805810/content/manuals/engine/release-notes/28.md#L718-L731). The answer is kept for the daemon's life; a daemon that does not answer is asked again for the next machine. Docker 29 prints `WARNING: Image mount is an experimental feature`, which is not a failure.
 
-A part volume is filled once from its image: an empty volume mounted at the part's path by `docker create` is filled by Docker, nothing is started, and a `.ahpd-filled` marker is written into it last. A volume without the marker is a fill that stopped half way, and is removed and filled again. The version is in the volume's name, so a bump makes a new volume and the old one is left for `docker volume prune`.
+A part volume is made with the `ahpd.part` label naming its image and filled once from that image: an empty volume mounted at the part's path by `docker create` is filled by Docker, nothing is started, and a `.ahpd-filled` marker is written into it last. A volume without the marker is a fill that stopped half way, and is removed and filled again. The marker holds the time a machine last used the volume, written again by a machine made with it once an hour has passed, as VS Code records a cached SDK's last use. The version is in the volume's name, so a bump makes a new volume; half a minute after the plugin starts, each Docker it makes machines on is swept, and a part volume of a version the versions file does not name is removed once its last use, or the time it was made where it holds no time, is more than a week ago, as VS Code removes a [cached SDK version](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L17-L78) the product no longer asks for. A volume a machine still mounts is left, since Docker will not remove it, and is swept again at the next start.
 
 A dev container gets its parts the same way: an image mount as a `--mount` entry in the override config's `runArgs`, or for a Compose definition an `image` volume of its service, or the volume as a read-only entry in its `mounts`, since the CLI's own `--mount` has no word for read-only.
 
-The machine is labelled `ahpd.parts=<id>@<version>,...` with the parts it was made with, and its `PATH` has each one's `bin` in front: a Docker machine's is set at `docker run` over the image's own, and a dev container's is put in front of the probed `PATH` every command is given. So a command a preset names is found inside without its path.
+The machine is labelled `ahpd.parts` with the parts it was made with, as JSON, `[{"id":"codex","version":"2.1.1"}, ...]`, as the dev container tooling writes its structured label, `devcontainer.metadata`, and [VS Code](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L967-L976) reads a container's labels as JSON. A machine an older daemon labelled `<id>@<version>,...` is read by the id before each `@`, as VS Code reads a container's [older folder label](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L977-L981) beside the current one. Its `PATH` has each one's `bin` in front: a Docker machine's is set at `docker run` over the image's own, and a dev container's is put in front of the probed `PATH` every command is given. So a command a preset names is found inside without its path.
 
-A part whose build fails, or whose requirement's build fails, is left out of the machine with one log line naming it and the build's reason, and the machine is made with the rest. A session whose agent needs a part the label does not name is refused with a sentence naming the part, and every other session on the machine runs.
+A part whose load fails, or whose requirement's load fails, is left out of the machine with one log line naming it and the load's reason, and the machine is made with the rest. A session whose agent needs a part the label does not name is refused with a sentence naming the part, and every other session on the machine runs.
 
-A machine made for one session, a disposable or a `devcontainer://` made when the session starts, is the exception: when a part that session's agent needs fails to build, the machine is not made and the session is refused at create with a sentence naming the part, so no container, volume or `computers.json` entry is left behind. A failed part that session's agent does not need is left out as above.
+A machine made for one session, a disposable or a `devcontainer://` made when the session starts, is the exception: when a part that session's agent needs fails to load, the machine is not made and the session is refused at create with a sentence naming the part, so no container, volume or `computers.json` entry is left behind. A failed part that session's agent does not need is left out as above.
 
 ### The joined image
 
-`ahpd-agents:<hash>` is every part copied into one image, which is what ahpd publishes and what a runtime that cannot mount image parts runs. Its hash folds in the versions file and the ahpd part's own source, so a version that moved is a different image. Build it with:
+`ahpd-agents:<hash>` is every part copied into one image, built on this host from the part images it has, which is what a runtime that cannot mount image parts runs. Its hash folds in the versions file and the ahpd part's own source, so a version that moved is a different image. Build it with:
 
 ```sh
-node --import ./scripts/dev.mjs scripts/computer.mjs parts --joined
+node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --joined
 ```
 
 A machine made from a profile that names no image runs `debian:bookworm-slim` with its parts mounted, so a fifteen-part build never precedes the first default machine.
 
 ### Adding a part
 
-Add the entry to `packages/computer/images/versions.json` and nothing else: the reader refuses a version that is not one exact version, in VS Code's words; an `id`, a `bin` entry or an `updates` variable or value outside the letters, digits, `.`, `_` and `-` VS Code holds a shell token to, since each lands unquoted in a shell line; an `id` an image name cannot be, as the reference grammar's path component is lowercase; an archive with no checksum for a platform, a `requires` naming a part the file does not have, and two parts of one id. A build picks an archive part's download by the `TARGETARCH` BuildKit sets, and a build that sets none is refused rather than given another architecture's. `requires` names the parts this one is built on, and `bin` names the commands it puts on the PATH - for an `npm` part the matching entry in its `node_modules/.bin`, run by the part's Node when it is a script and as it is when the package installed an executable, for an `archive` part whatever the publisher's tarball holds, which the build finds by name and does not assume a layout, or what its own `packages` put in `node_modules/.bin`. An archive part with `packages` requires `node`, and each package names its own version, since the part's is the download's.
+Add the entry to `packages/computer/images/versions.json`, and for a part with npm packages write its lock with `node scripts/parts-bump.mjs --locks`, which writes the `package.json` of every such part from the file and has npm resolve its `package-lock.json` without installing or running anything, as VS Code [refreshes an agent SDK's lock](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L88-L97); a test holds each lock to the versions the file names. The reader refuses a version that is not one exact version, in VS Code's words; an `id`, a `bin` entry or an `updates` variable or value outside the letters, digits, `.`, `_` and `-` VS Code holds a shell token to, since each lands unquoted in a shell line; an `id` an image name cannot be, as the reference grammar's path component is lowercase; an archive with no checksum for a platform, an archive command with no path in its download that no package of the part installs, a path that leaves the download, a `requires` naming a part the file does not have, and two parts of one id. A build picks an archive part's download by the `TARGETARCH` BuildKit sets, and a build that sets none is refused rather than given another architecture's. `requires` names the parts this one is built on, and `bin` names the commands it puts on the PATH - for an `npm` part the matching entry in its `node_modules/.bin`, run by the part's Node when it is a script and as it is when the package installed an executable, for an `archive` part the path `paths` names for it in the download, `{ "devin": "bin/devin" }`, which is the publisher's layout for that version, as VS Code [knows each agent SDK's layout](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L80) rather than searching it, so a build whose download moved its command fails naming the path, or what its own `packages` put in `node_modules/.bin` for a command `paths` does not name. An archive part with `packages` requires `node`, and each package names its own version, since the part's is the download's.
 
 The kinds it will not build are named in the error a missing or unknown `kind` gives, rather than guessed at. A CLI that is neither npm nor a tarball needs a kind of its own before the file will accept it.
 
 ### Bumps
 
-Bumps come by pull request. `.github/workflows/parts-bump.yml` runs weekly and on demand, compares the file with the ACP registry and with npm, computes each archive's new sha256, and opens one pull request carrying every newer version. A part no feed carries is skipped and named in the log, so it is bumped by hand, as is a package pinned at its own version, such as Claude Code in the `claude` part:
+Bumps come by pull request. `.github/workflows/parts-bump.yml` runs weekly and on demand, compares the file with the ACP registry and with npm, computes each archive's new sha256, writes the lock of each part that moved and has npm packages, and opens one pull request carrying every newer version with its lock. An archive part's `paths` are kept as they are, so a version whose download moved a command fails its build, naming the path to edit. A part no feed carries is skipped and named in the log, so it is bumped by hand, as is a package pinned at its own version, such as Claude Code in the `claude` part:
 
 ```sh
 node scripts/parts-bump.mjs --dry-run
 ```
 
-### Building ahead
+### Pulling ahead
 
-The verb above is `parts`, and it warms every part image before the first session that would otherwise wait for one:
+The verb above is `parts`, and it loads every part image before the first session that would otherwise wait for one:
 
 ```sh
-node --import ./scripts/dev.mjs scripts/computer.mjs parts --all
-node --import ./scripts/dev.mjs scripts/computer.mjs parts codex goose
+node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --all
+node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts codex goose
 ```
 
-It needs the resolver because it runs the plugin's own source. Each line is the tag and whether it was `built` or `was already there`, so running it twice builds nothing.
+It needs the resolver and the `development` condition because it runs the plugin's own source, and each workspace package's. Each line is the tag and whether it was `pulled`, `built` for the ahpd part of a checkout `AHPD_PART_AHPD_ROOT` names, or `was already there`, so running it twice loads nothing.
+
+### Building the parts
+
+`scripts/parts-publish.mjs` builds every part from the Dockerfile this checkout writes, at the tag a daemon run from it asks for. The release workflow runs it with `--push`: each part is built for `linux/amd64` and `linux/arm64` and pushed to `ghcr.io/<owner>/ahpd-part/<id>:<tag>`, and a tag already there is left as it is, as VS Code's build leaves an [SDK already uploaded](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L52). With `--local` it builds each part on this host's Docker instead, for a checkout whose part Dockerfiles moved since the last release, and a daemon run from that checkout finds them by their tags:
+
+```sh
+node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs --local
+```
+
+With neither it builds for both platforms and pushes nothing, which is how the release rehearses.
 
 ## The three tools
 
 `request_disposable_computer`, `release_computer` and `run_in_computer` let a model ask for a scratch machine during a session. They are separate from the machine a session runs in, and they follow the same image rules.
+
+Each asks `computer:write` of the person who sent the turn, as the host's own tools ask that person's grants, and is refused in the host's words without it. A machine a tool makes is owned by that person, as a machine is by whoever made it, and the tools act on the machines the person may use: their own, the host's, and one charged to a team. Another person's machine is one the tools say is not there.
 
 They are off until the daemon enables advanced tools:
 

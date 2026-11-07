@@ -14,6 +14,7 @@ import { MACHINE_OBJECTS } from '../src/gitdir.js';
 import { dockerRuntime } from '../src/runtime.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions, HostTool, ToolCall } from '../../sdk/src/types/host.js';
@@ -461,7 +462,7 @@ it('runs `run_in_computer` on it with the same flags a backend is reached with',
   });
 
   const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  const ran = String(await tool.run({ id: 'box', command: 'node --version' }, {} as ToolCall));
+  const ran = String(await tool.run({ id: 'box', command: 'node --version' }, hostCall()));
   expect(ran).toContain('v22.14.0');
   expect(ran).toContain('exit 0');
   // By the container id, as `how` and the relay reach it, and not by the name
@@ -1176,7 +1177,7 @@ it('gives a command run after the create a need\'s variable, as the container\'s
   // inherits: it is on the machine Docker holds, and on no command's flags.
   const id = String(opened.snapshot.state.config?.values?.computer ?? '').slice('computer://'.length);
   const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  await tool.run({ id, command: 'true' }, {} as ToolCall);
+  await tool.run({ id, command: 'true' }, hostCall());
   const held = dockerHeld(dockerState) as DockerHeld & { machines: { env?: Record<string, string> }[] };
   expect(held.machines[0]?.env).toMatchObject({ ANTHROPIC_API_KEY: 'from-the-agent' });
   expect(held.commands.length).toBeGreaterThan(0);
@@ -1268,7 +1269,7 @@ it('keeps a vault-named need out of the override and every argv, and gives it on
 
   // A tool's command too.
   const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  await tool.run({ id, command: 'true' }, {} as ToolCall);
+  await tool.run({ id, command: 'true' }, hostCall());
   expect(dockerHeld(dockerState).commands.at(-1)?.env.ANTHROPIC_API_KEY).toBe('ada-token');
 
   // And the value is in no argv either program saw, in no file the daemon
@@ -1318,7 +1319,7 @@ it('passes a remoteEnv value by name to every command, and keeps it out of the s
   expect(dockerHeld(dockerState).commands.at(-1)?.env.FROM_HOST).toBe('local-secret');
 
   const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  await tool.run({ id: 'box', command: 'true' }, {} as ToolCall);
+  await tool.run({ id: 'box', command: 'true' }, hostCall());
   expect(dockerHeld(dockerState).commands.at(-1)?.env.FROM_HOST).toBe('local-secret');
 
   expect(dockerHeld(dockerState).calls.flat().filter((one) => one.includes('local-secret'))).toEqual([]);
@@ -1443,6 +1444,48 @@ it('gives a Compose definition its labels and limits in a Compose override of it
 });
 
 /*
+ * A profile's OCI runtime reaches a dev container where its labels and limits
+ * go: one `--runtime=<value>` argument in the override config's `runArgs`, as
+ * `docker run` is given it, and for a Compose definition its service's
+ * `runtime`, the Compose specification's word for the OCI runtime a service's
+ * containers run under (container_spec.md L1225-L1237 at 3a4a6995).
+ */
+it('gives a dev container its profile\'s OCI runtime in the override config\'s runArgs', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState, { profiles: { sandbox: { ociRuntime: 'runsc' } } }));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder }, profile: 'sandbox' }),
+    encoding: 'utf-8',
+  });
+
+  const runArgs = overrideOf(devState)?.config.runArgs as string[];
+  expect(runArgs.filter((one) => one.startsWith('--runtime'))).toEqual(['--runtime=runsc']);
+  expect(dockerHeld(dockerState).machines[0]?.labels).toMatchObject({ 'ahpd.name': 'box', 'ahpd.profile': 'sandbox' });
+  await answered(dockerState, 6);
+});
+
+it('gives a Compose definition its profile\'s OCI runtime as its service\'s runtime', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), JSON.stringify({ dockerComposeFile: 'compose.yml', service: 'app' }));
+  writeFileSync(join(folder, '.devcontainer', 'compose.yml'), 'services:\n  app:\n    image: base\n');
+  const { options: loaded } = await load(optionsOf(devState, dockerState, { profiles: { sandbox: { ociRuntime: 'runsc' } } }));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder }, profile: 'sandbox' }),
+    encoding: 'utf-8',
+  });
+
+  expect(overrideOf(devState)?.config.runArgs).toBeUndefined();
+  expect(devHeld(devState).composes?.[0]?.config).toMatchObject({ services: { app: { runtime: 'runsc' } } });
+  await answered(dockerState, 6);
+});
+
+/*
  * A Compose definition naming `[]` leaves its files to the CLI's discovery,
  * which is followed here, and the override goes after them in `COMPOSE_FILE`.
  */
@@ -1555,7 +1598,7 @@ it('refuses a command in a container that is not running, with the daemon\'s sen
   }));
   const { options: loaded } = await load(optionsOf(devState, dockerState));
   const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  const ran = String(await tool.run({ id: 'stopped', command: 'true' }, {} as ToolCall));
+  const ran = String(await tool.run({ id: 'stopped', command: 'true' }, hostCall()));
   expect(ran).toContain('container stopped is not running');
   expect(ran).toContain('exit 1');
   expect(devHeld(devState).calls).toEqual([]);
@@ -1792,7 +1835,7 @@ it('reads the kept probe back after a restart, and runs no probe for it', async 
 
   const { options: later } = await load(options, [], configDir);
   const tool = (later.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  expect(String(await tool.run({ id: 'box', command: 'true' }, {} as ToolCall))).toContain('exit 0');
+  expect(String(await tool.run({ id: 'box', command: 'true' }, hostCall()))).toContain('exit 0');
   expect(probes(dockerState)).toBe(1);
   // And the command ran with what was kept.
   expect(dockerHeld(dockerState).commands.at(-1)?.env).toEqual({ PATH: '/usr/bin', HOME: '/root' });
@@ -1819,7 +1862,7 @@ it('keeps no probe that answered nothing, and probes again on the next command',
   expect(kept.box?.probe).toBeUndefined();
 
   const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  await tool.run({ id: 'box', command: 'true' }, {} as ToolCall);
+  await tool.run({ id: 'box', command: 'true' }, hostCall());
   expect(probes(dockerState)).toBe(2);
   await answered(dockerState, 9);
 });

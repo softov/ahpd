@@ -20,7 +20,7 @@ import type { CodeRoute } from './clone.js';
 import { bringBack, bundledInto, checkedOut, fetchedInto, followOfCopy, hostGit, keepUncommitted, movesOver } from './machinegit.js';
 import type { FarSeed, MachineGit, Ran } from './machinegit.js';
 import { absoluteOnHost, mountParts } from './manifest.js';
-import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, once, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
+import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, markerText, markerUsed, once, PART_VOLUME_KEPT_MS, PART_VOLUME_USE_REFRESH_MS, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
 import type { ArchiveEntry, MadePart, Tarball } from './parts.js';
 import type { Cli, CliOptions, DevContainerConfiguration, Reach } from './devcontainer.js';
 import type { ServerReport } from './servercheck.js';
@@ -119,6 +119,9 @@ export interface MadeState extends AskedState {
 
 /** The label a machine with state volumes carries, valued `volume`. */
 export const MACHINE_STATE = 'ahpd.state';
+
+/** The label a part volume carries, valued with the image it is filled from. */
+export const PART_VOLUME_LABEL = 'ahpd.part';
 
 /** A name as one piece of a volume name: lowercased, every character outside `[a-z0-9-]` a dash. */
 const volumePiece = (said: string): string => said.toLowerCase().replace(/[^a-z0-9-]/g, '-');
@@ -319,8 +322,9 @@ export interface MachineSpec {
    * What a profile's `ociRuntime` comes to, and the profile's alone: the
    * boundary a machine is given is the operator's to choose. Written as one argument,
    * `--runtime=<value>`, and passed as given, so a Docker that has no such
-   * runtime refuses the machine with its own message. Nothing reads it on the
-   * dev container route, which the CLI makes rather than `docker run`.
+   * runtime refuses the machine with its own message. A dev container takes it
+   * where its labels and limits go: the override config's `runArgs`, or the
+   * Compose override's `runtime` for a Compose definition.
    */
   ociRuntime?: string;
   /**
@@ -384,17 +388,17 @@ export interface MachineSpec {
    */
   parts?: MadePart[];
   /**
-   * The host mount each asked part is replaced by when it cannot be built, by
+   * The host mount each asked part is replaced by when it cannot be loaded, by
    * part id, as the agent that needs the part declared it.
    *
    * What a manifest answers; the plugin adds a fallback's mount to `mounts`
-   * and its part to `hostParts` only for a part whose build failed.
+   * and its part to `hostParts` only for a part whose load failed.
    */
   partFallbacks?: PartFallback[];
   /**
    * The parts this machine has from this host rather than from their image,
-   * each a fallback mount made in place of a part that could not be built.
-   * The `ahpd.parts` label names each as `<id>@host`.
+   * each a fallback mount made in place of a part that could not be loaded.
+   * The `ahpd.parts` label names each at the version `host`.
    */
   hostParts?: string[];
   /**
@@ -715,6 +719,16 @@ export interface ComputerRuntime {
   hasImage(tag: string): Promise<boolean>;
   /** Build one image from a build context piped on stdin. */
   buildImage(tag: string, context: Uint8Array): Promise<void>;
+  /** Pull one image from its registry and give it `tag` here. */
+  pullImage(from: string, tag: string): Promise<void>;
+  /**
+   * Remove each part volume `requested` does not keep that no machine has used
+   * for `PART_VOLUME_KEPT_MS`, as VS Code removes a cached SDK version the
+   * product does not ask for. Best effort: a volume Docker will not remove,
+   * one a machine still mounts among them, is left for the next time.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L30-L78
+   */
+  removeUnusedPartVolumes?(requested: (volume: string) => boolean): Promise<void>;
 }
 
 /**
@@ -894,7 +908,8 @@ export interface DockerOptions extends CommandOptions {
   /** How a nested host is started in a machine, before a profile says otherwise. */
   host?: string[];
   /**
-   * Whether a part may be mounted from its own image. Absent asks Docker once.
+   * Whether a part may be mounted from its own image. Absent asks the daemon
+   * once, by the condition Docker documents for image mounts.
    *
    * `false` mounts every part from its volume without asking, which is the
    * route a Docker that refuses image mounts takes anyway.
@@ -937,17 +952,6 @@ export type PartRoute = 'image' | 'volume';
  * into. Nothing here is read back from the machine.
  */
 const stateDirOf = (options: DockerOptions): string => options.configDir ?? tmpdir();
-
-/**
- * Whether a refused image mount was refused for the mount type itself.
- *
- * Only that answer is kept for the daemon's life: Docker answers a missing
- * source image with a pull error that names the container's image, and an
- * unreachable daemon says so, and neither says anything about image mounts.
- */
-const refusesImageMounts = (said: string): boolean =>
-  /type=image|image-subpath|mount type|type "image"|invalid field 'type'/i.test(said)
-  && !/no such image|unable to find image|pull access denied|cannot connect/i.test(said);
 
 /** A part as the `--mount` that takes it from its own image, read-only. */
 const imageMountOf = (part: MadePart): string =>
@@ -1428,6 +1432,8 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
       ...Object.entries(options.labels).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
       ...(options.cpus === undefined ? [] : ['--cpus', options.cpus]),
       ...(options.memory === undefined ? [] : ['--memory', options.memory]),
+      // One argument, as `docker run` is given it.
+      ...(options.runtime === undefined ? [] : [`--runtime=${options.runtime}`]),
       // A part from its own image, which only `runArgs` can spell: the CLI
       // passes the entry to its `docker run` as written.
       ...options.images.flatMap((part) => ['--mount', imageMountOf(part)]),
@@ -1438,8 +1444,8 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
 
 /**
  * The `docker run` options a container the CLI makes is given: the machine's
- * labels, its limits, and each part mounted from its own image where `route`
- * is `image`.
+ * labels, its limits, its profile's OCI runtime, and each part mounted from
+ * its own image where `route` is `image`.
  *
  * The labels are the name; the user and the guard a git directory is made
  * with; the agents; the profile, so a daemon that did not make the container
@@ -1452,6 +1458,7 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
   labels: Record<string, string>;
   cpus?: string;
   memory?: string;
+  runtime?: string;
   images: MadePart[];
 } => {
   const agents = spec.agents ?? [];
@@ -1467,6 +1474,7 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
     },
     ...(spec.cpus === undefined ? {} : { cpus: spec.cpus }),
     ...(spec.memory === undefined ? {} : { memory: spec.memory }),
+    ...(spec.ociRuntime === undefined ? {} : { runtime: spec.ociRuntime }),
     images: route === 'image' ? spec.parts ?? [] : [],
   };
 };
@@ -1487,8 +1495,9 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
  * `.env` reaching it.
  *
  * The labels are the service's `labels`, the limits its `cpus` and
- * `mem_limit`, and a part from its own image a `volumes` entry of Compose's
- * `image` type.
+ * `mem_limit`, the OCI runtime its `runtime`, and a part from its own image a
+ * `volumes` entry of Compose's `image` type.
+ * https://github.com/compose-spec/compose-spec/blob/3a4a6995e4a971f6173dff9130cb3e38e6738651/container_spec.md#L1225-L1237
  */
 const composeOverrideOf = (
   options: ReturnType<typeof runOptionsOf>,
@@ -1531,6 +1540,7 @@ const composeOverrideOf = (
         labels: options.labels,
         ...(options.cpus === undefined ? {} : { cpus: options.cpus }),
         ...(options.memory === undefined ? {} : { mem_limit: options.memory }),
+        ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
         ...(options.images.length === 0 ? {} : {
           volumes: options.images.map((part) => ({
             type: 'image',
@@ -1937,60 +1947,72 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   };
 
   /**
-   * Whether this Docker takes an image mount, once it has said so about the
-   * mount type.
+   * Whether this Docker takes an image mount, by the condition Docker
+   * documents, asked of the daemon itself: the containerd image store, which
+   * `docker info` reports as the `io.containerd.snapshotter.v1` driver type, on
+   * an Engine of 28.0.0 or later, the release that added the mount type.
+   * https://github.com/docker/docs/blob/dc9729c35e9ce9d10eef9218bafde2b4214f6f3d/content/manuals/engine/storage/image-mounts.md#L70-L71
+   * https://github.com/docker/docs/blob/6893b3aeddd346a4811ecb0cdc3fad88c4bc5893/content/manuals/engine/storage/containerd.md#L103-L104
+   * https://github.com/docker/docs/blob/53953dc8d0df3810734edbbb5ec9e939cf805810/content/manuals/engine/release-notes/28.md#L718-L731
    *
-   * Asked with the part being mounted, after its image is built, so the probe
-   * never names an image that may not exist. A yes, and a refusal of the mount
-   * type, are kept for this runtime's life; any other failure - the image
-   * missing, the daemon unreachable - is not an answer about image mounts, and
-   * the next machine asks again.
+   * The answer is kept for this runtime's life; a daemon that does not answer
+   * is asked again for the next machine.
    */
   let imagesMount: boolean | undefined = options.imageMounts === false ? false : undefined;
-  const canMountImages = async (tag: string): Promise<boolean> => {
+  const canMountImages = async (): Promise<boolean> => {
     if (imagesMount !== undefined) return imagesMount;
-    const probe = `ahpd-part-probe-${randomUUID().slice(0, 8)}`;
-    const held = await ran(options, ['create', '--name', probe, '--mount', `type=image,source=${tag},target=/probe`, tag, 'x']);
-    if (held.code === 0) {
-      await ran(options, ['rm', '-f', probe]);
-      imagesMount = true;
-      return true;
-    }
-    if (refusesImageMounts(held.stderr)) imagesMount = false;
-    return false;
+    const held = await ran(options, ['info', '--format', '{{json .}}']);
+    if (held.code !== 0) return false;
+    let info: Record<string, unknown>;
+    try { info = rows(held.stdout)[0] ?? {}; }
+    catch { return false; }
+    const store = Array.isArray(info.DriverStatus) ? info.DriverStatus as unknown[] : [];
+    const containerd = store.some((pair) => Array.isArray(pair) && pair[0] === 'driver-type' && pair[1] === 'io.containerd.snapshotter.v1');
+    const major = Number.parseInt(text(info.ServerVersion).split('.')[0] ?? '', 10);
+    imagesMount = containerd && major >= 28;
+    return imagesMount;
   };
 
   /**
-   * How a dev container gets its parts, and the one place that is chosen.
-   *
-   * The image route is a `--mount type=image` in the override config's
-   * `runArgs`, which the Dev Container CLI 0.89.0 passes to its `docker run`
-   * as written; it is taken where Docker takes image mounts, and the volume
-   * route everywhere else.
+   * How a machine gets its parts, and the one place that is chosen: the image
+   * route where Docker takes image mounts, and the volume route everywhere
+   * else. A dev container's image route is a `--mount type=image` in the
+   * override config's `runArgs`, which the Dev Container CLI 0.89.0 passes to
+   * its `docker run` as written.
    */
-  const devcontainerPartRoute = async (tag: string): Promise<PartRoute> =>
-    (await canMountImages(tag) ? 'image' : 'volume');
+  const partRoute = async (): Promise<PartRoute> => (await canMountImages() ? 'image' : 'volume');
 
   /**
    * One part's volume, filled from its image the first time it is asked for.
    *
-   * `docker create` with an empty named volume at the part's path fills the
-   * volume from the image, and nothing is started. The marker is written last,
-   * through the same container, so a fill that stopped half way leaves a volume
-   * without it, and such a volume is removed and filled again. One fill per
-   * volume at a time, shared as a build is.
+   * The volume is made with the `ahpd.part` label naming the image it is
+   * filled from, which is how an unused one is found again. `docker create`
+   * with the empty volume at the part's path fills it from the image, and
+   * nothing is started. The marker is written last, through the same
+   * container, so a fill that stopped half way leaves a volume without it, and
+   * such a volume is removed and filled again. Each use writes the time into
+   * the marker again once `PART_VOLUME_USE_REFRESH_MS` has passed, as VS Code
+   * records a cached SDK's use. One fill per volume at a time, shared as a
+   * build is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L430-L440
    */
   const ensurePartVolume = (part: MadePart): Promise<string> => {
     const volume = volumeOf(part);
     const at = partTarget(part.id);
     const helper = (): string => `ahpd-part-fill-${randomUUID().slice(0, 8)}`;
+    const marker = (): Buffer => archiveOf([{ name: FILLED_MARKER, bytes: Buffer.from(markerText(part.tag, Date.now()), 'utf8') }]);
     return once(`volume:${volume}`, async () => {
       if ((await ran(options, ['volume', 'inspect', volume])).code === 0) {
         const looking = helper();
         let filled = false;
         try {
           await must(['create', '--name', looking, '-v', `${volume}:${at}`, part.tag, 'x']);
-          filled = (await ran(options, ['cp', `${looking}:${at}/${FILLED_MARKER}`, '-'])).code === 0;
+          const read = await ran(options, ['cp', `${looking}:${at}/${FILLED_MARKER}`, '-']);
+          filled = read.code === 0;
+          const used = filled ? markerUsed(firstFileOf(Buffer.from(read.stdout, 'utf8'))?.toString('utf8') ?? '') : undefined;
+          if (filled && (used === undefined || Date.now() - used >= PART_VOLUME_USE_REFRESH_MS)) {
+            await must(['cp', '-', `${looking}:${at}`], undefined, marker());
+          }
         }
         finally {
           await ran(options, ['rm', '-f', looking]);
@@ -1998,11 +2020,11 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         if (filled) return volume;
         await must(['volume', 'rm', volume]);
       }
+      await must(['volume', 'create', '--label', `${PART_VOLUME_LABEL}=${part.tag}`, volume]);
       const filling = helper();
       try {
         await must(['create', '--name', filling, '-v', `${volume}:${at}`, part.tag, 'x']);
-        await must(['cp', '-', `${filling}:${at}`], undefined,
-          archiveOf([{ name: FILLED_MARKER, bytes: Buffer.from(`${part.tag}\n`, 'utf8') }]));
+        await must(['cp', '-', `${filling}:${at}`], undefined, marker());
       }
       finally {
         await ran(options, ['rm', '-f', filling]);
@@ -2015,17 +2037,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
    * How a machine's parts reach it, and the parts that can.
    *
    * On the volume route each volume is filled first, and a part whose volume
-   * cannot be filled is left out with a line naming it, as a part whose build
+   * cannot be filled is left out with a line naming it, as a part whose load
    * failed is: the machine is made with the rest and labelled with them.
    */
-  const mountable = async (
-    name: string,
-    parts: readonly MadePart[],
-    routeOf: (tag: string) => Promise<PartRoute>,
-  ): Promise<{ route?: PartRoute; parts: MadePart[] }> => {
-    const first = parts[0];
-    if (first === undefined) return { parts: [] };
-    const route = await routeOf(first.tag);
+  const mountable = async (name: string, parts: readonly MadePart[]): Promise<{ route?: PartRoute; parts: MadePart[] }> => {
+    if (parts.length === 0) return { parts: [] };
+    const route = await partRoute();
     if (route === 'image') return { route, parts: [...parts] };
     const filled: MadePart[] = [];
     for (const part of parts) {
@@ -3001,10 +3018,10 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         }
         /*
          * The parts, by the route a dev container takes: an image mount needs
-         * the part image here before `up`, which the plugin has built, and the
+         * the part image here before `up`, which the plugin has loaded, and the
          * volume route needs each volume filled before the CLI mounts it.
          */
-        const reached = await mountable(spec.name, spec.parts ?? [], devcontainerPartRoute);
+        const reached = await mountable(spec.name, spec.parts ?? []);
         const withParts: MachineSpec = spec.parts === undefined ? spec : { ...spec, parts: reached.parts };
         const scratch = mkdtempSync(join(tmpdir(), 'ahpd-devcontainer-'));
         const override = join(scratch, 'override.json');
@@ -3237,7 +3254,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        * `bin` in front of the image's own, so a command a preset names is found
        * without its path.
        */
-      const { route, parts } = await mountable(spec.name, spec.parts ?? [], async (tag) => (await canMountImages(tag) ? 'image' : 'volume'));
+      const { route, parts } = await mountable(spec.name, spec.parts ?? []);
       for (const part of parts) {
         if (route === 'image') flags.push('--mount', imageMountOf(part));
         else flags.push('-v', `${volumeOf(part)}:${partTarget(part.id)}:ro`);
@@ -3426,15 +3443,25 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       };
     },
 
+    /*
+     * The verbs as Docker Engine's API names the operations it serves them
+     * with - ContainerCreate, ContainerStart, ContainerStop, ContainerRestart,
+     * ContainerExec and ContainerDelete - and the resources `state` and `stats`,
+     * what ContainerInspect's State and ContainerStats answer, beside this
+     * scheme's own `status` and `capabilities`. Removing a machine is `delete`,
+     * as the scheme's resourceDelete names it.
+     * https://github.com/moby/moby/blob/dc0ad36c0628d1538be7b2ea27d0bc2d2df955ef/api/swagger.yaml#L8209
+     * https://github.com/moby/moby/blob/dc0ad36c0628d1538be7b2ea27d0bc2d2df955ef/api/swagger.yaml#L9338
+     */
     capabilities: () => ({
       runtime: 'docker',
-      actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
-      resources: ['status', 'capabilities', 'stats', 'state'],
+      actions: ['create', 'start', 'stop', 'restart', 'exec', 'delete'],
+      resources: ['status', 'capabilities', 'state', 'stats'],
     }),
 
     /*
-     * Two verbs about images rather than machines, and they are the ones a part
-     * is built with.
+     * The verbs about images rather than machines, which are the ones a part
+     * is pulled and built with.
      *
      * `image inspect` rather than `inspect`, because the latter is machines and
      * its not-found answer is a container error. The context is piped rather
@@ -3451,6 +3478,59 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         // Dockerfile that names a stage that is not there.
         const said = held.stderr.trim() || held.stdout.trim() || 'no output';
         throw new Error(`${options.command} build -t ${tag} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
+      }
+    },
+
+    // The image under the registry's name, then the tag every machine names it by.
+    pullImage: async (from, tag) => {
+      for (const argv of [['pull', from], ['tag', from, tag]]) {
+        const held = await ran(options, argv);
+        if (held.code !== 0) {
+          // Docker's own last lines: a registry that has no such tag, a login
+          // it asks for, a network that is not there.
+          const said = held.stderr.trim() || held.stdout.trim() || 'no output';
+          throw new Error(`${options.command} ${argv.join(' ')} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
+        }
+      }
+    },
+
+    /*
+     * Each part volume here that `requested` does not keep, removed once its
+     * last use - the marker's time, read through a container of the image its
+     * label names, or else the volume's own - is older than
+     * `PART_VOLUME_KEPT_MS`. One that cannot be read or removed is left, as VS
+     * Code leaves a version it cannot clean up now for the next call.
+     */
+    removeUnusedPartVolumes: async (requested) => {
+      const listed = await ran(options, ['volume', 'ls', '--format', '{{.Name}}']);
+      if (listed.code !== 0) return;
+      const now = Date.now();
+      for (const volume of listed.stdout.split('\n').map((one) => one.trim()).filter((one) => one.startsWith('ahpd-part-') && !requested(one))) {
+        try {
+          const found = rows((await ran(options, ['volume', 'inspect', '--format', '{{json .}}', volume])).stdout)[0] ?? {};
+          const labels = (typeof found.Labels === 'object' && found.Labels !== null ? found.Labels : {}) as Record<string, unknown>;
+          const image = labels[PART_VOLUME_LABEL];
+          let used = Date.parse(text(found.CreatedAt));
+          if (typeof image === 'string' && (await ran(options, ['image', 'inspect', image])).code === 0) {
+            const looking = `ahpd-part-fill-${randomUUID().slice(0, 8)}`;
+            try {
+              await must(['create', '--name', looking, '-v', `${volume}:/opt/ahpd/part`, image, 'x']);
+              const read = await ran(options, ['cp', `${looking}:/opt/ahpd/part/${FILLED_MARKER}`, '-']);
+              const marked = read.code === 0 ? markerUsed(firstFileOf(Buffer.from(read.stdout, 'utf8'))?.toString('utf8') ?? '') : undefined;
+              if (marked !== undefined) used = Number.isNaN(used) ? marked : Math.max(used, marked);
+            }
+            finally {
+              await ran(options, ['rm', '-f', looking]);
+            }
+          }
+          if (Number.isNaN(used) || now - used <= PART_VOLUME_KEPT_MS) continue;
+          if ((await ran(options, ['volume', 'rm', volume])).code === 0) {
+            options.log?.(`removed ${volume}, which no machine has used for over a week`);
+          }
+        }
+        catch {
+          // Left for the next time, as a volume Docker would not remove is.
+        }
       }
     },
   };

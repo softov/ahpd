@@ -13,6 +13,7 @@ import { fileResources } from '../../sdk/src/resources/resources.js';
 import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
@@ -1444,7 +1445,7 @@ it('gives a worktree session a git directory of its own, and runs the machine as
   const how = await loaded.computers?.how(box.name, { command: 'true' });
   expect(flagValue(how?.args ?? [], '--user')).toBe(ME);
   const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'run_in_computer');
-  await tool?.run({ id: box.name, command: 'true' }, {} as never);
+  await tool?.run({ id: box.name, command: 'true' }, hostCall());
   expect((held(state) as Held & { commands?: { user?: string }[] }).commands?.at(-1)?.user).toBe(ME);
 
   // And after the plugin is loaded again, from the machine's own label.

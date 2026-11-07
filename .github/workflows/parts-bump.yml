@@ -33,9 +33,9 @@ jobs:
           node-version: 22
 
       # The npm bundled with Node is asked about an npm part the registry does
-      # not carry, which is the only reason this job needs Node at all - the
-      # script reads one file and asks two questions, so there is nothing here
-      # to install.
+      # not carry, and writes the lock of each part that moved, which is the
+      # reason this job needs Node - the script installs nothing and runs no
+      # package's scripts.
       - name: What moved
         run: |
           set -o pipefail
@@ -58,7 +58,7 @@ jobs:
           git switch -c "$branch"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add packages/computer/images/versions.json
+          git add packages/computer/images/versions.json packages/computer/images/parts
           git commit -m 'parts: bump to the versions the feeds now carry'
           git push --set-upstream origin "$branch"
           {

@@ -118,6 +118,18 @@
           "items": { "type": "string" },
           "default": [],
           "description": "The variables of the daemon's environment the engine is given, by name, as Activepieces' AP_SANDBOX_PROPAGATED_ENV_VARS. None by default."
+        },
+        "logoLimitBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 32768,
+          "description": "The most one piece's logo may be, in bytes, since it travels in the adapters list every client receives in full. Default 32768; 0 sets no limit."
+        },
+        "logoTimeoutMs": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 10000,
+          "description": "How long the whole read of one piece's logo may take, redirects included. Default 10000, VS Code's for an image read; 0 waits for ever."
         }
       },
       "required": ["pieces"]

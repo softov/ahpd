@@ -15,8 +15,8 @@
  * same reason.
  */
 
-import { readFileSync } from 'node:fs';
-import { posix } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join, posix } from 'node:path';
 import { hostPathOf, machinePathOf } from '@ahpd/sdk';
 import type { BroughtBack } from '@ahpd/sdk';
 import { codeRouteOf } from './clone.js';
@@ -46,7 +46,7 @@ import type { ComputerRuntime, ExecResult, Machine, MachineSpec, RuntimeCapabili
 import { sshReach } from './ssh.js';
 import type { SshMachine, SshProgram, SshReach } from './ssh.js';
 import { TEMPLATE_PACKAGES, templateMaker } from './template.js';
-import type { TemplateParts, TemplateSteps } from './template.js';
+import type { TemplateLedger, TemplateParts, TemplateSteps } from './template.js';
 
 /** Where a VM's tree is, which is the session's repository at its own path. */
 const MACHINE_TREE = 'ahpd.tree';
@@ -235,10 +235,22 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
   const ready = options.waits?.ready ?? READY_MS;
   const every = options.waits?.every ?? EVERY_MS;
   const shutdown = options.waits?.shutdown ?? SHUTDOWN_MS;
-  const makeTemplate = options.parts === undefined ? undefined : templateMaker(options.parts, options.log);
+  /*
+   * When each older template was first found with no VM on it, beside the
+   * configuration, so the week an unused template is kept outlives a restart.
+   */
+  const ledgerPath = join(options.configDir, 'computer-templates.json');
+  const ledger: TemplateLedger = {
+    read: () => {
+      try { return JSON.parse(readFileSync(ledgerPath, 'utf8')) as Record<string, number>; }
+      catch { return {}; }
+    },
+    write: (held) => { writeFileSync(ledgerPath, `${JSON.stringify(held, null, 2)}\n`); },
+  };
+  const makeTemplate = options.parts === undefined ? undefined : templateMaker(options.parts, options.log, ledger);
   const capabilities: RuntimeCapabilities = {
     runtime: maker.kind,
-    actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart', 'suspend', 'resume'],
+    actions: ['create', 'delete', 'exec', 'start', 'stop', 'restart', 'suspend', 'resume'],
     resources: ['status', 'capabilities', 'stats', 'state'],
   };
 
@@ -471,6 +483,8 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
       await maker.drop(server, name);
       await forget(name, address);
     },
+    // The template each VM on the server was made from, by its own label.
+    backed: async () => (await maker.listOn(server)).flatMap((row) => row.labels?.[MACHINE_IMAGE] ?? []),
   });
 
   /** Why a spec cannot be made as a VM, or nothing when it can. */
@@ -616,13 +630,21 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
         memory: memoryOf(spec.memory),
       });
       where.set(spec.name, server);
+      /*
+       * A VM that did not come up, or whose tree was not seeded, is stopped
+       * and kept for a person to look at or start again, as VS Code stops a
+       * container whose preparation failed and keeps it; a stop that fails
+       * too is said in one line, and the first failure is what the make
+       * answers.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L443-L456
+       */
       try {
         const reach = await upOn(server, spec.name, machineKeyHeld, profile);
         if (tree !== undefined) await seeded(spec, reach, tree);
       }
       catch (error) {
-        await destroyed(server, spec.name).catch((gone: unknown) => {
-          options.log?.(`${spec.name} was not removed after it failed: ${gone instanceof Error ? gone.message : String(gone)}`);
+        await shutDown(server, spec.name).catch((stuck: unknown) => {
+          options.log?.(`${spec.name} was not stopped after it failed to come up: ${stuck instanceof Error ? stuck.message : String(stuck)}`);
         });
         throw error;
       }
@@ -746,10 +768,11 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
 
     /*
      * A VM is made from its template, and an image is Docker's: a part is
-     * built on a runtime that makes containers.
+     * pulled or built on a runtime that makes containers.
      */
     hasImage: async () => false,
     buildImage: async () => { throw new Error(`an image is not built by ${maker.kind}`); },
+    pullImage: async () => { throw new Error(`an image is not pulled by ${maker.kind}`); },
   };
 };
 

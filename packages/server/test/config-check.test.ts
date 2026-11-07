@@ -169,6 +169,27 @@ describe('a wrong value on a known key', () => {
   it('refuses a value that was dropped before, rather than falling back to the default', () => {
     expect(refusal({ updateCheck: 'false' })).toBe(`${config}: updateCheck must be true or false`);
   });
+
+  it('reads service.path as the shell\'s or the manager\'s, the shell\'s when the file names none, and refuses another', () => {
+    expect(folded({}).servicePath).toBe('shell');
+    expect(folded({ service: { path: 'manager' } }).servicePath).toBe('manager');
+    expect(refusal({ service: { path: 'login' } })).toBe(`${config}: service.path must be one of shell, manager`);
+  });
+
+  // The fetch bound is VS Code's for an image request (PROFILE_IMAGE_REQUEST_TIMEOUT_MS,
+  // src/vs/platform/agentHost/node/codex/codexProfileImage.ts L17 at 6b68d3fe),
+  // and the icon limit upstream's 32 KB (plan plugin/58).
+  it('reads iconLimitBytes and iconTimeoutMs, VS Code\'s 262144 and 10000 when the file names neither', () => {
+    expect(folded({})).toMatchObject({ iconLimitBytes: 262_144, iconTimeoutMs: 10_000 });
+    expect(folded({ iconLimitBytes: 0, iconTimeoutMs: 2500 })).toMatchObject({ iconLimitBytes: 0, iconTimeoutMs: 2500 });
+    expect(refusal({ iconLimitBytes: -1 })).toContain('iconLimitBytes');
+  });
+
+  it('takes onPath as runnable or findExecutable, and refuses another lookup', () => {
+    expect(folded({ onPath: 'findExecutable' }).warnings).toEqual([]);
+    expect(folded({ onPath: 'runnable' }).warnings).toEqual([]);
+    expect(refusal({ onPath: 'which' })).toBe(`${config}: onPath must be one of runnable, findExecutable`);
+  });
 });
 
 describe('an unknown key', () => {
@@ -425,7 +446,7 @@ describe('the shellEnv key', () => {
 
 describe('the modelProxy key', () => {
   it('is the model names and nothing else, with no providers of its own', () => {
-    expect(folded({}).modelProxy).toEqual({ models: {}, sessionCalls: 'record' });
+    expect(folded({}).modelProxy).toEqual({ models: {}, sessionCalls: 'record', keyRefusal: 'hostError' });
   });
 
   it('reads the names and the entries that serve each, naming a connector or an adapter', () => {

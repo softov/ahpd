@@ -844,7 +844,7 @@ it('gives a dev container its parts as image mounts in runArgs where Docker take
     `type=image,source=${CODEX.tag},image-subpath=opt/ahpd/codex,target=/opt/ahpd/codex,readonly`,
     `type=image,source=${NODE.tag},image-subpath=opt/ahpd/node,target=/opt/ahpd/node,readonly`,
   ]);
-  expect(runArgs).toContain('ahpd.parts=codex@2.1.1,node@24.21.0');
+  expect(runArgs).toContain(`ahpd.parts=${JSON.stringify([{ id: 'codex', version: '2.1.1' }, { id: 'node', version: '24.21.0' }])}`);
   expect(JSON.stringify(overridden().mounts ?? [])).not.toContain('ahpd-part');
 });
 

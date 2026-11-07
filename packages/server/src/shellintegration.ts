@@ -166,13 +166,21 @@ function areZshBashFishLoginArgs(originalArgs: string | readonly string[]): bool
 }
 
 /**
+ * How the zsh folder found under the temporary folder is taken, as the
+ * daemon's `zshFolder` setting names it: `owned`, only a folder of this user's
+ * that is not a link, or `asFound`, whatever is at the name, as VS Code takes it.
+ */
+export type ZshFolder = 'owned' | 'asFound';
+
+/**
  * The folder zsh is pointed at instead of the person's own: one per user,
  * under the system's temporary folder, that nobody else may enter.
  *
  * The reference sets the sticky bit and owner-only access with `0o1700`, and
- * makes the folder when the mode cannot be set because it is not there yet.
+ * makes the folder when the mode cannot be set because it is not there yet
+ * (src/vs/platform/terminal/node/terminalEnvironment.ts L219-L250 at 6b68d3fe).
  */
-const zshFolder = (): { folder: string } | ShellIntegrationInjectionFailure => {
+const zshFolder = (taken: ZshFolder): { folder: string } | ShellIntegrationInjectionFailure => {
   let username: string;
   try {
     username = userInfo().username;
@@ -186,7 +194,8 @@ const zshFolder = (): { folder: string } | ShellIntegrationInjectionFailure => {
    * another user can make it first. A symlink there would send the chmod and
    * the copies of four zsh startup files wherever it points, the person's own
    * home included; a folder someone else owns would hold files they wrote.
-   * Either way the shell starts with no integration.
+   * Under `owned` either way the shell starts with no integration; under
+   * `asFound` the chmod is tried on whatever is there, as the reference does.
    */
   let found: Stats | undefined;
   try {
@@ -197,7 +206,7 @@ const zshFolder = (): { folder: string } | ShellIntegrationInjectionFailure => {
   }
   if (found !== undefined) {
     const uid = typeof process.getuid === 'function' ? process.getuid() : undefined;
-    if (found.isSymbolicLink() || !found.isDirectory() || (uid !== undefined && found.uid !== uid)) {
+    if (taken === 'owned' && (found.isSymbolicLink() || !found.isDirectory() || (uid !== undefined && found.uid !== uid))) {
       return { type: 'failure', reason: 'FailedToCreateTmpDir' };
     }
     try {
@@ -231,6 +240,7 @@ const zshFolder = (): { folder: string } | ShellIntegrationInjectionFailure => {
  * `ZDOTDIR` is read from; the folder zsh is pointed at sends it back there.
  * The nonce goes to the script, which writes it after each command line it
  * reports, so a command line some program prints cannot pass for the shell's.
+ * `taken` is the daemon's `zshFolder` setting.
  */
 export const getShellIntegrationInjection = (
   executable: string,
@@ -238,6 +248,7 @@ export const getShellIntegrationInjection = (
   nonce: string,
   env: Record<string, string | undefined> | undefined,
   machine: ShellIntegrationMachine = THIS_MACHINE,
+  taken: ZshFolder = 'owned',
 ): ShellIntegrationConfigInjection | ShellIntegrationInjectionFailure => {
   const isWindows = machine.platform === 'win32';
   // Shell integration requires Windows 10 build 18309+ (ConPTY support)
@@ -339,7 +350,7 @@ export const getShellIntegrationInjection = (
       }
 
       // Move .zshrc into $ZDOTDIR as the way to activate the script
-      const made = zshFolder();
+      const made = zshFolder(taken);
       if ('type' in made) return made;
       envMixin.ZDOTDIR = made.folder;
       envMixin.USER_ZDOTDIR = env?.ZDOTDIR ?? homedir();
@@ -377,11 +388,13 @@ export const getShellIntegrationInjection = (
  * The injection is asked as VS Code's agent host asks it, with no environment,
  * so the zsh files a person's own `.zshrc` stands beside are the home folder's.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L364-L376
+ *
+ * `taken` is the daemon's `zshFolder` setting.
  */
-export const shellIntegration: ShellIntegration = (shell, args, env, nonce, machine) => {
+export const shellIntegrationOf = (taken: ZshFolder): ShellIntegration => (shell, args, env, nonce, machine) => {
   void machine;
   void env;
-  const asked = getShellIntegrationInjection(shell, [...args], nonce, undefined);
+  const asked = getShellIntegrationInjection(shell, [...args], nonce, undefined, THIS_MACHINE, taken);
   if (asked.type !== 'injection') return undefined;
   for (const file of asked.filesToCopy ?? []) {
     try {

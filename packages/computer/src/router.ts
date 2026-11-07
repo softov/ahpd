@@ -185,9 +185,11 @@ export const routed = (
      * answer is not an empty host: Docker's `list` throws by design when Docker
      * is not running, and a host that also serves a box over ssh would
      * otherwise list nothing at all. The rows of every runtime that answered
-     * are kept, and each that did not is one line naming it, its machines the
-     * rows it last answered, as VS Code keeps the list it had when a refresh
-     * fails rather than saying its entries removed.
+     * are kept, and each that did not is one line in VS Code's words for a
+     * listing that failed, naming it and why, its machines the rows it last
+     * answered, as VS Code keeps the list it had when a refresh fails rather
+     * than saying its entries removed.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L970-L972
      */
     list: async () => {
       const answers = await Promise.all(Object.entries(runtimes).map(async ([value, runtime]) => {
@@ -200,7 +202,7 @@ export const routed = (
         }
         catch (error) {
           const kept = lastRows.get(value) ?? [];
-          options.log?.(`the ${value} runtime did not list its machines, so the ${String(kept.length)} it last listed are kept: ${reasonOf(error)}`);
+          options.log?.(`Could not list the ${value} machines, so the ${String(kept.length)} it last listed are kept: ${reasonOf(error)}`);
           options.listed?.(value, undefined);
           return kept;
         }
@@ -279,9 +281,10 @@ export const routed = (
     // made on that runtime.
     capabilities: () => maker().capabilities(),
 
-    // Images are this host's own either way: a part is built here and mounted
-    // into a machine, so both verbs are the default runtime's.
+    // Images are this host's own either way: a part is pulled or built here and
+    // mounted into a machine, so the image verbs are the default runtime's.
     hasImage: (tag) => maker().hasImage(tag),
     buildImage: (tag, context) => maker().buildImage(tag, context),
+    pullImage: (from, tag) => maker().pullImage(from, tag),
   };
 };

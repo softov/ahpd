@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { HostTool } from '@ahpd/sdk';
+import type { Grant, HostTool, Owner, ToolCall } from '@ahpd/sdk';
 import { allowedImages, isFlag } from './manifest.js';
 import { allowedBy } from './reference.js';
 import type { ComputerRuntime } from './runtime.js';
@@ -44,11 +44,33 @@ const object = (value: unknown): Record<string, unknown> =>
 const said = (value: unknown): string | undefined =>
   (typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined);
 
+/**
+ * What every machine tool asks of the turn's person, as a write to
+ * `computer://` does: making, using and removing a machine are each a change
+ * to one.
+ */
+const WRITE: Grant = 'computer:write';
+
 export function computerTools(runtime: ComputerRuntime, options: ToolOptions): HostTool[] {
-  /** The machine a call names, or a sentence saying there is none. */
-  const find = async (id: string): Promise<{ said: string } | { machine: string }> => {
+  /**
+   * Whether the turn's person may use one machine: their own, the host's, or
+   * a team's, as a machine is owned by whoever made it and the host's serve
+   * everyone it serves. The host, and a turn nobody is behind, use any. A
+   * machine charged to a team is every person's here, since a call carries
+   * nothing of its person's teams.
+   */
+  const usable = async (id: string, at: ToolCall): Promise<boolean> => {
+    const person = at.person();
+    if (person === undefined || person === 'host' || person.startsWith('root:')) return true;
+    const held = await runtime.owner(id);
+    if (held === undefined) return false;
+    return held.owner === undefined || held.owner === person || held.owner.startsWith('root:') || held.team !== undefined;
+  };
+
+  /** The machine a call names among those its person may use, or a sentence saying there is none. */
+  const find = async (id: string, at: ToolCall): Promise<{ said: string } | { machine: string }> => {
     const found = (await runtime.list()).find((one) => one.id === id);
-    return found === undefined ? { said: `There is no computer called ${id}.` } : { machine: found.id };
+    return found === undefined || !await usable(found.id, at) ? { said: `There is no computer called ${id}.` } : { machine: found.id };
   };
 
   return [
@@ -73,7 +95,8 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
       effects: { writes: true, network: true },
       advancedPermission: true,
       instruction: 'Ask for one when a task needs a machine of its own - something to install into, break, or run work in that should not touch this host. Release it when the work is done.',
-      run: async (input) => queue(runtime, async () => {
+      run: async (input, at) => queue(runtime, async () => {
+        if (!at.may(WRITE)) return at.refusal(WRITE);
         const asked = object(input);
         const name = said(asked.name) ?? `${options.prefix}-${randomUUID().slice(0, 8)}`;
         // One listing for both questions, in the same queued operation as the
@@ -99,12 +122,17 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
         if (allowed !== undefined && !allowedBy(allowed.scopes, image)) {
           return `This host does not run ${image}. It runs ${allowed.names.join(', ')}.`;
         }
+        // Owned by the turn's person, as a machine is by whoever made it; the
+        // host's own turn makes one of the host's.
+        const person = at.person();
+        const owner = person === undefined || person === 'host' ? undefined : person as Owner;
         const made = await runtime.run({
           name,
           image,
           label: options.label,
           ...(cpus === undefined ? {} : { cpus }),
           ...(memory === undefined ? {} : { memory }),
+          ...(owner === undefined ? {} : { owner }),
         });
         return `computer://${made.id} is running on ${made.image}. Read computer://${made.id}/status for what it is, or run something in it with run_in_computer.`;
       }),
@@ -123,10 +151,11 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
       },
       effects: { destructive: true },
       advancedPermission: true,
-      run: async (input) => {
+      run: async (input, at) => {
+        if (!at.may(WRITE)) return at.refusal(WRITE);
         const id = said(object(input).id);
         if (id === undefined) return 'Which computer? Give the name from its computer:// URI.';
-        const held = await find(id);
+        const held = await find(id, at);
         if ('said' in held) return held.said;
         /*
          * A machine whose work cannot be brought out is kept rather than
@@ -160,16 +189,17 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
       effects: { writes: true, network: true, destructive: true },
       advancedPermission: true,
       run: async (input, at) => {
+        if (!at.may(WRITE)) return at.refusal(WRITE);
         const asked = object(input);
         const id = said(asked.id);
         const command = said(asked.command);
         if (id === undefined) return 'Which computer? Give the name from its computer:// URI.';
         if (command === undefined) return 'What command? Give a command line to run inside it.';
-        const held = await find(id);
+        const held = await find(id, at);
         if ('said' in held) return held.said;
         // The calling session's agent, so the command gets only that agent's
         // vault-read variables.
-        const ran = await runtime.exec(held.machine, ['sh', '-lc', command], undefined, at?.provider);
+        const ran = await runtime.exec(held.machine, ['sh', '-lc', command], undefined, at.provider);
         // A command that failed is the tool working: the exit code is the
         // answer, and it is said rather than thrown.
         return ran.output === '' ? `exit ${ran.code}` : `${ran.output}\n\nexit ${ran.code}`;

@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
+import { registryOf } from '../src/parts.js';
 import { dockerAddressOf } from '../src/plugin.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions, HostTool } from '../../sdk/src/types/host.js';
@@ -177,16 +179,17 @@ it('makes a profile\'s machine on its box\'s Docker, lists it by that runner and
   expect(usage.entries[0]).toMatchObject({ computer: 'docker-far.box', owner: 'user:ana' });
 });
 
-it('builds a far profile\'s parts on its box\'s Docker, which mounts them, and none on this host\'s', async () => {
+it('pulls a far profile\'s parts on its box\'s Docker, which mounts them, and none on this host\'s', async () => {
   const at = files();
   const { problems, provider } = await load(at, { far: { server: 'dev02', parts: ['node'] } });
   expect(problems).toEqual([]);
 
   await provider.write('computer://box', said(JSON.stringify({ image: 'node:22', profile: 'far' })), 'user:ana');
-  const far = held(farFile(at.local)) as Held & { builds?: { tag: string }[] };
-  expect(far.builds?.map((one) => one.tag.split(':')[0])).toEqual(['ahpd-part/node']);
+  const far = held(farFile(at.local)) as Held & { pulls?: string[] };
+  expect((far.pulls ?? []).filter((one) => one.includes('/ahpd-part/')).map((one) => one.split(':')[0]))
+    .toEqual([`${registryOf()}/ahpd-part/node`]);
   expect(far.machines.map((one) => one.name)).toEqual(['box']);
-  expect((held(at.local) as Held & { builds?: unknown[] }).builds ?? []).toEqual([]);
+  expect(((held(at.local) as Held & { pulls?: string[] }).pulls ?? []).filter((one) => one.includes('/ahpd-part/'))).toEqual([]);
 });
 
 it('refuses to make a machine on a box with no Docker, with the fix lines', async () => {
@@ -233,7 +236,7 @@ it('lists the local machines when a box\'s Docker refuses, naming it', async () 
   writeFileSync(farFile(at.local), JSON.stringify({ machines: [], calls: [], failPs: true }));
   const { listed, lines } = await load(at, { far: { server: 'dev02' } });
   expect(await listed()).toEqual(['here']);
-  expect(lines.some((line) => line.includes('the docker-far runtime did not list its machines'))).toBe(true);
+  expect(lines.some((line) => line.includes('Could not list the docker-far machines'))).toBe(true);
 });
 
 it('adopts a box\'s disposable machines at the next listing that reaches it, when the startup listing did not', async () => {
@@ -370,7 +373,7 @@ it('runs a session in a machine on a box\'s Docker nested, reached through that 
 
   // And a command a tool runs there is given the value too.
   const tool = (options.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  await tool.run({ id: 'docker-far.box', command: 'env' }, { provider: 'vaulted' } as never);
+  await tool.run({ id: 'docker-far.box', command: 'env' }, hostCall({ provider: 'vaulted' }));
   const far = held(farFile(at.local)) as Held & { commands?: { env: Record<string, string>; dockerEnv: string[] }[] };
   expect(far.commands?.at(-1)?.env[BOX_TOKEN]).toBe(SECRET);
   expect(far.commands?.at(-1)?.dockerEnv).toContain('DOCKER_HOST');

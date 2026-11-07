@@ -1,0 +1,7 @@
+{
+  "name": "ahpd-part-amp",
+  "private": true,
+  "dependencies": {
+    "@ampcode/cli": "0.0.1791273659-g33d612"
+  }
+}

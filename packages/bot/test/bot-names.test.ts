@@ -11,7 +11,8 @@ import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { sdkVersion } from '../../sdk/src/version.js';
 import { holds } from '../../sdk/src/access/users.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { backSessions, chatsOf, named, rowId, sessionsOf, userOf, whose } from '../src/names.js';
+import { CHAT_PROVIDER } from '../src/chat.js';
+import { backSessions, rowId, sessionsOf, userOf } from '../src/names.js';
 import { apply } from '../src/plugin.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
@@ -20,14 +21,14 @@ import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Grant, Principal, Users } from '../../sdk/src/types/users.js';
 
 /*
- * The names a bot's chats are addressed by.
+ * The names a bot and its back sessions are kept by.
  *
- * `bot://<slug>` is the bot, `bot://<slug>/<user>` is one person's main chat
- * with it, and `bot://<slug>/<user>/<name>` is a back session of that chat. What
- * is checked here is the whole of that: the parse of a path, the read that
- * answers one, the listing of the names, and who is refused - because a chat is
- * one person's conversation with a bot, and the bot's record being readable by
- * somebody is not permission to read their conversations.
+ * `bot://<slug>` is the bot, whose read is its record and starts nothing, as
+ * VS Code's reads answer content. A chat with it is a session a client makes
+ * with `createSession`, addressed by the URI the client names, and the back
+ * sessions behind it are kept by their names in the bot's own rows. What is
+ * checked here is that: the read, the nothing under a bot, the chat a create
+ * makes, and the rows.
  */
 
 /** A temporary directory removed after the test that made it. */
@@ -75,14 +76,8 @@ const peer = (): Peer => ({
   send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
 });
 
-/**
- * A host with the bot plugin on it.
- *
- * `people` is false for the host with no users directory, where no connection
- * is anybody: the one host whose reader is this host itself, and so the only
- * one where a path names a machine rather than a person.
- */
-function made(tokens: Record<string, Grant[]> = {}, people = true) {
+/** A host with the bot plugin on it, and a users directory. */
+function made(tokens: Record<string, Grant[]> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'ahpd-bot-names-'));
   loose.push(root);
   const bots = join(root, 'bots');
@@ -113,7 +108,7 @@ function made(tokens: Record<string, Grant[]> = {}, people = true) {
     resources: fileResources(),
     sessions,
     records,
-    ...(people ? { users: directory(tokens) } : {}),
+    users: directory(tokens),
   };
   const { options } = foldHostOptions(base, [contribution]);
   return { host: createHost(options), root, bots, records };
@@ -149,37 +144,12 @@ const record = async (client: Client, uri: string): Promise<Bag> => {
   return JSON.parse(String(answer['data'])) as Bag;
 };
 
-/** The names a client is shown for `bot://<slug>/<user>/`. */
-const listing = async (client: Client, uri: string): Promise<string[]> => {
-  const answer = got(await call(client, 'resourceList', { uri }));
-  return ((answer['entries'] ?? []) as Bag[]).map((one) => String(one['name']));
-};
+/** The grants a case needs: read a bot, and make and read the session that is a chat with it. */
+const CHATTER: Grant[] = ['bot:get', 'session:create', 'session:read', 'session:write'];
 
-/** What that URI resolves to, or the refusal it is owed. */
-const resolving = async (client: Client, uri: string) => call(client, 'resourceResolve', { uri });
-
-/** The grants a case needs: read a bot, chat with it, and open the session that is its chat. */
-const CHATTER: Grant[] = ['bot:get', 'bot:chat', 'session:create', 'session:read'];
-
-it('names the host itself where a reader is nobody', () => {
+it('names a person by the id after the kind', () => {
   expect(userOf('user:ana')).toBe('ana');
   expect(userOf('root:test')).toBe('test');
-  // And back again: the host's own name is the one path that is not a person.
-  expect(whose('ana', 'test')).toBe('user:ana');
-  expect(whose('test', 'test')).toBe('root:test');
-});
-
-it('reads a path under a bot as a chat, a name, or the names', () => {
-  // A bot's own address has no path: that is the record, and the read road
-  // answers it without asking this.
-  expect(named('')).toBeUndefined();
-  expect(named('ana')).toEqual({ at: 'chat', user: 'ana' });
-  expect(named('ana/')).toEqual({ at: 'sessions', user: 'ana' });
-  expect(named('ana/work')).toEqual({ at: 'back', user: 'ana', name: 'work' });
-  // Nothing deeper is a place under a bot, and an empty segment is not a name.
-  expect(named('ana/work/one')).toBeUndefined();
-  expect(named('/ana')).toBeUndefined();
-  expect(named('ana/work/')).toBeUndefined();
 });
 
 it('makes a row id of the words that name a back session', () => {
@@ -191,107 +161,12 @@ it('makes a row id of the words that name a back session', () => {
   expect(rowId(['motion', 'ana', 'work']).length).toBeLessThanOrEqual(40);
 });
 
-it('answers a read of a main chat with the session a read of the bot gives', async () => {
-  const { host, records } = made({ soft: ['bot:*', ...CHATTER], ana: CHATTER });
-  const soft = await as(host, 'soft');
-  got(await call(soft, 'resourceWrite', {
-    uri: 'bot://motion', data: JSON.stringify({ name: 'Motion' }), createOnly: true,
-  }));
-
-  const ana = await as(host, 'ana');
-  const hers = String((await record(ana, 'bot://motion'))['chat']);
-  // The same conversation, named: what a read of the bot hands her is what the
-  // path under it answers.
-  expect(String((await record(ana, 'bot://motion/ana'))['chat'])).toBe(hers);
-
-  // And it is a session this host holds, of the plugin's own provider, in the
-  // chat rows of the bot's own folder.
-  const rows = await (await records.collection(chatsOf('motion'))).find({ owner: 'user:ana' });
-  expect(rows.map((row) => row['chat'])).toEqual([hers]);
-});
-
-it('refuses a main chat to anybody but that person, the bot\'s owner and this host', async () => {
-  const { host } = made({
-    soft: ['bot:*', ...CHATTER],
-    ana: CHATTER,
-    rob: ['bot:get', 'bot:chat', 'session:create'],
-  });
-  const soft = await as(host, 'soft');
-  got(await call(soft, 'resourceWrite', {
-    uri: 'bot://motion', data: JSON.stringify({ name: 'Motion' }), createOnly: true,
-  }));
-
-  // She signs in before anything is said to her: a session the host opens for
-  // somebody is charged to them, and an account this host has never met is
-  // refused. What is read here is her chat, which belongs to her.
-  await as(host, 'ana');
-
-  // The bot's owner: what is said to a bot is said to a bot of hers.
-  expect(await record(soft, 'bot://motion/ana')).toHaveProperty('chat');
-
-  // The host itself, which needs no grant and is nobody.
-  const root = host.accept(peer(), undefined, true);
-  await root.handle({ method: 'initialize', params: { clientId: 'root', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
-  expect(await record(root, 'bot://motion/ana')).toHaveProperty('chat');
-
-  // And rob may read the bot, which is not permission to read her conversation
-  // with it - nor to see that she has one.
-  expect(await call(await as(host, 'rob'), 'resourceRead', { uri: 'bot://motion/ana' }))
-    .toMatchObject({ code: -32009 });
-});
-
-it('refuses a main chat to its person without the grant to chat', async () => {
-  const { host } = made({ soft: ['bot:*', ...CHATTER], ana: ['bot:get', 'session:create', 'session:read'] });
-  const soft = await as(host, 'soft');
-  got(await call(soft, 'resourceWrite', {
-    uri: 'bot://motion', data: JSON.stringify({ name: 'Motion' }), createOnly: true,
-  }));
-  // A read of the bot gives her no chat, so the path under it gives her none either.
-  const ana = await as(host, 'ana');
-  expect(await record(ana, 'bot://motion')).not.toHaveProperty('chat');
-  expect(await call(ana, 'resourceRead', { uri: 'bot://motion/ana' })).toMatchObject({ code: -32009 });
-});
-
-it('answers a back session by its name, and lists the names', async () => {
-  const { host, records } = made({ soft: ['bot:*', ...CHATTER], ana: CHATTER });
-  const soft = await as(host, 'soft');
-  got(await call(soft, 'resourceWrite', {
-    uri: 'bot://motion', data: JSON.stringify({ name: 'Motion' }), createOnly: true,
-  }));
-
-  // A name is what task 03 writes down when a message wakes a session, and
-  // nothing else has put one there yet. One collection per bot: the rows of
-  // `other` are in the folder of `other`, which is nobody's here to be shown.
-  const own = await records.collection(sessionsOf('motion'));
-  const elsewhere = await records.collection(sessionsOf('other'));
-  const backs = backSessions((bot) => (bot === 'other' ? elsewhere : own));
-  await backs.put('motion', 'ana', 'work', 'ahp-session:/woken');
-  await backs.put('motion', 'ana', 'reviews', 'ahp-session:/second');
-  // Another person's, and another bot's, which are neither hers to be shown.
-  await backs.put('motion', 'rob', 'theirs', 'ahp-session:/theirs');
-  await backs.put('other', 'ana', 'elsewhere', 'ahp-session:/elsewhere');
-
-  const ana = await as(host, 'ana');
-  expect(JSON.parse(String(got(await call(ana, 'resourceRead', { uri: 'bot://motion/ana/work' }))['data'])))
-    .toEqual({ session: 'ahp-session:/woken' });
-  expect(await listing(ana, 'bot://motion/ana/')).toEqual(['reviews', 'work']);
-  // The row a session is on, which is the other direction of `get` and what a
-  // turn begun in a back session is answered from: the bot and the person.
-  expect(await backs.of('motion', 'ahp-session:/woken'))
-    .toMatchObject({ bot: 'motion', user: 'ana', name: 'work' });
-  // Another bot's session is not this bot's, though its row exists elsewhere.
-  expect(await backs.of('motion', 'ahp-session:/elsewhere')).toBeUndefined();
-
-  // A name no row has is a back session that is not there.
-  expect(await call(ana, 'resourceRead', { uri: 'bot://motion/ana/nope' })).toMatchObject({ code: -32008 });
-  // And the names of another person's chats with the same bot are not hers to
-  // be shown, though she may read the bot they are chats with.
-  expect(await call(ana, 'resourceList', { uri: 'bot://motion/rob/' })).toMatchObject({ code: -32009 });
-  // And a path that is not one: a bot has nothing under a back session.
-  expect(await call(ana, 'resourceRead', { uri: 'bot://motion/ana/work/turn' })).toMatchObject({ code: -32008 });
-});
-
-it('keeps a bot\'s own read, and its record, where it was', async () => {
+/*
+ * A read of a bot is its record and starts nothing, as VS Code's reads answer
+ * content (types/common/commands.ts L610-L611 at spec v1.0.0): no chat is named
+ * on it and no session is made for the reader.
+ */
+it('reads a bot as its record alone, and starts nothing', async () => {
   const { host } = made({ soft: ['bot:*', ...CHATTER] });
   const soft = await as(host, 'soft');
   got(await call(soft, 'resourceWrite', {
@@ -300,30 +175,59 @@ it('keeps a bot\'s own read, and its record, where it was', async () => {
 
   const bot = await record(soft, 'bot://motion');
   expect(bot).toMatchObject({ id: 'motion', name: 'Motion' });
-  expect(String(bot['chat'])).toMatch(/^ahp-session:\//);
-
-  // What is at each of the three places under it, which is what a client
-  // checks before opening one.
-  expect(await resolving(soft, 'bot://motion')).toMatchObject({ result: { type: 'file' } });
-  expect(await resolving(soft, 'bot://motion/soft')).toMatchObject({ result: { type: 'file' } });
-  expect(await resolving(soft, 'bot://motion/soft/')).toMatchObject({ result: { type: 'directory' } });
-  expect(await resolving(soft, 'bot://motion/soft/nope')).toMatchObject({ code: -32008 });
+  expect(bot).not.toHaveProperty('chat');
+  const listed = got(await call(soft, 'listSessions', {}));
+  expect(listed['items'] ?? []).toEqual([]);
 });
 
-it('names the host\'s own main chat where no connection is anybody', async () => {
-  // A host with no users directory: every reader is this host, so the `<user>`
-  // of a path is the machine's own name and the main chat is the one a read of
-  // the bot answers.
-  const { host } = made({}, false);
-  const client = host.accept(peer());
-  await client.handle({
-    method: 'initialize',
-    params: { clientId: 'anyone', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
-  });
-  got(await call(client, 'resourceWrite', {
+/*
+ * A bot's address is its authority, so nothing is under one and a path-form
+ * URI names nothing, as a URL reads the two apart.
+ */
+it('answers nothing under a bot, and nothing at a path-form address', async () => {
+  const { host } = made({ soft: ['bot:*', ...CHATTER] });
+  const soft = await as(host, 'soft');
+  got(await call(soft, 'resourceWrite', {
     uri: 'bot://motion', data: JSON.stringify({ name: 'Motion' }), createOnly: true,
   }));
 
-  const chat = String((await record(client, 'bot://motion'))['chat']);
-  expect(String((await record(client, 'bot://motion/test'))['chat'])).toBe(chat);
+  expect(await call(soft, 'resourceResolve', { uri: 'bot://motion' })).toMatchObject({ result: { type: 'file' } });
+  for (const uri of ['bot://motion/soft', 'bot://motion/soft/work', 'bot:/motion']) {
+    expect(await call(soft, 'resourceRead', { uri })).toMatchObject({ code: -32008 });
+    expect(await call(soft, 'resourceResolve', { uri })).toMatchObject({ code: -32008 });
+  }
+  expect(await call(soft, 'resourceList', { uri: 'bot://motion/soft/' })).toMatchObject({ code: -32008 });
+});
+
+/*
+ * A chat with a bot is made the way a session of any agent is: a create on the
+ * bot's chat provider, naming the bot in its config, under the URI the client
+ * names (types/channels-session/commands.ts L50-L52 at spec v1.0.0).
+ */
+it('opens a chat with a bot by a create that names the bot', async () => {
+  const { host } = made({ soft: ['bot:*', ...CHATTER] });
+  const soft = await as(host, 'soft');
+  got(await call(soft, 'resourceWrite', {
+    uri: 'bot://motion', data: JSON.stringify({ name: 'Motion' }), createOnly: true,
+  }));
+
+  got(await call(soft, 'createSession', { channel: 'ahp-session:/talk', provider: CHAT_PROVIDER, config: { bot: 'motion' } }));
+  const opened = got(await call(soft, 'subscribe', { channel: 'ahp-session:/talk' }));
+  const state = (opened['snapshot'] as Bag)['state'] as Bag;
+  expect(state['_meta']).toMatchObject({ 'ahpd.bot': { id: 'motion', name: 'Motion' } });
+});
+
+it('keeps a back session by its name, one collection per bot', async () => {
+  const records = memoryRecords();
+  const own = await records.collection(sessionsOf('motion'));
+  const elsewhere = await records.collection(sessionsOf('other'));
+  const backs = backSessions((bot) => (bot === 'other' ? elsewhere : own));
+  await backs.put('motion', 'ana', 'work', 'ahp-session:/woken');
+  await backs.put('motion', 'ana', 'reviews', 'ahp-session:/second');
+  await backs.put('other', 'ana', 'elsewhere', 'ahp-session:/elsewhere');
+
+  expect(await backs.get('motion', 'ana', 'work')).toBe('ahp-session:/woken');
+  expect(await backs.get('motion', 'ana', 'nope')).toBeUndefined();
+  expect((await backs.sessions('motion')).sort()).toEqual(['ahp-session:/second', 'ahp-session:/woken']);
+  expect(await backs.sessions('other')).toEqual(['ahp-session:/elsewhere']);
 });

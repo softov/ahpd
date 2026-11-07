@@ -29,6 +29,7 @@ import type { Running } from './daemon.js';
 import { configuredAgents, findAgents, findRuntimes, nodeRuns } from './found.js';
 import { run as runProgram } from './install.js';
 import type { Runner } from './install.js';
+import type { OnPathLookup } from './onpath.js';
 import { describePlugin } from './plugins.js';
 import type { PluginRow } from './plugins.js';
 import { fileRecords } from './records.js';
@@ -157,7 +158,15 @@ const configOf = (facts: DoctorFacts): LoadedConfig => (facts.config ?? loadConf
 export const runtimeCheck = async (facts: DoctorFacts): Promise<Check> => {
   const platform = facts.platform ?? process.platform;
   const version = facts.version ?? process.version;
-  const runtimes = await findRuntimes({ run: facts.run, path: facts.path, platform });
+  let lookup: OnPathLookup | undefined;
+  try {
+    lookup = configOf(facts).values.onPath;
+  }
+  catch {
+    // A configuration that does not load is the Configuration check's line,
+    // and the runtimes are looked up the default way meanwhile.
+  }
+  const runtimes = await findRuntimes({ run: facts.run, path: facts.path, platform, ...(lookup === undefined ? {} : { onPath: lookup }) });
   if (!nodeRuns(version)) {
     return {
       name: 'Runtime',
@@ -317,8 +326,11 @@ const agentRecords = async (): Promise<StoredRecord[]> => {
 export const agentCheck = async (facts: DoctorFacts): Promise<Check> => {
   const platform = facts.platform ?? process.platform;
   let configured: Map<string, Record<string, unknown>>;
+  let lookup: OnPathLookup | undefined;
   try {
-    configured = configuredAgents(configOf(facts).values.plugins, await agentRecords());
+    const values = configOf(facts).values;
+    configured = configuredAgents(values.plugins, await agentRecords());
+    lookup = values.onPath;
   }
   catch (error) {
     return {
@@ -330,7 +342,7 @@ export const agentCheck = async (facts: DoctorFacts): Promise<Check> => {
   }
   // No version is asked: the line names none, and one probe per agent on PATH
   // takes longer than the check's limit.
-  const found = await findAgents({ run: facts.run, path: facts.path, platform, versions: false }, configured);
+  const found = await findAgents({ run: facts.run, path: facts.path, platform, versions: false, ...(lookup === undefined ? {} : { onPath: lookup }) }, configured);
   const missing = found.missing.filter((agent) => configured.has(agent.id));
   if (missing.length > 0) {
     return {

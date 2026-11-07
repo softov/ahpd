@@ -493,6 +493,5 @@ export async function movePlugins(options: PluginOptions): Promise<Moved[]> {
     run: options.run,
     fetch: options.fetch,
     say: options.say,
-    ...(options.force === true ? { force: true } : {}),
   });
 }

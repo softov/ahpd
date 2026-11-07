@@ -116,7 +116,7 @@ In VS Code, sign in to the same Dev Tunnels account and run **Agents: Connect to
 
 A client connecting over a tunnel computes its token from the tunnel's id, as the unpadded base64url of its SHA-256, and presents it as `?tkn=`. Only people who pass the Dev Tunnels access check can reach the tunnel, so the token does not need to be secret.
 
-A daemon on loopback with no connection token of its own accepts it, and that needs no configuration. A daemon started with `--connection-token` refuses it, because the client presents the derived token and not the daemon's. The plugin prints the derived token on its own line so you can make the two agree:
+A daemon on loopback with no connection token of its own accepts it, and that needs no configuration. A daemon started with `--connection-token` is reached through the hop from the tunnel's port to its own, which sets the daemon's token as the `tkn` of every request it carries, a WebSocket upgrade among them, as VS Code's CLI injects its agent host's token into each request arriving over a tunnel; the `listening` event carries the token to the plugin. A guarded daemon bound to the tunnel's own port has no hop, and the plugin prints the derived token on its own line so you can make the two agree:
 
 ```
 tunnel token 4d8f...  - what a client presents over the tunnel; this daemon requires its own

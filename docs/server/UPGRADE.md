@@ -18,7 +18,7 @@ What a release changes, and what to do before you take it, is in its *Upgrading*
 
 1. npm installs `@ahpd/server@<version>` where this ahpd already is. A global install is `-g --prefix <prefix>`, and a project folder is `--prefix <folder>`.
 2. Each plugin in the plugin root moves to the newest version whose `@ahpd/sdk` range admits the new daemon.
-3. The new binary is asked whether it takes the recorded flags, then the daemon restarts as `ahpd restart` does.
+3. The new binary is asked whether it takes the recorded flags, then the daemon restarts as `ahpd restart` does: 3 seconds after the answer, or, when a turn began while npm ran, once the turns end, which the answer says.
 
 ## Refusals
 
@@ -26,7 +26,7 @@ Each of these is refused before anything is installed:
 
 - a checkout or a linked package, because npm did not put that folder there
 - a daemon in the foreground, which cannot start itself again
-- a running turn, unless `--force`
+- a running turn, unless `--force`: npm replaces the files of the daemon that runs it
 - a plugin with no version that admits the new sdk, unless `--force`
 - a version that is not newer than the running one, since that is not an update
 
@@ -48,7 +48,7 @@ curl http://127.0.0.1:9187/api/update \
 
 ## Windows
 
-Windows locks the native module the daemon runs, so npm cannot replace it while the daemon is up. `ahpd update` answers, stops the daemon, and a helper outside the install does the rest. The helper waits for the daemon to go, runs npm, moves the plugins and starts the daemon with the recorded flags. Each step goes to `daemon.log`. A failed npm starts the old version again.
+Windows locks the native module the daemon runs, so npm cannot replace it while the daemon is up. `ahpd update` answers, stops the daemon 3 seconds later, and a helper outside the install does the rest. The helper waits for the daemon to go, runs npm, moves the plugins and starts the daemon with the recorded flags. Each step goes to `daemon.log`. A failed npm starts the old version again.
 
 ## By hand
 

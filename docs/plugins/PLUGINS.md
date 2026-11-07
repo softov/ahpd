@@ -322,7 +322,7 @@ A need is delivered six ways, and the field that names the way is the one that c
 | `{ file, target, readOnly? }` | a host file | a bind mount at `target` |
 | `{ name, default? }` | an environment variable | `-e <name>=<value>` |
 | `{ source, target }` | a host path | a `docker cp` after the create |
-| `{ part, fallback? }` | one agent CLI, or ahpd itself, built by the host at the version its versions file pins | the part's own image, read-only at `/opt/ahpd/<part>` with the parts it requires beside it |
+| `{ part, fallback? }` | one agent CLI, or ahpd itself, built at release and pulled by the host at the version its versions file pins | the part's own image, read-only at `/opt/ahpd/<part>` with the parts it requires beside it |
 | `{ state, seed? }` | a directory the agent keeps its own configuration in | a named volume, seeded from the host files the need lists and never from a login file |
 
 Every one of them takes `default`, `required` and `description`.
@@ -1369,7 +1369,7 @@ does not stop the next handler or the action it observed.
 | `resource_write` | `uri` |
 | `users_changed` | nothing |
 | `terminal_open` | `terminal`, `cwd` |
-| `listening` | `runtime`, `host`, `port`, `guarded` |
+| `listening` | `runtime`, `host`, `port`, `guarded`, and `connectionToken` where one is required, the daemon's endpoint record for the plugins in its own process, as VS Code's local endpoint record carries it |
 | `stopping` | nothing |
 | `log` | `line`, the same string `onEvent` receives |
 
@@ -1488,7 +1488,7 @@ holds both names.
 
 | Key | |
 | --- | --- |
-| `ahpd.entry` | What to import, when `exports` is not enough to say. It wins over `exports`, `main` and `index.js` for resolution, and a mismatch with what the package resolves to is reported |
+| `ahpd.entry` | What to import, when `exports` is not enough to say. It wins over `exports`, `main` and `index.js` for resolution, and a mismatch with what the package resolves to is reported. An entry outside the package is refused, so a manifest cannot point its own package at somebody else's code; the daemon's `pluginEntryOutside` set to `warn` loads it with a warning on its row, as VS Code loads an extension whose `main` is outside its folder |
 | `ahpd.title` | What `ahpd plugin list` prints, unless the module exports its own `title` |
 | `id` | A standalone plugin's id, which a package takes from its package name |
 | `name` | A standalone plugin's display name, where a package writes `ahpd.title` |
@@ -1506,11 +1506,11 @@ A field is written at the top level of a standalone manifest and under `ahpd`
 in a package.json, so `{ "description": "..." }` in a `plugin.json` and
 `"ahpd": { "description": "..." }` in a package.json say the same thing.
 
-Compatibility supports `*`, an exact version, `^`, `~`, `>=`, `<=`, `>`, `<`,
-`=`, and a space-separated conjunction such as `>=0.8 <0.9`. Anything it cannot
-read is refused by name rather than passed, so a misspelled range fails loudly
-instead of loading unchecked. A package with no `peerDependencies` loads, because
-absent is not incompatible.
+The range is npm's, read by [node-semver](https://github.com/npm/node-semver#ranges)
+as npm reads it: `^`, `~`, the comparators, `||` unions, hyphen ranges and
+x-ranges. A range node-semver cannot read is refused by name rather than passed,
+so a misspelled range fails loudly instead of loading unchecked. A package with
+no `peerDependencies` loads, because absent is not incompatible.
 
 The module is still the contract: `entry` says what to import, `apply` says what
 it is. The manifest is kept on the contribution, so the plugin channel lists it
@@ -1533,7 +1533,7 @@ A `src` that is a relative path is a file in the plugin's package. An adapter's 
 
 A `src` that starts with `mark:` names one of the marks the host ships, in `packages/server/icons/`, and any plugin may name any of them. The name is lowercase letters, digits and `-`, and the host resolves `<name>.svg` at load as it would a plugin's own file. Where `<name>-dark.svg` exists, the host sends it as a second icon with `theme: "dark"`. One template or adapter names a mark once, and a client draws the right one. The marks are `anthropic`, `cline`, `copilot`, `cursor`, `gemini`, `github`, `jira`, `linear`, `openai`, `openai-compatible`, `opencode`, `openrouter`, `qwen`, `resend` and `whatsapp`. An unknown mark, or a name with any other character, costs the icon and one line in the daemon's log.
 
-One icon is at most 256 KB of image, as VS Code bounds an icon's image, and a larger file, a larger fetched body or a larger `data:` URI is dropped. A `data:` URI is measured by the image it holds, not by its text. So is a path that resolves outside the package, a file that is not there, and an `https:` URL that cannot be fetched within 5 seconds. A dropped icon costs the icon and one line in the daemon's log, and the plugin still loads. An icon of the wrong shape refuses the manifest instead, because the field is checked before the plugin loads.
+One icon is at most the daemon's `iconLimitBytes` of image, 256 KB unless it says otherwise and no limit at 0, as VS Code bounds an icon's image, and a larger file, a larger fetched body or a larger `data:` URI is dropped. A `data:` URI is measured by the image it holds, not by its text. So is a path that resolves outside the package, a file that is not there, and an `https:` URL that cannot be fetched within the daemon's `iconTimeoutMs`, ten seconds unless it says otherwise, VS Code's for an image request. A dropped icon costs the icon and one line in the daemon's log, and the plugin still loads. An icon of the wrong shape refuses the manifest instead, because the field is checked before the plugin loads.
 
 A client draws an icon as an image, an `<img>` or a native image view, and never inline in the document. The host does not sanitize one: an SVG can carry a script, and drawing it as an image runs none.
 
@@ -1631,7 +1631,8 @@ agents made from the engines they register.
 
 One row per configured plugin, described without running it: `spec`, `name`,
 `state`, and `module`, `url`, `path`, `title` and `problem` where the daemon has
-them. A row carries the manifest the daemon loaded, and `undeclared: true` when
+them, `problem` cleared as an alert's text is. A row carries the manifest the
+daemon loaded, and `undeclared: true` when
 the plugin declares no contracts. Five fields say what the running daemon did
 with it:
 
@@ -1639,7 +1640,7 @@ with it:
 | --- | --- |
 | `version` | The version the plugin's package.json declares, when it has one |
 | `loaded` | Whether this daemon loaded it at its start |
-| `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref? }` alert: `error` for the line that says it did not load and `warning` for the rest. Every text has the userinfo of any URL and each `writeOnly` option value an error quoted answered `<set>`. Empty when the plugin has none |
+| `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref? }` alert: `error` for the line that says it did not load and `warning` for the rest. Every text has each `writeOnly` or `secret` option value an error quoted answered `<set>`, and is cleared as VS Code's agent host clears a text: an absolute URL's query and any URL's userinfo answered `<redacted>`, a signed-URL parameter `<redacted>`, and a connection token `?tkn=***`. Empty when the plugin has none |
 | `views` | The view the plugin draws on its own page, by surface: `{ main: { root, components, dataModel? } }`. A literal Text `text` and Link `label` come in a reader's locale when the plugin's catalog has them; a bound one and the data are served as the plugin wrote them. Absent when the plugin shows no view, after a clear, and on a reload or an unload |
 | `optionsSchema` | The form a client draws and the values `x-ahpd/plugins/options` is checked against, read from the manifest with no import, so a plugin switched off carries it too |
 

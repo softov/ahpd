@@ -67,6 +67,28 @@ it('finds gemini.cmd on Windows through PATHEXT', () => {
   expect(onPath('gemini', second, 'win32', { PATHEXT: '.cmd' })).toBe(wanted);
 });
 
+// The daemon's onPath setting at findExecutable runs VS Code's lookup
+// (src/vs/base/node/processes.ts L86-L140 at 6b68d3fe): any file that is not a
+// folder, and an entry that is not absolute read against the working directory.
+it.skipIf(process.platform === 'win32')('takes any file and reads an empty entry against the working directory under findExecutable', () => {
+  const file = fileIn(second, 'gemini', false);
+  const path = ['', first].join(SEPARATOR);
+  expect(onPath('gemini', path, 'linux', {}, 'runnable', second)).toBeUndefined();
+  expect(onPath('gemini', path, 'linux', {}, 'findExecutable', second)).toBe(file);
+  expect(onPath('gemini', first, 'linux', {}, 'findExecutable', second)).toBe(file);
+  mkdirSync(join(first, 'node'));
+  expect(onPath('node', first, 'linux', {}, 'findExecutable', second)).toBeUndefined();
+});
+
+// VS Code's findExecutable tries each PATHEXT extension in a folder and then
+// the name as written (src/vs/base/node/processes.ts L121-L137 at 6b68d3fe).
+it('finds a command on Windows by its name as written once no PATHEXT extension is there', () => {
+  const bare = fileIn(second, 'gemini');
+  expect(onPath('gemini', second, 'win32', { PATHEXT: '.cmd' })).toBe(bare);
+  const shim = fileIn(second, 'gemini.cmd');
+  expect(onPath('gemini', second, 'win32', { PATHEXT: '.cmd' })).toBe(shim);
+});
+
 // Windows-only: finding `gemini.CMD` for `gemini.cmd` takes a file system
 // that does not tell names apart by case.
 it.runIf(process.platform === 'win32')('names the file as its folder holds it, whatever case PATHEXT gives', () => {

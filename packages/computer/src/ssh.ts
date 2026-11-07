@@ -3,9 +3,11 @@
  *
  * An ssh machine is listed rather than made: its operator writes the box's
  * destination in the plugin's options, and this runtime answers about it from
- * those options and from what one `ssh` command says. Nothing of this host's is on the
- * box, so there is no label here to find one by and no machine to start or to
- * stop, and the verbs that would make one are refused.
+ * those options and from what one `ssh` command says. A box carries no label of
+ * this host's, so there is no label here to find one by and no machine to start
+ * or to stop, and the verbs that would make one are refused. What this host
+ * puts there is the ahpd a session's host runs, in the folder of the user it
+ * reaches the box as.
  *
  * The remote command is one string the box's login shell parses, because `ssh`
  * has no flag for a remote directory and none for a remote variable - `ssh(1)`.
@@ -17,6 +19,8 @@ import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import type { Spawn, SpawnOptions } from '@ahpd/sdk';
+import { HOST_INSTALL_COMMAND, hostInstallOf, isHostInstall } from './hostinstall.js';
+import type { Part, Tarball } from './parts.js';
 import type { ComputerRuntime, ExecResult, Machine, MachineStats, RuntimeCapabilities } from './runtime.js';
 import { checkServer, SERVER_CHECK } from './servercheck.js';
 import type { ServerReport } from './servercheck.js';
@@ -70,7 +74,12 @@ export interface SshMachine {
   identity?: string;
   /** Where a command starts on the box, when the login directory is not it. */
   workdir?: string;
-  /** How a nested host is started there. `['ahpd']` when absent. */
+  /**
+   * The command that starts a nested host there, run as it is written with
+   * nothing installed, as VS Code runs an agent host command it is given.
+   * Absent, it is the ahpd this host installs in the box user's folder.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sshRemoteAgentHostService.ts#L913-L929
+   */
   host?: string[];
   /** The agents this box is prepared for, as a machine carries them in a label. */
   agents?: string[];
@@ -101,6 +110,12 @@ export interface SshOptions {
    * what stops it is the plugin's own close.
    */
   pollSeconds?: number;
+  /** The parts the ahpd installed on a box is made of, `versions.json`'s when absent. */
+  parts?: Part[];
+  /** The ahpd part's lock that install runs `npm ci` from, the one beside `versions.json` when absent. */
+  lock?: Tarball[];
+  /** Where an ahpd installed on a box, or one run in its place, is said. */
+  log?: (line: string) => void;
 }
 
 /**
@@ -294,7 +309,7 @@ export interface SshReach {
    * One command, with its stdout and stderr apart and `input` on its stdin.
    *
    * Given as long as a transfer, since it is what sends a bundle in and runs
-   * the fetch that reads it.
+   * the fetch that reads it, and what installs ahpd on a box.
    */
   ran(command: string[], input?: Uint8Array | Readable): Promise<Ran>;
   /** One command, with its stdout landing in `path` byte for byte. */
@@ -302,8 +317,6 @@ export interface SshReach {
   stats(): Promise<MachineStats | undefined>;
   /** The server check, sent to the destination's `sh`; `id` names it in a refusal. */
   check(id: string): Promise<ServerReport>;
-  /** How a nested host is started there. */
-  hostCommand(): string[];
 }
 
 /**
@@ -408,20 +421,20 @@ export const sshReach = (program: SshProgram, target: SshTarget): SshReach => {
      * What the box can run, from the server check sent to its `sh`.
      *
      * The box's own `sh` rather than its login shell, so the script reads the
-     * same whatever shell the account logs in with. A box that does not
-     * answer, or whose `sh` failed, is a sentence naming it, because a report
-     * of nothing would read as a box that has nothing.
+     * same whatever shell the account logs in with. A box that names the
+     * command its host starts with is sent the command that says so. A box
+     * that does not answer, or whose `sh` failed, is a sentence naming it,
+     * because a report of nothing would read as a box that has nothing.
      */
     check: async (id) => checkServer(async () => {
-      const held = await ran(program, argv(SERVER_CHECK.command), bound + CHECK_MARGIN_MS, SERVER_CHECK.script);
+      const command = target.host === undefined ? SERVER_CHECK.command : SERVER_CHECK.named;
+      const held = await ran(program, argv(command), bound + CHECK_MARGIN_MS, SERVER_CHECK.script);
       if (held.timedOut) throw new Error(`${id} did not answer the server check within ${bound + CHECK_MARGIN_MS}ms`);
       if (held.code !== 0) {
         throw new Error(`${id} did not answer the server check: ${lastLine(held.stderr) || lastLine(held.stdout) || `ssh exited ${held.code}`}`);
       }
       return held.stdout;
     }),
-
-    hostCommand: () => target.host ?? ['ahpd'],
   };
 };
 
@@ -474,6 +487,45 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
     ...(machine.host === undefined ? {} : { host: machine.host }),
     ...(machine.agents === undefined ? {} : { agents: machine.agents }),
   });
+
+  /*
+   * The command a box's sessions start their host with: the install of this
+   * host's that one script on the box makes or finds (`hostinstall.ts`), its
+   * folder checked to be one, given its own plugin root. Two sessions starting
+   * on one box at once wait for one install, as two VMs on one server wait for
+   * one template.
+   */
+  const installing = new Map<string, Promise<string[]>>();
+  const installedOn = async (name: string): Promise<string[]> => {
+    const held = installing.get(name);
+    if (held !== undefined) return held;
+    const made = (async () => {
+      const install = hostInstallOf(options.parts, options.lock);
+      const ran = await reachOf(name).ran([...HOST_INSTALL_COMMAND, ...install.args], Buffer.from(install.script));
+      if (ran.timedOut) throw new Error(`ahpd ${install.version} was not installed on ${name} within ${TRANSFER_MS}ms`);
+      const said = new Map(ran.stdout.split('\n').filter((line) => line.includes('='))
+        .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+      const why = lastLine(ran.stderr) || lastLine(ran.stdout) || `ssh exited ${ran.code}`;
+      if (ran.code !== 0) throw new Error(`ahpd ${install.version} was not installed on ${name}: ${why}`);
+      const dir = said.get('install') ?? '';
+      if (!isHostInstall(dir, said.get('root') ?? '')) {
+        throw new Error(`ahpd ${install.version} was not installed on ${name}: the box answered ${JSON.stringify(dir)}, which is not one of this host's installs`);
+      }
+      const host = `${dir}/bin/ahpd`;
+      if (said.has('installed')) options.log?.(`ahpd ${install.version} was installed on ${name} at ${host}`);
+      // VS Code's warning when its pinned CLI was not installed and another one
+      // runs, which is the install's own last line.
+      if (said.has('fallback')) options.log?.(`ahpd ${install.version} was not installed on ${name}, so ${host} there starts its sessions' host: ${why}`);
+      return ['env', `AHPD_PLUGIN_ROOT=${dir}/ahpd/plugins`, host];
+    })();
+    installing.set(name, made);
+    try {
+      return await made;
+    }
+    finally {
+      installing.delete(name);
+    }
+  };
 
   return {
     kind: 'ssh',
@@ -538,13 +590,15 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
 
     /*
      * No parts: they are images mounted when a machine is made, and a box is
-     * listed rather than made. Its ahpd and its agents are the ones installed
-     * on it, so there is nothing for an agent's part need to be checked against.
+     * listed rather than made. Its ahpd is the one this host installs there,
+     * with the ahpd part's own plugins, or the one `host` starts, and its
+     * agents are its own, so there is nothing for an agent's part need to be
+     * checked against.
      */
     parts: async () => undefined,
 
     /*
-     * Nobody here made the box, and nothing of ours is on it.
+     * Nobody here made the box.
      *
      * So it says nothing about who owns it, and the plugin reads its own record
      * beside the configuration instead: a box nobody claimed is the host's own,
@@ -559,8 +613,12 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
      */
     how: async (id, asked) => reaches.get(id)?.how(asked) satisfies Spawn | undefined,
 
-    /** How this box starts a nested host, as its operator wrote it. */
-    hostCommand: async (id) => reaches.get(id)?.hostCommand(),
+    /** How this box starts a nested host: the command its operator wrote, or the ahpd this host installs there. */
+    hostCommand: async (id) => {
+      const machine = machines[id];
+      if (machine === undefined) return undefined;
+      return machine.host ?? installedOn(id);
+    },
 
     /*
      * The verbs that make a machine, which a box is not.
@@ -611,11 +669,12 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
     capabilities: () => CAPABILITIES,
 
     /*
-     * Images are this host's own, and a box is not: a part is built on a
-     * runtime that makes machines, so neither verb has anything to do here.
+     * Images are this host's own, and a box is not: a part is pulled or built
+     * on a runtime that makes machines, so no image verb has anything to do here.
      */
     hasImage: async () => false,
     buildImage: async () => { throw new Error('an image is not built for a box this host reaches over ssh'); },
+    pullImage: async () => { throw new Error('an image is not pulled for a box this host reaches over ssh'); },
   };
 };
 

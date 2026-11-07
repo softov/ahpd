@@ -402,6 +402,21 @@ describe('a call ends when either side does, and on a timeout', () => {
     expect(served.log.join('\n')).toMatch(/p0 unreachable \(ECONNREFUSED\); p1 answered 200/u);
   });
 
+  // modelProxy.keyRefusal passthrough: VS Code's Claude proxy re-emits an
+  // upstream error verbatim (src/vs/platform/agentHost/node/claude/anthropicErrors.ts
+  // L16-L18, L48-L61 at 6b68d3fe).
+  it('passes a provider\'s key refusal through as it came under keyRefusal passthrough', async () => {
+    for (const status of [401, 403]) {
+      const envelope = { type: 'error', error: { type: 'authentication_error', message: `invalid x-api-key ${String(status)}` }, request_id: 'req_1' };
+      const provider = await fake(answerJson(status, envelope));
+      const base = table('anthropic-messages', provider.endpoint);
+      const served = await proxy({ ...base, proxy: { ...base.proxy, keyRefusal: 'passthrough' } });
+      const got = await send(served.port, MESSAGES, { headers: { 'x-api-key': ROOT_TOKEN }, body: { model: 'm/x' } });
+      expect(got.status).toBe(status);
+      expect(got.json).toEqual(envelope);
+    }
+  });
+
   it('answers a provider\'s key refusal with this host\'s own error, and keeps its words for the log', async () => {
     /*
      * The proxy calls the provider with the host's key, so a 401 or 403 is

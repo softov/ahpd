@@ -318,23 +318,25 @@ describe('a caller is a person, root or a session, and may call', () => {
     for (const one of fake.received) expect(one.headers['x-ahp-scope']).toBeUndefined();
   });
 
-  it('reads meta from X-AHP-Meta, refuses one that is not name=value, and never sends it upstream', async () => {
+  // A JSON object of string values, as LiteLLM's x-litellm-spend-logs-metadata
+  // carries spend_logs_metadata (https://docs.litellm.ai/docs/proxy/cost_tracking).
+  it('reads meta from X-AHP-Meta as a JSON object of string values, refuses one that is not, and never sends it upstream', async () => {
     const fake = await okProvider();
     const usage = memoryUsage();
     const served = await proxy({ ...table(fake.endpoint), usage: () => usage });
     const key = { 'x-api-key': who.ana };
 
-    expect((await send(served.port, CHAT, { headers: { ...key, 'x-ahp-meta': 'a=1, b=2' }, body: CALL })).status).toBe(200);
+    expect((await send(served.port, CHAT, { headers: { ...key, 'x-ahp-meta': '{"a":"1","b":"two, three"}' }, body: CALL })).status).toBe(200);
     await pause(20);
-    expect(usage.entries.map((entry) => entry.meta)).toEqual([{ a: '1', b: '2' }]);
+    expect(usage.entries.map((entry) => entry.meta)).toEqual([{ a: '1', b: 'two, three' }]);
     // The header is this host's, not the provider's.
     for (const one of fake.received) expect(one.headers['x-ahp-meta']).toBeUndefined();
 
-    const bad = await send(served.port, MESSAGES, { headers: { ...key, 'x-ahp-meta': 'bad' }, body: CALL });
+    const bad = await send(served.port, MESSAGES, { headers: { ...key, 'x-ahp-meta': 'a=1' }, body: CALL });
     expect(bad.status).toBe(400);
     expect(isAnthropicError(bad.json)).toBe(true);
     expect(bad.json).toMatchObject({
-      error: { type: 'invalid_request_error', message: 'bad is not a meta entry; write one as name=value' },
+      error: { type: 'invalid_request_error', message: 'A meta is a JSON object of string values, and a=1 is not JSON' },
     });
 
     // A key at the bound and a call that adds one are over it, and refused
@@ -342,10 +344,24 @@ describe('a caller is a person, root or a session, and may call', () => {
     const full = await who.users.mintToken!('ana', {
       meta: Object.fromEntries(Array.from({ length: 32 }, (_one, at) => [`k${String(at)}`, 'v'])),
     });
-    const over = await send(served.port, CHAT, { headers: { 'x-api-key': full.secret, 'x-ahp-meta': 'extra=1' }, body: CALL });
+    const over = await send(served.port, CHAT, { headers: { 'x-api-key': full.secret, 'x-ahp-meta': '{"extra":"1"}' }, body: CALL });
     expect(over.status).toBe(400);
     expect(over.json).toMatchObject({ error: { message: 'A meta names 32 entries at most, and that body names 33' } });
     expect(fake.received).toHaveLength(1);
+  });
+
+  // LiteLLM takes spend_logs_metadata in the request body's metadata too
+  // (https://docs.litellm.ai/docs/proxy/cost_tracking).
+  it('reads meta from the body\'s metadata.spend_logs_metadata under the header\'s, and sends the provider neither', async () => {
+    const fake = await okProvider();
+    const usage = memoryUsage();
+    const served = await proxy({ ...table(fake.endpoint), usage: () => usage });
+    const body = { ...CALL, metadata: { spend_logs_metadata: { env: 'dev', client: 'pi' } } };
+    const sent = await send(served.port, CHAT, { headers: { 'x-api-key': who.ana, 'x-ahp-meta': '{"env":"prod"}' }, body });
+    expect(sent.status).toBe(200);
+    await pause(20);
+    expect(usage.entries.map((entry) => entry.meta)).toEqual([{ env: 'prod', client: 'pi' }]);
+    expect(JSON.parse(String(fake.received[0]?.body))).not.toHaveProperty('metadata');
   });
 
   it('charges a call with a key that carries a scope, and refuses a header that names another', async () => {

@@ -95,17 +95,21 @@ export function botCatalogue(store: BotStore): Catalogue {
       grant: 'bot:read',
       describe: () => ({ title: 'Bots', description: 'Every bot the reader may read, kept current.' }),
       /*
-       * Both roads wait for the store, as a read of `bot://` does.
+       * A reader without the channel's grant is let in too, and served the
+       * bots it may read: none, and each one a later add makes readable to it.
+       * VS Code serves each client its own projection of a list, leaving out
+       * what that client may not see rather than refusing the list.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4429
+       */
+      authorize: async (uri) => uri === CATALOGUE,
+      /*
+       * The snapshot waits for the store, as a read of `bot://` does.
        *
        * A subscribe can arrive before anything has read a bot, and the store
        * loads its cache on the first read rather than while the plugin applies.
        * A snapshot answered from an empty cache would never be corrected:
        * nothing publishes a bot that was there all along.
        */
-      authorize: async (uri, reader) => {
-        await store.ready();
-        return uri === CATALOGUE && store.all().some((one) => mayRead(one, reader));
-      },
       snapshot: async (uri, reader, client) => {
         await store.ready();
         if (uri !== CATALOGUE) throw new RpcError(-32001, `No channel at ${uri}; the catalogue is ${CATALOGUE}`);

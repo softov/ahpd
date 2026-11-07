@@ -13,9 +13,10 @@ import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { describePlugin, loadPlugins, pluginIdsOf } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { dockerRuntime } from '../src/runtime.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { NestedHost, NestedStart, NestedStarted } from '../../sdk/src/types/computers.js';
-import type { HostOptions, HostTool, NodeChange, NodeRegistry, ToolCall } from '../../sdk/src/types/host.js';
+import type { HostOptions, HostTool, NodeChange, NodeRegistry } from '../../sdk/src/types/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Usage, UsageEntry, UsageTotal } from '../../sdk/src/types/usage.js';
 
@@ -76,7 +77,7 @@ const load = async (
   return result;
 };
 
-const at = {} as ToolCall;
+const at = hostCall();
 const tool = (tools: HostTool[], name: string) => tools.find((one) => one.definition.name === name) as HostTool;
 
 it('serves computer: through the host and offers the three tools', async () => {

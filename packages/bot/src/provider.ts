@@ -1,24 +1,20 @@
 import { rmSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import { RpcError } from '@ahpd/sdk';
-import { covers, ownerFilter, ownerOfPrincipal } from '@ahpd/sdk';
+import { covers, ownerFilter } from '@ahpd/sdk';
 import { instructionsProblem } from './agents.js';
-import { CHAT_PROVIDER } from './chat.js';
 import { AGENTS_FILE, fromAgents, makeFolder, partsOf, readAgentsFile, writeAgentsFile } from './folder.js';
-import { named, rowId, userOf, whose } from './names.js';
 import {
   BOT_BODIES, BOT_COLORS, checkRecord, DEFAULT_SESSION, isSlug, TURN_WORD,
 } from './record.js';
-import { DEFAULT_TEMPLATE, templateOf } from './template.js';
-import type { Yaml } from './agents.js';
-import type { BackSessions } from './names.js';
+import type { InstructionsIn, Yaml } from './agents.js';
 import type { BotCatalogue } from './catalogue.js';
 import type { BotRecord } from './record.js';
 import type { BotStore } from './store.js';
 import type { BotTemplates } from './template.js';
 import type {
-  Bag, Entry, Metadata, Owner, Principal, Read, RecordCollection, ResourceChange, ResourceProvider, SchemeDescription,
-  SessionRequest, Watcher, WatchOptions, Write,
+  Bag, Entry, Metadata, Owner, Principal, Read, ResourceChange, ResourceProvider, SchemeDescription,
+  Watcher, WatchOptions, Write,
 } from '@ahpd/sdk';
 
 /**
@@ -36,30 +32,16 @@ import type {
  * the file. An edit the bot made to its own file is therefore what the next read
  * answers, and the record never carries a second copy to go stale.
  *
- * A bot's own address is the slug, and a read of it answers the record. Under it
- * are the chats: `bot://<slug>/<user>` is one person's main chat with the bot,
- * `bot://<slug>/<user>/` is the names of that person's back sessions, and
- * `bot://<slug>/<user>/<name>` is one of them. What those names mean is
- * `names.ts`; anything else under a bot is a URI this host has nothing at.
+ * A bot's address is `bot://<slug>`, the slug its authority, and a read of it
+ * answers the record and starts nothing, as VS Code's reads answer content and
+ * its sessions are made by a create. A person talks to a bot in a chat of their
+ * own: a session of the `bot-chat` provider that `createSession` makes, naming
+ * the bot in its config (see `chat.ts`).
  *
  * Who may see what is asked of `authorize` for reads and listings, and the
  * grant for everything else: the owner of a bot, a member of the team or
  * project it belongs to, and a holder of `bot:get` may read one, and a holder
  * of `bot:list` sees every one there is.
- *
- * A read answers the record with one key more: `chat`, the reader's own direct
- * chat with that bot. Who may chat is who may read it and then either holds
- * `bot:chat` or owns it, and a reader who may not is answered the record alone.
- * The chat is started the first time one is asked for, kept against the bot and
- * the person in the bot's own `chats` collection, so the next read is the same
- * chat.
- *
- * The paths under a bot are those chats: a read of `bot://<slug>/<user>` answers
- * `chat`, the same session a read of the bot hands that person, and a read of
- * `bot://<slug>/<user>/<name>` answers `session`, the session that name was
- * started as - kept per name in the bot's own `sessions` collection. Neither is part
- * of the record, so neither is answered to everybody who may read the bot: a
- * person's chats are the person's, the bot's owner's and this host's.
  *
  * Who may change one is asked on the write and delete roads, and it is the
  * read road's list plus the host's own key: its owner, a member of the team or
@@ -77,26 +59,6 @@ import type {
  * bot or a session that names an older one is still the host's.
  */
 
-/**
- * The sessions this host keeps, as much of them as a bot is about.
- *
- * Read through the host rather than held here, the way `store` lives beside the
- * daemon: a chat is a session this host holds, and one it no longer holds - a
- * daemon that restarted - is a chat that is started again.
- */
-export interface BotSessions {
-  /** Whose the session at this URI is, or nothing where this host has none. */
-  owner(uri: string): Promise<Owner | undefined>;
-  /**
-   * Start a session for the owner the request names, and answer its URI.
-   *
-   * `named` is called with the URI before the session is made, which is what
-   * lets the wake answer for it - its connectors - from the first tool list the
-   * backend is spawned with.
-   */
-  start(wanted: SessionRequest, named?: (uri: string) => void): Promise<string>;
-}
-
 /** What the provider was configured with. */
 export interface BotOptions {
   /** The folder a bot's own workspace is under, as `<root>/<slug>`. */
@@ -105,24 +67,13 @@ export interface BotOptions {
    * The folder the record store keeps the bots in, `<configDir>/bots`.
    *
    * Every bot's data is in `<botsDir>/<slug>/`: the record is `bot.md`, the
-   * main chat rows are in `chats/`, the back session rows in `sessions/` and
-   * the logs in `logs/`. A delete of a bot removes that folder, which is the
-   * whole of what the daemon kept of it.
+   * back session rows are in `sessions/` and the chat logs in `logs/`. A
+   * delete of a bot removes that folder, which is the whole of what the daemon
+   * kept of it.
    */
   botsDir: string;
   /** Where the records are kept. */
   store: BotStore;
-  /** The host's sessions, where the chat a read opens is started. */
-  sessions: BotSessions;
-  /**
-   * The main chat rows of one bot, in the collection `bots/<slug>/chats`.
-   *
-   * A call opens or answers the same collection each time, so the row a read
-   * of the bot writes is the one a wake of its chat finds.
-   */
-  chats(bot: string): RecordCollection;
-  /** The index of bot, person and name to the session that name is on. */
-  backSessions: BackSessions;
   /**
    * What this host is called, for a bot made by work nobody is a person for.
    *
@@ -139,6 +90,8 @@ export interface BotOptions {
   templates: BotTemplates;
   /** The YAML a bot's `AGENTS.md` is read and written with. */
   yaml: Yaml;
+  /** Where a bot's instructions are in its `AGENTS.md`: its own section unless this says the body. */
+  instructionsIn?: InstructionsIn;
   /**
    * The `AGENTS.md` a bot with no file is given: its template, filled with its
    * words.
@@ -152,7 +105,7 @@ export interface BotOptions {
    * Whether an owner may start a session on the agent a bot names, read at each
    * write.
    *
-   * A bot's `preset` or `harness` is an agent of this host, and the host asks
+   * A bot's `preset` or `provider` is an agent of this host, and the host asks
    * its own rule of whoever starts a session on one. A write names it for the
    * bot's owner rather than for the person making the change, so the same rule
    * is asked here: one person cannot point their bot at another person's agent.
@@ -188,53 +141,43 @@ export interface BotProvider extends ResourceProvider {
   authorize(uri: string, reader: Principal | undefined): Promise<boolean>;
 }
 
-/** A URI, split into the slug it names and the path under it. */
+/** A URI of this scheme, as a URL reads it. */
 interface At {
-  /** The slug, empty at the root. */
+  /** The slug, which is the authority: empty at the root. */
   slug: string;
-  /** The path under the bot, after a further slash: the chat, or the chat's own name. */
+  /**
+   * The path after the authority: empty at the root and at a bot, so a URI
+   * with one names nothing here.
+   */
   path: string;
   /** The text after `?`, which only the root listing reads. */
   query: string;
 }
 
 /**
- * `bot://<slug>` and `bot:/<slug>` are the same address.
- *
- * A client pastes a URI it was handed and a person types one, and the two
- * spellings are one character apart for the same resource. Both are read the
- * same way rather than one of them being a mistake. The query is kept apart
- * from the path, so `bot://?owner=me` is the root listing asked for the
- * caller's own rather than a bot named `?owner=me`.
+ * A URI of this scheme, read by a URL parser: `bot://<slug>` names a bot by
+ * its authority, `bot://` is the root, and the query is kept apart, so
+ * `bot://?owner=me` is the root listing asked for the caller's own rather than
+ * a bot named `?owner=me`.
  */
 const split = (uri: string): At | undefined => {
-  const match = /^([a-zA-Z][\w+.-]*):\/\/?(.*)$/.exec(uri);
-  if (match === null || match[1] !== 'bot') return undefined;
-  const rest = match[2] ?? '';
-  const mark = rest.indexOf('?');
-  const path = mark === -1 ? rest : rest.slice(0, mark);
-  const query = mark === -1 ? '' : rest.slice(mark + 1);
-  const slash = path.indexOf('/');
-  return slash === -1
-    ? { slug: path, path: '', query }
-    : { slug: path.slice(0, slash), path: path.slice(slash + 1), query };
+  let url: URL;
+  try {
+    url = new URL(uri);
+  }
+  catch {
+    return undefined;
+  }
+  if (url.protocol !== 'bot:') return undefined;
+  return { slug: url.host, path: url.pathname, query: url.search.slice(1) };
 };
 
 const absent = (uri: string): RpcError => new RpcError(-32008, `No bot at ${uri}`);
-
-/** The refusal a back session no row names is owed. */
-const noSession = (uri: string): RpcError => new RpcError(-32008, `No back session at ${uri}`);
 
 /** The refusal a change to somebody else's bot is owed. */
 const notYours = (bot: BotRecord): RpcError => new RpcError(
   -32009,
   `Only the owner of ${bot.id}, a member of its team or project, an admin or this host may change it`,
-);
-
-/** The refusal a look into somebody else's chats is owed. */
-const notTheirs = (bot: BotRecord, user: string): RpcError => new RpcError(
-  -32009,
-  `Only ${user}, the owner of ${bot.id} or this host may read these chats`,
 );
 
 const at = (uri: string): At => {
@@ -291,8 +234,8 @@ const manifest = (hostName: string) => ({
       description: 'Which colour it is drawn in: a name, or `#rrggbb`.',
     },
     instructions: { type: 'string', description: 'What it was asked to be, in its own words.' },
-    template: { type: 'string', description: 'The template a chat with it would open with, by name. Absent is the default.' },
-    harness: { type: 'string', description: 'The backend a session of it runs on.' },
+    template: { type: 'string', description: 'The template its AGENTS.md is made from, by name. Absent is the default.' },
+    provider: { type: 'string', description: 'The agent provider a session of it runs on.' },
     model: { type: 'string', description: 'The model it asks for.' },
     preset: { type: 'string', description: 'The session preset it starts from.' },
     session: {
@@ -367,44 +310,6 @@ const mayWrite = (bot: BotRecord, writer: Owner | undefined, reader: Principal |
   return false;
 };
 
-/**
- * Whether this reader may talk to this bot in a chat of their own.
- *
- * Two ways in, and no others: a bot's owner is not made to hold a grant for
- * their own conversation, which is the read road's own rule for `bot:get`, and
- * `bot:chat` is what lets anybody else open one. A membership of the team or
- * project a bot belongs to is not a way in here, because a chat is one person
- * talking to one bot and there is nothing for a third to be shown.
- *
- * A reader who is nobody - the root connection, and every connection on a host
- * with no users directory - is this host, which chats with any of its bots and
- * has no grant to show for it.
- */
-const mayChat = (bot: BotRecord, reader: Principal | undefined): boolean => {
-  if (reader === undefined) return true;
-  if (bot.owner === `user:${reader.id}`) return true;
-  return reader.can('bot:chat');
-};
-
-/**
- * Whether this reader may look into these chats of a bot.
- *
- * Three ways in, and no others: they are the person the path names, they own
- * the bot - what somebody says to it is said to a bot of theirs - or they are
- * this host, which is the reader who is nobody: the root connection, and every
- * connection on a host with no users directory. The grant that reads the bot is
- * not a way in, because a bot's record is the host's to show and a chat is not:
- * one person's conversation with a bot is theirs and their bot's.
- *
- * The bot's owner is the owner on record and not a member of the team or
- * project it belongs to, the way `mayChat` reads it.
- */
-const mayLook = (bot: BotRecord, user: string, reader: Principal | undefined): boolean => {
-  if (reader === undefined) return true;
-  const them = ownerOfPrincipal(reader);
-  return userOf(them) === user || bot.owner === them;
-};
-
 /** One answer, as a read serves it. */
 const json = (said: unknown): Read => ({
   data: JSON.stringify(said, null, 2),
@@ -412,24 +317,11 @@ const json = (said: unknown): Read => ({
   contentType: 'application/json',
 });
 
-/** The row one person's chat with one bot is kept under. */
-const chatRow = (slug: string, owner: Owner): string => rowId([slug, owner]);
-
 export function botProvider(options: BotOptions): BotProvider {
   const { root, store } = options;
 
   /** This host's own owner, whatever this machine is called today. */
   const self: Owner = `root:${options.hostName}`;
-
-  /**
-   * The chats being started right now, by row id.
-   *
-   * One chat per bot and person means the second of two reads arriving together
-   * waits on the first rather than opening a session of its own: what a person
-   * gets for reading a bot twice at once is one chat, not two rows pointing at
-   * two conversations.
-   */
-  const starting = new Map<string, Promise<string>>();
 
   /** One open watch: the slug it is on, empty for `bot://`, and who opened it. */
   interface Watching {
@@ -551,46 +443,6 @@ export function botProvider(options: BotOptions): BotProvider {
     return workspace;
   };
 
-  /**
-   * The chat this owner talks to this bot in, started the first time one is
-   * asked for.
-   *
-   * The row first, and the session the row names: a chat this host still has is
-   * the chat, and one whose session has gone - a daemon that restarted, whose
-   * session store is empty until somebody opens it again - is started afresh
-   * and the row written over it.
-   *
-   * The start is the host's own road, so it is the owner who is asked for
-   * `session:create` and a refusal there is this read's: a chat that could not
-   * be opened is not a record answered with a key missing.
-   */
-  const chatOf = async (bot: BotRecord, whose: Owner): Promise<string> => {
-    const id = chatRow(bot.id, whose);
-    const rows = options.chats(bot.id);
-    const row = await rows.get(id);
-    const held = row?.['chat'];
-    if (typeof held === 'string' && await options.sessions.owner(held) !== undefined) return held;
-    const running = starting.get(id);
-    if (running !== undefined) return running;
-    const begun = options.sessions.start({
-      owner: whose,
-      provider: CHAT_PROVIDER,
-      // The bot's own folder, which is where its work happens and so where a
-      // conversation about that work belongs.
-      workingDirectory: bot.workspace,
-      config: { bot: bot.id },
-      title: bot.name,
-    }).then(async (chat) => {
-      await rows.put({ id, bot: bot.id, owner: whose, chat });
-      return chat;
-    });
-    starting.set(id, begun);
-    // Held only while it is being started, whether it answers or refuses.
-    const done = (): void => { starting.delete(id); };
-    begun.then(done, done);
-    return begun;
-  };
-
   return {
     describe: (): SchemeDescription => ({
       title: 'Bot',
@@ -611,13 +463,10 @@ export function botProvider(options: BotOptions): BotProvider {
     },
 
     /**
-     * Every bot, `bot://`, or the back sessions of one person's chat with one
-     * bot, `bot://<slug>/<user>/`.
+     * Every bot, `bot://`.
      *
-     * Who may list the bots is asked the same way a read asks it, and who may
-     * list a person's back sessions is who may look into their chats: what a
-     * person has running behind a bot is theirs, so a listing of the names is
-     * not shown to whoever may read the bot.
+     * Who may list the bots is asked the same way a read asks it. A bot is a
+     * file, so a listing of one is of nothing there.
      *
      * `?owner=me` narrows the root listing to the bots whose owner is the
      * caller. It comes after who may list, so it only ever takes bots out of an
@@ -627,138 +476,76 @@ export function botProvider(options: BotOptions): BotProvider {
     list: async (uri, reader) => {
       await store.ready();
       const held = at(uri);
-      if (held.slug === '') {
-        if (held.path !== '') throw absent(uri);
-        const every = store.all();
-        const shown = reader === undefined || reader.can('bot:list')
-          ? every
-          : every.filter((one) => mayRead(one, reader));
-        const only = ownerFilter(held.query, reader);
-        const kept = only === undefined ? shown
-          : only === null ? []
-            : shown.filter((one) => one.owner === only);
-        return kept.map((one) => ({ name: one.id, type: 'file' as const }));
-      }
-      const bot = store.get(held.slug);
-      if (bot === undefined) throw absent(uri);
-      const where = named(held.path);
-      if (where === undefined || where.at !== 'sessions') throw absent(uri);
-      if (!mayLook(bot, where.user, reader)) throw notTheirs(bot, where.user);
-      const names = await options.backSessions.list(bot.id, where.user);
-      return names.map((name) => ({ name, type: 'file' as const }));
+      if (held.slug !== '' || held.path !== '') throw absent(uri);
+      const every = store.all();
+      const shown = reader === undefined || reader.can('bot:list')
+        ? every
+        : every.filter((one) => mayRead(one, reader));
+      const only = ownerFilter(held.query, reader);
+      const kept = only === undefined ? shown
+        : only === null ? []
+          : shown.filter((one) => one.owner === only);
+      return kept.map((one) => ({ name: one.id, type: 'file' as const }));
     },
 
     /**
-     * What is at this URI, without reading it.
+     * What is at this URI, without reading it: the root is a directory of bots
+     * and a bot is a file, its record.
      *
-     * The root is a directory of bots and a bot is a file, its record. Under a
-     * bot: `<user>` is a file, the main chat a read answers - it is there
-     * whether or not anybody has said anything yet, because a read of it is
-     * what opens it - `<user>/` is a directory, the back sessions of that
-     * person, and `<user>/<name>` is a file only where a row names a session.
-     *
-     * A chat and a back session are answered the moment they are asked about,
-     * because neither has a time of its own to name: what a read serves is
-     * where the session is, and it is where it was a moment ago.
-     *
-     * The reader is not handed to this road, so this answers shape and never
-     * permission, and `read` is where somebody looking into another person's
-     * chats is refused.
+     * The spec's resolve carries a time when it is known, and VS Code fills
+     * only what the stat has: a bot's are its record's, and the root has none
+     * of its own. A bot's size is left out, because this road has no reader
+     * and a bot's read answers what it reads from its `AGENTS.md` now.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L1076-L1085
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L305-L307
      */
     resolve: async (uri) => {
       await store.ready();
       const held = at(uri);
-      if (held.slug === '') {
-        if (held.path !== '') throw absent(uri);
-        const now = new Date().toISOString();
-        return { uri, type: 'directory', mtime: now, ctime: now };
-      }
+      if (held.path !== '') throw absent(uri);
+      if (held.slug === '') return { uri, type: 'directory' };
       const bot = store.get(held.slug);
       if (bot === undefined) throw absent(uri);
-      if (held.path === '') {
-        const body = JSON.stringify(bot, null, 2);
-        const mtime = moment(bot.updatedAt);
-        const ctime = moment(bot.createdAt);
-        return {
-          uri,
-          type: 'file',
-          size: Buffer.byteLength(body, 'utf8'),
-          ...(mtime === undefined ? {} : { mtime }),
-          ...(ctime === undefined ? {} : { ctime }),
-          // What an edit is checked against: the moment the record last changed,
-          // so a write that read the bot before somebody else's edit is refused
-          // rather than quietly undoing it.
-          etag: bot.updatedAt,
-        };
-      }
-      const where = named(held.path);
-      if (where === undefined) throw absent(uri);
-      const now = new Date().toISOString();
-      if (where.at === 'sessions') return { uri, type: 'directory', mtime: now, ctime: now };
-      if (where.at === 'chat') return { uri, type: 'file', mtime: now, ctime: now };
-      const session = await options.backSessions.get(bot.id, where.user, where.name);
-      if (session === undefined) throw noSession(uri);
-      return { uri, type: 'file', mtime: now, ctime: now };
+      const mtime = moment(bot.updatedAt);
+      const ctime = moment(bot.createdAt);
+      return {
+        uri,
+        type: 'file',
+        ...(mtime === undefined ? {} : { mtime }),
+        ...(ctime === undefined ? {} : { ctime }),
+        // What an edit is checked against: the moment the record last changed,
+        // so a write that read the bot before somebody else's edit is refused
+        // rather than quietly undoing it.
+        etag: bot.updatedAt,
+      };
     },
 
     /**
-     * The record and the reader's own chat with the bot, or the chat itself.
-     *
-     * A read is the only door a person has onto a bot they hold a grant for
-     * rather than made, so it is where their chat is opened: the same read
-     * twice is the same chat, and a reader who may not chat is answered the
-     * record alone rather than a refusal - there is nothing wrong with their
-     * read, there is simply no conversation of theirs to name.
-     *
-     * The chat is written under `chat` and nothing else of the record moves, so
-     * a client that writes the whole record back is writing back a bot it read.
-     *
-     * The paths under a bot answer that same chat and the back sessions behind
-     * it, and they answer a reader rather than whoever may read the bot: a main
-     * chat is one person's, and the bot's owner and this host are the other two
-     * who may see it. A name no row has is a back session that is not there,
-     * which is a read of something absent rather than a refusal.
+     * The record, and nothing else: a read starts nothing, as VS Code's reads
+     * answer content and its sessions are made by a create.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L610-L611
      */
-    read: async (uri, _wanted, reader) => {
+    read: async (uri) => {
       await store.ready();
       const held = at(uri);
-      if (held.slug === '') throw absent(uri);
+      if (held.slug === '' || held.path !== '') throw absent(uri);
       const known = store.get(held.slug);
       if (known === undefined) throw absent(uri);
       // The file's parts, read now rather than answered from the cache: an edit
       // the bot made to its own file shows on the next read, without anything
       // having to notice the write.
-      const bot = fromAgents(options.yaml, known);
-      if (held.path === '') {
-        /*
-         * The agent it names is the bot's session's, and one this host does not
-         * serve is said so here: a bot whose agent went is one that wakes
-         * nothing, and a client reading it is told rather than left to find out
-         * when a message goes unanswered.
-         */
-        const provider = bot.preset ?? bot.harness;
-        const state = provider !== undefined && options.available !== undefined && !options.available(provider)
-          ? { state: 'unavailable' as const }
-          : {};
-        const answered = mayChat(bot, reader)
-          ? { ...bot, ...state, chat: await chatOf(bot, reader === undefined ? self : ownerOfPrincipal(reader)) }
-          : { ...bot, ...state };
-        return json(answered);
-      }
-      const where = named(held.path);
-      // A directory is not a read: what is under a person's chat is the names,
-      // and a listing is what answers them.
-      if (where === undefined || where.at === 'sessions') throw absent(uri);
-      if (!mayLook(bot, where.user, reader)) throw notTheirs(bot, where.user);
-      if (where.at === 'chat') {
-        // The person themselves is asked what a read of the bot asks before it opens their chat.
-        if (reader !== undefined && bot.owner !== ownerOfPrincipal(reader) && !mayChat(bot, reader)) throw notTheirs(bot, where.user);
-        const chat = await chatOf(bot, whose(where.user, options.hostName));
-        return json({ chat });
-      }
-      const session = await options.backSessions.get(bot.id, where.user, where.name);
-      if (session === undefined) throw noSession(uri);
-      return json({ session });
+      const bot = fromAgents(options.yaml, known, options.instructionsIn);
+      /*
+       * The agent it names is the bot's session's, and one this host does not
+       * serve is said so here: a bot whose agent went is one that wakes
+       * nothing, and a client reading it is told rather than left to find out
+       * when a message goes unanswered.
+       */
+      const provider = bot.preset ?? bot.provider;
+      const state = provider !== undefined && options.available !== undefined && !options.available(provider)
+        ? { state: 'unavailable' as const }
+        : {};
+      return json({ ...bot, ...state });
     },
 
     /**
@@ -791,7 +578,7 @@ export function botProvider(options: BotOptions): BotProvider {
       // The file's parts over the record's: an edit that names no persona is
       // editing the bot as it is now, not as the store last read it.
       const known = store.get(slug);
-      const existing = known === undefined ? undefined : fromAgents(options.yaml, known);
+      const existing = known === undefined ? undefined : fromAgents(options.yaml, known, options.instructionsIn);
       if (existing !== undefined && !mayWrite(existing, owner, reader)) throw notYours(existing);
       if (existing === undefined && store.tombstoned(slug)) {
         throw new RpcError(-32010, `${slug} was a bot here once; choose another name`);
@@ -811,16 +598,17 @@ export function botProvider(options: BotOptions): BotProvider {
        * the person writing: a bot is the owner's work, and the host would ask
        * its own rule of whoever starts a session on it.
        */
-      const provider = draft.preset ?? draft.harness;
+      const provider = draft.preset ?? draft.provider;
       if (provider !== undefined && options.mayUse !== undefined && !options.mayUse(whose, provider)) {
         throw new RpcError(-32009, `${provider} is not an agent ${whose} may use`);
       }
-      // A make reads its template. An edit reads it only where the body names
-      // one, so a bot whose template was removed can still be edited; a template
-      // that is named and missing is refused either way.
-      const reads = existing === undefined || (said as Bag)['template'] !== undefined;
-      const template = reads ? await templateOf(draft, options.templates) : DEFAULT_TEMPLATE;
-      if (template === undefined) throw new RpcError(-32602, `The template ${draft.template as string} does not exist.`);
+      // A template the body names is read, and one that is missing is refused.
+      // A body that names none reads none, so a bot whose template was removed
+      // can still be edited.
+      const named = (said as Bag)['template'] === undefined ? undefined : draft.template;
+      if (named !== undefined && await options.templates.text(named) === undefined) {
+        throw new RpcError(-32602, `The template ${named} does not exist.`);
+      }
       const now = new Date().toISOString();
       const record: BotRecord = {
         id: slug,
@@ -831,7 +619,7 @@ export function botProvider(options: BotOptions): BotProvider {
         color: draft.color,
         ...(draft.instructions === undefined ? {} : { instructions: draft.instructions }),
         ...(draft.template === undefined ? {} : { template: draft.template }),
-        ...(draft.harness === undefined ? {} : { harness: draft.harness }),
+        ...(draft.provider === undefined ? {} : { provider: draft.provider }),
         ...(draft.model === undefined ? {} : { model: draft.model }),
         ...(draft.preset === undefined ? {} : { preset: draft.preset }),
         session: draft.session,
@@ -845,9 +633,10 @@ export function botProvider(options: BotOptions): BotProvider {
       /*
        * The section ends at the next `##` line, so instructions with one of
        * their own would be cut at it: refused here, before anything is written,
-       * rather than written and read back short.
+       * rather than written and read back short. Instructions that are the
+       * whole body hold any line.
        */
-      const wrong = instructionsProblem(record.instructions ?? '');
+      const wrong = instructionsProblem(record.instructions ?? '', options.instructionsIn);
       if (wrong !== undefined) throw new RpcError(-32602, wrong);
       /*
        * The file is written before the record, because the file is the one copy
@@ -867,15 +656,15 @@ export function botProvider(options: BotOptions): BotProvider {
       if (record.computer === undefined) {
         // A file this host cannot read would be written over as if it were
         // empty, and its text is the bot's: the write is refused instead.
-        const file = readAgentsFile(record.workspace, options.yaml);
+        const file = readAgentsFile(record.workspace, options.yaml, options.instructionsIn);
         if (file.kind === 'unreadable') {
           throw new RpcError(-32603, `${join(record.workspace, AGENTS_FILE)} cannot be read, so it was not written: ${String(file.error)}`);
         }
         if (existing === undefined && file.kind === 'missing') {
-          makeFolder(record.workspace, await options.agents(record), options.yaml, partsOf(record));
+          makeFolder(record.workspace, await options.agents(record), options.yaml, partsOf(record), options.instructionsIn);
         }
         else {
-          writeAgentsFile(record.workspace, options.yaml, partsOf(record));
+          writeAgentsFile(record.workspace, options.yaml, partsOf(record), options.instructionsIn);
         }
       }
       await store.put(record);
@@ -908,7 +697,7 @@ export function botProvider(options: BotOptions): BotProvider {
       await store.remove(held.slug);
       /*
        * The folder, which is the whole of what the daemon kept of the bot: the
-       * record, its main chat rows, its back session rows and its logs. The
+       * record, its back session rows and its chat logs. The
        * tombstone is written first, so a delete that fails here is a bot that
        * is gone with its rows still on disk rather than a name made again.
        *
