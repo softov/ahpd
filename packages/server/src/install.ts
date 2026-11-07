@@ -504,8 +504,10 @@ export const setPluginEnabled = (path: string, name: string, enabled: boolean): 
  *
  * The launcher of the ahpd part sets the variable, where the configuration
  * directory is not writable and a plugin installed there would go nowhere a
- * run would look for it. Everywhere else it is unset and the configuration
- * directory is the root, which is what the daemon loads a bare name from.
+ * run would look for it, and the host started on an ssh box from the ahpd
+ * installed there is given its install's own root, which holds the plugins
+ * pinned with it. Everywhere else it is unset and the configuration directory
+ * is the root, which is what the daemon loads a bare name from.
  * An empty value is a variable nobody set, as `rootsOf` reads it.
  */
 export const pluginRoot = (configDir: string): string => {

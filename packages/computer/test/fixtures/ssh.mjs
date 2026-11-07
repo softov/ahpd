@@ -19,8 +19,9 @@
  * in between.
  *
  * `SSH_FAKE_CHECK` names a file whose text is the box's answer to the server
- * check: a remote `sh -s` reads the script on stdin and prints that file in its
- * place, so a test says what a box has without this host having it.
+ * check: a remote `sh -s`, or `sh -s -- named` for a box that names its host's
+ * command, reads the script on stdin and prints that file in its place, so a
+ * test says what a box has without this host having it.
  */
 
 import { spawn } from 'node:child_process';
@@ -110,5 +111,5 @@ const runRemote = () => {
 };
 
 const check = process.env.SSH_FAKE_CHECK;
-if (check !== undefined && check !== '' && held.remote.join(' ') === 'sh -s') answerCheck(check);
+if (check !== undefined && check !== '' && ['sh -s', 'sh -s -- named'].includes(held.remote.join(' '))) answerCheck(check);
 else runRemote();

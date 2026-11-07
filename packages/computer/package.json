@@ -101,7 +101,7 @@
         "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments before its own, for a wrapper or a context." },
         "ssh": {
           "type": "object",
-          "description": "Boxes this host reaches over ssh. Each is listed rather than made: nothing of this host is on one, so none can be created, started or removed here.",
+          "description": "Boxes this host reaches over ssh. Each is listed rather than made, so none can be created, started or removed here; a session on one starts its host from the ahpd this host installs in the user's own folder there.",
           "properties": {
             "command": { "type": "string", "description": "The program that reaches a box. ssh." },
             "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments before its own, for a wrapper or a jump host." },
@@ -117,7 +117,7 @@
                   "port": { "type": "string", "description": "The port, when it is not the one ssh would use." },
                   "identity": { "type": "string", "description": "The private key to reach it with, when ssh would not pick one itself." },
                   "workdir": { "type": "string", "description": "Where a command starts on the box. The login directory when absent, which is also where a path from this host is not." },
-                  "host": { "type": "array", "items": { "type": "string" }, "description": "The command that starts a nested host on the box. [\"ahpd\"] when absent." },
+                  "host": { "type": "array", "items": { "type": "string" }, "description": "The command that starts a nested host on the box, run as written with nothing installed. The ahpd this host installs in the user's own folder there when absent." },
                   "agents": { "type": "array", "items": { "type": "string" }, "description": "The agents the box is prepared for, as a machine carries them in a label. A session of another agent is refused." }
                 }
               }

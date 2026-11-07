@@ -674,7 +674,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * than anything a machine holds, and an operator who reaches two runtimes
    * through one proxy or one agent says so once.
    */
-  const sshed = ssh === undefined ? undefined : sshRuntime({ ...ssh, ...(env === undefined ? {} : { env }) });
+  const sshed = ssh === undefined ? undefined : sshRuntime({ ...ssh, ...(env === undefined ? {} : { env }), log: noted });
 
   /*
    * One Docker for each profile that names a box, reached through Docker's own

@@ -477,8 +477,8 @@ export const ahpdSourceOf = async (log?: (line: string) => void): Promise<AhpdSo
   return answered;
 };
 
-/** The image a part downloads from, for one platform. */
-const platformOf = (part: Part, key: string): { url: string; sha256: string } => {
+/** The download a part is made from, for one platform. */
+export const platformOf = (part: Part, key: string): { url: string; sha256: string } => {
   const found = (part.archives ?? {})[key];
   if (found === undefined) throw new Error(`${versionsPath()} has no ${key} download for ${part.id}`);
   return found;
@@ -701,6 +701,9 @@ const PLUGIN_ROOT = '/opt/ahpd/ahpd/plugins';
 const ahpdLauncher = (part: Part): string =>
   launchers(part, () => '/opt/ahpd/node/bin/node /opt/ahpd/ahpd/node_modules/.bin/ahpd', { AHPD_PLUGIN_ROOT: PLUGIN_ROOT });
 
+/** The flags npm installs ahpd with, into the ahpd part's image and onto a box alike. */
+export const AHPD_NPM_FLAGS = '--no-audit --no-fund --loglevel=error --legacy-peer-deps';
+
 /**
  * The Dockerfile that builds one part.
  *
@@ -717,11 +720,10 @@ export const dockerfileOf = (part: Part, source?: AhpdSource): string => {
   if (source === undefined) {
     throw new Error(`the ${part.id} part is built from code this checkout has to pack, which is what ahpdSourceOf() answers`);
   }
-  const flags = '--no-audit --no-fund --loglevel=error --legacy-peer-deps';
   if (source.from === 'npm') {
     return [
       fetching(true, 'ca-certificates'),
-      `RUN npm install --prefix /opt/ahpd/${part.id} ${flags} @ahpd/sdk@${source.version} @ahpd/server@${source.version}`,
+      `RUN npm install --prefix /opt/ahpd/${part.id} ${AHPD_NPM_FLAGS} @ahpd/sdk@${source.version} @ahpd/server@${source.version}`,
       // The nested backends go in the part, not in the config dir, because a
       // `FROM scratch` stage keeps nothing that is not under `/opt/ahpd/ahpd`.
       //
@@ -743,11 +745,11 @@ export const dockerfileOf = (part: Part, source?: AhpdSource): string => {
   return [
     fetching(true, 'ca-certificates'),
     `COPY ${names.join(' ')} ./`,
-    `RUN npm install --prefix /opt/ahpd/${part.id} ${flags} ${source.tarballs.map((one) => `./${one.name}`).join(' ')}`,
+    `RUN npm install --prefix /opt/ahpd/${part.id} ${AHPD_NPM_FLAGS} ${source.tarballs.map((one) => `./${one.name}`).join(' ')}`,
     // The plugins of a checkout are tarballs, and what resolves a bare name is
     // the plugin root, so npm installs them into the same root the launcher
     // points `AHPD_PLUGIN_ROOT` at.
-    `RUN npm install --prefix ${PLUGIN_ROOT} ${flags} ${[...source.plugins, ...source.tarballs]
+    `RUN npm install --prefix ${PLUGIN_ROOT} ${AHPD_NPM_FLAGS} ${[...source.plugins, ...source.tarballs]
       .map((one) => `./${one.name}`).join(' ')}`,
     ahpdLauncher(part),
     only(part.id),

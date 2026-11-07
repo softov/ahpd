@@ -736,9 +736,9 @@ const holding = (values: Record<string, string>): Vault => ({
   list: async () => Object.keys(values),
 });
 
-/** A load with one box, and an agent whose need is the vault's. */
+/** A load with one box, which starts the ahpd on its PATH, and an agent whose need is the vault's. */
 const vaultedLoad = () => load(
-  { machines: { dev02: { destination: 'dev02', agents: ['vaulted'] } } },
+  { machines: { dev02: { destination: 'dev02', agents: ['vaulted'], host: ['ahpd'] } } },
   { agents: [vaultedAgent], vault: holding({ [HOST_TOKEN]: SECRET }) },
 );
 
@@ -841,7 +841,6 @@ it('reaches a made machine through a jump, with a known-hosts file of its own', 
   // A box an operator wrote has neither.
   expect(sshReach({}, { destination: 'dev02', port: '2229' }).argv('true'))
     .toEqual(['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30', '-p', '2229', 'dev02', '--', 'true']);
-  expect(sshReach({}, { destination: 'dev02', host: ['/opt/ahpd/ahpd/bin/ahpd'] }).hostCommand()).toEqual(['/opt/ahpd/ahpd/bin/ahpd']);
 });
 
 it('makes the machine key once, however many machines ask for it at once', async () => {

@@ -324,8 +324,8 @@ A key is never in the shipped block: a host record fills its variable in its own
 
 ## ssh machines
 
-A box that already runs ahpd is listed in the plugin's `ssh` option and reached over ssh.
-This host never makes, starts, stops or removes one: it lists it, runs commands on it, and starts a host on it for each session.
+A box is listed in the plugin's `ssh` option and reached over ssh.
+This host never makes, starts, stops or removes one: it lists it, runs commands on it, and starts a host on it for each session, from the ahpd it installs there in the user's own folder.
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": { "ssh": { "machines": {
@@ -347,7 +347,7 @@ This host never makes, starts, stops or removes one: it lists it, runs commands 
 | `ssh.machines.<name>.port` | The port, when it is not the one ssh would use. |
 | `ssh.machines.<name>.identity` | The private key, when ssh would not pick one itself. |
 | `ssh.machines.<name>.workdir` | Where a command and a session start on the box. The login directory when absent. |
-| `ssh.machines.<name>.host` | The command that starts a host on the box. `["ahpd"]` when absent. |
+| `ssh.machines.<name>.host` | The command that starts a host on the box, run as written, and nothing is installed. Absent, the host is the ahpd this host installs there; see [The ahpd on the box](#the-ahpd-on-the-box). |
 | `ssh.machines.<name>.agents` | The agents the box is prepared for. A session of another agent is refused. |
 
 The entry `deb` is the machine `computer://ssh.deb`.
@@ -356,10 +356,27 @@ A policy names every ssh machine with `computer: ["ssh.*"]`.
 
 ### What the box needs
 
-- ahpd at this host's version, and the plugins of the agents it serves, each configured in the box's own `config.json`. The host on the box loads a plugin with the options its own file gives it, and serves the agent records in its own `agents` folder, so cofold's `model` lives in the file and an ACP agent's in its record.
-- `ahpd` on the `PATH` of a non-interactive login, which a Node installed by nvm is not. Otherwise name its full path in `host`.
+- What the install below downloads with: Linux on x86_64 or aarch64, `curl`, `tar`, `xz` and `sha256sum`, and a route to nodejs.org and the npm registry. A box without them names in `host` the command that starts an ahpd of its own, by its full path where the `PATH` of a non-interactive login does not hold it, as it does not hold a Node installed by nvm.
+- The plugins of the agents it serves beyond cofold and pi, which the install brings, in the box's configuration folder, where `ahpd plugin install` run there puts them, each configured in the box's own `config.json`. The host on the box loads a plugin with the options its own file gives it, and serves the agent records in its own `agents` folder, so cofold's `model` lives in the file and an ACP agent's in its record.
 - Its own model credentials. Nothing is sent from this host: `host` above sources a file on the box, because a non-interactive ssh reads no profile.
 - This host's key in `authorized_keys`, and the box's host key known to this host. Every call passes `BatchMode=yes`, so a password prompt or an unknown host key fails with ssh's own sentence.
+
+### The ahpd on the box
+
+With no `host`, a session's host is ahpd at the version `versions.json` names, which this host installs on the box the first time a session starts there, as VS Code installs its CLI on a host it reaches over SSH.
+The install is in `$XDG_DATA_HOME/ahpd/server/<version>-<hash>`, under `~/.local/share` when that is unset, so it needs no `sudo` and leaves any other ahpd on the box as it is.
+It holds what a machine's `/opt/ahpd` holds of the `node` and `ahpd` parts: Node from its download, checked by its sha256, and `@ahpd/server` with cofold and pi, installed by npm. The box downloads them itself.
+
+An install that is there is used again. A version, a download or a plugin that moves is a new folder, and the five installs used most recently are kept.
+The log says each install:
+
+```text
+computer: ahpd 0.8.0 was installed on deb at /home/me/.local/share/ahpd/server/0.8.0-1a2b3c4d5e6f/bin/ahpd
+```
+
+A box no download is made for, anything but Linux on x86_64 or aarch64, is refused before anything is installed, in the words VS Code [refuses one with](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sshRemoteAgentHostService.ts#L935-L938), `Unsupported remote platform: FreeBSD amd64`, and runs an ahpd of its own by naming it in `host`.
+A download that fails runs the newest other install of this host's there, as VS Code falls back to its [newest other CLI](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L111-L123), and the log says so and why; with none, the session is refused with the install's own last line.
+The folder the box answers is checked to be one of this host's installs, directly under its root and named `<version>-<hash>`, before anything runs from it.
 
 ### What the box can run
 
@@ -388,7 +405,7 @@ A policy names every ssh machine with `computer: ["ssh.*"]`.
 | `kvm` | `/dev/kvm` exists, and the user can read and write it. |
 | `libvirt` | `virsh` is on the box. |
 | `libvirtAccess` | `virsh -c qemu:///system list` works as the user. |
-| `ahpd` | `ahpd --version` answers, from the `PATH` or from `~/.local/node/bin`, where the install script puts it. |
+| `ahpd` | This host's install answers `--version`, or the box can download one. The fix is the packages the download needs, or on a system no download is made for, a `host` command for an ahpd of the box's own. A box whose `host` names that command is ok with it and is asked nothing about the install, which does not apply to it. |
 
 `fix` holds the lines to run on the box, in order. A line that starts with `#` is a note, so the list can be pasted into a shell as it is. The `apt` lines are for Debian and Ubuntu; on another system the fix names the package to install. A new group takes effect at the next login, so log in again before you read the leaf again.
 

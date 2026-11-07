@@ -14,7 +14,7 @@
       "description": "Argumentos que van antes de los suyos, para un wrapper o un contexto."
     },
     "ssh": {
-      "description": "Máquinas a las que este host llega por ssh. Cada una se lista, no se crea: nada de este host está en ella, así que ninguna se puede crear, iniciar ni eliminar desde aquí."
+      "description": "Máquinas a las que este host llega por ssh. Cada una se lista, no se crea, así que ninguna se puede crear, iniciar ni eliminar desde aquí; una sesión en ella inicia su host con el ahpd que este host instala en la carpeta del propio usuario allí."
     },
     "libvirt": {
       "description": "Cómo un perfil con runtime libvirt crea sus máquinas: cada una es una VM en el libvirt de su servidor, un clon enlazado de un disco plantilla, alcanzada por ssh a través de ese servidor."
