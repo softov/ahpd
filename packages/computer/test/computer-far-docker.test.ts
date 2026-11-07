@@ -235,7 +235,7 @@ it('lists the local machines when a box\'s Docker refuses, naming it', async () 
   writeFileSync(farFile(at.local), JSON.stringify({ machines: [], calls: [], failPs: true }));
   const { listed, lines } = await load(at, { far: { server: 'dev02' } });
   expect(await listed()).toEqual(['here']);
-  expect(lines.some((line) => line.includes('the docker-far runtime did not list its machines'))).toBe(true);
+  expect(lines.some((line) => line.includes('Could not list the docker-far machines'))).toBe(true);
 });
 
 it('adopts a box\'s disposable machines at the next listing that reaches it, when the startup listing did not', async () => {
