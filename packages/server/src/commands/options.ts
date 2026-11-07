@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type OptionSpec } from '@cofold/commands';
 import { isRecord, secretRef } from '@ahpd/sdk';
-import type { IssuerVerify, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
+import type { IssuerVerify, ManagedSettingsPermissions, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
 import type { Config, HttpSetting, RoutesSetting } from '../config.js';
 import { asSpec, configDir, configPath, loadConfig, shellEnvProblems } from '../config.js';
 import { sourceOf, pluginIdOf, pluginIdsOf, runPlugins } from '../plugins.js';
@@ -118,6 +118,8 @@ export interface Options {
   shellEnv?: ShellEnv;
   /** The rules a session's commands are matched against when its window pushed none. */
   terminalAutoApproveDefaults: 'vscode' | 'none';
+  /** The managed permissions every session is held to, absent when the deployment set none. */
+  managedSettingsPermissions?: ManagedSettingsPermissions;
   /**
    * A module whose default export reads a session's shell commands, as the
    * file's `commandParser` names it.
@@ -688,6 +690,17 @@ export const serverFields = {
     type: 'string',
     enum: ['vscode', 'none'],
     description: 'The rules a session\'s shell commands are matched against when the window that started it pushed none: vscode uses VS Code\'s terminal auto-approve table, none approves no command.',
+  },
+  managedSettingsPermissions: {
+    type: 'object',
+    title: 'Managed permissions',
+    properties: {
+      disableBypassPermissionsMode: { type: 'string', enum: ['disable'] },
+      deny: { type: 'array', items: { type: 'string' } },
+      ask: { type: 'array', items: { type: 'string' } },
+      limitTo: { type: 'array', items: { type: 'string' } },
+    },
+    description: 'The managed permissions every session on the host is held to, in VS Code\'s shape: deny and ask rules in the managed rule grammar (Shell, Read, Write, Domain), disableBypassPermissionsMode "disable" to take Allow All away, and limitTo, the Domain rules a fetch stays within. The host checks each rule on the tool questions of its kind beside the session\'s permissions, and hands the whole to every backend. Set in the configuration file only.',
   },
   commandParser: {
     type: 'string',
@@ -1278,6 +1291,7 @@ const noCwd = input['noCwd'] === true;
   const clientToolTimeoutMs = given('clientToolTimeoutMs');
   const clientToolCallDisconnectTimeoutMs = given('clientToolCallDisconnectTimeoutMs');
   const shellEnv = given('shellEnv');
+  const managedSettingsPermissions = given('managedSettingsPermissions');
   // File-only, and already absolute: `anchored` resolved it against the file.
   const commandParser = file.commandParser;
   const deltaWindowMs = given('deltaWindowMs');
@@ -1327,6 +1341,7 @@ const noCwd = input['noCwd'] === true;
     ...(clientToolCallDisconnectTimeoutMs === undefined ? {} : { clientToolCallDisconnectTimeoutMs }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',
+    ...(managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions }),
     ...(commandParser === undefined ? {} : { commandParser }),
     ...(deltaWindowMs === undefined ? {} : { deltaWindowMs }),
     ...(sleepAfterMinutes === undefined ? {} : { sleepAfterMinutes }),

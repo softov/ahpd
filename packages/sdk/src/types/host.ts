@@ -28,6 +28,7 @@ import type { PayOrder } from '../usage/charge.js';
 import type { RecordStore } from './records.js';
 import type { Vault } from './vault.js';
 import type { Peer, Request } from './rpc.js';
+import type { ManagedSettingsPermissions } from './permissions.js';
 import type { Opened } from './listen.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
@@ -879,6 +880,19 @@ export interface HostOptions {
    * nothing.
    */
   terminalAutoApproveDefaults?: 'vscode' | 'none';
+  /**
+   * The managed permissions the operator sets for every session on the host,
+   * in VS Code's shape: managed `ask` and `deny` rules, the Allow All lock,
+   * and the domains a fetch stays within.
+   *
+   * The host checks the rules of `deny` and `ask`, and `limitTo`, on every
+   * tool question of their kind, beside the session's permissions, and the
+   * lock takes the host's Allow All away from every session. Handed to every
+   * backend on `Start.managedSettings` as well, as VS Code hands its runtime
+   * `managedSettings: { permissions }`, for a runtime that enforces them on
+   * the calls it never asks the host about.
+   */
+  managedSettingsPermissions?: ManagedSettingsPermissions;
   /**
    * How a session's shell commands are read before their rules are matched.
    *

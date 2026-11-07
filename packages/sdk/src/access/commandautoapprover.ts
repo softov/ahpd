@@ -73,7 +73,7 @@ const SAFE_SINKS: ReadonlySet<string> = new Set(['/dev/null', '/dev/stdout', '/d
 const WORD_END = /[\s;|&<>()]/u;
 
 /** Every character of a name a rule may carry, escaped so it stands for itself in a regular expression. */
-const escapeRegExpCharacters = (value: string): string => value.replace(/[-\\{}*+?|^$.,[\]()#\s]/gu, '\\$&');
+export const escapeRegExpCharacters = (value: string): string => value.replace(/[-\\{}*+?|^$.,[\]()#\s]/gu, '\\$&');
 
 /** A rule that matches nothing, which is what a key no regular expression can carry becomes. */
 const NEVER_MATCHES = /(?!)/u;
@@ -546,28 +546,8 @@ const sedWritesInPlace = (command: string): boolean => {
   return /(?:^|\s)(-[a-zA-Z]*[iI][a-zA-Z]*\S*|--in-place(?:=\S*)?|(-i|-I)\s*'[^']*'|(-i|-I)\s*"[^"]*")(?:\s|$)/u.test(command);
 };
 
-/**
- * What the commands of a line add up to.
- *
- * One denied command denies the line, and one that matches no allow rule leaves
- * the line unapproved: every command of a line runs, so every one of them has
- * to be answered for. A command that sets a variable for itself is denied
- * rather than matched, because what it runs afterwards is not what the line
- * says.
- */
-const matchCommands = (subCommands: readonly string[], rules: CompiledRules, powershell: boolean): CommandApprovalResult => {
-  let approved = true;
-  for (const subCommand of subCommands) {
-    if (sedWritesInPlace(subCommand)) return 'denied';
-    if (TRANSIENT_VARIABLE.test(subCommand)) return 'denied';
-    if (matchesRule(subCommand, rules.deny, powershell)) return 'denied';
-    if (!matchesRule(subCommand, rules.allow, powershell)) approved = false;
-  }
-  return approved ? 'approved' : 'noMatch';
-};
-
-/** A glob, as the edit patterns are written, as the expression that matches a whole path against it. */
-const globRegexOf = (pattern: string): RegExp => {
+/** A glob, as the edit patterns and path rules are written, as the expression that matches a whole path against it. */
+export const globRegexOf = (pattern: string, ignoreCase = false): RegExp => {
   let source = '';
   let i = 0;
   while (i < pattern.length) {
@@ -605,7 +585,7 @@ const globRegexOf = (pattern: string): RegExp => {
     source += escapeRegExpCharacters(c);
     i += 1;
   }
-  return new RegExp(`^${source}$`);
+  return new RegExp(`^${source}$`, ignoreCase ? 'i' : '');
 };
 
 /**
@@ -616,7 +596,7 @@ const globRegexOf = (pattern: string): RegExp => {
  * written. Nothing matching the path at all is not an approval: the table is
  * the whole of what a write is allowed by.
  */
-const patternsAllow = (path: string, patterns: TerminalAutoApprovePatterns): boolean => {
+export const patternsAllow = (path: string, patterns: TerminalAutoApprovePatterns): boolean => {
   // In the patterns' own separators. A pattern is written with `/`, and on
   // Windows a path has `\`: the denial `.git` pattern never matched
   // `C:\repo\.git\config` while the allow-all one did, so a denial was never
@@ -642,7 +622,7 @@ const SHELL_EXPANDS = /[$(){}`~%]/u;
  * would have to be on. A path this may not look at is `undefined` as well,
  * because a check that cannot be made is not one that passed.
  */
-const realPathOf = (path: string): string | undefined => {
+export const realPathOf = (path: string): string | undefined => {
   let rest = '';
   let at = path;
   for (;;) {
@@ -724,6 +704,25 @@ export interface CommandApprovalOptions {
   editPatterns?: TerminalAutoApprovePatterns;
   /** The locations, relative to the folder, a write target must stay off. */
   sensitive?: readonly SensitiveEditLocation[];
+  /** A permission rule's decision on one command, read ahead of the table's. */
+  classify?: (subCommand: string) => 'allow' | 'ask' | undefined;
+  /** A permission rule's decision on the whole line: an allow covers every command of it unless a rule asks. */
+  classifyCommandLine?: (commandLine: string) => 'allow' | 'ask' | undefined;
+}
+
+/**
+ * What the rules say of a command line, and the commands they read in it, as
+ * VS Code's `ICommandApprovalEvaluation`: the result, whether a permission's
+ * ask rule spoke, whether a command no rule may approve is in it, and the
+ * commands no rule approved.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/commandAutoApprover.ts#L133-L145
+ */
+export interface CommandApprovalEvaluation {
+  result: CommandApprovalResult;
+  hasAskRule?: boolean;
+  hasUnsafeSubCommand?: boolean;
+  subCommands?: readonly string[];
+  unapprovedSubCommands?: readonly string[];
 }
 
 /**
@@ -747,21 +746,62 @@ export class CommandAutoApprover {
    * the rules spoke about the command and about nothing else.
    */
   evaluate(line: string, options: CommandApprovalOptions = {}): CommandApprovalResult {
-    const trimmed = line.trimStart();
-    if (trimmed === '') return 'approved';
+    return this.evaluation(line, options).result;
+  }
+
+  /**
+   * What the rules say about a command line, with the commands they read in
+   * it, as VS Code's `CommandAutoApprover.evaluate` reads one: a permission's
+   * decision on a command, or on the whole line, ahead of the table, a command
+   * that writes in place or sets a variable for itself never approved, and a
+   * write a line makes approved only where it lands in the folder and the
+   * edit patterns allow it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/commandAutoApprover.ts#L274-L330
+   */
+  evaluation(line: string, options: CommandApprovalOptions = {}): CommandApprovalEvaluation {
+    const trimmed = line.trim();
+    if (trimmed === '') return { result: 'approved' };
     const rules = compileRules(options.rules ?? DEFAULT_TERMINAL_AUTO_APPROVE_RULES);
-    if (matchesLine(trimmed, rules.denyCommandLine)) return 'denied';
-
+    const powershell = options.shell === 'powershell';
+    const lineDecision = options.classifyCommandLine?.(trimmed);
+    const lineDenied = matchesLine(trimmed, rules.denyCommandLine);
+    const lineAllowed = matchesLine(trimmed, rules.allowCommandLine);
     const read = this.split(trimmed, options.shell ?? 'bash');
-    if (read === undefined || read.unanalyzable) return 'noMatch';
+    if (read === undefined || read.unanalyzable) return { result: lineDecision === undefined && lineDenied ? 'denied' : 'noMatch' };
 
-    let result = matchCommands(read.subCommands, rules, options.shell === 'powershell');
-    if (result !== 'denied' && matchesLine(trimmed, rules.allowCommandLine)) result = 'approved';
-    if (result !== 'approved' || read.writeDests.length === 0) return result;
-
+    const unapprovedSubCommands: string[] = [];
+    let denied = false;
+    let hasUnsafeSubCommand = false;
+    let hasAskRule = lineDecision === 'ask';
+    for (const subCommand of read.subCommands) {
+      const decision = options.classify?.(subCommand);
+      hasAskRule ||= decision === 'ask';
+      let result: CommandApprovalResult;
+      if (sedWritesInPlace(subCommand) || TRANSIENT_VARIABLE.test(subCommand)) {
+        hasUnsafeSubCommand = true;
+        result = 'denied';
+      }
+      else if (decision === 'ask' || lineDecision === 'ask') result = 'noMatch';
+      else if (decision === 'allow' || lineDecision === 'allow') result = 'approved';
+      else {
+        result = lineDenied || matchesRule(subCommand, rules.deny, powershell) ? 'denied'
+          : matchesRule(subCommand, rules.allow, powershell) ? 'approved' : 'noMatch';
+        if (result !== 'denied' && lineAllowed) result = 'approved';
+      }
+      denied ||= result === 'denied';
+      if (result !== 'approved') unapprovedSubCommands.push(subCommand);
+    }
+    let result: CommandApprovalResult = denied ? 'denied' : hasAskRule || unapprovedSubCommands.length > 0 ? 'noMatch' : 'approved';
     const folder = options.workingDirectory;
-    if (folder === undefined) return 'noMatch';
-    return read.writeDests.every((dest) => writeAllowed(dest, folder, options.editPatterns, options.sensitive ?? [])) ? 'approved' : 'noMatch';
+    if (result === 'approved' && read.writeDests.length > 0
+      && (folder === undefined || !read.writeDests.every((dest) => writeAllowed(dest, folder, options.editPatterns, options.sensitive ?? [])))) result = 'noMatch';
+    return {
+      result,
+      ...(hasAskRule ? { hasAskRule: true } : {}),
+      ...(hasUnsafeSubCommand ? { hasUnsafeSubCommand: true } : {}),
+      subCommands: read.subCommands,
+      unapprovedSubCommands,
+    };
   }
 }
 
@@ -971,4 +1011,45 @@ export const DEFAULT_TERMINAL_AUTO_APPROVE_RULES: Readonly<TerminalAutoApproveRu
   eval: false,
   'Invoke-Expression': false,
   iex: false,
+};
+
+/** Commands a grant never names, since naming one would grant whatever it runs. */
+const NEVER_AUTO_APPROVE_COMMANDS = new Set([
+  'bash', 'sh', 'zsh', 'fish', 'ksh', 'csh', 'tcsh', 'dash',
+  'pwsh', 'powershell', 'powershell.exe', 'cmd', 'cmd.exe',
+  'python', 'python3', 'node', 'ruby', 'perl', 'php', 'lua',
+  'eval', 'exec', 'source', 'sudo', 'su', 'doas',
+  'curl', 'wget', 'invoke-restmethod', 'invoke-webrequest', 'irm', 'iwr',
+]);
+/** Commands a grant names with their sub-command, and the two it names one level further. */
+const COMMANDS_WITH_SUBCOMMANDS = new Set(['git', 'npm', 'npx', 'yarn', 'docker', 'kubectl', 'cargo', 'dotnet', 'mvn', 'gradle']);
+const COMMANDS_WITH_SUB_SUBCOMMANDS = new Set(['npm run', 'yarn run']);
+
+/**
+ * The command prefixes a grant may name for the commands no rule approved,
+ * and whether the whole line is worth offering exactly, as VS Code suggests
+ * the keys of a terminal grant.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/terminal/common/autoApprove/suggestAutoApproveRules.ts
+ */
+export const suggestAutoApproveRuleKeys = (commandLine: string, unapprovedSubCommands: readonly string[]): { subCommandKeys: string[]; offerExactCommandLine: boolean } => {
+  const nextArgument = (parts: string[], from: number): number | undefined => {
+    for (let i = from; i < parts.length; i++) if (!(parts[i] ?? '').startsWith('-')) return i;
+    return undefined;
+  };
+  const keys = unapprovedSubCommands.flatMap((command): string[] => {
+    const parts = command.trim().split(/\s+/u);
+    const base = (parts[0] ?? '').toLowerCase();
+    if (NEVER_AUTO_APPROVE_COMMANDS.has(base)) return [];
+    if (!COMMANDS_WITH_SUBCOMMANDS.has(base)) return [parts[0] ?? ''];
+    const sub = nextArgument(parts, 1);
+    if (sub === undefined) return [];
+    if (!COMMANDS_WITH_SUB_SUBCOMMANDS.has(`${parts[0] ?? ''} ${parts[sub] ?? ''}`.toLowerCase())) return [parts.slice(0, sub + 1).join(' ')];
+    const subSub = nextArgument(parts, sub + 1);
+    return subSub === undefined ? [] : [parts.slice(0, subSub + 1).join(' ')];
+  });
+  const first = unapprovedSubCommands[0]?.split(' ')[0] ?? '';
+  return {
+    subCommandKeys: [...new Set(keys)],
+    offerExactCommandLine: first !== commandLine && !COMMANDS_WITH_SUBCOMMANDS.has(commandLine) && !COMMANDS_WITH_SUB_SUBCOMMANDS.has(commandLine),
+  };
 };

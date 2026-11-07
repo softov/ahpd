@@ -5,7 +5,7 @@ import { readMultiRoot } from '../sessions/remotesession.js';
 import { filesOf, needsAsyncRewrite, snapshot } from './attachments.js';
 import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
-import { ALLOW_SESSION_OPTION_ID, withSessionGrant } from './permissions.js';
+import { grantOf, withGrant } from './permissions.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
@@ -2064,25 +2064,34 @@ export function chatAction(
         typeof action.selectedOptionId === 'string' ? action.selectedOptionId : undefined,
       );
       /*
-       * An approval that picked "Allow in this Session" is kept for the
-       * session and the tool, in the session's `permissions`, as VS Code's
-       * host keeps one: said on the session as this host's config change,
-       * kept with the session, and handed to every chat's backend as a key
-       * this host takes is. The option is the one the held state resolved
-       * from the question's own options, so a question that offered none such,
-       * one the operator's rule names among them, keeps nothing.
+       * An approval that picked a grant keeps it, as VS Code's host keeps one:
+       * a scoped grant's rules, or for "Allow in this Session" the tool's
+       * name, in the session's `permissions`, said on the session as this
+       * host's config change, kept with the session and handed to every
+       * chat's backend as a key this host takes is; an "Always Allow" grant's
+       * rules in the host's own `permissions`, said on the root. The option
+       * is the one the held state resolved from the question's own options,
+       * so a question that offered none such keeps nothing, and neither does
+       * one that asked to leave the sandbox.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1878-L1911
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L619-L650
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L612-L650
        */
       const turn = ctx.stateOf(worker ? channel : session.chatUri)?.activeTurn as Bag | undefined;
       const call = (Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [])
         .map((part) => part.toolCall as Bag | undefined)
         .find((one) => one !== undefined && one.toolCallId === toolCallId);
-      const option = call?.selectedOption as Bag | undefined;
       const owning = sessions.get(session.uri);
-      if (owning === undefined || call?.status !== 'running' || typeof call.toolName !== 'string'
-        || option?.id !== ALLOW_SESSION_OPTION_ID || option.id !== action.selectedOptionId || option.kind !== 'approve') break;
-      const permissions = withSessionGrant(owning.config.permissions, call.toolName);
+      const grant = call === undefined || call.status !== 'running' ? undefined
+        : grantOf(call, typeof action.selectedOptionId === 'string' ? action.selectedOptionId : undefined);
+      if (owning === undefined || grant === undefined) break;
+      if (grant.scope === 'host') {
+        const permissions = withGrant(ctx.rootConfig.permissions, grant.rules);
+        if (permissions === undefined) break;
+        ctx.rootConfig.permissions = permissions;
+        dispatch(ROOT, { type: 'root/configChanged', config: { permissions } });
+        break;
+      }
+      const permissions = withGrant(owning.config.permissions, grant.rules);
       if (permissions === undefined) break;
       owning.config.permissions = permissions;
       kept.setConfig(idOf(session.uri), { ...kept.config(idOf(session.uri)), permissions });

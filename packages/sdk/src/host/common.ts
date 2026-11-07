@@ -129,7 +129,7 @@ export const HOSTS_TAKEN: Record<string, Record<string, unknown>> = {
   permissions: {
     type: 'object',
     title: 'Permissions',
-    description: 'Rules for this session\'s tool calls, each a tool\'s name. A question about a tool that deny names is refused, and one about a tool that allow names, and ask does not, is answered without asking. Updated when a tool is allowed in this session.',
+    description: 'Permission rules: a tool name or Tool(specifier), e.g. Shell(npm run *), WebFetch(example.com), WebFetch(example.com/docs/*), Read(./src/**), or Edit(./docs/**). Shell specifiers support wildcards, /regex/flags, and commandLine:<specifier> for the full command line. Deny rules reject matching calls; ask rules require confirmation before allow rules or implicit defaults. Updated automatically when approving "in this Session" or "Always Allow".',
     properties: {
       allow: { type: 'array', title: 'Allowed permission rules', items: { type: 'string', title: 'Permission rule' } },
       deny: { type: 'array', title: 'Denied permission rules', items: { type: 'string', title: 'Permission rule' } },

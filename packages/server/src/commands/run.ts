@@ -1398,6 +1398,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * way.
      */
     terminalAutoApproveDefaults: options.terminalAutoApproveDefaults,
+    // The operator's managed permissions, handed on as the file says them.
+    ...(options.managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions: options.managedSettingsPermissions }),
     /*
      * The reader a configured module exports, which takes the sdk's own
      * splitter's place.

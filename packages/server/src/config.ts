@@ -6,7 +6,7 @@ import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveConfig, type ResolvedConfig } from '@cofold/config';
-import { isShellName, issuerKind, reason, type Icon, type IssuerVerify, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type ShellEnv } from '@ahpd/sdk';
+import { isShellName, issuerKind, reason, type Icon, type IssuerVerify, type ManagedSettingsPermissions, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type ShellEnv } from '@ahpd/sdk';
 import type { ProxySetting } from './proxy/providers.js';
 
 /**
@@ -385,6 +385,20 @@ export interface Config {
    * empty table has said what it approves, and it approves nothing.
    */
   terminalAutoApproveDefaults?: 'vscode' | 'none';
+  /**
+   * The managed permissions every session on the host is held to, in VS
+   * Code's shape: `deny` and `ask` rules in the managed rule grammar (`Shell`,
+   * `Read`, `Write`, `Domain`), `disableBypassPermissionsMode: 'disable'` to
+   * take Allow All away, and `limitTo`, the `Domain` rules a fetch stays
+   * within.
+   *
+   * The host checks each rule on the tool questions of its kind beside the
+   * session's permissions, the lock takes the host's
+   * Allow All away, and the whole is handed to every backend, as VS Code
+   * hands its runtime managed settings. Absent is no managed permissions at
+   * all.
+   */
+  managedSettingsPermissions?: ManagedSettingsPermissions;
   /**
    * How long a streamed delta waits for the next one before it is sent.
    *

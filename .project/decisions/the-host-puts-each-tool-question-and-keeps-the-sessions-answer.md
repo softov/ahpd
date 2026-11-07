@@ -1,19 +1,23 @@
 ---
-title: The host puts each tool question with VS Code's options and keeps an "Allow in this Session" answer in the session's permissions, and a host rule can make a tool call always ask
+title: The host decides each tool question with VS Code's chain and options and keeps a grant in the session's or the host's permissions, and a host rule or a managed rule can make a tool call always ask
 status: accepted
 date: 2026-11-06
 supersedes: decisions/each-backend-offers-its-options-unless-a-rule-asks.md
 refs:
-  - "[code://packages/sdk/src/host/permissions.ts](../../packages/sdk/src/host/permissions.ts) - the options, the operator's rule and how the session's `permissions` answer a question"
-  - "[code://packages/sdk/src/host/spawn.ts](../../packages/sdk/src/host/spawn.ts) - `toolReady`, a backend's question as the host puts it"
-  - "[code://packages/sdk/src/host/chatactions.ts](../../packages/sdk/src/host/chatactions.ts) - `chat/toolCallConfirmed`, where an Allow in this Session answer is kept"
+  - "[code://packages/sdk/src/host/permissions.ts](../../packages/sdk/src/host/permissions.ts) - the chain, the options, the grants, the operator's rule and the managed check"
+  - "[code://packages/sdk/src/access/permissionrules.ts](../../packages/sdk/src/access/permissionrules.ts) - VS Code's permission rules"
+  - "[code://packages/sdk/src/host/spawn.ts](../../packages/sdk/src/host/spawn.ts) - `toolReady`, a backend's question as the host decides and puts it"
+  - "[code://packages/sdk/src/host/chatactions.ts](../../packages/sdk/src/host/chatactions.ts) - `chat/toolCallConfirmed`, where a grant is kept"
+  - "[code://packages/sdk/src/types/agent.ts](../../packages/sdk/src/types/agent.ts) - `PendingConfirmation`, a question's host-only fields, and `Start.managedSettings`"
+  - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L238-L650 - VS Code's chain, its options and its grants
+  - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostPolicySupport.ts#L46-L56 - the enforcement VS Code records as partial, which the host's managed check carries
   - "[code://packages/sdk/src/types/session.ts](../../packages/sdk/src/types/session.ts) - `confirm(toolCallId, approved, optionId)`, the answer a backend receives"
   - git://d391559e - the last commit that holds the superseded decision and the one it superseded
   - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L67-L76 - VS Code's options, in its words
   - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L619-L650 - an Allow in this Session answer kept as a rule in the session's `permissions`
   - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1684-L1766 - VS Code's host answers its agent's question from the session's rules
   - https://github.com/microsoft/vscode/blob/a959ba62444/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts#L881 - `chat.tools.eligibleForAutoApproval`, the setting the rule is named after
-  - https://github.com/microsoft/vscode/blob/a959ba62444/src/vs/workbench/contrib/chat/browser/tools/languageModelToolsService.ts#L1399-L1411 - in VS Code, the session's Auto-Approve level still skips the setting
+  - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L32-L42 - VS Code's planned per-tool translation of the setting, which the per-tool ask is
 ---
 
 ## Context
@@ -28,16 +32,33 @@ Examples are a call that writes to a tracker, sends a message or moves money.
 
 ## Decision
 
-The host puts every question a backend asks about a tool call.
-Where the backend offers no options of its own, the question offers VS Code's three, in VS Code's words.
-An Allow in this Session answer adds the tool's name to `allow` in the session's `permissions`, VS Code's session property.
-The host answers a later question about a tool that `allow` names, and `ask` does not, itself.
-It refuses a question about a tool that `deny` names before any client is asked, and says nothing of it.
-One exception: a tool that the host root config key `eligibleForAutoApproval` sets to `false` asks on every call, in every backend.
-Its question offers Allow Once and Skip alone, and no rule of the session answers it.
+The host decides every question a backend asks about a tool call with VS Code's chain, for what this host has.
+A backend says what the call asks for in host-only fields beside its question.
+They are its kind, the path, the URL, the shell line and its language.
+Two flags say the call asks to leave the sandbox, or a managed rule asks about it.
+The host refuses a call its `permissions` deny before any client is asked.
+It refuses a write to an attachment snapshot the same way.
+Otherwise the host answers the question itself where VS Code's chain does.
+That is Allow All, `allow` rules, reads inside the folders, allowed writes, and approved shell lines.
+A question about a shell line, a fetch, a read or a write offers grants of what it asks for.
+Each grant is offered in the session and always.
+Any other question offers its backend's own options, else VS Code's three, in VS Code's words.
+A session grant is kept in the session's `permissions`, VS Code's session property.
+An Always grant is kept in the host's own `permissions`, root config.
+A call that asks to leave the sandbox offers Allow and Skip and keeps nothing.
+The host also checks the operator's managed rules on every question, each on the questions of its kind.
+A managed deny is refused before any client is asked, and a managed ask asks.
+A tool that the host root config key `eligibleForAutoApproval` sets to `false` is the managed layer's per-tool ask.
+It asks on every call, in every backend.
+Its question offers Allow Once and Skip alone, and nothing answers it but a person, Allow All and grants included.
+That is VS Code's own planned translation of the setting.
+VS Code maps it onto the Allow All lock only because its managed grammar has no tool-name family.
+It says to replace that with a per-tool translation once the grammar gains one, and this host's rules match tool names.
 Every permission mode asks, `bypassPermissions` included, and `dontAsk` refuses the call.
+The managed lock takes Allow All away from every session.
 
 Source: the audit's rows EJ-0046, EJ-0048, EJ-0051, EJ-0058, EJ-0164 and P2EJ-0101, 2026-11-06.
+And C6's differences from VS Code, judged 2026-11-07, with the sandbox step and the managed layer Aaron approved.
 Each was judged by Aaron Paterson's test for a divergence from VS Code: whether it is "intentional AND necessary", with "no better more idiomatic pattern".
 The rule's source: Softov, 2026-10-16, for host/101, chose "the rule wins over every mode" and "a host root config key".
 
@@ -47,12 +68,16 @@ Every backend's question offers the same options in the same words, as in VS Cod
 What a person allowed is in the session's config, where a client reads it and can remove it.
 Each backend must ask with no options of its own, except a tool's own choices, and must keep no "always" of its own.
 Claude reads the session's `permissions` itself; the host answers the questions of the others.
-A rule with a specifier, such as `Shell(npm run *)`, names no call, because a backend's question does not say what the call runs or touches.
-The host reads the rule by each name a backend gives a tool.
+A rule with a specifier, such as `Shell(npm run *)`, names a call by what the question says it runs or touches.
+A backend that leaves those fields out is answered by its tool's name alone.
+The host's check of managed rules is ahpd's own.
+It carries the enforcement VS Code's policy inventory records as partial.
+The managed settings are handed to every backend as well.
+A runtime that enforces them itself does so for the calls it never asks the host about.
+The host reads the operator's `eligibleForAutoApproval` rule by each name a backend gives a tool.
 An MCP server's tool is `<server>/<tool>`, its server read from the call's `contributor`, the session's customization it names, as AHP names an MCP tool's server.
 A call with no contributor is named by its full tool name alone.
 An ACP agent decides itself whether to ask, so the rule reaches only the MCP tools this host serves it.
-This differs from VS Code, where the session's Auto-Approve level still skips `eligibleForAutoApproval`.
 
 ## Options
 

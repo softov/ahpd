@@ -1,10 +1,20 @@
+import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
+import { patternsAllow, realPathOf, suggestAutoApproveRuleKeys } from '../access/commandautoapprover.js';
+import {
+  isExactAbsolutePathRule, matchesPermissionRule, matchesShellCommandLine, matchesShellSubCommand, parsePermissionGrantOptionId,
+  pathRule, permissionGrantOptionId, shellExactRule, shellPrefixRule, webFetchRule,
+} from '../access/permissionrules.js';
+import type { CommandApprovalEvaluation, CommandApprovalOptions, SensitiveEditLocation } from '../access/commandautoapprover.js';
+import type { PermissionGrantScope, PermissionRequest, PermissionRuleContext } from '../access/permissionrules.js';
 import type { Bag } from '../types/common.js';
+import type { ManagedSettingsPermissions } from '../types/permissions.js';
 
 /*
  * The questions a backend puts to a person about a tool call, as this host puts
- * them: the options each offers, the operator's rule that makes a tool ask
- * every time, and the "Allow in this Session" answers a session keeps, as VS
- * Code's `SessionPermissionManager` owns them for every agent of its host.
+ * them: whether a rule refuses it before anybody is asked, whether a setting or
+ * a permission answers it, the options it offers, and the grants an answer
+ * keeps, as VS Code's `SessionPermissionManager` owns them for every agent of
+ * its host.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L203-L207
  */
 
@@ -100,64 +110,463 @@ export const alwaysAsks = (rootConfig: Record<string, unknown>, toolName: string
   return rules.some((one) => one.tool === '*' && one.value === false);
 };
 
-/** A session's permission rules: the lists of tools it allows, refuses and asks about. */
-interface PermissionRules {
+/**
+ * The options a question that asks to leave the sandbox offers: Allow, this
+ * call alone, and Skip, as VS Code's host offers them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L77-L81
+ */
+export const SANDBOX_CONFIRMATION_OPTIONS: readonly Bag[] = [{ ...ALLOW_ONCE_OPTION, label: 'Allow' }, SKIP_OPTION];
+
+/** The `_meta` key a question that asks to leave the sandbox is marked with, so no grant is kept from its answer. */
+export const SANDBOX_BYPASS_META_KEY = 'agentHost.sandboxBypass';
+
+/**
+ * Writes that ask whatever the edit patterns say, VS Code's
+ * `ALWAYS_CHECKED_EDIT_PATTERNS`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/chat/common/chatSettings.ts#L112-L126
+ */
+export const ALWAYS_CHECKED_EDIT_PATTERNS: Readonly<Record<string, boolean>> = {
+  '**/.mcp.json': false,
+  '**/.npmrc': false,
+  '**/.vscode/*.json': false,
+  '**/.github/agents/**': false,
+  '**/.github/hooks/**': false,
+  '**/.github/copilot/settings.json': false,
+  '**/.github/copilot/settings.local.json': false,
+  '**/.claude/agents/**': false,
+  '**/.claude/settings.json': false,
+  '**/.claude/settings.local.json': false,
+  '**/.codex/agents/**': false,
+  '**/.codex/config.toml': false,
+  '**/.codex/hooks.json': false,
+};
+
+/** A permission list's rules: what it allows, refuses and asks about. */
+export interface PermissionRules {
   allow: string[];
   deny: string[];
   ask: string[];
 }
 
 /**
- * A `permissions` value as VS Code's host reads one: an object whose `allow`,
- * `deny` and `ask`, each where present, are lists of rules. Any other value is
- * no rules at all.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L277-L310
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L1059-L1070
+ * The rules of every `permissions` value given, each read as VS Code's host
+ * reads one, an object whose `allow`, `deny` and `ask` are lists of rules and
+ * any other value none, added together: the session's and the host's lists
+ * are additive.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L888-L901
  */
-const permissionRulesOf = (value: unknown): PermissionRules | undefined => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
-  const held = value as Bag;
-  const lists = [held.allow, held.deny, held.ask];
-  if (!lists.every((one) => one === undefined || (Array.isArray(one) && one.every((rule) => typeof rule === 'string')))) return undefined;
-  return { allow: (held.allow ?? []) as string[], deny: (held.deny ?? []) as string[], ask: (held.ask ?? []) as string[] };
+export const permissionRulesOf = (...values: unknown[]): PermissionRules => {
+  const read = values.flatMap((value): PermissionRules[] => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return [];
+    const held = value as Bag;
+    const lists = [held.allow, held.deny, held.ask];
+    if (!lists.every((one) => one === undefined || (Array.isArray(one) && one.every((rule) => typeof rule === 'string')))) return [];
+    return [{ allow: (held.allow ?? []) as string[], deny: (held.deny ?? []) as string[], ask: (held.ask ?? []) as string[] }];
+  });
+  return {
+    allow: [...new Set(read.flatMap((one) => one.allow))],
+    deny: [...new Set(read.flatMap((one) => one.deny))],
+    ask: [...new Set(read.flatMap((one) => one.ask))],
+  };
 };
 
 /**
- * How a session's `permissions` answer a question about a tool: `deny` where
- * a rule in `deny` names it, `allow` where one in `allow` does and none in
- * `ask` does, and nothing otherwise, as VS Code's host turns a call a deny
- * rule names away before anything else and reads an ask rule before an allow
- * rule.
- *
- * A rule names a tool by its name, or as `<name>(*)`. A rule with any other
- * specifier, `Shell(npm run *)` or `Read(./src/**)`, scopes a request by what
- * it runs or touches, which a backend's question does not say here, so it
- * names no call.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L287-L315
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L402-L425
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/permissionRules.ts#L106-L124
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/permissionRules.ts#L208-L228
+ * A `permissions` value with rules added to `allow`, its `deny` and `ask` kept
+ * as they are, or nothing where every rule is there already: VS Code's host
+ * keeps a grant picked from a question as `allow` rules, in the session's
+ * value or the host's. A value that is not one is read as no rules.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L1058-L1070
  */
-export const answeredInSession = (value: unknown, toolName: string): 'allow' | 'deny' | undefined => {
-  const rules = permissionRulesOf(value);
-  if (rules === undefined) return undefined;
-  const names = (rule: string): boolean => rule.trim() === toolName || rule.trim() === `${toolName}(*)`;
-  if (rules.deny.some(names)) return 'deny';
-  return rules.allow.some(names) && !rules.ask.some(names) ? 'allow' : undefined;
-};
-
-/**
- * A session's `permissions` with a tool added to `allow`, its `deny` and `ask`
- * kept as they are, or nothing where the tool is already there: VS Code's
- * host keeps an "Allow in this Session" answer as a rule naming the tool.
- * A value that is not one is read as no rules, as VS Code's host reads it.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L1059-L1070
- */
-export const withSessionGrant = (value: unknown, toolName: string): Bag | undefined => {
-  const rules = permissionRulesOf(value);
-  const permissions: Bag = rules === undefined ? { allow: [], deny: [] } : value as Bag;
-  const allowed = rules?.allow ?? [];
-  const allow = [...new Set([...allowed, toolName])];
+export const withGrant = (value: unknown, rules: readonly string[]): Bag | undefined => {
+  const lists = (one: unknown): boolean => one === undefined || (Array.isArray(one) && one.every((rule) => typeof rule === 'string'));
+  const valid = typeof value === 'object' && value !== null && !Array.isArray(value)
+    && lists((value as Bag).allow) && lists((value as Bag).deny) && lists((value as Bag).ask);
+  const permissions: Bag = valid ? value as Bag : { allow: [], deny: [] };
+  const allowed = (permissions.allow ?? []) as string[];
+  const allow = [...new Set([...allowed, ...rules])];
   if (allow.length === allowed.length) return undefined;
   return { ...permissions, allow };
+};
+
+/** What the host's approval chain reads to decide a question, gathered by the host from the call, its session and its config. */
+export interface ToolApproval {
+  /** What the call asks for, by VS Code's kinds. */
+  request: PermissionRequest;
+  /** The command line of a shell call. */
+  commandLine?: string;
+  /** The call asks to leave its sandbox. */
+  requestSandboxBypass?: boolean;
+  /** A managed rule asks about the call. */
+  managedApprovalRequired?: boolean;
+  /** The session's and the host's permission rules, together. */
+  rules: PermissionRules;
+  /** The folder a relative rule is read against, and the home. */
+  context: PermissionRuleContext;
+  /** The session's working folders, as paths. */
+  workingDirectories: readonly string[];
+  /** The folder this host keeps the session's attachment snapshots in, where it keeps them as files. */
+  attachmentsDirectory?: string;
+  /** The local files and folders a person attached to the chat's turns. */
+  attached: readonly string[];
+  /** VS Code's global Allow All, `globalAutoApproveEnabled`. */
+  globalAutoApprove: boolean;
+  /** The session's own Allow All, its `autoApprove` level. */
+  sessionAutoApprove: boolean;
+  /** The managed lock that takes Allow All away. */
+  bypassLocked: boolean;
+  /** `terminalAutoApproveEnabled` is not off. */
+  terminalAutoApprove: boolean;
+  /** The edit patterns a write must match. */
+  editPatterns: Record<string, boolean>;
+  /** The session's `sensitiveEditLocations`. */
+  sensitive: readonly SensitiveEditLocation[];
+  /** The host's command rules over a line, a permission's decision on each command and on the line laid on. */
+  evaluateShell?: (options: Pick<CommandApprovalOptions, 'classify' | 'classifyCommandLine'>) => CommandApprovalEvaluation;
+  /** Whether a path exists, for the folder grant's git root. */
+  exists: (path: string) => boolean;
+}
+
+/** A path and the path it really is, links followed, or nothing where it cannot be read, which asks. */
+const resolvedPaths = (path: string): string[] | undefined => {
+  const real = realPathOf(path);
+  if (real === undefined) return undefined;
+  return real === path ? [path] : [path, real];
+};
+
+/** Whether a path is a folder or under it, blind to case where the platform's paths are. */
+const inside = (path: string, folder: string, ignoreCase: boolean): boolean => {
+  const spelled = (one: string): string => (ignoreCase ? one.toLowerCase() : one);
+  const at = spelled(normalize(path));
+  const parent = spelled(normalize(folder));
+  return at === parent || at.startsWith(parent.endsWith(sep) ? parent : `${parent}${sep}`);
+};
+
+/** The request's own name for a shell rule's language. */
+const shellOf = (approval: ToolApproval): 'bash' | 'powershell' => approval.request.shellLanguage ?? 'bash';
+
+/**
+ * A permission's decision on a command, and on a whole line, from the
+ * session's and the host's `Shell` rules: `ask` before `allow`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L715-L726
+ */
+const shellClassifiers = (approval: ToolApproval): Pick<CommandApprovalOptions, 'classify' | 'classifyCommandLine'> => {
+  const { rules, request, context } = approval;
+  const language = shellOf(approval);
+  const classify = (matches: (rule: string) => boolean): 'allow' | 'ask' | undefined =>
+    (rules.ask.some(matches) ? 'ask' : rules.allow.some(matches) ? 'allow' : undefined);
+  return {
+    classify: (command) => classify((rule) => matchesPermissionRule(rule, request, context) || matchesShellSubCommand(rule, command, language)),
+    classifyCommandLine: (line) => classify((rule) => matchesShellCommandLine(rule, line, language)),
+  };
+};
+
+/**
+ * Whether a write is one the edit patterns and the always-checked ones leave
+ * to ask, or lands in a sensitive location of the session.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L788-L814
+ */
+const requiresEditConfirmation = (paths: readonly string[], approval: ToolApproval): boolean => {
+  const { ignorePathCase } = approval.context;
+  if (paths.some((path) => !patternsAllow(path, { '**/*': true, ...ALWAYS_CHECKED_EDIT_PATTERNS }))) return true;
+  return approval.workingDirectories.some((folder) => approval.sensitive.some((location) => {
+    const at = join(folder, location.path);
+    const places = resolvedPaths(at) ?? [at];
+    return paths.some((path) => places.some((place) => (location.isDirectory
+      ? inside(path, place, ignorePathCase === true)
+      : (ignorePathCase === true ? path.toLowerCase() === place.toLowerCase() : path === place))));
+  }));
+};
+
+/**
+ * Whether a write lands somewhere that always asks: a dotfile or dot-folder of
+ * the home, or a platform's configuration folder unless the working folder is
+ * inside it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L856-L871
+ */
+const platformRestricted = (path: string, folder: string, approval: ToolApproval): boolean => {
+  const home = approval.context.homeDirectory;
+  const ignoreCase = approval.context.ignorePathCase === true;
+  if (inside(path, home, ignoreCase) && relative(home, path).split(sep)[0]?.startsWith('.') === true) return true;
+  const restricted = process.platform === 'win32'
+    ? [process.env.APPDATA, process.env.LOCALAPPDATA].filter((one): one is string => one !== undefined)
+    : process.platform === 'darwin' ? [join(home, 'Library')] : [];
+  for (const one of restricted) {
+    if (inside(path, one, ignoreCase)) return !inside(folder, one, ignoreCase);
+  }
+  return false;
+};
+
+/**
+ * Whether the session's or the host's permissions refuse the call before
+ * anybody is asked: a rule naming the whole request, a shell rule naming the
+ * line or one command of it, a path rule naming the path or the path it
+ * really is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L397-L433
+ */
+export const isDeniedByPermissions = (approval: ToolApproval, subCommands: readonly string[]): boolean => {
+  const { rules, request, context } = approval;
+  if (rules.deny.length === 0) return false;
+  if (rules.deny.some((rule) => matchesPermissionRule(rule, request, context))) return true;
+  if (request.kind === 'shell' && approval.commandLine !== undefined) {
+    const language = shellOf(approval);
+    if (rules.deny.some((rule) => matchesShellCommandLine(rule, approval.commandLine ?? '', language))) return true;
+    const commands = subCommands.length > 0 ? subCommands : [approval.commandLine.trim()];
+    return commands.some((command) => rules.deny.some((rule) => matchesShellSubCommand(rule, command, language)));
+  }
+  if ((request.kind === 'read' || request.kind === 'write') && request.path !== undefined) {
+    const paths = resolvedPaths(request.path);
+    if (paths === undefined) return rules.deny.some((rule) => rule.trim().startsWith(request.kind === 'read' ? 'Read(' : 'Edit('));
+    return paths.some((path) => rules.deny.some((rule) => matchesPermissionRule(rule, { ...request, path }, context)));
+  }
+  return false;
+};
+
+/**
+ * A managed rule as the permission rule VS Code's checks read it by, for the
+ * questions of its kind: `Shell` and `Read` as written, `Write` as `Edit`,
+ * `Domain` as `WebFetch` of the host in any scheme, and `Shell(<command>)`
+ * with no wildcard as the command with its arguments too, which is what the
+ * managed grammar says it names.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L79-L125
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L190-L192
+ */
+const asPermissionRule = (rule: string): string[] => {
+  const opening = rule.indexOf('(');
+  const family = opening === -1 ? rule : rule.slice(0, opening);
+  const argument = opening === -1 || !rule.endsWith(')') ? undefined : rule.slice(opening + 1, -1);
+  if (opening !== -1 && argument === undefined) return [];
+  switch (family) {
+    case 'Shell':
+      return [argument === undefined || argument.includes('*') ? rule : `Shell(${argument} *)`];
+    case 'Read':
+      return [rule];
+    case 'Write':
+    case 'Edit':
+      return [argument === undefined ? 'Edit' : `Edit(${argument})`];
+    case 'Domain':
+      return [argument === undefined ? 'WebFetch' : `WebFetch(${argument.includes('://') ? argument : `*://${argument}`})`];
+    default:
+      return [];
+  }
+};
+
+/**
+ * Whether the operator's managed rules refuse a call, or make it ask, read
+ * on every question from every backend beside the session's permissions:
+ * `deny` before `ask`, each rule on the questions of its kind (`Shell` on a
+ * command, `Read` and `Write` on a file's read and write, `Domain` on a URL
+ * request) and matched by the checks the session's own rules are, so a
+ * managed deny is refused before anybody is asked and a managed ask is put as
+ * a question a managed rule raised. A URL request outside the `Domain` rules
+ * of `limitTo` is refused as a deny is.
+ *
+ * This host's own check, carrying the enforcement VS Code's policy inventory
+ * records as partial for its agents; a runtime that enforces managed settings
+ * itself is handed them too, for the calls it never asks the host about.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostPolicySupport.ts#L46-L56
+ */
+export const managedDecision = (managed: ManagedSettingsPermissions | undefined, approval: ToolApproval, subCommands: readonly string[]): 'deny' | 'ask' | undefined => {
+  if (managed === undefined) return undefined;
+  const names = (rules: readonly string[] | undefined): boolean => {
+    const read = (rules ?? []).flatMap(asPermissionRule);
+    return read.length > 0 && isDeniedByPermissions({ ...approval, rules: { allow: [], deny: read, ask: [] } }, subCommands);
+  };
+  if (names(managed.deny)) return 'deny';
+  if (approval.request.kind === 'url' && managed.limitTo !== undefined
+    && !managed.limitTo.flatMap(asPermissionRule).some((rule) => matchesPermissionRule(rule, approval.request, approval.context))) return 'deny';
+  return names(managed.ask) ? 'ask' : undefined;
+};
+
+/**
+ * Whether a write is of a snapshot this host keeps of an attachment, which the
+ * model never edits, so the call is refused before anybody is asked.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L460-L477
+ */
+export const isForbiddenSnapshotWrite = (approval: ToolApproval): boolean =>
+  approval.request.kind === 'write' && approval.request.path !== undefined && approval.attachmentsDirectory !== undefined
+  && inside(approval.request.path, approval.attachmentsDirectory, approval.context.ignorePathCase === true);
+
+/**
+ * Whether the host answers a question itself, and how: `setting` where a
+ * setting or a permission approved it, `not-needed` where the call needs no
+ * approval at all, nothing where a person is asked. VS Code's chain, for what
+ * this host has: a call that asks to leave its sandbox asks; global, then the
+ * session's, Allow All approve, unless the managed lock took them away; an
+ * ask rule asks, a protected write asks unless an exact path grant names it,
+ * an allow rule approves; a read inside the working folders, of an attachment
+ * snapshot or of something attached approves; a write inside the working
+ * folders the edit patterns allow approves; and a shell line the rules and
+ * the host's command table approve, its writes included, approves.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L238-L395
+ */
+export const getAutoApproval = (approval: ToolApproval): 'setting' | 'not-needed' | undefined => {
+  const { request, rules, context } = approval;
+  if (approval.requestSandboxBypass === true) return undefined;
+  if (!approval.bypassLocked && (approval.globalAutoApprove || approval.sessionAutoApprove)) return 'setting';
+  const writes = request.kind === 'write' && request.path !== undefined ? resolvedPaths(request.path) : undefined;
+  if (request.kind === 'write' && request.path !== undefined && writes === undefined) return undefined;
+  let allowing: string[] = [];
+  if (rules.allow.length > 0 || rules.ask.length > 0) {
+    const requests = writes !== undefined
+      ? writes.map((path) => ({ ...request, path }))
+      : (request.kind === 'read' && request.path !== undefined ? resolvedPaths(request.path)?.map((path) => ({ ...request, path })) : [request]);
+    if (requests === undefined || rules.ask.some((rule) => requests.some((one) => matchesPermissionRule(rule, one, context)))) return undefined;
+    const canonical = requests.at(-1);
+    if (request.kind !== 'shell' && canonical !== undefined) allowing = rules.allow.filter((rule) => matchesPermissionRule(rule, canonical, context));
+  }
+  if (writes !== undefined && !allowing.some(isExactAbsolutePathRule) && requiresEditConfirmation(writes, approval)) return undefined;
+  if (allowing.length > 0) return 'setting';
+  if (request.kind === 'read' && request.path !== undefined) {
+    if (approval.attachmentsDirectory !== undefined && inside(request.path, approval.attachmentsDirectory, context.ignorePathCase === true)) return 'not-needed';
+    const reads = resolvedPaths(request.path);
+    if (reads === undefined) return undefined;
+    const within = (folders: readonly string[]): boolean => folders.some((folder) => {
+      const roots = resolvedPaths(folder);
+      return roots !== undefined && reads.every((one) => roots.some((root) => inside(one, root, context.ignorePathCase === true)));
+    });
+    return within(approval.workingDirectories) || within(approval.attached) ? 'not-needed' : undefined;
+  }
+  if (writes !== undefined) {
+    const allowed = approval.workingDirectories.some((folder) => writes.every((path) =>
+      inside(path, folder, context.ignorePathCase === true) && !platformRestricted(path, folder, approval)
+      && patternsAllow(path, { ...approval.editPatterns, ...ALWAYS_CHECKED_EDIT_PATTERNS })));
+    return allowed ? 'not-needed' : undefined;
+  }
+  if (request.kind === 'shell' && approval.commandLine !== undefined) {
+    if (request.shellLanguage === undefined || !approval.terminalAutoApprove || approval.evaluateShell === undefined) return undefined;
+    if (approval.evaluateShell(shellClassifiers(approval)).result !== 'approved') return undefined;
+    return rules.allow.some((rule) => matchesPermissionRule(rule, request, context)) ? 'setting' : 'not-needed';
+  }
+  return undefined;
+};
+
+/** An option that keeps a grant, in the session or for the host. */
+const grantOption = (label: string, rules: readonly string[], scope: PermissionGrantScope = 'session'): Bag =>
+  ({ id: permissionGrantOptionId(scope, rules), label, kind: 'approve', group: 1 });
+
+/**
+ * The grants a question about a read or a write offers: the file, in the
+ * session and always, and the folder it is in, up to its git root, unless the
+ * write is one that always asks.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L926-L988
+ */
+const pathConfirmationOptions = (approval: ToolApproval): Bag[] => {
+  const { request } = approval;
+  if ((request.kind !== 'read' && request.kind !== 'write') || request.path === undefined || !isAbsolute(request.path)) return [];
+  const write = request.kind === 'write';
+  const paths = resolvedPaths(request.path);
+  const canonical = paths?.at(-1);
+  if (paths === undefined || canonical === undefined) return [];
+  const tool = write ? 'Edit' : 'Read';
+  const options: Bag[] = [];
+  const always: Bag[] = [];
+  const fileRule = pathRule(tool, canonical, false);
+  const base = basename(request.path) || request.path;
+  if (fileRule !== undefined) {
+    options.push(grantOption(write ? `Allow Edits to ${base} in this Session` : `Allow Reading ${base} in this Session`, [fileRule]));
+    always.push(grantOption(write ? `Always Allow Edits to ${base}` : `Always Allow Reading ${base}`, [fileRule], 'host'));
+  }
+  if (write && requiresEditConfirmation(paths, approval)) return [...options, ...always];
+  let folder = dirname(request.path);
+  for (let at = folder; ; at = dirname(at)) {
+    if (approval.exists(join(at, '.git'))) {
+      folder = at;
+      break;
+    }
+    if (dirname(at) === at) break;
+  }
+  const folders = resolvedPaths(folder);
+  const canonicalFolder = folders?.at(-1);
+  if (canonicalFolder === undefined) return [...options, ...always];
+  const folderRule = pathRule(tool, canonicalFolder, true);
+  if (folderRule !== undefined && inside(canonical, canonicalFolder, approval.context.ignorePathCase === true)) {
+    const name = basename(folder) || folder;
+    options.push(grantOption(write ? `Allow Edits in ${name} in this Session` : `Allow Reading Files in ${name} in this Session`, [folderRule]));
+    always.push(grantOption(write ? `Always Allow Edits in ${name}` : `Always Allow Reading Files in ${name}`, [folderRule], 'host'));
+  }
+  return [...options, ...always];
+};
+
+/**
+ * The options a question offers that grant what it asks for, by its kind:
+ * the commands of a shell line no rule approved, by their prefixes and
+ * exactly, the host a fetch goes to, and the path a read or write is of, each
+ * in the session and always, between Allow Once and Skip. Nothing for any
+ * other kind.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L990-L1042
+ */
+const scopedConfirmationOptions = (approval: ToolApproval): Bag[] | undefined => {
+  const { request } = approval;
+  if (request.kind !== 'shell' && request.kind !== 'url' && request.kind !== 'read' && request.kind !== 'write') return undefined;
+  const options: Bag[] = [ALLOW_ONCE_OPTION];
+  if (request.kind === 'shell' && request.shellLanguage !== undefined && approval.terminalAutoApprove && approval.commandLine !== undefined
+    && approval.evaluateShell !== undefined) {
+    const evaluation = approval.evaluateShell(shellClassifiers(approval));
+    const unapproved = evaluation.unapprovedSubCommands ?? [];
+    if (evaluation.hasUnsafeSubCommand !== true && evaluation.hasAskRule !== true && unapproved.length > 0) {
+      const { subCommandKeys, offerExactCommandLine } = suggestAutoApproveRuleKeys(approval.commandLine, unapproved);
+      const always: Bag[] = [];
+      if (subCommandKeys.length > 0) {
+        const commands = subCommandKeys.map((key) => `\`${key} …\``).join(', ');
+        const label = subCommandKeys.length === 1 ? commands : `Commands ${commands}`;
+        const prefixes = subCommandKeys.map(shellPrefixRule);
+        options.push(grantOption(`Allow ${label} in this Session`, prefixes));
+        always.push(grantOption(`Always Allow ${label}`, prefixes, 'host'));
+      }
+      const exact = unapproved.map(shellExactRule);
+      if (offerExactCommandLine && exact.every((one): one is string => one !== undefined)) {
+        options.push(grantOption('Allow Exact Command in this Session', exact));
+        always.push(grantOption('Always Allow Exact Command', exact, 'host'));
+      }
+      options.push(...always);
+    }
+  }
+  else if (request.kind === 'url' && request.url !== undefined) {
+    try {
+      const url = new URL(request.url);
+      if (url.hostname !== '') {
+        const pattern = url.protocol === 'https:' ? url.hostname : `${url.protocol}//${url.hostname}`;
+        const fetches = [webFetchRule(pattern)];
+        options.push(grantOption(`Allow Fetching ${pattern} in this Session`, fetches));
+        options.push(grantOption(`Always Allow Fetching ${pattern}`, fetches, 'host'));
+      }
+    }
+    catch { /* a URL that does not read offers the one-time answer alone */ }
+  }
+  if (request.kind === 'read' || request.kind === 'write') options.push(...pathConfirmationOptions(approval));
+  options.push(SKIP_OPTION);
+  return options;
+};
+
+/**
+ * The options a question offers, and the `_meta` it carries, as VS Code's
+ * host builds a ready action: Allow Once and Skip for a question a managed
+ * rule asks, Allow and Skip for one that asks to leave the sandbox, marked so
+ * no grant is kept from it, its own where a sandbox path grant offers them,
+ * the grants of what it asks for where it says what that is, else the
+ * backend's own options, else VS Code's three.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L560-L610
+ */
+export const confirmationOptions = (approval: ToolApproval, own: readonly Bag[] | undefined, meta: Bag | undefined): { options: Bag[]; meta?: Bag } => {
+  const sandbox = approval.requestSandboxBypass === true;
+  const marked = sandbox ? { meta: { ...meta, [SANDBOX_BYPASS_META_KEY]: true } } : meta === undefined ? {} : { meta };
+  if (approval.managedApprovalRequired === true) return { options: (sandbox ? SANDBOX_CONFIRMATION_OPTIONS : MANAGED_CONFIRMATION_OPTIONS).slice(), ...marked };
+  if (sandbox) return { options: meta?.['vscode.sandboxPathGrant'] !== undefined && own !== undefined ? own.slice() : SANDBOX_CONFIRMATION_OPTIONS.slice(), ...marked };
+  return { options: scopedConfirmationOptions(approval) ?? (own !== undefined ? own.slice() : CONFIRMATION_OPTIONS.slice()), ...marked };
+};
+
+/**
+ * What an approval picked keeps, as VS Code's host keeps it: nothing for a
+ * question that asked to leave the sandbox or an answer that is not the
+ * approval the call holds; the rules of a grant, in the session's
+ * `permissions` or the host's; and the tool's name, in the session's, for
+ * Allow in this Session.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L612-L650
+ */
+export const grantOf = (call: Bag, optionId: string | undefined): { scope: PermissionGrantScope; rules: string[] } | undefined => {
+  const picked = call.selectedOption as Bag | undefined;
+  if ((call._meta as Bag | undefined)?.[SANDBOX_BYPASS_META_KEY] === true || picked?.id !== optionId || picked?.kind !== 'approve' || optionId === undefined) return undefined;
+  const grant = parsePermissionGrantOptionId(optionId);
+  if (grant !== undefined) return grant;
+  return optionId === ALLOW_SESSION_OPTION_ID && typeof call.toolName === 'string' ? { scope: 'session', rules: [call.toolName] } : undefined;
 };

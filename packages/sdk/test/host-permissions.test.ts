@@ -19,6 +19,7 @@ import { fileResources } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
+import type { HostOptions } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Session } from '../src/types/session.js';
 
@@ -68,11 +69,12 @@ type Answer = [string, boolean, string | undefined];
  * The echo backend, asking a person about one call of `tool` in every turn it
  * is sent, and keeping every answer it is handed.
  */
-const asking = (answers: Answer[], tool = 'bash', server?: { id: string; name: string }): Agent => {
+const asking = (answers: Answer[], tool = 'bash', server?: { id: string; name: string }, asked: Bag = {}, starts: Start[] = []): Agent => {
   const base = echo({ path: dir, pace: 50 });
   return {
     ...base,
     create: (start: Start): Session => {
+      starts.push(start);
       const session = base.create(start) as Session;
       return {
         ...session,
@@ -91,7 +93,8 @@ const asking = (answers: Answer[], tool = 'bash', server?: { id: string; name: s
             type: 'chat/toolCallStart', turnId, toolCallId, toolName: tool, displayName: 'Bash',
             ...(server === undefined ? {} : { contributor: { kind: 'mcp', customizationId: server.id } }),
           });
-          start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: 'Run ls', toolInput: 'ls', confirmationTitle: 'Run Bash?' });
+          // The question, with whatever the backend says for the host's decision beside it.
+          start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: 'Run ls', toolInput: 'ls', confirmationTitle: 'Run Bash?', ...asked });
         },
         confirm: (toolCallId: string, approved: boolean, optionId?: string) => {
           answers.push([toolCallId, approved, optionId]);
@@ -103,8 +106,8 @@ const asking = (answers: Answer[], tool = 'bash', server?: { id: string; name: s
 };
 
 /** A host serving `agent`, with one client watching the root, the session and its chat. */
-const serving = async (agent: Agent) => {
-  const host = createHost({ path: dir, agents: [agent], resources: fileResources() });
+const serving = async (agent: Agent, over: Partial<HostOptions> = {}) => {
+  const host = createHost({ path: dir, agents: [agent], resources: fileResources(), ...over });
   const p = listening();
   const client = host.accept(p);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
@@ -220,5 +223,203 @@ it('refuses a call the session\'s permissions deny before any client is asked, a
   expect(answers).toEqual([['call-t1', false, undefined]]);
   expect(p.heard.filter((one) => one.channel === CHAT
     && (one.action.type === 'chat/toolCallReady' || one.action.type === 'chat/toolCallConfirmed'))).toEqual([]);
+  await host.close();
+});
+
+/** A turn begun with no question waited for, for the calls the host answers or refuses before any client is asked. */
+const begin = async (dispatch: (channel: string, action: Bag) => Promise<void>, turnId: string): Promise<void> => {
+  await dispatch(CHAT, { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } });
+};
+
+/*
+ * What a backend's question says for the host's decision is the host's alone,
+ * as VS Code's agents raise a pending confirmation beside the action.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+ */
+it('takes a question\'s host-only fields off before any client is sent it', async () => {
+  const answers: Answer[] = [];
+  const { host, turn } = await serving(asking(answers, 'bash', undefined, {
+    permissionKind: 'shell', shellCommand: 'ls -la', shellLanguage: 'bash', requestSandboxBypass: false, managedApprovalRequired: false,
+  }));
+  const ready = await turn('t1');
+  for (const key of ['permissionKind', 'permissionPath', 'permissionUrl', 'shellCommand', 'shellLanguage', 'requestSandboxBypass', 'managedApprovalRequired']) {
+    expect(ready).not.toHaveProperty(key);
+  }
+  await host.close();
+});
+
+/*
+ * A `Shell` rule with a specifier names the commands of a line, and one that
+ * denies refuses the call before anybody is asked, as VS Code's host reads
+ * its permission rules.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L397-L425
+ */
+it('refuses a command a session\'s Shell rule denies before any client is asked', async () => {
+  const answers: Answer[] = [];
+  const { host, p, dispatch } = await serving(asking(answers, 'bash', undefined, { permissionKind: 'shell', shellCommand: 'git status && rm -rf build', shellLanguage: 'bash' }));
+  await dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: [], deny: ['Shell(rm *)'] } } });
+  await begin(dispatch, 't1');
+  await until(() => answers.length > 0, 'the refusal');
+  expect(answers).toEqual([['call-t1', false, undefined]]);
+  expect(p.heard.some((one) => one.action.type === 'chat/toolCallReady')).toBe(false);
+  await host.close();
+});
+
+/*
+ * A read inside the session's working folder needs no approval, as VS Code's
+ * host answers one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L345-L361
+ */
+it('answers a read inside the session\'s working folder itself', async () => {
+  const answers: Answer[] = [];
+  const { host, turn } = await serving(asking(answers, 'Read', undefined, { permissionKind: 'read', permissionPath: join(dir, 'notes.txt') }));
+  const ready = await turn('t1');
+  expect(ready.confirmed).toBe('not-needed');
+  expect(ready).not.toHaveProperty('options');
+  await until(() => answers.length > 0, 'the approval');
+  expect(answers).toEqual([['call-t1', true, undefined]]);
+  await host.close();
+});
+
+/*
+ * A fetch's question offers its host, in the session and always, between
+ * Allow Once and Skip, and an Always Allow is kept in the host's own
+ * `permissions` and answers the next fetch there, as VS Code's host offers and
+ * keeps one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L1024-L1036
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L636-L646
+ */
+it('offers a fetch\'s host in the session and always, and keeps an Always Allow in the host\'s permissions', async () => {
+  const answers: Answer[] = [];
+  const { host, p, dispatch, turn } = await serving(asking(answers, 'WebFetch', undefined, { permissionKind: 'url', permissionUrl: 'https://example.com/docs' }));
+  const always = 'allow-always-rules:["WebFetch(example.com)"]';
+  expect((await turn('t1')).options).toEqual([
+    { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+    { id: 'allow-session-rules:["WebFetch(example.com)"]', label: 'Allow Fetching example.com in this Session', kind: 'approve', group: 1 },
+    { id: always, label: 'Always Allow Fetching example.com', kind: 'approve', group: 1 },
+    { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
+  ]);
+  await dispatch(CHAT, { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-t1', approved: true, confirmed: 'user-action', selectedOptionId: always });
+  expect(p.heard.filter((one) => one.channel === ROOT && one.action.type === 'root/configChanged').map((one) => one.action.config))
+    .toEqual([{ permissions: { allow: ['WebFetch(example.com)'], deny: [] } }]);
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't1'), 'the first turn');
+  expect((await turn('t2')).confirmed).toBe('not-needed');
+  await host.close();
+});
+
+/*
+ * A question that asks to leave the sandbox is put to a person whatever Allow
+ * All says, with Allow and Skip, and marked so its answer keeps nothing, as
+ * VS Code's host puts one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L268-L273
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L597
+ */
+it('puts a question that asks to leave the sandbox to a person under Allow All, with Allow and Skip, and keeps nothing from it', async () => {
+  const answers: Answer[] = [];
+  const { host, p, dispatch, turn } = await serving(asking(answers, 'bash', undefined, { permissionKind: 'shell', shellCommand: 'ls', shellLanguage: 'bash', requestSandboxBypass: true }));
+  await dispatch(ROOT, { type: 'root/configChanged', config: { globalAutoApproveEnabled: true } });
+  const ready = await turn('t1');
+  expect(ready.options).toEqual([{ id: 'allow-once', label: 'Allow', kind: 'approve' }, { id: 'skip', label: 'Skip', kind: 'deny', group: 2 }]);
+  expect((ready._meta as Bag | undefined)?.['agentHost.sandboxBypass']).toBe(true);
+  p.heard.length = 0;
+  await dispatch(CHAT, { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-t1', approved: true, confirmed: 'user-action', selectedOptionId: 'allow-once' });
+  expect(p.heard.some((one) => one.action.type === 'session/configChanged' || one.action.type === 'root/configChanged')).toBe(false);
+  await host.close();
+});
+
+/*
+ * Global Allow All answers a question itself, as VS Code's host answers one,
+ * and the managed lock takes it away.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L275-L285
+ */
+it('answers a question under global Allow All, and asks it under the managed lock', async () => {
+  const free: Answer[] = [];
+  const open = await serving(asking(free));
+  await open.dispatch(ROOT, { type: 'root/configChanged', config: { globalAutoApproveEnabled: true } });
+  expect((await open.turn('t1')).confirmed).toBe('not-needed');
+  await open.host.close();
+
+  const locked: Answer[] = [];
+  const closed = await serving(asking(locked), { managedSettingsPermissions: { disableBypassPermissionsMode: 'disable' } });
+  await closed.dispatch(ROOT, { type: 'root/configChanged', config: { globalAutoApproveEnabled: true } });
+  expect((await closed.turn('t1')).options).toEqual(STANDARD);
+  await closed.host.close();
+});
+
+/*
+ * A question a managed rule asks about, which its backend marks, is put with
+ * Allow Once and Skip and answered by nobody but a person, Allow All and the
+ * session's grants included, as VS Code's host puts one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1696-L1702
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L597
+ */
+it('puts a question a managed rule asks about with Allow Once and Skip, whatever Allow All and the session allow', async () => {
+  const answers: Answer[] = [];
+  const { host, dispatch, turn } = await serving(asking(answers, 'Read', undefined, {
+    permissionKind: 'read', permissionPath: join(dir, 'notes.txt'), managedApprovalRequired: true,
+  }));
+  await dispatch(ROOT, { type: 'root/configChanged', config: { globalAutoApproveEnabled: true } });
+  await dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: ['Read'], deny: [] } } });
+  expect((await turn('t1')).options).toEqual(ONCE);
+  expect(answers).toEqual([]);
+  await host.close();
+});
+
+/*
+ * The operator's managed rules are checked on every question beside the
+ * session's permissions, this host's own check: a deny refuses the call before
+ * its question is said, and an ask puts it with Allow Once and Skip whatever
+ * the session allows.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostPolicySupport.ts#L46-L56
+ */
+it('refuses a call a managed deny rule names, and asks one a managed ask rule names with Allow Once and Skip', async () => {
+  const refused: Answer[] = [];
+  const denied = await serving(asking(refused, 'bash', undefined, { permissionKind: 'shell', shellCommand: 'git status && curl https://example.com', shellLanguage: 'bash' }),
+    { managedSettingsPermissions: { deny: ['Shell(curl)'] } });
+  await begin(denied.dispatch, 't1');
+  await until(() => refused.length > 0, 'the refusal');
+  expect(refused).toEqual([['call-t1', false, undefined]]);
+  expect(denied.p.heard.some((one) => one.action.type === 'chat/toolCallReady')).toBe(false);
+  await denied.host.close();
+
+  const answers: Answer[] = [];
+  const asked = await serving(asking(answers, 'Write', undefined, { permissionKind: 'write', permissionPath: join(dir, 'notes.txt') }),
+    { managedSettingsPermissions: { ask: ['Write(**/*.txt)'] } });
+  await asked.dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: ['Edit'], deny: [] } } });
+  expect((await asked.turn('t1')).options).toEqual(ONCE);
+  await asked.host.close();
+});
+
+/*
+ * A managed `Domain` rule is checked on a URL request, and a fetch outside the
+ * `Domain` rules of `limitTo` is refused as a deny is, as the managed rules
+ * apply per permission kind.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L79-L125
+ */
+it('refuses a fetch a managed Domain rule denies, and one outside the managed boundary', async () => {
+  for (const managed of [{ deny: ['Domain(*.example.com)'] }, { limitTo: ['Domain(github.com)'] }]) {
+    const refused: Answer[] = [];
+    const { host, p, dispatch } = await serving(asking(refused, 'WebFetch', undefined, { permissionKind: 'url', permissionUrl: 'http://docs.example.com/page' }),
+      { managedSettingsPermissions: managed });
+    await begin(dispatch, 't1');
+    await until(() => refused.length > 0, 'the refusal');
+    expect(refused).toEqual([['call-t1', false, undefined]]);
+    expect(p.heard.some((one) => one.action.type === 'chat/toolCallReady')).toBe(false);
+    await host.close();
+  }
+});
+
+/*
+ * Every backend is handed the managed settings on its start, as VS Code hands
+ * its runtime `managedSettings: { permissions }`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1107
+ */
+it('hands a backend the managed settings on its start', async () => {
+  const answers: Answer[] = [];
+  const starts: Start[] = [];
+  const managed = { deny: ['Shell(curl *)'], disableBypassPermissionsMode: 'disable' as const };
+  const { host, turn } = await serving(asking(answers, 'bash', undefined, {}, starts), { managedSettingsPermissions: managed });
+  await turn('t1');
+  expect(starts[0]?.managedSettings).toEqual({ permissions: managed });
   await host.close();
 });

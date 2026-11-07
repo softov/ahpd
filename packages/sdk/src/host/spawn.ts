@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState, ErrorInfo, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
 import { CommandAutoApprover, DEFAULT_TERMINAL_AUTO_APPROVE_RULES, splitCommand } from '../access/commandautoapprover.js';
@@ -17,7 +19,14 @@ import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
-import { alwaysAsks, answeredInSession, asksForTool, CONFIRMATION_OPTIONS, MANAGED_CONFIRMATION_OPTIONS, mcpServerOf } from './permissions.js';
+import {
+  alwaysAsks, asksForTool, confirmationOptions, getAutoApproval as autoApprovalOf, isDeniedByPermissions, isForbiddenSnapshotWrite, managedDecision,
+  mcpServerOf, permissionRulesOf,
+} from './permissions.js';
+import type { ToolApproval } from './permissions.js';
+import { vscodeRootProperties } from '../vscoderootconfig.js';
+import { PENDING_CONFIRMATION_FIELDS } from '../types/agent.js';
+import type { PendingConfirmation } from '../types/agent.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
@@ -412,8 +421,12 @@ export function createSpawn(ctx: HostContext): Spawn {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1684-L1766
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L610
    */
-  const toolReady = (session: string, chat: string, action: Bag, backend: () => Session | undefined): Bag | undefined => {
-    if (action.type !== 'chat/toolCallReady' || typeof action.confirmationTitle !== 'string' || action.confirmed !== undefined) return action;
+  const toolReady = (session: string, chat: string, given: Bag, backend: () => Session | undefined): Bag | undefined => {
+    if (given.type !== 'chat/toolCallReady') return given;
+    // The question's host-only fields, read here and sent to no client.
+    const signal = Object.fromEntries(PENDING_CONFIRMATION_FIELDS.flatMap((key) => (given[key] === undefined ? [] : [[key, given[key]]]))) as PendingConfirmation;
+    const action = Object.fromEntries(Object.entries(given).filter(([key]) => !(PENDING_CONFIRMATION_FIELDS as readonly string[]).includes(key)));
+    if (typeof action.confirmationTitle !== 'string' || action.confirmed !== undefined) return action;
     const toolCallId = String(action.toolCallId ?? '');
     const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
     const call = (Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [])
@@ -421,21 +434,90 @@ export function createSpawn(ctx: HostContext): Spawn {
       .find((one) => one !== undefined && one.toolCallId === toolCallId);
     const toolName = typeof call?.toolName === 'string' ? call.toolName : undefined;
     const owning = sessions.get(session);
+    const serving = owning?.backends.get(chat)?.agent ?? owning?.agent;
     const contributor = (action.contributor ?? call?.contributor) as Bag | undefined;
-    // Read against the tools this host offered the chat, which a backend names to the rule as `ahp/<name>`,
-    // and an MCP server's tool against the server its contributor names among the session's customizations.
-    const managed = toolName !== undefined && alwaysAsks(ctx.rootConfig, toolName,
-      ctx.boundTools(session, chat, owning?.backends.get(chat)?.agent.provider ?? owning?.agent.provider).map((one) => one.definition.name),
+    const folders = (owning === undefined ? [] : ctx.leadOf(owning)?.workingDirectories() ?? []).map(localPath).filter((one) => one !== '');
+    const shell = signal.permissionKind === 'shell';
+    const commandLine = shell ? signal.shellCommand ?? (typeof action.toolInput === 'string' ? action.toolInput : undefined) : undefined;
+    const subCommands = commandLine === undefined ? [] : splitForRules(commandLine, signal.shellLanguage ?? 'bash')?.subCommands ?? [];
+    /*
+     * The terminal rules and the edit patterns are the host's one value each,
+     * which on a host with people answer the owner's turns alone, as the
+     * host's shell answers read them.
+     */
+    const owners = options.users === undefined || senderOf(String(action.turnId ?? '')) === kept.owner(idOf(session));
+    const pushed = ctx.rootConfig['terminalAutoApproveRules'];
+    const terminalRules = pushed !== null && typeof pushed === 'object'
+      ? pushed as TerminalAutoApproveRules
+      : options.terminalAutoApproveDefaults === 'none' ? {} : DEFAULT_TERMINAL_AUTO_APPROVE_RULES;
+    const patterns = ctx.rootConfig['editAutoApprovePatterns'];
+    const editPatterns = (patterns !== null && typeof patterns === 'object' ? patterns : vscodeRootProperties.editAutoApprovePatterns?.default ?? {}) as TerminalAutoApprovePatterns;
+    const held: unknown = owning?.config['sensitiveEditLocations'];
+    const sensitive = Array.isArray(held) && held.every((one: unknown) => typeof one === 'object' && one !== null && !Array.isArray(one)
+      && typeof (one as Bag).path === 'string' && typeof (one as Bag).isDirectory === 'boolean')
+      ? held as SensitiveEditLocation[]
+      : [];
+    const managedSettings = options.managedSettingsPermissions;
+    const attachments = kept.attachmentsDir?.(idOf(session));
+    const messages = [...(Array.isArray(ctx.stateOf(chat)?.turns) ? ctx.stateOf(chat)?.turns as Bag[] : []), ...(turn === undefined ? [] : [turn])]
+      .map((one) => one.message as Bag | undefined);
+    const approval: ToolApproval = {
+      request: {
+        kind: signal.permissionKind,
+        toolName: toolName ?? '',
+        ...(signal.shellLanguage === undefined ? {} : { shellLanguage: signal.shellLanguage }),
+        ...(signal.permissionUrl === undefined ? {} : { url: signal.permissionUrl }),
+        ...(signal.permissionPath === undefined ? {} : { path: signal.permissionPath }),
+      },
+      ...(commandLine === undefined ? {} : { commandLine }),
+      ...(signal.requestSandboxBypass === true ? { requestSandboxBypass: true } : {}),
+      rules: permissionRulesOf(owning?.config.permissions, ctx.rootConfig.permissions),
+      context: { ...(folders[0] === undefined ? {} : { workingDirectory: folders[0] }), homeDirectory: homedir(), ignorePathCase: process.platform === 'win32' || process.platform === 'darwin' },
+      workingDirectories: folders,
+      ...(attachments === undefined ? {} : { attachmentsDirectory: attachments }),
+      attached: messages.flatMap((message) => (Array.isArray(message?.attachments) ? message.attachments as Bag[] : []))
+        .flatMap((one) => (typeof one.uri === 'string' && one.uri.startsWith('file:') && localPath(one.uri) !== '' ? [localPath(one.uri)] : [])),
+      globalAutoApprove: ctx.rootConfig.globalAutoApproveEnabled === true,
+      sessionAutoApprove: ctx.rootConfig.autoApprovePolicyRestricted !== true && owning?.config.autoApprove === 'autoApprove',
+      bypassLocked: managedSettings?.disableBypassPermissionsMode === 'disable',
+      terminalAutoApprove: ctx.rootConfig.terminalAutoApproveEnabled !== false && owners,
+      editPatterns: owners ? editPatterns : {},
+      sensitive,
+      ...(commandLine === undefined ? {} : {
+        evaluateShell: (classifiers) => approver.evaluation(commandLine, {
+          rules: terminalRules, editPatterns, shell: signal.shellLanguage ?? 'bash', sensitive, ...classifiers,
+          ...(folders[0] === undefined ? {} : { workingDirectory: folders[0] }),
+        }),
+      }),
+      exists: existsSync,
+    };
+    // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
+    // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
+    const eligible = toolName === undefined || !alwaysAsks(ctx.rootConfig, toolName,
+      ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
       mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
-    const options = managed ? MANAGED_CONFIRMATION_OPTIONS.slice() : Array.isArray(action.options) ? action.options : CONFIRMATION_OPTIONS.slice();
-    const answer = toolName === undefined ? undefined : answeredInSession(owning?.config.permissions, toolName);
-    if (answer === 'deny') {
+    /*
+     * The operator's managed rules, read on every question beside the
+     * session's permissions; a question a managed rule asks, its backend's
+     * mark or this host's, answers to nobody but a person, as one the
+     * operator's `eligibleForAutoApproval` names.
+     */
+    const managedSays = managedDecision(managedSettings, approval, subCommands);
+    const managed = signal.managedApprovalRequired === true || managedSays === 'ask' || !eligible;
+    if (managedSays === 'deny' || isForbiddenSnapshotWrite(approval) || isDeniedByPermissions(approval, subCommands)) {
       queueMicrotask(() => { backend()?.confirm(toolCallId, false); });
       return undefined;
     }
-    if (answer !== 'allow' || managed) return { ...action, options };
-    if (contributor?.kind === 'client') {
-      return { ...action, options, _meta: { ...(call?._meta as Bag | undefined), ...(action._meta as Bag | undefined), autoApproveBySetting: true } };
+    const asked = { ...approval, ...(managed ? { managedApprovalRequired: true } : {}) };
+    const approved = managed ? undefined : autoApprovalOf(asked);
+    // A client's tool keeps its question, which the client that runs it answers, marked approved by the setting.
+    const marked = approved !== undefined && contributor?.kind === 'client'
+      ? { ...(call?._meta as Bag | undefined), ...(action._meta as Bag | undefined), autoApproveBySetting: true }
+      : action._meta as Bag | undefined;
+    if (approved === undefined || contributor?.kind === 'client') {
+      const { options: offered, meta } = confirmationOptions(asked, Array.isArray(action.options) ? action.options as Bag[] : undefined, marked);
+      const { _meta: _given, ...rest } = action;
+      return { ...rest, options: offered, ...(meta === undefined ? {} : { _meta: meta }) };
     }
     queueMicrotask(() => { backend()?.confirm(toolCallId, true); });
     return {
@@ -1166,6 +1248,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       chatUri,
       trusted: trustedBy,
       getAutoApproval,
+      ...(options.managedSettingsPermissions === undefined ? {} : { managedSettings: { permissions: options.managedSettingsPermissions } }),
       ...(userSettings === undefined ? {} : { userSettings }),
       /*
        * The tools bound to this session: this host's own, and whatever the

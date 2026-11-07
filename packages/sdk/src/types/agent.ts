@@ -16,6 +16,7 @@ import type { ComputerPort } from './computers.js';
 import type { MachineNeed } from './machine.js';
 import type { ShellEnv } from '../machines/shellenv.js';
 import type { SessionConfigAnswerer } from './completions.js';
+import type { ManagedSettingsPermissions, PermissionKind } from './permissions.js';
 
 /**
  * An MCP server the host offers its agents, reached over stdio.
@@ -157,6 +158,35 @@ export interface SessionAt {
 export type AutoApprovalKind = 'shell' | 'tool';
 
 /**
+ * What a backend's question about a call carries for the host's decision,
+ * beside the `chat/toolCallReady` it emits, as VS Code's agents raise a
+ * pending confirmation: fields the host reads and takes off the action before
+ * any client is sent it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+ */
+export interface PendingConfirmation {
+  /** What the call asks to do. */
+  permissionKind?: PermissionKind;
+  /** The absolute path a read or a write is of. */
+  permissionPath?: string;
+  /** The URL a fetch is of. */
+  permissionUrl?: string;
+  /** The command line a shell call runs, where its input carries more than the line. */
+  shellCommand?: string;
+  /** The shell that runs it; a shell call with none asks. */
+  shellLanguage?: 'bash' | 'powershell';
+  /** The call asks to leave its sandbox: answered by a person alone, for this call alone. */
+  requestSandboxBypass?: boolean;
+  /** A managed rule asks about the call: answered by a person alone, Allow Once or Skip. */
+  managedApprovalRequired?: boolean;
+}
+
+/** The host-only fields of a backend's question, which no client is sent. */
+export const PENDING_CONFIRMATION_FIELDS = [
+  'permissionKind', 'permissionPath', 'permissionUrl', 'shellCommand', 'shellLanguage', 'requestSandboxBypass', 'managedApprovalRequired',
+] as const;
+
+/**
  * What the host's approval check says about one tool call.
  *
  * `not-needed` is host/100's: the rules the owner's window pushed approved the
@@ -267,6 +297,15 @@ export interface Start {
    * that as a call that asks.
    */
   getAutoApproval?: (kind: AutoApprovalKind, line: string, shell?: CommandShell, tool?: string) => AutoApproval | undefined;
+  /**
+   * The managed settings the operator set for every session on the host, as
+   * VS Code hands its runtime `managedSettings: { permissions }`, for a
+   * backend whose runtime enforces managed settings itself: it refuses what a
+   * managed rule denies, and marks a question a managed rule asks with
+   * `managedApprovalRequired`. Absent where the operator set none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1107
+   */
+  managedSettings?: { permissions: ManagedSettingsPermissions };
   /**
    * Whether this session loads the settings of the person who runs the daemon.
    *
