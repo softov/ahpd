@@ -237,6 +237,12 @@ const taken = (client: Client, id: string): Promise<unknown> => client.handle({
   params: { channel: CHAT, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id } },
 });
 
+/**
+ * Wait for the host to take up the head of the chat's queue: it does once the
+ * backend that ended a turn has finished saying so, a moment after the end.
+ */
+const headTaken = (): Promise<void> => new Promise((done) => { setTimeout(done, 0); });
+
 /** What the chat's state is, as a client subscribing to it now is told. */
 const stateOf = async (client: Client): Promise<Bag> => {
   const opened = await client.handle({ method: 'subscribe', params: { channel: CHAT } }) as {
@@ -781,10 +787,9 @@ it('keeps a queued message behind the steered turn', async () => {
   chat.steeringConsumed?.('s1');
   expect((await stateOf(client))['activeTurn']).toMatchObject({ id: 't1' });
 
-  // It starts when the steered turn ends, and not before: once the host has
-  // heard the turn's end through.
+  // It starts when the steered turn ends, and not before.
   chat.complete('done');
-  await new Promise((done) => { setTimeout(done, 0); });
+  await headTaken();
   const after = await stateOf(client);
   expect(after['activeTurn']).toMatchObject({ message: { text: 'and then this' } });
   // The chat's reducer leaves the key out once its queue is empty.
@@ -944,6 +949,7 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   expect(lines(configDir, 'one')).toHaveLength(1);
 
   chat.complete('one');
+  await headTaken();
 
   // Started: the entry left the queue, and its message is the turn that began -
   // under a turn id of the chat's own, with the entry it was named on it.
@@ -956,10 +962,10 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
     { session: HELD, chat: CHAT, turnId: String(next['id']), text: 'and then this' },
   ]);
-  // And the client is told both ways a queued entry ends: taken out of its
-  // queue, and named on the turn it became.
-  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/pendingMessageRemoved'))
-    .toMatchObject([{ kind: 'queued', id: 'q1' }]);
+  // And the client is told by the turn the entry became, which names it, as VS
+  // Code's host starts a queued message (queueDrainContribution.ts L291-L297 at
+  // 6b68d3fe): the reducer takes the entry out of the queue with it.
+  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/pendingMessageRemoved')).toEqual([]);
   expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted').map((one) => one['queuedMessageId']))
     .toEqual([undefined, 'q1']);
 
@@ -990,8 +996,10 @@ it('starts what waited in the order the queue was left in', async () => {
   expect((await stateOf(client))['queuedMessages']).toMatchObject([{ id: 'q2' }, { id: 'q1' }]);
 
   chat.complete('one');
+  await headTaken();
   expect((await stateOf(client))['activeTurn']).toMatchObject({ message: { text: 'second asked' } });
   chat.complete('two');
+  await headTaken();
   // And the one behind that, which is the rest of what the order said - the
   // queue emptying one turn at a time rather than all at once.
   const last = await stateOf(client);
