@@ -443,13 +443,6 @@ it('tells a session in a worktree nothing is trusted when the repository is not'
 });
 
 /*
- * A folder a window says yes to is the window's answer for that folder, and it
- * stands: the move starts the backend again, and the process that starts has
- * never heard the question - decision `a-yes-is-kept-until-the-next-push`. A
- * push of `workspaceTrust` is the window answering for every folder at once, so
- * it puts the folders it answered one at a time behind it.
- */
-/*
  * A window that says yes to a folder puts it into its own trust settings and
  * pushes them ahead of its answer, so the backend a move starts reads the
  * folder in the host's trust, as VS Code's window answers.
