@@ -556,6 +556,19 @@ describe('a session that ran only commands', () => {
     await host.close();
   });
 
+  /*
+   * Titled by its first message as VS Code's host seeds a title from one:
+   * trimmed, its whitespace collapsed to single spaces, and cut at 200
+   * characters.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L252-L255
+   */
+  it('is titled by its first message on one line, cut at 200 characters, as VS Code\'s host seeds a title', async () => {
+    const { client, host } = await reopened([`!echo a\n\n   b ${'x'.repeat(250)}  `]);
+    const row = (await listed(client)).find((one) => one.resource === LIVE);
+    expect(row?.title).toBe(Array.from(`!echo a b ${'x'.repeat(250)}`).slice(0, 200).join(''));
+    await host.close();
+  });
+
   it('opens with its commands\' turns, and a turn sent after the restart runs after them', async () => {
     const { client, host, p, chat } = await reopened(['!echo first']);
     await listed(client);

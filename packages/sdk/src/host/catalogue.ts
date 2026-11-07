@@ -1,6 +1,6 @@
 import { ROOT, chatUriFor, subagentChatUri } from './channels.js';
 import { accountKey } from './root.js';
-import { Status, idFor, idOf, titleFrom, uriFor } from '../sessions/catalog.js';
+import { Status, idFor, idOf, normalizeTitle, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { Summary, SummaryChat } from '../types/catalog.js';
@@ -1374,12 +1374,15 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * A row for a session listed from the turns this host keeps for it.
    *
    * Its title is the one the session was given, kept as its default chat's in
-   * a record that keeps none of the session's, and else its first turn's, as
-   * a backend titles a session after its first prompt. Its
-   * dates are its first turn's start and its last turn's end, which is where
-   * the protocol's reducer moves a chat when a turn completes. A turn that
-   * names no start adds nothing to them, and a row with no start at all dates
-   * from the epoch, as a transcript entry with no time does.
+   * a record that keeps none of the session's, and else its first turn's
+   * message, normalized as VS Code's host seeds a title from a first message:
+   * empty where that turn says nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L189-L199
+   *
+   * Its dates are its first turn's start and its last turn's end, which is
+   * where the protocol's reducer moves a chat when a turn completes. A turn
+   * that names no start adds nothing to them, and a row with no start at all
+   * dates from the epoch, as a transcript entry with no time does.
    */
   const keptRow = (id: string, folder: string, turns: readonly Bag[]): Listed => {
     const startOf = (turn: Bag): number => (typeof turn.startedAt === 'string' ? Date.parse(turn.startedAt) : Number.NaN);
@@ -1396,7 +1399,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const epoch = new Date(0).toISOString();
     return {
       id,
-      title: named ?? titleFrom(typeof said === 'string' ? said : '', 'New session'),
+      title: named ?? normalizeTitle(typeof said === 'string' ? said : ''),
       createdAt: first === undefined ? epoch : new Date(startOf(first)).toISOString(),
       modifiedAt: last === undefined
         ? epoch

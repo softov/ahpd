@@ -126,6 +126,23 @@ export const titleFrom = (text: string, fallback: string, max = 80): string => {
 };
 
 /**
+ * The most characters a title seeded from a message keeps, as VS Code's host
+ * caps one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L27
+ */
+export const MAX_TITLE_LENGTH = 200;
+
+/**
+ * A message as a title: trimmed, its whitespace collapsed to single spaces,
+ * and cut at `maxLength` characters, as VS Code's host normalizes a title it
+ * seeds from a first message. A message with nothing in it is the empty title,
+ * which a client draws as its own placeholder.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L252-L255
+ */
+export const normalizeTitle = (text: string, maxLength = MAX_TITLE_LENGTH): string =>
+  Array.from(text.trim().replace(/\s+/g, ' ')).slice(0, maxLength).join('').trim();
+
+/**
  * Whether a chat's latest turn holds its queue: a turn that ended in an error
  * whose last part says a client may resume it.
  *
