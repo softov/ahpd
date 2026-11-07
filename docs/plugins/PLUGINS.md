@@ -216,11 +216,11 @@ against its contract before it is recorded.
 | `registerWorktrees(worktrees)` | set | `repository`, `branches`, `create`, `dirty`, `remove`, and the optional `gitDir` |
 | `registerGithub(pullRequests)` | set | `resource`, `forBranch`, `create` |
 | `registerAutomations(store)` | set | the automation store |
-| `registerSessions(store)` | set | the session store: flags, config, artifacts, pull requests, chat titles, the chats a session has, and the sessions it holds |
+| `registerSessions(store)` | set | the session store: flags, config, scope, owner, the senders of turns, provider, counts, artifacts, pull requests, chat titles and flags, the chats a session has and a chat's move between sessions, and the sessions it holds |
 | `registerDiagnostics(diagnostics)` | set | all members optional, so `{}` is valid |
 | `registerComputers(computers)` | set | how a backend runs its process in a named machine |
 | `registerContainers(containers)` | set | whether a dev container can be made, made, written to, stopped and removed; present, the host serves `vscode/devContainers/*` and advertises the capability |
-| `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record`, `total`, `pools` and `records`, all four |
+| `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record`, `total`, `pools`, `records` and `groups`, all five |
 | `registerPolicies(policies, when?)` | set | where policies are kept: `list`, `get`, `put` and `remove`, all four |
 | `registerVault(vault, when?)` | set | where this host's secrets are kept: `get`, `set`, `delete` and `list`, all four |
 | `registerCommandParser(split, when?)` | set | reads a shell command before the terminal rules match it: `(line, shell)` in, `{ subCommands, writeDests, unanalyzable }` or `undefined` out |

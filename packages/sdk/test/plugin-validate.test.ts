@@ -66,13 +66,16 @@ const ports = {
   },
   sessions: {
     flags: () => {}, setFlags: () => {}, config: () => {}, setConfig: () => {},
+    scope: () => {}, setScope: () => {}, owner: () => {}, setOwner: () => {},
+    sender: () => {}, setSender: () => {}, provider: () => {}, setProvider: () => {},
+    changes: () => {}, setChanges: () => {},
     artifacts: () => {}, setArtifacts: () => {}, pullRequests: () => {}, setPullRequests: () => {},
     chatTitle: () => {}, setChatTitle: () => {}, chats: () => {}, setChats: () => {}, forget: () => {},
-    chatFlags: () => {}, setChatFlags: () => {},
+    chatFlags: () => {}, setChatFlags: () => {}, moveChat: () => {},
     sessions: () => {},
   },
   diagnostics: {},
-  usage: { record: () => {}, total: () => {} },
+  usage: { record: () => {}, total: () => {}, pools: () => {}, records: () => {}, groups: () => {} },
 };
 
 const sessionsWithoutChatTitle = (): Record<string, unknown> => {
@@ -177,6 +180,23 @@ describe('pluginHost', () => {
   it('refuses a sessions store that cannot list the ids it holds', () => {
     const { host } = pluginHost('alpha', context());
     expect(() => host.registerSessions(sessionsWithoutASessionList() as never)).toThrow(/registerSessions.*sessions/);
+  });
+
+  /*
+   * Every member a port's type requires is checked, so a store lacking one is
+   * refused naming it rather than accepted and failing at its first use.
+   */
+  it('refuses a sessions or usage store lacking any member its type requires, naming it', () => {
+    const lacking = (store: Record<string, unknown>, member: string): Record<string, unknown> =>
+      Object.fromEntries(Object.entries(store).filter(([key]) => key !== member));
+    for (const member of ['scope', 'setScope', 'owner', 'setOwner', 'sender', 'setSender', 'provider', 'setProvider', 'changes', 'setChanges', 'moveChat']) {
+      const { host } = pluginHost('alpha', context());
+      expect(() => host.registerSessions(lacking(ports.sessions, member) as never)).toThrow(new RegExp(`alpha.*registerSessions.*\\b${member}\\b`));
+    }
+    for (const member of ['pools', 'records', 'groups']) {
+      const { host } = pluginHost('alpha', context());
+      expect(() => host.registerUsage(lacking(ports.usage, member) as never)).toThrow(new RegExp(`alpha.*registerUsage.*\\b${member}\\b`));
+    }
   });
 
   it('accepts empty diagnostics and an agent with no probe, because both are optional', () => {
