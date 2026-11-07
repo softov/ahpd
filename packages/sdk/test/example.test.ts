@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
+import { memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -134,15 +135,27 @@ it('says it back in the voice the session was created with', async () => {
   expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('HELLO');
 });
 
+/*
+ * A host started again over the same store lists the session it ran, and
+ * opens it from the backend's transcript. The example keeps its transcripts in
+ * memory, so the second host is handed the same backend.
+ */
 it('leaves a finished session in the catalogue, and opens it again from its transcript', async () => {
-  const { client, uri, chatUri } = await talking();
-  client.handle({
+  const sessions = memorySessions();
+  const agent = echo({ path: '/tmp/echo', pace: 0 });
+  const first = createHost({ path: '/tmp/echo', agents: [agent], sessions }).accept(peer());
+  await first.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  const uri = 'ahp-session:/one';
+  await first.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+  const chatUri = ((await first.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  first.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'remember me' } } },
   });
   await settle(12);
-  await client.handle({ method: 'disposeSession', params: { channel: uri } });
 
+  const client = createHost({ path: '/tmp/echo', agents: [agent], sessions }).accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: { resource: string; provider: string; title: string }[];
   };
@@ -151,11 +164,9 @@ it('leaves a finished session in the catalogue, and opens it again from its tran
 
   // Opened from its transcript, with nothing started: this is what makes a
   // catalogue row a row somebody can read.
-  const again = await client.handle({
-    method: 'subscribe',
-    // The default chat of the row, built from the URI it is listed under.
-    params: { channel: chatUriFor(listed.items[0]?.resource ?? '') },
-  }) as { snapshot: { state: { turns: unknown[] } } };
+  const row = listed.items[0]?.resource ?? '';
+  const chat = ((await client.handle({ method: 'subscribe', params: { channel: row } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  const again = await client.handle({ method: 'subscribe', params: { channel: chat } }) as { snapshot: { state: { turns: unknown[] } } };
   expect(again.snapshot.state.turns).toHaveLength(1);
 });
 
