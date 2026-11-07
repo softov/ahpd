@@ -2278,14 +2278,19 @@ export function createTooling(ctx: HostContext): Tooling {
         run: async (input: Record<string, unknown>): Promise<string> => {
           try {
             /*
-             * A tool the operator's rule names is refused here.
+             * A tool the operator's rule names is refused here where the
+             * daemon's `managedRules` is `checked`.
              *
              * The rule is the operator saying the call asks every time, and
              * this door has no session to ask in: a refusal is the one answer
              * that keeps the rule. The message names the key so a person can
-             * find what refused them.
+             * find what refused them. Under `handed` the host checks no
+             * managed rule, VS Code's host, and this door has no runtime to
+             * hand the rule to, as VS Code's agents that take no managed
+             * settings get none, so the call runs.
+             * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
              */
-            if (asksForTool(options.eligibleForAutoApproval, `ahp/${definition.name}`)) {
+            if (options.managedRules !== 'handed' && asksForTool(options.eligibleForAutoApproval, `ahp/${definition.name}`)) {
               throw new Error(`${definition.name} asks every time: eligibleForAutoApproval names ahp/${definition.name}, and /mcp has no session to ask in`);
             }
             const answer = await one.run(input, sessionlessContext(caller));

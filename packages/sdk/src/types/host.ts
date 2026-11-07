@@ -924,13 +924,15 @@ export interface HostOptions {
    * `checked`, the default, is this host's own check: each managed family on
    * every question of its kind from every backend, a `deny` refusing the call
    * and an `ask`, or a tool its eligibility sets `false`, putting the question
-   * with Allow Once and Skip alone. `handed` is VS Code's: the host checks no
+   * with Allow Once and Skip alone, and `/mcp` refusing a host tool its
+   * eligibility sets `false`. `handed` is VS Code's: the host checks no
    * managed rule and marks nothing, hands the rules to the backends on
    * `Start.managedSettings` for the runtimes that take them, and puts a
    * question a backend marked `managedApprovalRequired` with Allow Once and
    * Skip, as VS Code's host keeps the merged permissions for its runtimes and
-   * checks none. The start's check of the managed document and the Allow All
-   * lock hold under both.
+   * checks none; `/mcp`, with no runtime to hand a rule to, runs the tool. The
+   * start's check of the managed document and the Allow All lock hold under
+   * both.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostManagedSettingsService.ts
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
    */

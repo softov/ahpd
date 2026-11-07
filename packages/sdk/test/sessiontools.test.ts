@@ -1159,6 +1159,23 @@ describe('a tool a person calls with no session', () => {
     expect(calls).toEqual(['ping']);
   });
 
+  /*
+   * Under `managedRules: handed` the host checks no managed rule, VS Code's
+   * host, and this door has no runtime to hand one to, so the call runs.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
+   */
+  it('runs a tool the operator\'s rule names when the daemon hands the managed rules on', async () => {
+    const calls: string[] = [];
+    const notify: HostTool = {
+      definition: { name: 'notify', title: 'notify', description: 'notify, and sessionless.', inputSchema: { type: 'object', properties: {} } },
+      sessionless: true,
+      run: () => { calls.push('notify'); return 'notify'; },
+    };
+    const { users, host } = hosting([notify], undefined, undefined, { eligibleForAutoApproval: { 'ahp/notify': false }, managedRules: 'handed' });
+    expect(await run(host, { principal: await principal(users, 'member') }, 'notify', {})).toBe('notify');
+    expect(calls).toEqual(['notify']);
+  });
+
   it('makes a session the caller owns, with no parent, when it is independent', async () => {
     const { host, users, store } = hosting();
     const said = await run(host, { principal: await principal(users, 'member') }, 'create_session', {
