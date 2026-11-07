@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { posix } from '../../../tools/posix.ts';
-import { dockerfileOf, readParts, registryOf, tagOf } from '../src/parts.js';
+import { dockerfileOf, lockOf, readParts, registryOf, tagOf } from '../src/parts.js';
 import type { Part } from '../src/parts.js';
 
 /*
@@ -26,7 +26,7 @@ afterEach(() => {
   for (const one of loose.splice(0)) rmSync(one, { recursive: true, force: true });
 });
 
-interface Built { platforms: string[]; tags: string[]; contexts: string[]; labels: string[]; push: boolean; dockerfile?: string }
+interface Built { platforms: string[]; tags: string[]; contexts: string[]; labels: string[]; push: boolean; dockerfile?: string; files?: string[] }
 interface Held { buildx?: Built[]; builds?: { tag: string }[]; published?: string[] }
 
 /** One run of the script with these arguments, over a scripted docker holding `state`. */
@@ -49,7 +49,7 @@ const publish = (args: string[], state: Record<string, unknown> = {}): { held: H
 const parts = readParts();
 const node = parts.find((one) => one.kind === 'node') as Part;
 const codex = parts.find((one) => one.id === 'codex') as Part;
-const tagFor = (part: Part): string => tagOf(part, undefined, dockerfileOf(part));
+const tagFor = (part: Part): string => tagOf(part, undefined, dockerfileOf(part, undefined, lockOf(part)));
 const remoteFor = (part: Part): string => `${registryOf()}/${tagFor(part)}`;
 
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
@@ -65,9 +65,12 @@ it.skipIf(!posix)('builds every part for both platforms and pushes it where a ho
   expect(at(node)).toBe(0);
   // The codex part copies node in by its tag, which here is the registry's image of it.
   const one = built[at(codex)];
-  expect(one?.dockerfile).toBe(dockerfileOf(codex));
+  expect(one?.dockerfile).toBe(dockerfileOf(codex, undefined, lockOf(codex)));
   expect(one?.contexts).toEqual([`${tagFor(node)}=docker-image://${remoteFor(node)}`]);
   expect(built[0]?.contexts).toEqual([]);
+  // An npm part is built from its two files, and node, which installs nothing by npm, from none.
+  expect(one?.files).toEqual(['package.json', 'package-lock.json']);
+  expect(built[0]?.files).toEqual([]);
   // Nothing was built into this host's own images.
   expect(held.builds ?? []).toEqual([]);
 });

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { computersFor, machineRefusal } from '../../sdk/src/machines/computers.js';
-import { dockerfileOf, readParts, registryOf, tagOf } from '../src/parts.js';
+import { dockerfileOf, lockOf, readParts, registryOf, tagOf } from '../src/parts.js';
 import type { Part } from '../src/parts.js';
 import { dockerRuntime, stateVolumeOf } from '../src/runtime.js';
 import { revealed } from '../src/secrets.js';
@@ -1290,7 +1290,7 @@ it('reads a machine with no recorded needs again from the needs its agents decla
  */
 const versionOf = (one: Part): string => {
   if (one.kind === 'ahpd') return one.version;
-  const tag = tagOf(one, undefined, dockerfileOf(one));
+  const tag = tagOf(one, undefined, dockerfileOf(one, undefined, lockOf(one)));
   return tag.slice(tag.lastIndexOf(':') + 1);
 };
 const PARTS = new Map(readParts().map((one) => [one.id, versionOf(one)]));

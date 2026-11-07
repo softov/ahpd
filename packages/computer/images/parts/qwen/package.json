@@ -1,0 +1,7 @@
+{
+  "name": "ahpd-part-qwen",
+  "private": true,
+  "dependencies": {
+    "@qwen-code/qwen-code": "0.26.5"
+  }
+}

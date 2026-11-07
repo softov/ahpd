@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
-import { contextOf, dockerfileOf, ensureJoined, ensurePart, joinedDockerfile, readParts, registryOf, tagOf } from '../src/parts.js';
+import { contextOf, dockerfileOf, ensureJoined, ensurePart, joinedDockerfile, lockOf, readParts, registryOf, tagOf } from '../src/parts.js';
 import { dockerRuntime } from '../src/runtime.js';
 import type { Part } from '../src/parts.js';
 
@@ -72,7 +72,7 @@ const parts: Part[] = [node, codex];
  * code does rather than spelling the hash of a Dockerfile they do not hold.
  * The tag's own shape is asserted in `computer-parts.test.ts`.
  */
-const tagFor = (part: Part): string => tagOf(part, undefined, dockerfileOf(part));
+const tagFor = (part: Part): string => tagOf(part, undefined, dockerfileOf(part, undefined, lockOf(part)));
 
 /** Where the release workflow pushed a part, which is where a host pulls it from. */
 const remoteFor = (part: Part): string => `${registryOf()}/${tagFor(part)}`;

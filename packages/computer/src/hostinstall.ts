@@ -14,8 +14,9 @@
  *
  * What is installed is what a machine's `/opt/ahpd` holds of the `node` and
  * `ahpd` parts, at the versions `versions.json` names: Node from its download,
- * checked by its sha256, `@ahpd/server` by npm with the part's plugins in a
- * plugin root of the install's own, and a launcher that runs it on that Node.
+ * checked by its sha256, `@ahpd/server` by `npm ci` from the ahpd part's lock,
+ * the part's plugins in a plugin root of the install's own, and a launcher
+ * that runs it on that Node.
  * The folder is under `$XDG_DATA_HOME/ahpd/server`, where ahpd keeps its data,
  * so the install needs no `sudo` and leaves any other ahpd on the box as it is.
  * The plugin root is given to the host a session starts, and the launcher
@@ -27,8 +28,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { AHPD_NPM_FLAGS, platformOf, readParts, versionsPath } from './parts.js';
-import type { Part } from './parts.js';
+import { lockOf, PART_NPM_FLAGS, platformOf, readParts, versionsPath } from './parts.js';
+import type { Part, Tarball } from './parts.js';
 
 /** The folder the installs are in, as the box's own `sh` expands it. */
 export const HOST_ROOT = '"${XDG_DATA_HOME:-$HOME/.local/share}/ahpd/server"';
@@ -43,12 +44,16 @@ export const INSTALL_GLOB = `*-${'[0-9a-f]'.repeat(12)}`;
  */
 export const HOST_MACHINES = { 'linux-x64': ['x86_64', 'amd64'], 'linux-arm64': ['aarch64', 'arm64'] } as const;
 
+/** The line that ends each file the script writes, which no line of a JSON file is. */
+const END = 'AHPD_PART_FILE';
+
 /*
- * The script, sent to the box's `sh` on stdin with the install's folder, the
- * version, the two Node downloads with their sums and the plugins as its
- * arguments. It prints `root=<the root>` and `install=<the folder that runs>`,
- * with `installed=yes` after an install and `fallback=yes` when the folder is
- * another install than the one asked for.
+ * The script, sent to the box's `sh` on stdin after the `files` function that
+ * writes the ahpd part's lock, with the install's folder, the two Node
+ * downloads with their sums and the plugins as its arguments. It prints
+ * `root=<the root>` and `install=<the folder that runs>`, with `installed=yes`
+ * after an install and `fallback=yes` when the folder is another install than
+ * the one asked for.
  *
  * `uname` answers the platform VS Code's installer reads, and a box that is not
  * Linux on x86_64 or aarch64 has no Node download in `versions.json`. The
@@ -59,8 +64,8 @@ export const HOST_MACHINES = { 'linux-x64': ['x86_64', 'amd64'], 'linux-arm64': 
  * install holds no path of the folder it was made in.
  */
 const SCRIPT = `
-key=$1 version=$2 x64=$3 x64sum=$4 arm64=$5 arm64sum=$6
-shift 6
+key=$1 x64=$2 x64sum=$3 arm64=$4 arm64sum=$5
+shift 5
 case "$(uname -s) $(uname -m)" in
   ${HOST_MACHINES['linux-x64'].map((one) => `'Linux ${one}'`).join('|')}) url=$x64 sum=$x64sum ;;
   ${HOST_MACHINES['linux-arm64'].map((one) => `'Linux ${one}'`).join('|')}) url=$arm64 sum=$arm64sum ;;
@@ -90,7 +95,8 @@ install() {
     printf '%s  node.tar\\n' "$sum" | sha256sum --check --strict - &&
     mkdir node && tar "$how" node.tar -C node --strip-components=1 && rm node.tar &&
     PATH="$tmp/node/bin:$PATH" && export PATH &&
-    npm install --prefix "$tmp/ahpd" ${AHPD_NPM_FLAGS} "@ahpd/sdk@$version" "@ahpd/server@$version" &&
+    mkdir ahpd && files ahpd &&
+    npm ci --prefix "$tmp/ahpd" ${PART_NPM_FLAGS} &&
     { [ "$#" -eq 0 ] || AHPD_PLUGIN_ROOT="$tmp/ahpd/plugins" "$tmp/ahpd/node_modules/.bin/ahpd" plugin install --no-enable "$@"; } &&
     mkdir bin &&
     printf '%s\\n' '#!/bin/sh' 'here=$(cd -- "$(dirname -- "$0")/.." && pwd)' 'exec "$here/node/bin/node" "$here/ahpd/node_modules/.bin/ahpd" "$@"' > bin/ahpd &&
@@ -129,8 +135,8 @@ export const isHostInstall = (dir: string, root: string): boolean => {
   return at > 0 && !name.includes('/') && /^[0-9a-f]{12}$/.test(name.slice(at + 1));
 };
 
-/** The command the box runs, before the install's arguments, and the script it reads on stdin. */
-export const HOST_INSTALL = { command: ['sh', '-s', '--'], script: SCRIPT } as const;
+/** The command the box runs, before the install's arguments, with the install's script on its stdin. */
+export const HOST_INSTALL_COMMAND = ['sh', '-s', '--'] as const;
 
 /** One install of ahpd on a box. */
 export interface HostInstall {
@@ -138,16 +144,21 @@ export interface HostInstall {
   version: string;
   /**
    * Its folder under the root: the version, then a hash of the script and
-   * every pinned value it is given, so a moved version, download or plugin is
-   * a new folder.
+   * every pinned value it is given, so a moved version, lock, download or
+   * plugin is a new folder.
    */
   key: string;
-  /** What `HOST_INSTALL.command` is given after it. */
+  /** What `HOST_INSTALL_COMMAND` is given after it. */
   args: string[];
+  /** The script, the ahpd part's lock written into it. */
+  script: string;
 }
 
-/** The install the parts file pins, read from `versions.json` when no parts are given. */
-export const hostInstallOf = (parts: readonly Part[] = readParts()): HostInstall => {
+/**
+ * The install the parts file pins, read from `versions.json` when no parts are
+ * given, with the ahpd part's lock, read beside that file when none is given.
+ */
+export const hostInstallOf = (parts: readonly Part[] = readParts(), lock?: readonly Tarball[]): HostInstall => {
   const node = parts.find((one) => one.kind === 'node');
   const ahpd = parts.find((one) => one.kind === 'ahpd');
   if (node === undefined || ahpd === undefined) {
@@ -156,9 +167,15 @@ export const hostInstallOf = (parts: readonly Part[] = readParts()): HostInstall
   const x64 = platformOf(node, 'linux-x64');
   const arm64 = platformOf(node, 'linux-arm64');
   const pinned = [
-    ahpd.version, x64.url, x64.sha256, arm64.url, arm64.sha256,
+    x64.url, x64.sha256, arm64.url, arm64.sha256,
     ...(ahpd.plugins ?? []).map((one) => `${one}@${ahpd.version}`),
   ];
-  const key = `${ahpd.version}-${createHash('sha256').update([SCRIPT, ...pinned].join('\0')).digest('hex').slice(0, 12)}`;
-  return { version: ahpd.version, key, args: [key, ...pinned] };
+  // Each file as a here-document, its last newline the one the document ends with.
+  const files = (lock ?? lockOf(ahpd) ?? []).flatMap((one) => {
+    const text = one.bytes.toString('utf8');
+    return [`  cat > "$1/${one.name}" <<'${END}'`, text.endsWith('\n') ? text.slice(0, -1) : text, END];
+  });
+  const script = ['files() {', ...files, '}', SCRIPT].join('\n');
+  const key = `${ahpd.version}-${createHash('sha256').update([script, ...pinned].join('\0')).digest('hex').slice(0, 12)}`;
+  return { version: ahpd.version, key, args: [key, ...pinned], script };
 };

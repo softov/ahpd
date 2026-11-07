@@ -45,15 +45,25 @@ if (first === 'plugin') {
 }
 `;
 
-/** The npm in the download: it records its arguments and writes the stand-in ahpd under its prefix. */
+/**
+ * The npm in the download: it records its arguments, refuses a prefix with no
+ * lock in it, as `npm ci` does, and writes the stand-in ahpd under the prefix.
+ */
 const NPM_STANDIN = `#!/bin/sh
 echo "$*" >> "$NPM_LOG"
 while [ "$#" -gt 0 ]; do
   case "$1" in --prefix) prefix=$2; shift ;; esac
   shift
 done
+[ -f "$prefix/package.json" ] && [ -f "$prefix/package-lock.json" ] || { echo "npm ci: no lock in $prefix" >&2; exit 1; }
 mkdir -p "$prefix/node_modules/.bin" && cp "$(dirname "$0")/../share/ahpd.js" "$prefix/node_modules/.bin/ahpd"
 `;
+
+/** The ahpd part's two files, standing in for the ones `lockOf` reads. */
+const LOCK = [
+  { name: 'package.json', bytes: Buffer.from('{\n  "name": "ahpd-part-ahpd",\n  "private": true\n}\n') },
+  { name: 'package-lock.json', bytes: Buffer.from('{\n  "lockfileVersion": 3\n}\n') },
+];
 
 /** A Node download, packed as the box unpacks it, and its sha256. */
 const download = (): { url: string; sha256: string } => {
@@ -93,6 +103,7 @@ const box = (parts: Part[], options: { env?: Record<string, string>; machine?: P
     },
     machines: { dev02: { destination: 'dev02', ...options.machine } },
     parts,
+    lock: LOCK,
     log: (line) => { logged.push(line); },
   });
   return { runtime, logged };
@@ -111,7 +122,7 @@ const standing = (path: string, version: string): void => {
 
 it.skipIf(!posix)('installs ahpd in the box user folder the first time, and starts the host from there', async () => {
   const parts = partsWith(download());
-  const { key } = hostInstallOf(parts);
+  const { key } = hostInstallOf(parts, LOCK);
   const { runtime, logged } = box(parts);
 
   const command = await runtime.hostCommand('dev02');
@@ -119,10 +130,12 @@ it.skipIf(!posix)('installs ahpd in the box user folder the first time, and star
   expect(command).toEqual(['env', `AHPD_PLUGIN_ROOT=${join(dir, 'ahpd', 'plugins')}`, join(dir, 'bin', 'ahpd')]);
   // The launcher runs the ahpd npm installed on the download's Node.
   expect(spawnSync(join(dir, 'bin', 'ahpd'), ['--version'], { encoding: 'utf8' }).stdout.trim()).toBe('9.9.9');
-  // ahpd at the part's version with the part's flags, and its plugins in the install's own root.
+  // ahpd from the ahpd part's lock, written byte for byte, by `npm ci` with the part's flags.
+  for (const one of LOCK) expect(readFileSync(join(dir, 'ahpd', one.name))).toEqual(one.bytes);
   const [run] = npmRuns();
-  expect(run?.split(' ').slice(0, 2)).toEqual(['install', '--prefix']);
-  expect(run?.split(' ').slice(3)).toEqual(['--no-audit', '--no-fund', '--loglevel=error', '--legacy-peer-deps', '@ahpd/sdk@9.9.9', '@ahpd/server@9.9.9']);
+  expect(run?.split(' ').slice(0, 2)).toEqual(['ci', '--prefix']);
+  expect(run?.split(' ').slice(3)).toEqual(['--no-audit', '--no-fund', '--loglevel=error']);
+  // The plugins are installed into the install's own root.
   expect(existsSync(join(dir, 'ahpd', 'plugins', 'node_modules', '@ahpd', 'agent-cofold'))).toBe(true);
   expect(existsSync(join(dir, 'ahpd', 'plugins', 'node_modules', '@ahpd', 'agent-pi'))).toBe(true);
   // The folder the download was unpacked in went into place, and nothing else is left.
@@ -160,7 +173,7 @@ it.skipIf(!posix)('runs the command the box names as it is, and installs nothing
 
 it.skipIf(!posix)('keeps the five installs used most recently', async () => {
   const parts = partsWith(download());
-  const { key } = hostInstallOf(parts);
+  const { key } = hostInstallOf(parts, LOCK);
   const older = [0, 1, 2, 3, 4, 5].map((at) => `1.0.${at}-00000000000${at}`);
   for (const [at, name] of older.entries()) {
     mkdirSync(join(installs(), name), { recursive: true });

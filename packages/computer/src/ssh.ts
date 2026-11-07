@@ -19,8 +19,8 @@ import { spawn } from 'node:child_process';
 import { createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import type { Spawn, SpawnOptions } from '@ahpd/sdk';
-import { HOST_INSTALL, hostInstallOf, isHostInstall } from './hostinstall.js';
-import type { Part } from './parts.js';
+import { HOST_INSTALL_COMMAND, hostInstallOf, isHostInstall } from './hostinstall.js';
+import type { Part, Tarball } from './parts.js';
 import type { ComputerRuntime, ExecResult, Machine, MachineStats, RuntimeCapabilities } from './runtime.js';
 import { checkServer, SERVER_CHECK } from './servercheck.js';
 import type { ServerReport } from './servercheck.js';
@@ -112,6 +112,8 @@ export interface SshOptions {
   pollSeconds?: number;
   /** The parts the ahpd installed on a box is made of, `versions.json`'s when absent. */
   parts?: Part[];
+  /** The ahpd part's lock that install runs `npm ci` from, the one beside `versions.json` when absent. */
+  lock?: Tarball[];
   /** Where an ahpd installed on a box, or one run in its place, is said. */
   log?: (line: string) => void;
 }
@@ -498,8 +500,8 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
     const held = installing.get(name);
     if (held !== undefined) return held;
     const made = (async () => {
-      const install = hostInstallOf(options.parts);
-      const ran = await reachOf(name).ran([...HOST_INSTALL.command, ...install.args], Buffer.from(HOST_INSTALL.script));
+      const install = hostInstallOf(options.parts, options.lock);
+      const ran = await reachOf(name).ran([...HOST_INSTALL_COMMAND, ...install.args], Buffer.from(install.script));
       if (ran.timedOut) throw new Error(`ahpd ${install.version} was not installed on ${name} within ${TRANSFER_MS}ms`);
       const said = new Map(ran.stdout.split('\n').filter((line) => line.includes('='))
         .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));

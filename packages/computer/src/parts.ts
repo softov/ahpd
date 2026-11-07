@@ -650,11 +650,57 @@ const launchersIn = (part: Part): string[] => [`mkdir -p /opt/ahpd/${part.id}/bi
     + `${writes(launcher, part, '$run')}; chmod +x ${launcher}`;
 })];
 
-/** The `npm install` a part installed by npm runs, and the launcher it leaves. */
-const byNpm = (part: Part): string => [
+/**
+ * The two files a part's npm packages are installed from, as VS Code installs
+ * each agent SDK from the `package.json` and `package-lock.json` committed
+ * beside it: the packages at the versions the versions file pins, and the
+ * whole graph they resolved to. `node scripts/parts-bump.mjs --locks` writes
+ * them, in `parts/<id>` beside the versions file.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L48
+ */
+export const LOCK_FILES = ['package.json', 'package-lock.json'] as const;
+
+/** A part's two files, or nothing for a part with no npm packages; the ahpd part's are `@ahpd/sdk` and `@ahpd/server`. */
+export const lockOf = (part: Part, path: string = versionsPath()): Tarball[] | undefined => {
+  if (part.kind !== 'ahpd' && part.packages === undefined) return undefined;
+  return LOCK_FILES.map((name) => {
+    const at = join(dirname(path), 'parts', part.id, name);
+    if (!existsSync(at)) {
+      throw new Error(`${at} is not there, and the ${part.id} part's npm packages are installed from it: node scripts/parts-bump.mjs --locks writes it`);
+    }
+    return { name, bytes: readFileSync(at) };
+  });
+};
+
+/** The flags npm installs a part's packages with. */
+export const PART_NPM_FLAGS = '--no-audit --no-fund --loglevel=error';
+
+/**
+ * The `npm ci` that installs a part's packages into `root` from its two files,
+ * so the part is a function of its lock, as VS Code installs each agent SDK
+ * from the lock committed beside it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L51
+ *
+ * Each file is checked against the sum written here, so the tag that hashes
+ * the Dockerfile names the lock too, and a build given another file is
+ * refused, as a download that is not its sum is. Install scripts run, because
+ * several of these packages fetch their binary in a `postinstall`. The peers
+ * a package names are installed with it, because dsh's own packages reach one
+ * another as peers.
+ */
+const fromLock = (root: string, lock: readonly Tarball[]): string => [
+  `COPY ${lock.map((one) => one.name).join(' ')} ${root}/`,
+  [
+    `RUN cd ${root}`,
+    ...lock.map((one) => `echo "${createHash('sha256').update(one.bytes).digest('hex')}  ${one.name}" | sha256sum --check --strict -`),
+    `npm ci ${PART_NPM_FLAGS}`,
+  ].join(' \\\n && '),
+].join('\n');
+
+/** The `npm ci` a part installed by npm runs, and the launcher it leaves. */
+const byNpm = (part: Part, lock: readonly Tarball[]): string => [
   fetching(true, 'ca-certificates'),
-  `RUN npm install --prefix /opt/ahpd/${part.id} --no-audit --no-fund --loglevel=error ${
-    (part.packages ?? []).map((one) => (packageOf(one).version === undefined ? `${one}@${part.version}` : one)).join(' ')}`,
+  fromLock(`/opt/ahpd/${part.id}`, lock),
   launchers(part, () => '$run', {}, (bin) => scriptOrNative(`/opt/ahpd/${part.id}/node_modules/.bin/${bin}`)),
   only(part.id),
 ].join('\n\n');
@@ -671,11 +717,11 @@ const scriptOrNative = (path: string): string =>
   `run=${path}; case "$(head -c 2 ${path})" in '#!') run="/opt/ahpd/node/bin/node ${path}";; esac`;
 
 /** The download a part made of one tarball fetches, unpacked into the part. */
-const byDownload = (part: Part): string => [
-  fetching(part.packages !== undefined, 'ca-certificates curl bzip2 xz-utils'),
+const byDownload = (part: Part, lock?: readonly Tarball[]): string => [
+  fetching(lock !== undefined, 'ca-certificates curl bzip2 xz-utils'),
   // An archive part's npm packages, each at the version it pins of its own,
   // installed before the download unpacks beside them.
-  ...(part.packages === undefined ? [] : [`RUN npm install --prefix /opt/ahpd/${part.id} --no-audit --no-fund --loglevel=error ${part.packages.join(' ')}`]),
+  ...(lock === undefined ? [] : [fromLock(`/opt/ahpd/${part.id}`, lock)]),
   download(part, launchersIn(part)),
   only(part.id),
 ].join('\n\n');
@@ -701,9 +747,6 @@ const PLUGIN_ROOT = '/opt/ahpd/ahpd/plugins';
 const ahpdLauncher = (part: Part): string =>
   launchers(part, () => '/opt/ahpd/node/bin/node /opt/ahpd/ahpd/node_modules/.bin/ahpd', { AHPD_PLUGIN_ROOT: PLUGIN_ROOT });
 
-/** The flags npm installs ahpd with, into the ahpd part's image and onto a box alike. */
-export const AHPD_NPM_FLAGS = '--no-audit --no-fund --loglevel=error --legacy-peer-deps';
-
 /**
  * The Dockerfile that builds one part.
  *
@@ -711,19 +754,23 @@ export const AHPD_NPM_FLAGS = '--no-audit --no-fund --loglevel=error --legacy-pe
  * `/opt/ahpd/<id>` and nothing else, so a part is the same directory whether it
  * was mounted or copied. The `ahpd` part is the one kind whose source has to be
  * answered first, because its image holds this repository's code or the published
- * version and the two are not the same build.
+ * version and the two are not the same build. A part with npm packages, the
+ * published ahpd among them, is installed from its two files, `lock`.
  */
-export const dockerfileOf = (part: Part, source?: AhpdSource): string => {
+export const dockerfileOf = (part: Part, source?: AhpdSource, lock?: readonly Tarball[]): string => {
   if (part.kind === 'node') return byNode(part);
-  if (part.kind === 'archive') return byDownload(part);
-  if (part.kind === 'npm') return byNpm(part);
+  if (lock === undefined && (part.kind === 'npm' || part.packages !== undefined || source?.from === 'npm')) {
+    throw new Error(`the ${part.id} part installs its npm packages from its ${LOCK_FILES.join(' and ')}, which is what lockOf() answers`);
+  }
+  if (part.kind === 'archive') return byDownload(part, lock);
+  if (part.kind === 'npm') return byNpm(part, lock ?? []);
   if (source === undefined) {
     throw new Error(`the ${part.id} part is built from code this checkout has to pack, which is what ahpdSourceOf() answers`);
   }
   if (source.from === 'npm') {
     return [
       fetching(true, 'ca-certificates'),
-      `RUN npm install --prefix /opt/ahpd/${part.id} ${AHPD_NPM_FLAGS} @ahpd/sdk@${source.version} @ahpd/server@${source.version}`,
+      fromLock(`/opt/ahpd/${part.id}`, lock ?? []),
       // The nested backends go in the part, not in the config dir, because a
       // `FROM scratch` stage keeps nothing that is not under `/opt/ahpd/ahpd`.
       //
@@ -745,11 +792,13 @@ export const dockerfileOf = (part: Part, source?: AhpdSource): string => {
   return [
     fetching(true, 'ca-certificates'),
     `COPY ${names.join(' ')} ./`,
-    `RUN npm install --prefix /opt/ahpd/${part.id} ${AHPD_NPM_FLAGS} ${source.tarballs.map((one) => `./${one.name}`).join(' ')}`,
+    `RUN npm install --prefix /opt/ahpd/${part.id} ${PART_NPM_FLAGS} ${source.tarballs.map((one) => `./${one.name}`).join(' ')}`,
     // The plugins of a checkout are tarballs, and what resolves a bare name is
     // the plugin root, so npm installs them into the same root the launcher
-    // points `AHPD_PLUGIN_ROOT` at.
-    `RUN npm install --prefix ${PLUGIN_ROOT} ${AHPD_NPM_FLAGS} ${[...source.plugins, ...source.tarballs]
+    // points `AHPD_PLUGIN_ROOT` at, with the sdk beside them and no plugin's
+    // peer range checked against another's, as `ahpd plugin install` installs
+    // into a plugin root (`the-daemon-installs-its-own-sdk-beside-the-plugins`).
+    `RUN npm install --prefix ${PLUGIN_ROOT} --legacy-peer-deps --no-audit --no-fund --loglevel=error ${[...source.plugins, ...source.tarballs]
       .map((one) => `./${one.name}`).join(' ')}`,
     ahpdLauncher(part),
     only(part.id),
@@ -894,8 +943,9 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
     const source = part.kind === 'ahpd' ? await ahpdSourceOf(options.log) : undefined;
     // The Dockerfile is what the image is, so it is written once and is both what
     // the tag hashes and what is built: an upgrade that changes how a part is
-    // written changes the image while the versions stand still.
-    const file = dockerfileOf(part, source);
+    // written changes the image while the versions stand still, and so does a
+    // lock that moved, whose sums it holds.
+    const file = dockerfileOf(part, source, lockOf(part));
     const tag = tagOf(part, source?.hash, file);
     await once(tag, async () => {
       if (await options.runtime.hasImage(tag)) return;

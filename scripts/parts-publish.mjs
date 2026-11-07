@@ -44,7 +44,7 @@ if (argv.some((one) => one !== '--push' && one !== '--local') || (argv.includes(
 const push = argv.includes('--push');
 const local = argv.includes('--local');
 
-const { ahpdSourceOf, contextOf, dockerfileOf, readParts, registryOf, tagOf } = await import('../packages/computer/src/parts.ts');
+const { ahpdSourceOf, contextOf, dockerfileOf, lockOf, readParts, registryOf, tagOf } = await import('../packages/computer/src/parts.ts');
 const { dockerRuntime } = await import('../packages/computer/src/runtime.ts');
 
 /** The platforms a machine runs on, which are the downloads every archive part names. */
@@ -79,10 +79,13 @@ let failed = false;
 for (const id of ordered) {
   const part = parts.find((one) => one.id === id);
   const source = part.kind === 'ahpd' ? await ahpdSourceOf((line) => { process.stdout.write(`${line}\n`); }) : undefined;
-  const file = dockerfileOf(part, source);
+  const lock = lockOf(part);
+  const file = dockerfileOf(part, source, lock);
   const tag = tagOf(part, source?.hash, file);
   tags.set(id, tag);
-  const context = contextOf(file, source?.from === 'workspace' ? [...source.tarballs, ...source.plugins] : []);
+  // A part with npm packages is built from its two files, and a checkout's own
+  // ahpd part from the tarballs it packed.
+  const context = contextOf(file, source?.from === 'workspace' ? [...source.tarballs, ...source.plugins] : lock ?? []);
 
   if (local) {
     if (await docker.hasImage(tag)) {

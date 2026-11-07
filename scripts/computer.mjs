@@ -245,7 +245,7 @@ const verbs = {
         + 'Run it as: node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --all');
     }
     const { dockerRuntime } = runtime;
-    const { ahpdSourceOf, dockerfileOf, ensureJoined, ensurePart, readParts, tagOf, versionsPath } = source;
+    const { ahpdSourceOf, dockerfileOf, ensureJoined, ensurePart, lockOf, readParts, tagOf, versionsPath } = source;
     const docker = dockerRuntime({ command: 'docker', label: 'ahpd.computer=1' });
 
     if (options.joined) {
@@ -269,11 +269,12 @@ const verbs = {
 
     // The ahpd part's tag carries a hash of its own source, so the question has
     // to be answered before it is asked; and every tag carries the hash of the
-    // Dockerfile that writes it, as the plugin spells it.
+    // Dockerfile that writes it, with the sums of a part's lock, as the plugin
+    // spells it.
     const sourceOf = async (part) => (part.kind === 'ahpd' ? await ahpdSourceOf() : undefined);
     const tagFor = async (part) => {
       const source = await sourceOf(part);
-      return tagOf(part, source?.hash, dockerfileOf(part, source));
+      return tagOf(part, source?.hash, dockerfileOf(part, source, lockOf(part)));
     };
 
     let refused = false;

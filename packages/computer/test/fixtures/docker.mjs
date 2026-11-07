@@ -225,8 +225,8 @@ if (verb === 'info') {
  * `docker buildx`, as the release workflow builds with it: `imagetools
  * inspect` answers for an image the registry holds, which `published` lists,
  * and `build` is recorded in `buildx` with its platforms, tags, build
- * contexts, labels, whether it pushed and the Dockerfile it was piped; a
- * pushed tag is then published.
+ * contexts, labels, whether it pushed, the Dockerfile it was piped and the
+ * names of the other files beside it; a pushed tag is then published.
  */
 if (verb === 'buildx') {
   if (args[1] === 'imagetools' && args[2] === 'inspect') {
@@ -234,7 +234,8 @@ if (verb === 'buildx') {
     process.exit((held.published ?? []).includes(args[3]) ? 0 : 1);
   }
   const flag = (name) => args.flatMap((one, at) => (args[at - 1] === name ? [one] : []));
-  const dockerfile = contextEntries(await readStdin()).find((one) => one.name === 'Dockerfile');
+  const entries = contextEntries(await readStdin());
+  const dockerfile = entries.find((one) => one.name === 'Dockerfile');
   held.buildx ??= [];
   held.buildx.push({
     platforms: flag('--platform'),
@@ -243,6 +244,7 @@ if (verb === 'buildx') {
     labels: flag('--label'),
     push: args.includes('--push'),
     dockerfile: dockerfile?.bytes.toString('utf8'),
+    files: entries.map((one) => one.name).filter((name) => name !== 'Dockerfile'),
   });
   if (args.includes('--push')) held.published = [...held.published ?? [], ...flag('--tag')];
   keep();
