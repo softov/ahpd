@@ -201,6 +201,27 @@ if (verb === 'build') {
 }
 
 /*
+ * `docker info --format {{json .}}`: the Engine's version and its image
+ * store, the containerd one unless `imageMounts: false` says the daemon runs
+ * a classic storage driver; `engine` names another version, and `failInfo`
+ * is a daemon that does not answer.
+ */
+if (verb === 'info') {
+  keep();
+  if (held.failInfo === true) {
+    process.stderr.write('Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n');
+    process.exit(1);
+  }
+  const classic = held.imageMounts === false;
+  process.stdout.write(`${JSON.stringify({
+    ServerVersion: held.engine ?? '29.0.0',
+    Driver: classic ? 'overlay2' : 'overlayfs',
+    DriverStatus: classic ? [['Backing Filesystem', 'extfs'], ['Supports d_type', 'true']] : [['driver-type', 'io.containerd.snapshotter.v1']],
+  })}\n`);
+  process.exit(0);
+}
+
+/*
  * `docker buildx`, as the release workflow builds with it: `imagetools
  * inspect` answers for an image the registry holds, which `published` lists,
  * and `build` is recorded in `buildx` with its platforms, tags, build
@@ -644,9 +665,8 @@ if (verb === 'run' || verb === 'create') {
    * An image mount, as Docker 29 takes it and an older Docker refuses it.
    *
    * `imageMounts: false` is a Docker that does not know the type, in the
-   * daemon's own words; `failMount` is any other refusal a test wants, such as
-   * the source image missing. A Docker that takes one warns on stderr that it
-   * is experimental, and makes the container all the same.
+   * daemon's own words. A Docker that takes one warns on stderr that it is
+   * experimental, and makes the container all the same.
    */
   const field = (mount, key) => String(mount).split(',').find((one) => one.startsWith(`${key}=`))?.slice(key.length + 1);
   const images = typed.filter((one) => field(one, 'type') === 'image');
@@ -654,11 +674,6 @@ if (verb === 'run' || verb === 'create') {
     if (held.imageMounts === false) {
       keep();
       process.stderr.write('Error response from daemon: invalid mount config for type "image": mount type unknown\n');
-      process.exit(1);
-    }
-    if (typeof held.failMount === 'string') {
-      keep();
-      process.stderr.write(`${held.failMount}\n`);
       process.exit(1);
     }
     const absent = images.map((one) => field(one, 'source')).find((one) => !(held.images ?? []).includes(one));

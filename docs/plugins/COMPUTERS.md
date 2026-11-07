@@ -948,13 +948,13 @@ A part reaches the machine one of two ways:
 | Route | When | What Docker is given |
 | --- | --- | --- |
 | Image | Docker takes an image mount | `--mount type=image,source=ahpd-part/<id>:<version>,image-subpath=opt/ahpd/<id>,target=/opt/ahpd/<id>,readonly` |
-| Volume | Docker refuses one, or the option `imageMounts` is `false` | `-v ahpd-part-<id>-<version>:/opt/ahpd/<id>:ro` |
+| Volume | Docker does not take one, or the option `imageMounts` is `false` | `-v ahpd-part-<id>-<version>:/opt/ahpd/<id>:ro` |
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": { "imageMounts": false } }] }
 ```
 
-Whether Docker takes an image mount is asked once, on the first machine with a part, by creating and removing a container that mounts that part's own image. A refusal of the mount type is kept for the daemon's life; any other failure, such as the image missing, is asked again for the next machine. Docker 29 prints `WARNING: Image mount is an experimental feature`, which is not a failure.
+Whether Docker takes an image mount is the condition Docker documents, asked of the daemon once, on the first machine with a part: image mounts [require the containerd image store](https://github.com/docker/docs/blob/dc9729c35e9ce9d10eef9218bafde2b4214f6f3d/content/manuals/engine/storage/image-mounts.md#L70-L71), which `docker info` [reports](https://github.com/docker/docs/blob/6893b3aeddd346a4811ecb0cdc3fad88c4bc5893/content/manuals/engine/storage/containerd.md#L103-L104) as the driver type `io.containerd.snapshotter.v1`, on an Engine of 28.0.0 or later, the release that [added the mount type](https://github.com/docker/docs/blob/53953dc8d0df3810734edbbb5ec9e939cf805810/content/manuals/engine/release-notes/28.md#L718-L731). The answer is kept for the daemon's life; a daemon that does not answer is asked again for the next machine. Docker 29 prints `WARNING: Image mount is an experimental feature`, which is not a failure.
 
 A part volume is made with the `ahpd.part` label naming its image and filled once from that image: an empty volume mounted at the part's path by `docker create` is filled by Docker, nothing is started, and a `.ahpd-filled` marker is written into it last. A volume without the marker is a fill that stopped half way, and is removed and filled again. The marker holds the time a machine last used the volume, written again by a machine made with it once an hour has passed, as VS Code records a cached SDK's last use. The version is in the volume's name, so a bump makes a new volume; half a minute after the plugin starts, each Docker it makes machines on is swept, and a part volume of a version the versions file does not name is removed once its last use, or the time it was made where it holds no time, is more than a week ago, as VS Code removes a [cached SDK version](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L17-L78) the product no longer asks for. A volume a machine still mounts is left, since Docker will not remove it, and is swept again at the next start.
 

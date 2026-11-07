@@ -908,7 +908,8 @@ export interface DockerOptions extends CommandOptions {
   /** How a nested host is started in a machine, before a profile says otherwise. */
   host?: string[];
   /**
-   * Whether a part may be mounted from its own image. Absent asks Docker once.
+   * Whether a part may be mounted from its own image. Absent asks the daemon
+   * once, by the condition Docker documents for image mounts.
    *
    * `false` mounts every part from its volume without asking, which is the
    * route a Docker that refuses image mounts takes anyway.
@@ -951,17 +952,6 @@ export type PartRoute = 'image' | 'volume';
  * into. Nothing here is read back from the machine.
  */
 const stateDirOf = (options: DockerOptions): string => options.configDir ?? tmpdir();
-
-/**
- * Whether a refused image mount was refused for the mount type itself.
- *
- * Only that answer is kept for the daemon's life: Docker answers a missing
- * source image with a pull error that names the container's image, and an
- * unreachable daemon says so, and neither says anything about image mounts.
- */
-const refusesImageMounts = (said: string): boolean =>
-  /type=image|image-subpath|mount type|type "image"|invalid field 'type'/i.test(said)
-  && !/no such image|unable to find image|pull access denied|cannot connect/i.test(said);
 
 /** A part as the `--mount` that takes it from its own image, read-only. */
 const imageMountOf = (part: MadePart): string =>
@@ -1957,39 +1947,40 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   };
 
   /**
-   * Whether this Docker takes an image mount, once it has said so about the
-   * mount type.
+   * Whether this Docker takes an image mount, by the condition Docker
+   * documents, asked of the daemon itself: the containerd image store, which
+   * `docker info` reports as the `io.containerd.snapshotter.v1` driver type, on
+   * an Engine of 28.0.0 or later, the release that added the mount type.
+   * https://github.com/docker/docs/blob/dc9729c35e9ce9d10eef9218bafde2b4214f6f3d/content/manuals/engine/storage/image-mounts.md#L70-L71
+   * https://github.com/docker/docs/blob/6893b3aeddd346a4811ecb0cdc3fad88c4bc5893/content/manuals/engine/storage/containerd.md#L103-L104
+   * https://github.com/docker/docs/blob/53953dc8d0df3810734edbbb5ec9e939cf805810/content/manuals/engine/release-notes/28.md#L718-L731
    *
-   * Asked with the part being mounted, after its image is built, so the probe
-   * never names an image that may not exist. A yes, and a refusal of the mount
-   * type, are kept for this runtime's life; any other failure - the image
-   * missing, the daemon unreachable - is not an answer about image mounts, and
-   * the next machine asks again.
+   * The answer is kept for this runtime's life; a daemon that does not answer
+   * is asked again for the next machine.
    */
   let imagesMount: boolean | undefined = options.imageMounts === false ? false : undefined;
-  const canMountImages = async (tag: string): Promise<boolean> => {
+  const canMountImages = async (): Promise<boolean> => {
     if (imagesMount !== undefined) return imagesMount;
-    const probe = `ahpd-part-probe-${randomUUID().slice(0, 8)}`;
-    const held = await ran(options, ['create', '--name', probe, '--mount', `type=image,source=${tag},target=/probe`, tag, 'x']);
-    if (held.code === 0) {
-      await ran(options, ['rm', '-f', probe]);
-      imagesMount = true;
-      return true;
-    }
-    if (refusesImageMounts(held.stderr)) imagesMount = false;
-    return false;
+    const held = await ran(options, ['info', '--format', '{{json .}}']);
+    if (held.code !== 0) return false;
+    let info: Record<string, unknown>;
+    try { info = rows(held.stdout)[0] ?? {}; }
+    catch { return false; }
+    const store = Array.isArray(info.DriverStatus) ? info.DriverStatus as unknown[] : [];
+    const containerd = store.some((pair) => Array.isArray(pair) && pair[0] === 'driver-type' && pair[1] === 'io.containerd.snapshotter.v1');
+    const major = Number.parseInt(text(info.ServerVersion).split('.')[0] ?? '', 10);
+    imagesMount = containerd && major >= 28;
+    return imagesMount;
   };
 
   /**
-   * How a dev container gets its parts, and the one place that is chosen.
-   *
-   * The image route is a `--mount type=image` in the override config's
-   * `runArgs`, which the Dev Container CLI 0.89.0 passes to its `docker run`
-   * as written; it is taken where Docker takes image mounts, and the volume
-   * route everywhere else.
+   * How a machine gets its parts, and the one place that is chosen: the image
+   * route where Docker takes image mounts, and the volume route everywhere
+   * else. A dev container's image route is a `--mount type=image` in the
+   * override config's `runArgs`, which the Dev Container CLI 0.89.0 passes to
+   * its `docker run` as written.
    */
-  const devcontainerPartRoute = async (tag: string): Promise<PartRoute> =>
-    (await canMountImages(tag) ? 'image' : 'volume');
+  const partRoute = async (): Promise<PartRoute> => (await canMountImages() ? 'image' : 'volume');
 
   /**
    * One part's volume, filled from its image the first time it is asked for.
@@ -2049,14 +2040,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
    * cannot be filled is left out with a line naming it, as a part whose load
    * failed is: the machine is made with the rest and labelled with them.
    */
-  const mountable = async (
-    name: string,
-    parts: readonly MadePart[],
-    routeOf: (tag: string) => Promise<PartRoute>,
-  ): Promise<{ route?: PartRoute; parts: MadePart[] }> => {
-    const first = parts[0];
-    if (first === undefined) return { parts: [] };
-    const route = await routeOf(first.tag);
+  const mountable = async (name: string, parts: readonly MadePart[]): Promise<{ route?: PartRoute; parts: MadePart[] }> => {
+    if (parts.length === 0) return { parts: [] };
+    const route = await partRoute();
     if (route === 'image') return { route, parts: [...parts] };
     const filled: MadePart[] = [];
     for (const part of parts) {
@@ -3032,10 +3018,10 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         }
         /*
          * The parts, by the route a dev container takes: an image mount needs
-         * the part image here before `up`, which the plugin has built, and the
+         * the part image here before `up`, which the plugin has loaded, and the
          * volume route needs each volume filled before the CLI mounts it.
          */
-        const reached = await mountable(spec.name, spec.parts ?? [], devcontainerPartRoute);
+        const reached = await mountable(spec.name, spec.parts ?? []);
         const withParts: MachineSpec = spec.parts === undefined ? spec : { ...spec, parts: reached.parts };
         const scratch = mkdtempSync(join(tmpdir(), 'ahpd-devcontainer-'));
         const override = join(scratch, 'override.json');
@@ -3268,7 +3254,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        * `bin` in front of the image's own, so a command a preset names is found
        * without its path.
        */
-      const { route, parts } = await mountable(spec.name, spec.parts ?? [], async (tag) => (await canMountImages(tag) ? 'image' : 'volume'));
+      const { route, parts } = await mountable(spec.name, spec.parts ?? []);
       for (const part of parts) {
         if (route === 'image') flags.push('--mount', imageMountOf(part));
         else flags.push('-v', `${volumeOf(part)}:${partTarget(part.id)}:ro`);
