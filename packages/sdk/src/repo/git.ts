@@ -124,10 +124,20 @@ export function gitBranches(): DirectoryFacts {
      * only way to know whether this is a GitHub repository, which is what
      * turns a client's pull-request affordances on.
      */
-    const [status, origin] = await Promise.all([
+    /*
+     * And the repository's default branch, the target of `origin/HEAD`, which
+     * is the base branch VS Code's git service reports for a folder: the branch
+     * whose pull requests are nobody's work in progress.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitService.ts#L1306-L1331
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitService.ts#L2229-L2234
+     */
+    const [status, origin, defaultBranchRef] = await Promise.all([
       git(dir, ['status', '-sb', '--porcelain']),
       git(dir, ['remote', 'get-url', 'origin']),
+      git(dir, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']),
     ]);
+    const ref = defaultBranchRef?.trim();
+    const baseBranchName = !ref ? undefined : ref.startsWith('refs/remotes/origin/') ? ref.substring('refs/remotes/origin/'.length) : ref;
     const lines = (status ?? '').split('\n');
     const head = lines[0] ?? '';
     const upstream = /^## [^.]*\.\.\.(\S+)/.exec(head)?.[1];
@@ -150,6 +160,7 @@ export function gitBranches(): DirectoryFacts {
         outgoingChanges: ahead,
       }),
       uncommittedChanges: lines.slice(1).filter((one) => one.trim() !== '').length,
+      ...(baseBranchName === undefined ? {} : { baseBranchName }),
       hasGitHubRemote: owner !== undefined,
       ...(owner ? { githubOwner: owner.owner, githubRepo: owner.repo } : {}),
     };
@@ -163,12 +174,11 @@ export function gitBranches(): DirectoryFacts {
     /*
      * `git` is the well-known key, and the field names are the reference host's.
    *
-   * Not the protocol's: it declares no `_meta` keys at all. The names come
-   * from a capture of the other implementation - `branchName`,
-   * `upstreamBranchName`, `incomingChanges`, `outgoingChanges`,
-   * `uncommittedChanges`, `hasGitHubRemote`, `githubOwner`, `githubRepo` -
-   * because a client reads one spelling, and this host used to write `branch`
-   * where that client looks for `branchName` and so said nothing at all.
+   * The protocol declares no `_meta` keys at all. The names are VS Code's
+   * session git state's - `branchName`, `upstreamBranchName`,
+   * `incomingChanges`, `outgoingChanges`, `uncommittedChanges`,
+   * `baseBranchName`, `hasGitHubRemote`, `githubOwner`, `githubRepo` - since a
+   * client reads that one spelling.
    *
    * Written whole, and correct only because this is the only producer of
    * `_meta` here.

@@ -4,8 +4,9 @@ import { computerId } from '../machines/computers.js';
 import { deleteNested } from '../sessions/nested.js';
 import { uriOf } from '../resources/fileuri.js';
 import { idOf, uriFor, Status } from '../sessions/catalog.js';
-import { stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, rm, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { worktreeFor, worktreesOf } from '../repo/worktrees.js';
 import { ROOT, chatIdFor, chatUriFor, named } from './channels.js';
 import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
@@ -14,7 +15,7 @@ import { openLink } from '../tools/session.js';
 import { readCreatedBy, readMultiRoot, readOrigin } from '../sessions/remotesession.js';
 import { HOSTS_OWN, bangCommand, noProvider } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
-import { autoApproved, requireTrust } from './trust.js';
+import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Chosen, Session, MessageAttachment, MessageFrom } from '../types/session.js';
 import type { MessageChatAttachment } from '@microsoft/agent-host-protocol';
@@ -196,6 +197,13 @@ export interface Lifecycle {
    * out at all - and is absent where nobody sent the message.
    */
   messageAttachments(message: Record<string, unknown>, sender?: Connection): Attached;
+  /**
+   * The folder a session that names none works in under the daemon's
+   * `workspacelessFolder`: its own scratch folder, made now, for `scratch`,
+   * and nothing for `first`, which leaves it to the first folder this host
+   * serves.
+   */
+  scratchFolder(uri: string): Promise<string | undefined>;
   /** Create a session on its provider, with what its request asked to be told, offered and shaped by. */
   createProviderSession(
     uri: string,
@@ -227,6 +235,40 @@ export const symlinkFolders = (config: Record<string, unknown>): string[] => {
 /** The message of the commit that saves a dirty tree before archive removes it. */
 export const ARCHIVE_COMMIT_MESSAGE = 'Saving uncommitted changes before archiving session';
 
+/**
+ * A session's scratch folder, `<home>/.copilot/chats/<session id>`, as VS Code
+ * names a workspace-less session's, or nothing for a session id that names no
+ * folder of its own under the chats folder, so what is made, made again or
+ * removed for a session is a folder under it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/workspacelessScratchDir.ts#L14-L20
+ *
+ * Both paths normalized, and the folder a strict descendant of the chats
+ * folder, as VS Code keeps a worktree inside its repository's `.worktrees`, so
+ * an equivalent spelling of the chats folder cannot slip past. VS Code joins
+ * the ids it mints itself, which never meet the case; a folder made outside
+ * the chats folder for a session is a fault, so it is refused.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/worktreePaths.ts#L35-L42
+ */
+export const workspacelessScratchDir = (uri: string): string | undefined => {
+  const chats = resolve(homedir(), '.copilot', 'chats');
+  const folder = resolve(join(chats, idOf(uri)));
+  const inside = relative(chats, folder);
+  return inside !== '' && inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside) ? folder : undefined;
+};
+
+/**
+ * Whether a session working in `folder` is workspace-less, as VS Code marks
+ * one: its folder is its own scratch folder, where a session that named none
+ * works under `workspacelessFolder: scratch` until `set_workspace` gives it a
+ * workspace, as VS Code's conversion takes the mark off.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10698-L10700
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L829-L832
+ */
+export const isWorkspaceless = (uri: string, folder: string | undefined): boolean => {
+  const scratch = workspacelessScratchDir(uri);
+  return scratch !== undefined && folder === scratch;
+};
+
 export function createLifecycle(ctx: HostContext): Lifecycle {
   const {
     options, sessions, byChat, subagents, owners, kept, decided, offered, worktrees, worktreeOf, origins,
@@ -246,6 +288,27 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   // What a turn naming a model its agent does not offer does, from the host's
   // own option: read here because this is where a turn is sent.
   ctx.unofferedModel = options.unofferedModel ?? 'fail';
+  // And where a session that names no folder works, read here because this is
+  // where a session is made.
+  ctx.workspacelessFolder = options.workspacelessFolder ?? 'first';
+
+  /*
+   * A session that names no folder, given its own under `scratch`: made now,
+   * before anything reads it, as VS Code's agent ensures a workspace-less
+   * session's scratch folder when it creates the session. A session id that
+   * names no folder under the chats folder is refused: VS Code joins the ids it
+   * mints itself, which never meet the case, and a folder made outside the
+   * chats folder for a session is a fault, so it is refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/workspacelessScratchDir.ts#L10-L15
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1565-L1570
+   */
+  const scratchFolder = async (uri: string): Promise<string | undefined> => {
+    if (ctx.workspacelessFolder !== 'scratch') return undefined;
+    const folder = workspacelessScratchDir(uri);
+    if (folder === undefined) throw new RpcError(INVALID_PARAMS, `${uri} names no folder of its own under ${join(homedir(), '.copilot', 'chats')}`);
+    await mkdir(folder, { recursive: true });
+    return folder;
+  };
 
   /** The folders linked into a session's tree, from the config it was made with. */
   const linkedOf = (uri: string): string[] => symlinkFolders(kept.config(idOf(uri)) ?? decided.get(uri) ?? {});
@@ -721,6 +784,18 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       kept.forget(idOf(uri));
       owners.delete(uri);
     }
+    /*
+     * And its own scratch folder, where it worked in one, which goes with it
+     * once its backend is done with it, as VS Code's agent removes a
+     * workspace-less session's when the session is deleted. One that will not
+     * go is a line in the log: the session goes either way.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L5610-L5618
+     */
+    const scratch = workspacelessScratchDir(uri);
+    if (scratch !== undefined && directory === scratch) {
+      await rm(scratch, { recursive: true, force: true })
+        .catch((error: unknown) => log(`${uri}: its scratch folder ${scratch} was not removed: ${error instanceof Error ? error.message : String(error)}`));
+    }
     // Every other client is told, because the session was theirs too.
     // `session`, which is the name the protocol gives it. Under
     // `resource` a client reads `undefined` and takes nothing out, so a
@@ -1016,34 +1091,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (!held) return;
     /*
      * The window that asked is asked about the folder, before anything is
-     * moved or made.
-     *
-     * The same question a client adding a folder is asked, and answered from
-     * the same value: a folder the host's `workspaceTrust` already trusts is
-     * entered without a round trip, and any other only on the asking window's
-     * yes.
+     * moved or made, the same question a client adding a folder is asked.
      */
     const effective = { ...held.agent.defaults(), ...contributedDefaults(), ...held.config };
     const auto = autoApproved(effective, rootConfig);
     try {
-      await requireTrust({ folder: move.directory, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
+      await requireTrust({ folder: move.directory, sender: move.sender, autoApproved: auto });
       decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
       offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
-      await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, async (repository) => {
-        /*
-         * The repository the worktree is cut from, when it is not the folder the
-         * move asked for - a subdirectory of a repository the window may never
-         * have opened.
-         *
-         * The worktree itself is not asked about: the host makes it, and one the
-         * host made is trusted exactly when its repository is. The repository the window
-         * vouches for here is remembered on its connection, so the backend
-         * started in the worktree is told the same thing.
-         */
-        if (repository !== move.directory) {
-          await requireTrust({ folder: repository, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
-        }
-      });
+      await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, (repository, path) =>
+        requireWorktreeTrust({ folder: move.directory, repository, path, sender: move.sender, autoApproved: auto }));
     }
     catch (error) {
       /*
@@ -1931,6 +1988,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           said();
           if (who !== undefined) kept.setSender(idOf(session.uri), turnId, who);
         }
+        // A person's turn going out makes an external session this host's own,
+        // as VS Code's host adopts one on its outgoing user turn.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/externalSessionAdoption/externalSessionAdoptionContribution.ts#L25-L30
+        if ((from?.origin?.kind ?? 'user') === 'user') ctx.adoptExternalSession(session.uri);
         void sendTurn(session, turnId, text, model, from, attachments, stopped);
       }
       return undefined;
@@ -2404,6 +2465,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     removeSession, respawning, restart, moveSession, relaunchChat, chatIdOf, disposeProviderChat, backendsOwn,
     getProviderForChat, chatConfig, isolated, oweTree,
     requestSessionWorktreeRemoval, restoreSessionWorktree, canAutomaticallyDeleteArchivedSession, createDetachedWorktree,
-    beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, createProviderSession,
+    beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, scratchFolder, createProviderSession,
   };
 }

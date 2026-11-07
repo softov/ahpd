@@ -14,10 +14,10 @@ import type { ConfigPropertySchema } from '@microsoft/agent-host-protocol';
  * contributes the literal it resolves to. The two keys whose default comes
  * from `src/vs/platform/chat/common/chatSettings.ts` name that file as a URL.
  *
- * This host acts on nine of them, each one setting for every connection:
- * `globalAutoApproveEnabled`, `autoApprovePolicyRestricted`,
- * `eligibleForAutoApproval` and `permissions`, which a tool question is
- * decided by, `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and
+ * This host acts on eight of them, each one setting for every connection:
+ * `globalAutoApproveEnabled`, `autoApprovePolicyRestricted` and
+ * `permissions`, which a tool question is decided by,
+ * `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and
  * `editAutoApprovePatterns`, which a session's commands are answered by,
  * `canvasesEnabled`, which the
  * plugin host's `openCanvas`, `updateCanvas` and `closeCanvas` ask before they
@@ -33,9 +33,9 @@ import type { ConfigPropertySchema } from '@microsoft/agent-host-protocol';
  * Keyed by the config key, so `ROOT_CONFIG_SCHEMA` spreads the whole map into
  * its own `properties`. The keys here this host reads: `globalAutoApproveEnabled`
  * and `autoApprovePolicyRestricted`, which `trust.ts` and the approval chain in
- * `host/spawn.ts` ask before a tool call runs; `eligibleForAutoApproval` and
- * `permissions`, which that chain asks too, `permissions` keeping an "Always
- * Allow" grant; `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and
+ * `host/spawn.ts` ask before a tool call runs; `permissions`, which that
+ * chain asks too and which keeps an "Always Allow" grant;
+ * `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and
  * `editAutoApprovePatterns`, which `host/spawn.ts` answers a session's
  * commands and writes from; `canvasesEnabled`, which `host/canvases.ts` asks
  * before it opens, updates or closes a canvas; and `chatMoves.enabled`, which
@@ -364,24 +364,6 @@ export const vscodeRootProperties: Record<string, ConfigPropertySchema> = {
     default: {},
   },
   /*
-   * `chat.shared.contribution.ts:881`, `chat.tools.eligibleForAutoApproval`,
-   * under the name this host reads.
-   *
-   * The property is the setting's own declaration, with `propertyNames` left
-   * out: that one lists the tool names a client draws, and a rule for a tool
-   * this host has never heard of is still a rule. `false` is the one value the
-   * check acts on: the tool it names asks every time, with no "always" option.
-   * `true`, a missing key and a value that is not a boolean leave the tool as
-   * it was, which is the tier below - the terminal rules.
-   */
-  eligibleForAutoApproval: {
-    type: 'object',
-    title: 'Eligible for Auto Approval',
-    description: "Controls which tools are eligible for automatic approval. Tools set to 'false' will always present a confirmation and will never offer the option to auto-approve. The default behavior (or setting a tool to 'true') may result in the tool offering auto-approval options.",
-    default: {},
-    additionalProperties: { type: 'boolean', title: 'Eligible' },
-  },
-  /*
    * The seven below are `agentMergeRootConfigSchema`, `agentMerge.ts:160-197`,
    * a schema of its own that `platformRootSchema` does not spread. The keys
    * keep their `agentMerge.` prefix, as upstream's other flat namespaces do,
@@ -461,3 +443,21 @@ export const vscodeRootProperties: Record<string, ConfigPropertySchema> = {
     default: false,
   },
 };
+
+/**
+ * The root config keys a start leaves to each window's next push, VS Code's
+ * `clientOwnedApprovalRootConfigKeys`: a window pushes them at every connect,
+ * and each gates a question or a policy. VS Code's reason: "Their persisted
+ * value is a snapshot of one client's settings, so reviving it would re-grant
+ * approvals that a user, workspace, or policy tightened while the host was
+ * stopped."
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L1085-L1102
+ */
+export const clientOwnedApprovalRootConfigKeys: ReadonlySet<string> = new Set([
+  'globalAutoApproveEnabled',
+  'autoApprovePolicyRestricted',
+  'terminalAutoApproveEnabled',
+  'editAutoApprovePatterns',
+  'autoReplyEnabled',
+  'workspaceTrust',
+]);

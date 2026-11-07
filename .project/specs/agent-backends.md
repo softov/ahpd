@@ -173,8 +173,16 @@ AND the CLI's answer to the message is that turn's
 AND the rest of the stopped turn's answer opens no turn and joins none.
 WHEN the turn is stopped before the CLI was handed the steering message
 THEN the message goes with the stop.
+WHEN the record's `stopEnds` is `query` and the turn is stopped while the CLI holds the steering message
+THEN the CLI closes, as VS Code's stop aborts its query, and the message goes with it
+AND no turn opens for the message
+AND the next turn goes to a CLI that resumes the conversation.
+WHEN the closed CLI says anything after the stop
+THEN it ends no turn and joins none.
 WHEN the turn fails while the CLI holds the steering message
-THEN the message fails with it, and the CLI's answer to it opens no turn and joins none.
+THEN no turn opens for the message, as VS Code's steering takes the turn it went into
+AND the CLI's answer to the message goes nowhere
+AND a turn sent after that answer goes out.
 WHEN a client sends a turn while the turn of the steering message runs
 THEN the backend runs it once that turn has ended.
 WHEN that turn is stopped
@@ -199,6 +207,9 @@ The reason: the CLI folds a steering message into a turn at its next tool call.
 One that arrives after the last tool call runs as a turn of its own, which the CLI writes as a prompt.
 VS Code's replay starts a turn at every prompt a transcript holds.
 A prompt that reaches the CLI while such a message waits there runs with it, as one turn with one answer.
+VS Code's stop aborts the query with every entry it holds, and its steering entry takes the turn of the send in flight.
+So a stop or a failure takes a held steering message with it.
+See https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L476-L496 and https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L438-L474.
 *A turn is read back as it began* in the sessions spec says how the host reads such a turn back.
 See [`code://packages/agent-claude/src/session/query.ts`](../../packages/agent-claude/src/session/query.ts) and [`code://packages/agent-claude/src/transcript.ts`](../../packages/agent-claude/src/transcript.ts).
 

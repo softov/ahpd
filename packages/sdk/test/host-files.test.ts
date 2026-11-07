@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, parse } from 'node:path';
@@ -9,7 +9,7 @@ import { uriOf } from '../src/resources/resources.js';
 import type { Start } from '../src/types/agent.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
-import type { WorkspaceFiles } from '../src/types/host.js';
+import type { HostOptions, WorkspaceFiles } from '../src/types/host.js';
 import {
   resetSdk, actions, builtServer, claude, complete, createHost, emit, firstMessage, hello, hostTools, list, machine, open,
   peer, read, resolve, sendAnswered, serving, sessionQueries, settle, running, wrote,
@@ -30,11 +30,23 @@ const REPO = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, 
 beforeEach(resetSdk);
 
 describe('where the agent works', () => {
-  const opened = async (also: string[] = []) => {
-    const host = serving('/home/softov', also);
+  const opened = async (also: string[] = [], over: Partial<HostOptions> = {}) => {
+    const host = serving('/home/softov', also, over);
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     return client;
+  };
+
+  /** A home of the case's own, so a scratch folder is made where nothing else lives. */
+  const homed = (): string => {
+    const home = mkdtempSync(join(tmpdir(), 'ahpd-home-'));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    onTestFinished(async () => {
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    });
+    return home;
   };
 
   it('runs a session in the directory the client named', async () => {
@@ -113,6 +125,114 @@ describe('where the agent works', () => {
     });
     await sendAnswered(client, 'ahp-session:/a');
     expect(sessionQueries().at(-1)?.options.cwd).toBe('/home/softov');
+  });
+
+  /*
+   * VS Code's host works a session that names no folder in a scratch folder
+   * of its own under `~/.copilot/chats`, made when the session is, made again
+   * when it is gone, and removed with the session; `scratch` is that.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/workspacelessScratchDir.ts#L14-L20
+   */
+  it('works one that names none in a scratch folder of its own, removed with it, when the daemon says scratch', async () => {
+    const home = homed();
+    const client = await opened([], { workspacelessFolder: 'scratch' });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'claude' } });
+    await settle();
+    const folder = join(home, '.copilot', 'chats', 'a');
+    expect(sessionQueries().at(-1)?.options.cwd).toBe(folder);
+    expect(existsSync(folder)).toBe(true);
+
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/a' } });
+    expect(existsSync(folder)).toBe(false);
+  });
+
+  /*
+   * A session working in its scratch folder is VS Code's workspace-less
+   * session: marked on its `_meta`, its agent told last that it works in a
+   * scratch folder, and `set_workspace` offered to it up front; a session in
+   * the first served folder is none of it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10698-L10700
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/prompts/promptRegistry.ts#L220-L229
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L2255-L2258
+   */
+  it('makes a session in its scratch folder VS Code\'s workspace-less session, and one in the first served folder none of it', async () => {
+    homed();
+    const told = async (over: Partial<HostOptions>) => {
+      const client = await opened([], { tools: hostTools(), ...over });
+      const uri = `ahp-session:/${over.workspacelessFolder ?? 'first'}`;
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      await settle();
+      const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { _meta?: Record<string, unknown> } };
+      }).snapshot.state;
+      const query = sessionQueries().at(-1);
+      const servers = query?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>;
+      return {
+        mark: state._meta?.workspaceless,
+        prompt: (query?.options.systemPrompt as { append?: string } | undefined)?.append ?? '',
+        upFront: servers.ahp?.tools.find((one) => one.name === 'set_workspace')?._meta?.['anthropic/alwaysLoad'],
+      };
+    };
+    const scratch = await told({ workspacelessFolder: 'scratch' });
+    expect(scratch.mark).toBe(true);
+    expect(scratch.prompt).toContain('This lightweight chat has a SCRATCH working directory, not a project or repository.');
+    expect(scratch.upFront).toBe(true);
+
+    const first = await told({});
+    expect(first.mark).toBeUndefined();
+    expect(first.prompt).not.toContain('<workspaceless_chat>');
+    expect(first.upFront).toBe(false);
+  });
+
+  it('makes a session\'s scratch folder again when a start finds it gone', async () => {
+    const home = homed();
+    const client = await opened([], { workspacelessFolder: 'scratch' });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'claude' } });
+    await settle();
+    const folder = join(home, '.copilot', 'chats', 'a');
+    await rm(folder, { recursive: true });
+
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/a', chat: 'ahp-chat:/side' } });
+    await settle();
+    expect(existsSync(folder)).toBe(true);
+  });
+
+  it('refuses a session whose id names no folder of its own under the chats folder', async () => {
+    const home = homed();
+    const client = await opened([], { workspacelessFolder: 'scratch' });
+    await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/..', provider: 'claude' } }))
+      .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('names no folder of its own') });
+    // Nor one that spells the chats folder itself, as VS Code requires a
+    // strict descendant of the root it keeps a folder in.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/worktreePaths.ts#L35-L42
+    await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a/..', provider: 'claude' } }))
+      .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('names no folder of its own') });
+    expect(sessionQueries()).toHaveLength(0);
+    expect(existsSync(join(home, '.copilot', 'chats'))).toBe(false);
+  });
+
+  it('takes a push of workspacelessFolder for the next session', async () => {
+    const home = homed();
+    // A daemon that holds the one key, so what it holds is what the push left.
+    const held: Record<string, unknown> = {};
+    const rootConfig: NonNullable<HostOptions['rootConfig']> = {
+      schema: () => ({
+        type: 'object',
+        properties: { workspacelessFolder: { type: 'string', enum: ['first', 'scratch'], title: 'Workspaceless folder' } },
+      }),
+      values: async () => ({ ...held }),
+      write: async (values) => { Object.assign(held, values); return {}; },
+    };
+    const client = await opened([], { rootConfig });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { workspacelessFolder: 'scratch' } } },
+    });
+    await settle();
+    expect(held.workspacelessFolder).toBe('scratch');
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a', provider: 'claude' } });
+    await settle();
+    expect(sessionQueries().at(-1)?.options.cwd).toBe(join(home, '.copilot', 'chats', 'a'));
   });
 });
 
@@ -630,8 +750,8 @@ describe('more than one directory', () => {
   };
 
   /** A window's session over the given folders, made from a multi-root workspace or not, and spoken in. */
-  const windowed = async (folders: string[], multiRoot = true) => {
-    const host = serving('/home/softov');
+  const windowed = async (folders: string[], multiRoot = true, over: Partial<HostOptions> = {}) => {
+    const host = serving('/home/softov', [], over);
     const p = peer();
     p.request = async () => ({ trusted: true });
     const client = host.accept(p);
@@ -756,6 +876,27 @@ describe('more than one directory', () => {
       ['session/workingDirectorySet', 5, `Session does not support dynamic working-directory changes: ${single.uri}`],
     ]);
     expect(sessionQueries().length).toBe(before + 1);
+  });
+
+  /*
+   * A workspace-less session takes no folder change, made from a multi-root
+   * workspace or not, as VS Code's host refuses one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12675-L12682
+   */
+  it('refuses a folder change to a workspace-less session, in VS Code\'s words', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ahpd-home-'));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    onTestFinished(async () => {
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    });
+    const scratch = await windowed([], true, { workspacelessFolder: 'scratch' });
+    await scratch.client.handle({ method: 'dispatchAction', params: { channel: scratch.uri, clientSeq: 1, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    await settle(8);
+    expect(folderActions(scratch.peer, scratch.uri)).toEqual([
+      ['session/workingDirectorySet', 1, `Session does not support dynamic working-directory changes: ${scratch.uri}`],
+    ]);
   });
 
   /*
@@ -1249,7 +1390,13 @@ describe('a session entering a folder nobody vouched for', () => {
     expect(cwd()).toBe(there);
   });
 
-  it('asks about the folder and nothing about the worktree it makes from it', async () => {
+  /*
+   * The worktree a move makes is asked about before it is made, with the
+   * repository it is cut from as the trusted parent a window trusts it by, as
+   * VS Code's host asks the client that started a conversion.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L975-L977
+   */
+  it('asks about the folder and then the worktree it makes from it, the folder its trusted parent', async () => {
     const { here, there } = folders();
     const created: { repository: string; path: string }[] = [];
     const worktrees: Worktrees = {
@@ -1263,14 +1410,15 @@ describe('a session entering a folder nobody vouched for', () => {
     const { asked, move, cwd } = await hosted(here, { trusts: [here], worktrees });
     await move(there, true);
 
-    // Once: the folder the session was sent to. The worktree is made beside the
-    // repository rather than under it, so it is a folder no window could have
-    // vouched for - and one the host made is trusted when the repository it was
-    // cut from is, which is what the window was just asked about.
-    expect(asked).toEqual([{ method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(there) } }]);
+    // The folder the session was sent to, and then the worktree in that
+    // folder's `<repo>.worktrees`, with the folder as its trusted parent.
     expect(created).toHaveLength(1);
     expect(created[0]?.repository).toBe(there);
-    // And the session runs in it, with nothing asked about it.
+    expect(asked).toEqual([
+      { method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(there) } },
+      { method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(String(created[0]?.path)), trustedParent: uriOf(there) } },
+    ]);
+    // And the session runs in it.
     expect(String(cwd())).toContain('two.worktrees');
   });
 

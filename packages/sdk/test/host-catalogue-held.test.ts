@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createHost, hello, machine, peer, resetSdk, settle } from './support/host.js';
+import { createHost, hello, machine, peer, resetSdk, settle, showExternal } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import type { Agent, Listed, SessionStore } from '@ahpd/sdk';
@@ -29,12 +29,20 @@ const PATH = '/home/softov';
 /** How long one pass over the backend's store takes. */
 const WAIT = 100;
 
-/** One row, as a backend answers it. */
+const HOUR = 60 * 60 * 1000;
+/** When the backend's rows were made and last written, inside the window of the mode that shows them. */
+const CREATED = new Date(Date.now() - 10 * HOUR).toISOString();
+const MODIFIED = new Date(Date.now() - HOUR).toISOString();
+
+/**
+ * One row, as a backend answers it, stamped the same each time it is made, so
+ * a row a test makes again moves only where the test moves it.
+ */
 const row = (id: string, title: string): Listed => ({
   id,
   title,
-  createdAt: '2026-09-27T00:00:00.000Z',
-  modifiedAt: '2026-09-27T09:00:00.000Z',
+  createdAt: CREATED,
+  modifiedAt: MODIFIED,
   workingDirectories: [`file://${PATH}`],
 });
 
@@ -93,7 +101,11 @@ const listed = async (client: { handle(request: unknown): Promise<unknown> }) =>
  * whole of this is about, since it is the only answer that waits.
  *
  * The client watches the root, because a catalogue notification goes to the
- * connections watching the root channel and to no others.
+ * connections watching the root channel and to no others. A row the backend
+ * lists is a transcript written outside this host unless a case's store
+ * records the session as run here, so the client shows those by the root's
+ * `showExternalSessions`, at the mode that shows every one of the last thirty
+ * days.
  *
  * `runs` is which backend to build it over, for a case about one this fixture
  * is not.
@@ -104,6 +116,7 @@ const started = async (runs: (here: Store) => Agent = backend, sessions?: Sessio
   const p = peer();
   const client = host.accept(p);
   await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+  await showExternal(client);
   return { here, client, notes: p.notes };
 };
 
@@ -185,7 +198,12 @@ describe('the catalogue is held', () => {
 
 describe('a refresh says what it found', () => {
   it('sends a row that appeared, and one that is gone', async () => {
-    const { here, client, notes } = await started();
+    // The row the store starts with is a session this host ran, recorded under
+    // the name it was made with: one of the stored sessions the fill is about.
+    const kept = memorySessions();
+    kept.setProvider('one', 'slow');
+    kept.setUri?.('one', 'ahp-session:/one');
+    const { here, client, notes } = await started(backend, kept);
     await filled(here);
 
     // Nothing was said to fill it. This client connected before that listing
@@ -240,6 +258,26 @@ describe('a refresh says what it found', () => {
     expect(moved[0]?.changes?.title).toBe('Two, retitled');
     expect(moved[0]?.changes?.resource).toBeUndefined();
   });
+
+  /*
+   * A row's `_meta` is among the fields VS Code's host compares before it says
+   * a surfaced session moved, so a key its backend changed between two
+   * listings is said, as a pull request's state on a row is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1346-L1364
+   */
+  it('sends a row whose _meta alone moved', async () => {
+    const { here, client, notes } = await started();
+    await filled(here);
+
+    notes.length = 0;
+    here.rows = [{ ...row('one', 'One'), _meta: { 'probe.key': 'moved' } }];
+    await listed(client);
+    await until(() => said(notes, 'root/sessionSummaryChanged').length > 0);
+
+    const moved = said(notes, 'root/sessionSummaryChanged');
+    expect(moved.map((one) => one.session)).toEqual(['ahp-session:/one']);
+    expect((moved[0]?.changes as { _meta?: unknown } | undefined)?._meta).toMatchObject({ 'probe.key': 'moved' });
+  });
 });
 
 describe('a backend that refuses keeps what it had', () => {
@@ -266,6 +304,8 @@ describe('a backend that refuses keeps what it had', () => {
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    // Shown by the mode `started` shows its backend's rows by.
+    await showExternal(client);
     return { first, second, client, notes: p.notes };
   };
 

@@ -129,7 +129,10 @@ describe('a session in a folder no backend read', () => {
       listed: [row('one', 'One')],
       known: (id, folder) => (id === 'ember' && folder === BOT ? row('ember', 'Ember', BOT) : undefined),
     };
-    const store = recorded(memorySessions(), 'ember', BOT);
+    // Both rows are sessions this host ran: `one` in the folder the backend
+    // lists, under the name it was made with, and `ember` in the bot's.
+    const store = recorded(recorded(memorySessions(), 'ember', BOT), 'one', PATH);
+    store.setUri?.('one', 'ahp-session:/one');
     const { client, notes } = await watching([backend('claude', here, counted)], store);
 
     // The first answer joins the boot listing, and starts the first refresh of

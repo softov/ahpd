@@ -700,13 +700,15 @@ export function createHandlers(ctx: SessionContext): Handlers {
      */
     const turnId = ctx.mapping?.turnId ?? '';
     // Which client's tool the question is about, read the way the mapping reads
-    // a reported call: the name it gave, and the title only when it named none.
-    const owner = ctx.ownerOf(request.toolCall.name ?? undefined, request.toolCall.title ?? toolCallId);
-    const contributor: Bag = owner === undefined ? {} : { contributor: { kind: 'client', clientId: owner } };
+    // a reported call: the name it gave, and the title only when it named none;
+    // a client's call named by the tool the client announced, as the mapping
+    // names one.
+    const tool = ctx.clientToolOf(request.toolCall.name ?? undefined, request.toolCall.title ?? toolCallId);
+    const contributor: Bag = tool === undefined ? {} : { contributor: { kind: 'client', clientId: tool.owner } };
     const existing = ctx.mapping === undefined ? undefined : callPartOf(ctx.mapping, toolCallId);
     const call = existing === undefined ? {
       toolCallId,
-      toolName: request.toolCall.name ?? request.toolCall.title ?? toolCallId,
+      toolName: tool?.name ?? request.toolCall.name ?? request.toolCall.title ?? toolCallId,
       displayName: request.toolCall.title ?? request.toolCall.name ?? toolCallId,
       ...(request.toolCall.rawInput === undefined ? {} : { toolInput: JSON.stringify(request.toolCall.rawInput) }),
     } as Bag : bag(bag(existing).toolCall);
@@ -758,7 +760,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
         displayName: String(call.displayName),
         readied: true,
         asked: true,
-        ...(owner === undefined ? {} : { contributor: owner }),
+        ...(tool === undefined ? {} : { contributor: tool.owner }),
       });
     }
     emit('chat', {

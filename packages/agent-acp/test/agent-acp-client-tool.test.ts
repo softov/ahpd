@@ -677,14 +677,18 @@ it('opens a row of its own for a request the agent never reported', async () => 
    * its start, because a client watching the chat rather than the session has
    * to see the call it is being asked about.
    */
+  /*
+   * The row and the entry raised from it name the tool the client announced,
+   * as VS Code's host names a client's call, so the client knows the call for
+   * its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L626-L638
+   */
   const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
   expect(start?.action).toMatchObject({
     toolCallId: 'ahp-mcp-1',
     toolName: 'openFile',
     contributor: { kind: 'client', clientId: 'a' },
   });
-  // The entry names the tool the client announced, the same name every
-  // sentence about the call uses.
   expect(asked(p, uri).map((request) => (request.toolCall as Bag).toolName)).toEqual(['openFile']);
 
   await complete(a.client, chatUri, 'ahp-mcp-1', OK('opened /a.txt'));

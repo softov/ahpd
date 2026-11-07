@@ -219,6 +219,15 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   bareSessions: Set<string>;
   /**
+   * The sessions that started workspace-less, kept from the start that
+   * found one working in its scratch folder, before its tools are bound, so a
+   * workspace it takes since leaves `set_workspace` offered as it was, as VS
+   * Code's host keeps them: a tool list that moved would miss the prompt
+   * cache.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2206-L2213
+   */
+  startedWorkspaceless: Set<string>;
+  /**
    * The turns that run a `!` command, by chat and turn id while they run
    * (`commandTurnKey`).
    *
@@ -323,6 +332,19 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * key that takes hold while the daemon runs, read as each turn is sent.
    */
   unofferedModel: 'fail' | 'keep';
+  /**
+   * Where a session that names no folder works: the first folder this host
+   * serves, `first`, or a scratch folder of its own, `scratch`, as VS Code's
+   * host works one. A daemon key that takes hold while the daemon runs, read
+   * as each session is made.
+   */
+  workspacelessFolder: 'first' | 'scratch';
+  /**
+   * Whose work a session a root connection starts is: the host itself,
+   * `host`, or no one, `none`, as VS Code's host. A daemon key that takes hold
+   * while the daemon runs, read as each session is made.
+   */
+  rootOwner: 'host' | 'none';
   /**
    * Whether a turn's sender is said on what clients read, `said`, or kept by
    * the host alone, `kept`, as VS Code's host keeps it. A daemon key that

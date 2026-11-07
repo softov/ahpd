@@ -71,7 +71,7 @@ import { controlIn, controlServer } from '../control.js';
 import type { ControlServer } from '../control.js';
 import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
-import { agentPluginsDir, automationsDir, automationsPath, automationStatePath, configDir, configPath, customizationStatePath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
+import { agentPluginsDir, automationsDir, automationsPath, automationStatePath, configDir, configPath, customizationStatePath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, rootConfigPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
 import { API_PREFIX, apiHandler, json, listenApi, plainRequests, pluginRoutes, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { mcpHandler } from '../mcp.js';
 import { servedRegistry, type ServedFacts } from './served.js';
@@ -87,6 +87,7 @@ import { applyPresets, planPresets, splitModels } from '../agents/migrate.js';
 import { handedAgent } from '../agents/handed.js';
 import { fileVault } from '../vault.js';
 import { daemonRootConfig } from '../rootconfig.js';
+import { fileRootConfigStore } from '../rootconfigstore.js';
 import { pty } from '../pty.js';
 import { shellIntegration } from '../shellintegration.js';
 import { screen } from '../screen.js';
@@ -211,7 +212,7 @@ export function daemonAutomations(told: (message: string) => void, store?: Autom
  * the configuration directory, the machine owners and the vault included. The
  * owners file is the computer plugin's and the vault is this daemon's own port
  * until a plugin registers one, and this daemon's own start is the only place
- * that knows all five at once - which is why the sweep happens here rather than
+ * that knows all six at once - which is why the sweep happens here rather than
  * beside any one of the writers.
  */
 export const wholeFiles = (users?: string): string[] => [
@@ -219,6 +220,7 @@ export const wholeFiles = (users?: string): string[] => [
   policiesPath(),
   automationStatePath(),
   customizationStatePath(),
+  rootConfigPath(),
   join(configDir(), 'computers.json'),
   vaultPath(),
 ];
@@ -1364,6 +1366,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     closedChats: options.closedChats,
     unofferedModel: options.unofferedModel,
+    workspacelessFolder: options.workspacelessFolder,
+    rootOwner: options.rootOwner,
     turnSenders: options.turnSenders,
     backendBackgroundWork: options.backendBackgroundWork,
     agentOrchestrationLimitsScope: options.agentOrchestrationLimitsScope,
@@ -1398,8 +1402,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * way.
      */
     terminalAutoApproveDefaults: options.terminalAutoApproveDefaults,
-    // The operator's managed permissions, handed on as the file says them.
+    // The operator's managed permissions and per-tool eligibility, handed on as the file says them.
     ...(options.managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions: options.managedSettingsPermissions }),
+    ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
+    managedRules: options.managedRules,
     /*
      * The reader a configured module exports, which takes the sdk's own
      * splitter's place.
@@ -1428,6 +1434,16 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * the host only shows what it is given and hands writes on.
      */
     rootConfig: daemonRootConfig(options, typed, openWire, (servers) => { mcpServers = servers as typeof mcpServers; }, async () => (await applyNow()).restart),
+    /*
+     * The root config a client pushed, kept between restarts, as VS Code's
+     * host keeps its own: a daemon restarted for an upgrade comes back with
+     * the settings its windows set, an Always Allow among them, and the
+     * approval and policy keys from each window's next push.
+     */
+    rootConfigStore: fileRootConfigStore({
+      file: rootConfigPath(),
+      onProblem: (message) => process.stderr.write(`${message}\n`),
+    }),
     /*
      * What this host adds on top of a backend, kept between restarts.
      *

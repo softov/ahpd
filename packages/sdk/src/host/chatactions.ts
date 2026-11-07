@@ -1,12 +1,12 @@
 import { isDeepStrictEqual } from 'node:util';
-import { idOf, Status } from '../sessions/catalog.js';
+import { SESSION_META_WORKSPACELESS_KEY, idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { readMultiRoot } from '../sessions/remotesession.js';
 import { filesOf, needsAsyncRewrite, snapshot } from './attachments.js';
-import { chatIdFor, chatUriFor, isRootChannel, MARKS, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatIdFor, chatUriFor, isRootChannel, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { grantOf, withGrant } from './permissions.js';
-import { autoApproved, requireTrust } from './trust.js';
+import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { Session } from '../types/session.js';
@@ -55,6 +55,8 @@ export function sessionFlag(
   // each client keeping its own.
   ctx.dispatch(uri, action, origin);
   ctx.markSummaryDirty(uri);
+  // Whether its chats may move, which an archived session's may not.
+  if (bit === Status.IsArchived) for (const chat of ctx.sessions.get(uri)?.chats.keys() ?? []) ctx.updateChatMovability(chat);
   // Archived: asleep, or its tree given back where it is asleep already, and
   // let go by the residency where nothing holds it.
   // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L1457-L1464
@@ -424,14 +426,9 @@ export function chatAction(
    * A worker's chat is read-only, whichever side of a restart it is on.
    *
    * Nobody types into a subagent: its conversation is the harness's work
-   * inside somebody else's call. What a client may still send on one is
-   * an answer to what the worker asked there and a stop, and those are
-   * the lead chat's backend's to act on, since that backend runs the
-   * worker. A command typed into one runs as this host's local command,
-   * ahead of the admission that refuses any other start in the reference
-   * host's words for a read-only chat; anything else is refused here, before
-   * the resume below, which would start an agent for a chat the client
-   * cannot write to.
+   * inside somebody else's call. A command typed into one runs as this host's
+   * local command, ahead of the admission that refuses any other start in the
+   * reference host's words for a read-only chat.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
    */
   const worker = toolCallOfSubagentChat(channel) !== undefined;
@@ -443,8 +440,23 @@ export function chatAction(
     else unsent(channel, 'rejected', 'readOnly', 'This chat is read-only.');
     return;
   }
+  /*
+   * A person watches a worker's chat and sends it no message, as the protocol
+   * reads a read-only chat: a pending message and a resume are refused in the
+   * words VS Code's turn admission refuses a request to one with. Every other
+   * action is the chat's own: an answer, a stop or a client's run of a call
+   * goes to the backend that runs the worker, below, and anything else is
+   * applied to the worker chat's state alone, as VS Code's host applies a
+   * client action to its channel.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/state.ts#L394-L395
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+   */
+  if (worker && (type === 'chat/pendingMessageSet' || type === 'chat/turnResume')) {
+    refuse(connection.peer, channel, action, origin, 'This chat is read-only.');
+    return;
+  }
   if (worker && !WORKER_ACTIONS.has(type)) {
-    refuse(connection.peer, channel, action, origin, `${channel} is a read-only subagent chat`);
+    dispatch(channel, action, origin);
     return;
   }
   /*
@@ -1003,8 +1015,9 @@ export function chatAction(
      * A folder a window adds to the session's set or takes from it, on VS
      * Code's conditions and in its words: an editor window, on the session's
      * channel, a session that is ready, was made from a multi-root workspace,
-     * works in its folders rather than in a worktree and has its default chat
-     * alone, on a backend that works in more than one folder; the first folder
+     * is neither workspace-less nor isolated in a worktree and has its default
+     * chat alone, on a backend that works in more than one folder; the first
+     * folder
      * stays, and so does a folder a chat is scoped to. The set and the removal
      * are the protocol's reducers', and an action that changes nothing goes to
      * every client of the session.
@@ -1043,7 +1056,8 @@ export function chatAction(
       }
       const chats = (Array.isArray(state.chats) ? state.chats : []) as Bag[];
       const values = (typeof state.config === 'object' && state.config !== null ? (state.config as Bag).values : undefined) as Bag | undefined;
-      if (readMultiRoot(state) === undefined || values?.isolation === 'worktree'
+      const meta = (typeof state._meta === 'object' && state._meta !== null ? state._meta : {}) as Bag;
+      if (readMultiRoot(state) === undefined || meta[SESSION_META_WORKSPACELESS_KEY] === true || values?.isolation === 'worktree'
         || chats.length !== 1 || state.defaultChat !== chats[0]?.resource) {
         no(`Session does not support dynamic working-directory changes: ${uri}`);
         break;
@@ -1086,7 +1100,7 @@ export function chatAction(
           // The window is asked about a folder the session enters, before
           // anything is written, and an answer of no means it never went there.
           if (type === 'session/workingDirectorySet') {
-            await requireTrust({ folder: one, sender: connection, trust: rootConfig.workspaceTrust, autoApproved: auto });
+            await requireTrust({ folder: one, sender: connection, autoApproved: auto });
           }
           owner.additional = root === undefined ? next : next.slice(1);
           const due = ctx.relaunches.get(uri);
@@ -1162,8 +1176,8 @@ export function chatAction(
        * The folder this action puts the session into, if any: the window is
        * asked about it before anything is written, the question a move asks,
        * and an answer of no means the session never went there. A worktree
-       * the restart makes from it needs no question of its own, since one the
-       * host made is trusted exactly when its repository is.
+       * the restart makes from it is asked about before it is made, as a
+       * move's is.
        */
       const entering = next.find((entry) => !was.includes(entry));
       const moving = root !== undefined && next[0] !== root;
@@ -1171,7 +1185,7 @@ export function chatAction(
       void (async () => {
         try {
           if (entering !== undefined) {
-            await requireTrust({ folder: entering, sender: connection, trust: rootConfig.workspaceTrust, autoApproved: auto });
+            await requireTrust({ folder: entering, sender: connection, autoApproved: auto });
           }
           /*
            * A new first folder is a move, made as `set_workspace` makes one:
@@ -1185,7 +1199,7 @@ export function chatAction(
             conn.tokensFor(owner.agent.provider),
             { additional: owner.additional, ...(moving ? { directory: next[0] } : {}) },
             connection,
-            undefined,
+            (repository, path) => requireWorktreeTrust({ folder: next[0] ?? repository, repository, path, sender: connection, autoApproved: auto }),
             conn.tokensFor,
           );
           dispatch(uri, action, origin);
@@ -2093,6 +2107,10 @@ export function chatAction(
         if (permissions === undefined) break;
         ctx.rootConfig.permissions = permissions;
         dispatch(ROOT, { type: 'root/configChanged', config: { permissions } });
+        // Kept for the next start, as VS Code's host persists the root config
+        // a change of its own makes.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1275-L1282
+        ctx.persistRootConfig();
         break;
       }
       const permissions = withGrant(owning.config.permissions, grant.rules);

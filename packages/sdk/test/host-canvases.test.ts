@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ROOT } from '../src/host.js';
 import { createCanvases } from '../src/host/canvases.js';
 import { canvasResource, chatOfCanvas } from '../src/host/channels.js';
@@ -335,6 +335,16 @@ describe('a canvas whose chat goes', () => {
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'base' } });
     await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'ahp-chat:/spare' } });
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/spare' } });
+    // Its first turn, run to its end, which a chat has before a move is made of it.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/spare', action: { type: 'chat/turnStarted', turnId: 't0', startedAt: new Date().toISOString(), message: { text: 'first', origin: { kind: 'user' } } } },
+    });
+    await vi.waitFor(async () => {
+      const read = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/spare' } }) as { snapshot: { state: { turns: unknown[]; activeTurn?: unknown } } };
+      expect(read.snapshot.state.turns.length).toBeGreaterThan(0);
+      expect(read.snapshot.state.activeTurn ?? undefined).toBeUndefined();
+    });
     const resource = await calls.open('ahp-chat:/spare', STATE);
     const lists = () => seen.seen.filter((one) => one.method === 'action'
       && one.params.channel === 'ahp-chat:/spare'

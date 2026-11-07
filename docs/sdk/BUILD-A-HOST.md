@@ -172,7 +172,13 @@ offer `prepare-pull-request` and `create-pr`. The host puts the answer beside th
 `_meta.github`: `owner`, `repo`, `pullRequestUrls`, `pullRequestBranchName`,
 and `pullRequestState` (`open`, `closed`, `merged`) with the
 `pullRequestStateUrl` it is the state of. Asked at startup, when a token
-arrives, and when a turn ends. `githubPullRequests()` asks the REST API with a
+arrives, and when a turn ends, as VS Code's host asks: with the root's
+`autoAttachPullRequests` on, for a branch other than the git facts'
+`baseBranchName`, and until a pull request is known for the branch, the one
+found going first and the known ones kept behind it; a known one's state is
+read again each time. With `autoAttachPullRequests` off nothing is looked up,
+and each list keeps the pull requests a session recorded or associated, its
+baseline's included; where the selected one is neither, it goes with its state. `githubPullRequests()` asks the REST API with a
 lent token and `gh pr list` without one; a machine with neither answers no
 pull request rather than failing, and an answer that fails keeps what was held.
 
@@ -186,9 +192,13 @@ cron in a named time zone, one Markdown file per definition under
 host was down. A program that wants a clock writes its own `AutomationStore`
 over `memoryAutomations()`, with `parseCron` and `nextOccurrence` from this
 package. One that keeps the definitions somewhere passes `persist`, which is
-handed each change to a definition before the store holds it and says it, as
-VS Code's automation service persists before it publishes: a throw there fails
-the change and leaves the store as it was.
+handed each change to a definition before the store holds it and says it, and
+for a run that begins or moves every run its automation keeps, as `runsOf`
+and `runs`, as VS Code's automation service persists its runs beside its
+catalogue before it publishes: a throw there fails the change and leaves the
+store as it was. `create` takes the runs back beside the definition at a
+start, and a run that was not over when they were written is failed as
+interrupted, as VS Code's service recovers one.
 A run reads `running` while any session it started is executing or waiting on a
 person, and the host says the execution ended through `settle`: a store that
 implements it records the terminal `completed`, `failed` or `cancelled` and

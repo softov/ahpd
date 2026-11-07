@@ -1,7 +1,7 @@
 import { createClientCalls as holder } from '@ahpd/sdk';
 import type { Bag, BoundTool, ClientCalls as Held, RunClientTool } from '@ahpd/sdk';
 import { HOST_SERVER } from '../mapping.js';
-import type { AcpCall } from '../types.js';
+import type { AcpCall, ClientTool } from '../types.js';
 import { bag } from './common.js';
 import type { SessionContext } from './context.js';
 
@@ -27,12 +27,13 @@ const OWN_PREFIX = 'ahp-mcp-';
 /** What this area offers the rest of the session, and the `Session` members it brings. */
 export interface ClientCalls {
   /**
-   * Which client's tool the agent reported a call for, if any.
+   * Which client's tool the agent reported a call for, if any: its owner and
+   * the name the client announced it with.
    *
    * Nothing for a call that is not a client's: the host's own tools ride the
    * same server and are nobody's to run.
    */
-  ownerOf: (name: string | undefined, title: string) => string | undefined;
+  clientToolOf: (name: string | undefined, title: string) => ClientTool | undefined;
   /**
    * Hold a call a client owns, so the entry asking it goes out.
    *
@@ -96,27 +97,31 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
   };
 
   /**
-   * Which client's tool the agent reported a call for.
+   * Which client's tool the agent reported a call for, by its owner and the
+   * name the client announced it with, which is what follows the owner's id in
+   * the name the tool is offered under.
    *
    * The name the agent gave is read before the title, and the title only when
    * it named none: an agent that said what the tool was called has said which
    * one it meant, so a title that happens to spell another client's tool is not
    * what it reported.
    */
-  const ownerOf = (name: string | undefined, title: string): string | undefined =>
-    offered(name ?? title)?.owner;
+  const clientToolOf = (name: string | undefined, title: string): ClientTool | undefined => {
+    const tool = offered(name ?? title);
+    return tool?.owner === undefined ? undefined : { owner: tool.owner, name: tool.definition.name.slice(tool.owner.length + 2) };
+  };
 
   /**
    * Ask the client that owns a call to run it.
    *
-   * The call is held under the name the client announced its tool with, as
-   * the chat's row names it, because that is the name the client answers to
-   * and the name every sentence about the call uses. A tool the offering no
-   * longer holds is no call to ask anybody about.
+   * The call is named by the tool the client announced, which is the name the
+   * client answers to and the name every sentence about the call uses, drawn
+   * as the chat's row draws it, and is held while the offering still has that
+   * client's tool.
    */
   const openCall = (call: AcpCall, turnId: string): void => {
     const owner = call.contributor;
-    if (owner === undefined || offered(`${owner}__${call.toolName}`)?.owner !== owner) return;
+    if (owner === undefined || !ctx.offering.some((one) => one.owner === owner && one.definition.name === `${owner}__${call.toolName}`)) return;
     calls.open({
       turnId,
       owner,
@@ -149,6 +154,8 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
    *
    * The turn is the running one. A request arriving with no turn behind it is
    * still held, since the entry is what asks, and has no turn to draw it in.
+   * The row is drawn under the client's name too: this call was never
+   * reported, so it has no title of the agent's.
    */
   const openOwn = (owner: string, name: string, input: string): string => {
     invented += 1;
@@ -167,7 +174,7 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
      * a person reading a transcript with a row the agent has no account of has
      * only this line to tell them where it came from.
      */
-    ctx.options.log?.(`${ctx.provider}: the agent reported no call for ${name}; it is run as ${toolCallId}`);
+    ctx.options.log?.(`${ctx.provider}: the agent reported no call for ${owner}__${name}; it is run as ${toolCallId}`);
     const turnId = ctx.mapping?.turnId;
     if (turnId !== undefined) {
       const contributor = { contributor: { kind: 'client', clientId: owner } };
@@ -265,5 +272,5 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
     return true;
   };
 
-  return { ownerOf, openCall, calls, ranByClient, setTools };
+  return { clientToolOf, openCall, calls, ranByClient, setTools };
 }

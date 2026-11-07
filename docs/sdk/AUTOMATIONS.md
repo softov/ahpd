@@ -4,7 +4,7 @@ An **automation** is one instruction this host carries out with nobody watching:
 
 Automations live on a catalogue of their own, `ahp-automations://`. A client subscribes to it, writes definitions into it, and watches each run on the run's own channel.
 
-A client that wants only its own automations subscribes to `ahp-automations://?owner=me`. The snapshot keeps the entries whose `_meta['ahpd.owner']` is that connection's principal: `user:<id>` for a person, `plugin:<name>` for a plugin. A connection with no principal owns nothing, and the filter answers no entries. Any other value is refused with `-32602`, the way a wrong param is. An action about one automation reaches a filtered subscription only when that automation is the subscriber's own. A removal carries an id and no entry, so it reaches every filtered subscription.
+A client that wants only its own automations subscribes to `ahp-automations://?owner=me`: the RFC 6570 template `ahp-automations://{?owner}`, which `initialize` advertises as `_meta['ahpd.automations']` on a host that serves automations, expanded with `owner` `me`. The snapshot keeps the entries whose `_meta['ahpd.owner']` is that connection's principal: `user:<id>` for a person, `plugin:<name>` for a plugin. A connection with no principal owns nothing, and the filter answers no entries. Any other value is refused with `-32602`, the way a wrong param is. An action about one automation reaches a filtered subscription only when that automation is the subscriber's own. A removal carries an id and no entry, so it reaches every filtered subscription.
 
 Terms, one line each:
 
@@ -241,7 +241,7 @@ Automations are driven over the protocol, and over the HTTP API where the daemon
 | `listAutomationTriggerDefinitions` | Every event trigger type this host fires: `session`, `watch`, and each plugin's |
 | `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI once the run is recorded, its session made after. A press while a run of it is going is answered with that run, and a `requestId` asked again with the run it made. Refused when there is no such automation. A switched-off automation runs, and the run does not count against an `afterRuns` cap |
 | `fetchAutomationRuns` | Bring one more page of an automation's runs into view. A cursor that is not the entry's own is refused |
-| `automation/createRequested` | Write one into the catalogue |
+| `automation/createRequested` | Write one into the catalogue, at any URI in the `ahp-automation` scheme; a URI in another is refused "Automation resource must use the ahp-automation scheme", and a create where one is kept with another definition "Automation already exists", in VS Code's words |
 | `automation/updateRequested` | Patch one - absent keys are left alone, so two clients editing different fields do not revert each other |
 | `automation/removed` | Take one out |
 | `automationRun/cancelRequested` | Stop a run: the turns its sessions are running stop, and the run settles as they end; a run with no session yet settles `cancelled` at once. Answered to the client that asked; refused for a run that is unknown, already over, or running no turn |

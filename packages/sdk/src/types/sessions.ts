@@ -320,6 +320,23 @@ export interface SessionStore {
   /** Record it, or forget it with `undefined`. */
   setUserSettings?(id: string, value: boolean | undefined): void;
   /**
+   * Whether this session is external: one a backend listed, made outside this
+   * host, that this host opened and nobody has sent a turn in since, as VS
+   * Code's registry keeps a discovered session external until it is adopted.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSessionRegistry.ts#L104-L122
+   *
+   * Kept with the session for the reason its provider is: opening it writes
+   * the session's record, and a record is what makes a listed session this
+   * host's own, so what opening it did not change has to be written beside
+   * it. Only `true` is written down; a session this host made is never one.
+   *
+   * Optional: a store that leaves it out holds a session external while it
+   * has no record here.
+   */
+  external?(id: string): boolean | undefined;
+  /** Record it, or forget it with `false` or `undefined`. */
+  setExternal?(id: string, value: boolean | undefined): void;
+  /**
    * The session this one was started from, as the id that session is held
    * under, or nothing where nothing started it.
    *

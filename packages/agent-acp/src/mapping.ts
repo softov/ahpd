@@ -135,24 +135,20 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
    * Which client's tool this is, read off what the agent reported. The name it
    * gave is what it called, so it is read before the title: a title that spells
    * some other client's tool is not what the agent said it reached for.
+   *
+   * A client's call is named by the tool the client announced, as VS Code's
+   * host names one, stripping its client-tool server's prefix where the call
+   * comes in, so the client knows the call for its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L626-L638
    */
-  const owner = turn.ownerOf?.(named, title);
-  /*
-   * A client's tool by the name the client announced it with: the host MCP
-   * server's prefix and the client's own are taken off, as VS Code's agents
-   * strip their client tool server's prefix, so the row names a tool the
-   * client has.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
-   */
-  const bare = name.startsWith(HOST_SERVER) ? name.slice(HOST_SERVER.length) : name;
-  const toolName = owner !== undefined && bare.startsWith(`${owner}__`) ? bare.slice(owner.length + 2) : name;
+  const tool = turn.clientToolOf?.(named, title);
   const call: AcpCall = {
     toolCallId: update.toolCallId,
-    toolName,
+    toolName: tool?.name ?? name,
     displayName: title,
     readied: false,
     asked: false,
-    ...(owner === undefined ? {} : { contributor: owner }),
+    ...(tool === undefined ? {} : { contributor: tool.owner }),
   };
   turn.calls.set(update.toolCallId, call);
   const toolKind = 'kind' in update && update.kind !== undefined && update.kind !== null ? KINDS[update.kind] : undefined;
@@ -160,7 +156,7 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
     kind: 'toolCall',
     toolCall: {
       toolCallId: update.toolCallId,
-      toolName,
+      toolName: call.toolName,
       displayName: title,
       status: 'streaming',
       ...contributorOf(call),

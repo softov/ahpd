@@ -1,8 +1,8 @@
 /**
- * The schemes VS Code's URL approval and URL globs name, and the test that a
- * URI is of one of them.
+ * The schemes VS Code's URL approval, its URL globs and its retained terminal
+ * links name, and the test that a URI is of one of them.
  *
- * Vendored from VS Code's `network.ts`: the three `Schemas` the vendored
+ * Vendored from VS Code's `network.ts`: the four `Schemas` the vendored
  * modules here reach, as an object where VS Code has a namespace, and
  * `matchesScheme` with `matchesSomeScheme`, as VS Code has them, except that
  * `matchesScheme` tells a URI from a string by its class, every URI here
@@ -17,6 +17,7 @@ export const Schemas = Object.freeze({
   http: 'http',
   https: 'https',
   file: 'file',
+  agentHostTerminal: 'agenthost-terminal',
 });
 
 export function matchesScheme(target: URI | string, scheme: string): boolean {

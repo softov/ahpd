@@ -4,8 +4,8 @@ import { idOf, uriFor } from '../sessions/catalog.js';
 import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import {
-  ROOT, isRootChannel, isAutomations, automationsChannel, schemeOf, spaceOf, baseOf,
-  chatOfCanvas, chatUriFor, subagentChatUri, toolCallOfSubagentChat, shapedSession,
+  ROOT, isRootChannel, isAutomations, automationsChannel, schemeOf, spaceOf, ownerUriOf,
+  chatOfCanvas, chatUriFor, nonPtyShellTerminalOf, subagentChatUri, toolCallOfSubagentChat, shapedSession,
 } from './channels.js';
 import type { ChannelKind, Space } from './channels.js';
 import type { Home } from './gate.js';
@@ -139,10 +139,10 @@ export function createRouting(ctx: HostContext): Routing {
     if (isAutomations(channel)) return automationsChannel(channel);
     if (isRootChannel(channel)) return ROOT;
     // A session channel, and its marks and changesets with it, by the id in it.
-    const base = baseOf(channel);
-    if (spaceHere(base) === 'session') {
-      const published = names.get(idOf(base)) ?? ctx.kept.uri?.(idOf(base));
-      return published === undefined ? channel : `${published}${channel.slice(base.length)}`;
+    const owner = ownerUriOf(channel);
+    if (spaceHere(owner) === 'session') {
+      const published = names.get(idOf(owner)) ?? ctx.kept.uri?.(idOf(owner));
+      return published === undefined ? channel : `${published}${channel.slice(owner.length)}`;
     }
     const session = sessionOfChat(channel);
     if (session === undefined || session === shapedSession(channel)) return channel;
@@ -242,7 +242,7 @@ export function createRouting(ctx: HostContext): Routing {
    * something else.
    *
    * Read from `claims` for a name this host holds, or whose session channel
-   * (`baseOf`) it holds, and otherwise from the name's space (`spaceOf`).
+   * (`ownerUriOf`) it holds, and otherwise from the name's space (`spaceOf`).
    * Every other channel is a session's: a session may be held under its
    * provider's scheme, `claude:/<id>`, which says nothing about it being one,
    * and a session a backend keeps on disk is named before anything here has
@@ -259,7 +259,9 @@ export function createRouting(ctx: HostContext): Routing {
      */
     const canvasChat = chatOfCanvas(channel);
     if (canvasChat !== undefined) return channelKind(canvasChat);
-    const held = claims.get(channel) ?? claims.get(baseOf(channel));
+    // A retained terminal link is a terminal's, live or rebuilt from what was kept.
+    if (nonPtyShellTerminalOf(channel) !== undefined) return 'terminal';
+    const held = claims.get(channel) ?? claims.get(ownerUriOf(channel));
     if (held !== undefined) return held.kind === 'terminal' ? 'terminal' : held.kind === 'watch' ? 'other' : 'session';
     const space = spaceHere(channel);
     return space === 'terminal' ? 'terminal' : space === 'own' || space === 'plugin' ? 'other' : 'session';
@@ -292,9 +294,9 @@ export function createRouting(ctx: HostContext): Routing {
   const openedBy = (channel: string, client: string): void => {
     if (client === '') return;
     // A session's own channel, or the session a chat, an annotation or a
-    // changeset of it belongs to. `baseOf` is what keeps a session's marks
+    // changeset of it belongs to. `ownerUriOf` is what keeps a session's marks
     // from being raised as a session of their own.
-    const session = spaceOf(channel) === 'chat' ? sessionFor(channel) : baseOf(channel);
+    const session = spaceOf(channel) === 'chat' ? sessionFor(channel) : ownerUriOf(channel);
     if (spaceOf(session) === 'chat' || !sessionChannel(session)) return;
     const key = `${session}\u0000${client}`;
     if (opened.has(key)) return;
@@ -312,7 +314,7 @@ export function createRouting(ctx: HostContext): Routing {
 
   /**
    * Refuse a name for a new session, chat or terminal that `claims` already
-   * holds, as it is or as the session channel it hangs off (`baseOf`), that is
+   * holds, as it is or as the session channel it hangs off (`ownerUriOf`), that is
    * a session running or listed here, or that falls in a space (`spaceOf`)
    * this host keeps for another kind.
    */
@@ -321,7 +323,7 @@ export function createRouting(ctx: HostContext): Routing {
     const fits = space === undefined || space === kind;
     if (!fits)
       throw new RpcError(-32003, `${name} is a name this host keeps for ${space === 'own' ? 'its own channels' : space === 'plugin' ? 'plugin channels' : `${space}s`}`);
-    for (const one of new Set([name, baseOf(name)])) {
+    for (const one of new Set([name, ownerUriOf(name)])) {
       const held = claims.get(one);
       if (held !== undefined) throw new RpcError(-32003, `${name} is already a ${held.kind} here`);
       if (sessions.has(one) || owners.has(one)) throw new RpcError(-32003, `${name} names the session ${one}`);

@@ -68,9 +68,9 @@ const CONFLICT = -32011;
     if (scheme === AGENT_CLIENT_SCHEME) return clientResources;
     if (scheme === TOOL_RESULT_RESOURCE_SCHEME) return ctx.toolResults.provider;
     const provider = options.resourceProviders?.[scheme];
-    // A scheme nobody serves is not the file store's to read, and it is
-    // not a permission answer either: the host has nothing for it, which
-    // is `-32601`.
+    // A scheme nobody serves: the host has nothing for it, which is
+    // NotFound, as VS Code's host answers a resource its file system cannot
+    // serve.
     if (provider === undefined) throw notServed(uri);
     return provider;
   };
@@ -251,9 +251,10 @@ const CONFLICT = -32011;
      * May I read this, may I write it.
      *
      * The negotiated form of the question, and a client that asks is told
-     * yes for any `file:` URI, the way the reference host answers it:
-     * there is no person at a daemon to prompt, and the connection token
-     * has already decided who may be here.
+     * yes for any URI, the way the reference host answers it, a connected
+     * client's own resource asked of that client: there is no person at a
+     * daemon to prompt, and the connection token has already decided who may
+     * be here.
      *
      * It grants nothing, because there is nothing left to grant: the write
      * half is served to any connection, and the read half always was. The

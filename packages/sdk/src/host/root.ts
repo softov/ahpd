@@ -4,7 +4,8 @@ import { seesAccount, seesConfig } from './gate.js';
 import { OPERATIONS, operationsOf } from '../access/users.js';
 import { REMOTE_SESSIONS_META } from '../sessions/remotesession.js';
 import { sdkVersion } from '../version.js';
-import { vscodeRootProperties } from '../vscoderootconfig.js';
+import { accepts } from '../utils/configvalues.js';
+import { clientOwnedApprovalRootConfigKeys, vscodeRootProperties } from '../vscoderootconfig.js';
 import { CLIENT_QUEUE_BYTES, MINIMUM_LIMIT_BYTES, REPLAY_BYTES } from './limits.js';
 import { ROOT } from './channels.js';
 import type { Connection, HostOptions } from '../types/host.js';
@@ -168,11 +169,10 @@ const capacity = (measure: () => number | undefined): number | undefined => {
  *
  * The key is deliberately not one `ROOT_CONFIG_SCHEMA` declares. The value is
  * the harness's own answer about who it is signed in as, so a client that could
- * push one would be telling this host the operator's email - and undeclared, a
- * push of it is refused by the same path every key this host cannot describe
- * takes. It is published into `config.values` all the same, which is where VS
- * Code's own host puts its account: a value a client reads, not a setting it
- * draws a control for.
+ * push one would be telling this host the operator's email: a push that moves
+ * it is refused as a read-only property's is (`actions.ts`). It is published
+ * into `config.values` all the same, which is where VS Code's own host puts its
+ * account: a value a client reads, not a setting it draws a control for.
  */
 export const accountKey = (provider: string): string =>
   provider === 'codex' ? 'vscode.codexAccount' : `ahpd.${provider}Account`;
@@ -204,7 +204,6 @@ export interface Root {
   daemonKey(key: string): boolean;
   /** Whether a key the root's config holds is the daemon's to show, a plugin removed while the daemon runs among them. */
   daemonHeld(key: string): boolean;
-  declaresConfigKey(key: string): boolean;
   advertisedSchemes(): Record<string, unknown> | undefined;
   advertisedChannels(): { scheme: string; title: string; description?: string; grant: string }[] | undefined;
   advertisedMethods(): { method: string; title: string; description?: string; grant: string }[] | undefined;
@@ -246,6 +245,14 @@ export interface Root {
    * Nothing when the root is not held yet: its first snapshot reads the port.
    */
   daemonValuesChanged(): Promise<void>;
+  /**
+   * Keep the root config this host holds for its clients in
+   * `HostOptions.rootConfigStore`, whole, a backend's account aside: what
+   * VS Code's host writes after each change a client or the host makes to it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1275-L1313
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13661-L13662
+   */
+  persistRootConfig(): void;
 }
 
 export function createRoot(ctx: HostContext): Root {
@@ -369,16 +376,14 @@ export function createRoot(ctx: HostContext): Root {
    * connected to it.
    * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L20-L23
    *
-   * Everything pushed whose key is declared below is kept, and only what the
-   * host's own half of that schema names is acted on. Keeping a declared key
-   * this host does not act on is not indulgence: `values` is state a client
-   * reads back, and a host that dropped a key it merely drew would report a
-   * setting that silently reverted.
+   * Everything pushed is kept, whatever its key, as VS Code's host keeps a
+   * root patch whole, and only what the host's own half of the schema below
+   * names is acted on: `values` is state a client reads back, and what the
+   * host has a client learns from the declared properties.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2878-L2898
    *
-   * A key nobody declares is a different thing and is refused rather than
-   * kept: a value with no property is one no client can draw or explain, and
-   * the refusal is said in the words of the key, so the next UPSTREAM.md pass
-   * finds what a newer VS Code added.
+   * A start opens it with what `HostOptions.rootConfigStore` kept, read
+   * against the schema below once the providers' keys are known.
    */
   const rootConfig: Record<string, unknown> = {};
   /**
@@ -389,17 +394,19 @@ export function createRoot(ctx: HostContext): Root {
    * setting. The host's own keys come after, so a clash would resolve to the
    * host's reading of the same key (there is none).
    *
-   * Ten of them are read by this host: `defaultShell`, which a client's
-   * terminal opens, and `workspaceTrust` below, the three terminal and edit
-   * rules among VS Code's own, which are what `spawn.ts` answers
-   * `getAutoApproval` from, `globalAutoApproveEnabled`, which `trust.ts` asks
-   * before a tool call runs,
-   * `eligibleForAutoApproval`, which `spawn.ts` asks per tool before a call
-   * runs, and this host's own `changeWords`, which says where a commit message
-   * and a pull request's words come from, with `clientQueueBytes` and
-   * `replayBytes` beside it, which bound what this host holds for a client that
-   * is not reading (`limits.ts`). The rest are declared and nothing more, which is
-   * what a client needs and all it gets.
+   * Each key this host decides by is read where the decision is made:
+   * `defaultShell` where a client's terminal opens, `workspaceTrust` below,
+   * the three terminal and edit rules, `permissions` and
+   * `autoApprovePolicyRestricted` where `spawn.ts` answers `getAutoApproval`,
+   * `globalAutoApproveEnabled` where `trust.ts` asks before a tool call runs,
+   * `agentOrchestrationLimits` where the session tools count, `canvasesEnabled`
+   * where a canvas opens, `chatMoves.enabled` where a chat moves, the two
+   * merged sessions' days in `sessionlifecycle.ts`, and `showExternalSessions`
+   * where the catalogue lists; and this host's own `changeWords`, which says
+   * where a commit message and a pull request's words come from, with
+   * `clientQueueBytes` and `replayBytes` beside it, which bound what this host
+   * holds for a client that is not reading (`limits.ts`). The rest are
+   * declared, which is what a client draws its controls from.
    */
   const ROOT_CONFIG_SCHEMA = {
     // `type` is required of a `ConfigSchema` and is always `object`. Left out,
@@ -512,7 +519,7 @@ export function createRoot(ctx: HostContext): Root {
       clientQueueBytes: {
         type: 'number',
         title: 'Client Queue Bytes',
-        description: `The most a client that is not reading may have queued for it, in bytes, before the host closes it. At least ${MINIMUM_LIMIT_BYTES}.`,
+        description: `The most a client that is not reading may have queued for it, in bytes, before the host closes it. At least ${MINIMUM_LIMIT_BYTES}; 0 sets no limit, as VS Code's host writes to an open socket whatever it holds.`,
         default: CLIENT_QUEUE_BYTES,
       },
       /*
@@ -534,7 +541,7 @@ export function createRoot(ctx: HostContext): Root {
       replayBytes: {
         type: 'number',
         title: 'Replay Bytes',
-        description: `The most the replay buffer holds, in bytes, before it drops its oldest envelopes. At least ${MINIMUM_LIMIT_BYTES}.`,
+        description: `The most the replay buffer holds, in bytes, before it drops its oldest envelopes. At least ${MINIMUM_LIMIT_BYTES}; 0 sets no limit, the thousand envelopes alone, as VS Code's host replays.`,
         default: REPLAY_BYTES,
       },
     },
@@ -575,16 +582,6 @@ export function createRoot(ctx: HostContext): Root {
    */
   const daemonHeld = (key: string): boolean => daemonKey(key) || daemonSeen.has(key);
   /**
-   * Whether a pushed key is one this host can describe.
-   *
-   * The host's own properties or the daemon's, whoever is asking: a connection
-   * without `config:read` is shown none of the daemon's keys, but the key
-   * exists and a push of it is a write this host may make, so `seesConfig`
-   * decides what a connection is shown and this decides what is real.
-   */
-  const declaresConfigKey = (key: string): boolean =>
-    Object.hasOwn(ROOT_CONFIG_SCHEMA.properties, key) || Object.hasOwn(providerProperties(), key) || daemonKey(key);
-  /**
    * The root config properties the providers' configurations declare, as VS
    * Code adds a registered provider's properties to the root config's schema;
    * a key this host's own schema declares stays the host's.
@@ -599,6 +596,29 @@ export function createRoot(ctx: HostContext): Root {
     Object.entries(providerProperties()).filter(([, property]) => property.default !== undefined)
       .map(([key, property]) => [key, property.default]),
   );
+  /*
+   * What a start brings back of the root config `HostOptions.rootConfigStore`
+   * kept: each key the schema declares whose value its property accepts, as
+   * VS Code's host restores its persisted values schema by schema. A
+   * provider's settings come back with the rest: this host keeps them as root
+   * settings, in this store alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1399
+   *
+   * The client-owned approval and policy keys are left to each window's next
+   * push, VS Code's reason: "Approval and policy values are a snapshot of one
+   * client's settings and are re-pushed on every connect, so restoring them
+   * could re-grant an approval that was tightened while the host was
+   * stopped."
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1401-L1416
+   *
+   * The restart mark is this process's and a daemon key its port's, so both
+   * stay out, as a push keeps them out of `rootConfig`.
+   */
+  const declared: Record<string, unknown> = { ...ROOT_CONFIG_SCHEMA.properties, ...providerProperties() };
+  for (const [key, value] of Object.entries(options.rootConfigStore?.read() ?? {})) {
+    if (Object.hasOwn(declared, key) && accepts(declared[key], value) && !clientOwnedApprovalRootConfigKeys.has(key)
+      && key !== RESTART_KEY && !daemonKey(key)) rootConfig[key] = value;
+  }
   /**
    * What this host serves beside `file:`, as one map a client reads.
    *
@@ -717,6 +737,10 @@ export function createRoot(ctx: HostContext): Root {
   /** Whether a root config key is one a backend's account is published under. */
   const isAccountKey = (key: string): boolean =>
     [...agents.values()].some((agent) => accountKey(agent.provider) === key);
+
+  const persistRootConfig = (): void => {
+    options.rootConfigStore?.write(Object.fromEntries(Object.entries(rootConfig).filter(([key]) => !isAccountKey(key))));
+  };
 
   const keptOnReplace = (pushed: Record<string, unknown>): Record<string, unknown> => {
     const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
@@ -857,7 +881,7 @@ export function createRoot(ctx: HostContext): Root {
 
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
-    daemonKey, daemonHeld, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
-    daemonValues, rootSeed, rootFor, keptOnReplace, changesNothing, daemonValuesChanged,
+    daemonKey, daemonHeld, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
+    daemonValues, rootSeed, rootFor, keptOnReplace, changesNothing, daemonValuesChanged, persistRootConfig,
   };
 }

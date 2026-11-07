@@ -1,6 +1,6 @@
 import { constants } from 'node:fs';
 import { access, stat } from 'node:fs/promises';
-import { ROOT, named, retainedTerminalOf, retainedTerminalUri } from './channels.js';
+import { ROOT, named, nonPtyShellTerminalOf } from './channels.js';
 import { commandTurnKey } from './chatactions.js';
 import { localPath } from '../resources/fileuri.js';
 import { INTERNAL_ERROR, RpcError } from '../rpc.js';
@@ -159,7 +159,7 @@ export function createTerminals(ctx: HostContext): Terminals {
     const call = claim.kind === 'session' && claim.toolCallId !== undefined
       ? { session: claim.session, chat: claim.chat, key: claim.toolCallId }
       : undefined;
-    const uri = call === undefined ? `ahp-terminal:/${crypto.randomUUID()}` : retainedTerminalUri(call.chat, call.key);
+    const uri = call === undefined ? `ahp-terminal:/${crypto.randomUUID()}` : ctx.nonPtyShellTerminalUri(call.session, call.chat, call.key);
     /*
      * The daemon's own shell, `$SHELL`, then `/bin/sh`, or the first
      * PowerShell found on Windows. `defaultShell` is what a client's own
@@ -380,7 +380,7 @@ export function createTerminals(ctx: HostContext): Terminals {
     open: (asked) => {
       if (ctx.closed) throw new Error(CLOSING);
       const key = crypto.randomUUID();
-      const uri = retainedTerminalUri(chatUri, key);
+      const uri = ctx.nonPtyShellTerminalUri(sessionUri, chatUri, key);
       /*
        * Claimed by the session with the chat, the turn running in it and the
        * tool call the backend named, as VS Code's shell tool claims an
@@ -646,7 +646,7 @@ export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext
         throw new Error(`Terminal already exists: ${uri}`);
       // The host names these, and a client's shell under one would answer for
       // the terminal a tool call names.
-      if (retainedTerminalOf(uri) !== undefined)
+      if (nonPtyShellTerminalOf(uri) !== undefined)
         throw new RpcError(-32003, `${uri} is a name this host keeps for the terminals a tool result names`);
       claimable(uri, 'terminal');
       /*

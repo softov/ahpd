@@ -131,6 +131,10 @@ export function memorySessions(): SessionStore & Held {
     // never said.
     userSettings: (id) => rows.get(id)?.userSettings,
     setUserSettings: (id, value) => { patch(id, { userSettings: value === true ? undefined : value }); },
+    // Only the `true` of a session opened and not adopted is held: absent is
+    // every session this host made.
+    external: (id) => rows.get(id)?.external,
+    setExternal: (id, value) => { patch(id, { external: value === true ? true : undefined }); },
     parent: (id) => rows.get(id)?.parent,
     setParent: (id, value) => { patch(id, { parent: value }); },
     rootOf: (id) => treeOf(id).root,
@@ -291,6 +295,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.tools === undefined ? {} : { tools: held.tools }),
         ...(held.trustedFolder === undefined ? {} : { trustedFolder: held.trustedFolder }),
         ...(held.userSettings === undefined ? {} : { userSettings: held.userSettings }),
+        ...(held.external === undefined ? {} : { external: held.external }),
         ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
         ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
         ...(held.customTitle === undefined ? {} : { customTitle: held.customTitle }),
@@ -483,6 +488,8 @@ interface Row {
   trustedFolder?: string | undefined;
   /** `false` where the session asked not to load its person's settings. */
   userSettings?: boolean | undefined;
+  /** `true` where a backend's session was opened here and not adopted. */
+  external?: boolean | undefined;
   artifacts?: Record<string, unknown>[] | undefined;
   pullRequests?: PullRequestBaseline | undefined;
   customTitle?: string | undefined;
@@ -516,7 +523,7 @@ interface Row {
 const empty = (row: Row): boolean =>
   row.flags === undefined && row.config === undefined && row.scope === undefined
   && row.owner === undefined && row.senders === undefined && row.provider === undefined
-  && row.tools === undefined && row.trustedFolder === undefined && row.userSettings === undefined
+  && row.tools === undefined && row.trustedFolder === undefined && row.userSettings === undefined && row.external === undefined
   && row.artifacts === undefined && row.pullRequests === undefined && row.customTitle === undefined && row.chatTitles === undefined
   && row.chatFlags === undefined && row.chatChanges === undefined && row.chatDrafts === undefined && row.annotations === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
@@ -548,6 +555,8 @@ interface Saved {
   trustedFolder?: string;
   /** `false` where the session asked not to load its person's settings. */
   userSettings?: boolean;
+  /** `true` where a backend's session was opened here and not adopted. */
+  external?: boolean;
   artifacts?: Record<string, unknown>[];
   pullRequests?: PullRequestBaseline;
   /** The title the session was given, beside each chat's own. */
@@ -711,6 +720,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.tools === undefined ? {} : { tools: held.tools }),
       ...(held.trustedFolder === undefined ? {} : { trustedFolder: held.trustedFolder }),
       ...(held.userSettings === undefined ? {} : { userSettings: held.userSettings }),
+      ...(held.external === undefined ? {} : { external: held.external }),
       ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
       ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
       ...(held.customTitle === undefined ? {} : { customTitle: held.customTitle }),
@@ -849,6 +859,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       // default, and anything that is not a boolean is ignored rather than
       // guessed at, as every other field is.
       if (row.userSettings === false) inner.setUserSettings?.(row.id, false);
+      // Only the `true` a session can mean here, the same way.
+      if (row.external === true) inner.setExternal?.(row.id, true);
       if (Array.isArray(row.artifacts)) inner.setArtifacts(row.id, row.artifacts.filter((one) => typeof one === 'object' && one !== null));
       // Only an object with two arrays of strings is a baseline this version
       // understands; anything else is ignored rather than guessed at.
@@ -960,6 +972,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setTrustedFolder: (id, value) => { touched(id, () => { inner.setTrustedFolder?.(id, value); }); },
     userSettings: (id) => inner.userSettings?.(id),
     setUserSettings: (id, value) => { touched(id, () => { inner.setUserSettings?.(id, value); }); },
+    external: (id) => inner.external?.(id),
+    setExternal: (id, value) => { touched(id, () => { inner.setExternal?.(id, value); }); },
     parent: (id) => inner.parent(id),
     setParent: (id, value) => { touched(id, () => { inner.setParent(id, value); }); },
     rootOf: (id) => inner.rootOf(id),

@@ -6,11 +6,11 @@ import { disableConditionsProblem } from '../automations/automations.js';
 import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn } from './gate.js';
-import { AUTOMATIONS, chatUriFor, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { ANNOTATIONS_PATH_SEGMENT, AUTOMATIONS, chatUriFor, isAutomationResource, isRootChannel, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './sessionlifecycle.js';
-import { RESTART_KEY } from './root.js';
+import { accountKey, RESTART_KEY } from './root.js';
 import { claimOf } from './terminals.js';
 import type { HeldCopies, TemplatePlugin } from '../types/clientplugins.js';
 import type { Bag } from '../types/common.js';
@@ -47,7 +47,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    * read that took one would say so only by being wrong.
    */
   const {
-    agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided, declaresConfigKey,
+    agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided,
     dir, dispatch, homeId, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
     ownerFor, owners, restoreSession, permitted, presence, restart, retool,
     rootConfig, served, sessionFor, sessions, shown, starting, subagents, markSummaryDirty, terminals, toolDefinitions,
@@ -225,11 +225,11 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14267-L14295
      */
     if (type.startsWith('annotations/')) {
-      if (!channel.endsWith(MARKS)) {
-        no(`${type} belongs on a session's ${MARKS} channel, not ${channel}`);
+      if (!channel.endsWith(ANNOTATIONS_PATH_SEGMENT)) {
+        no(`${type} belongs on a session's ${ANNOTATIONS_PATH_SEGMENT} channel, not ${channel}`);
         return;
       }
-      const owning = channel.slice(0, -MARKS.length);
+      const owning = channel.slice(0, -ANNOTATIONS_PATH_SEGMENT.length);
       const id = idOf(owning);
       const mark = (): void => {
         const next = annotationsReducer(marksOf(id), action as unknown as AnnotationsAction);
@@ -283,27 +283,25 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         ? action.config
         : {}) as Record<string, unknown>;
       /*
-       * The keys nobody declares, taken out before anything is applied.
+       * Every key pushed is applied and kept, as VS Code's host applies a root
+       * patch whatever keys it carries, a client learning what the host has
+       * from the properties the schema declares. A start brings back the
+       * declared keys alone: the daemon's from its configuration and the rest
+       * from `HostOptions.rootConfigStore`, as VS Code's host restores its
+       * persisted values by its schemas (`createRoot`).
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2878-L2898
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1399
        *
-       * A value with no property in the schema is one no client can draw a
-       * control for, so keeping it would be reporting a setting that is not
-       * one - the opposite of the reason a declared key this host does not act
-       * on is kept. It is a log line rather than a refusal while any declared
-       * key is left, because a client newer than this host sends its whole
-       * patch at connect and one unknown key must not lose the other forty.
-       *
-       * A key is offered here whether or not this connection is *shown* it:
-       * `seesConfig` decides what a connection reads, not what exists, and the
-       * daemon's keys are the ones that difference is about.
+       * Except a backend's account, which the harness says and no client may:
+       * a push that moves one is refused in the words VS Code's host refuses a
+       * remote client's change to a property the host holds read-only.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2830-L2840
        */
-      const refused = Object.keys(pushed).filter((key) => !declaresConfigKey(key));
-      if (Object.keys(pushed).length > 0 && refused.length === Object.keys(pushed).length) {
-        // The path a refused daemon write takes: `behind` logs it and answers
-        // the sender with this reason, and nobody else hears it.
-        return Promise.reject(new Error(`root config does not declare ${refused.join(', ')}`));
-      }
-      if (refused.length > 0) log(`root config: refused ${refused.join(', ')}`);
-      const config = Object.fromEntries(Object.entries(pushed).filter(([key]) => declaresConfigKey(key)));
+      const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
+      const account = Object.keys(pushed).find((key) => [...agents.values()].some((agent) => accountKey(agent.provider) === key)
+        && !isDeepStrictEqual(pushed[key], held[key]));
+      if (account !== undefined) return Promise.reject(new Error(`Host configuration property is read-only: ${account}`));
+      const config = pushed;
       /*
        * A `changeWords` naming a backend this host cannot ask, refused before
        * anything is applied.
@@ -393,21 +391,17 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
             else target[key] = value;
           }
         };
+        const showing = rootConfig.showExternalSessions;
         if (action.replace === true) {
           for (const key of Object.keys(rootConfig)) delete rootConfig[key];
-          delete connection.trustedFolders;
         }
         into(rootConfig, ours);
+        // The external sessions mode moved: what it shows is said again, as
+        // VS Code reconciles its listing on a change of mode.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1560-L1571
+        if (rootConfig.showExternalSessions !== showing) void ctx.reconcileExternalSessions();
         // A merged sessions key moved: the pass runs now, with the new days.
         if (Object.prototype.hasOwnProperty.call(config, AUTO_ARCHIVE_KEY) || Object.prototype.hasOwnProperty.call(config, AUTO_DELETE_KEY)) ctx.scheduleSessionLifecycle();
-        /*
-         * A `workspaceTrust` push answers for every folder at once, so the
-         * folders this window said yes to one at a time are behind it: a window
-         * that has just said which folders it trusts is not still vouching for
-         * one it answered about earlier. A pushed `null` takes the key back,
-         * which is a new answer like any other and clears them too.
-         */
-        if (Object.prototype.hasOwnProperty.call(config, 'workspaceTrust')) delete connection.trustedFolders;
         log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
         /*
          * Said back whole, like every other action a client originates:
@@ -422,6 +416,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * the echo.
          */
         dispatch(ROOT, { ...action, config: echoed }, origin);
+        // Kept for the next start, as VS Code's host persists the root config
+        // after each push a client makes.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13661-L13662
+        ctx.persistRootConfig();
         // Moving chats turned on or off moves every chat's offer of a move.
         if (Object.hasOwn(config, 'chatMoves.enabled')) for (const chat of byChat.keys()) ctx.updateChatMovability(chat);
       };
@@ -522,6 +520,12 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         // And what a turn naming a model its agent does not offer does, read the same way: as the next turn is sent.
         const unoffered = theirs['unofferedModel'];
         if (unoffered === 'fail' || unoffered === 'keep') ctx.unofferedModel = unoffered;
+        // And where a session that names no folder works, read the same way: as the next session is made.
+        const workspaceless = theirs['workspacelessFolder'];
+        if (workspaceless === 'first' || workspaceless === 'scratch') ctx.workspacelessFolder = workspaceless;
+        // And whose a root connection's session is, read the same way: as the next session is made.
+        const rootOwner = theirs['rootOwner'];
+        if (rootOwner === 'host' || rootOwner === 'none') ctx.rootOwner = rootOwner;
         // And whether a turn's sender is said, read the same way: as the next start is said or turn read back.
         const senders = theirs['turnSenders'];
         if (senders === 'said' || senders === 'kept') ctx.turnSenders = senders;
@@ -641,8 +645,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const store = options.automations;
       if (!store) { no(`${type} needs an automations store, and this host has none`); return; }
       const resource = String(action.resource ?? '');
-      if (!resource.startsWith('ahp-automation:/')) {
-        no(`${resource || 'That'} is not an automation URI`);
+      // Any URI in the scheme, as VS Code's automation service takes one, and refused in its words.
+      if (!isAutomationResource(resource)) {
+        no(`Automation resource must use the ahp-automation scheme: ${resource}`);
         return;
       }
       /*

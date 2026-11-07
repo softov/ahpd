@@ -20,6 +20,8 @@ refs:
   - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1684-L1766 - VS Code's host answers its agent's question from the session's rules
   - https://github.com/microsoft/vscode/blob/a959ba62444/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts#L881 - `chat.tools.eligibleForAutoApproval`, the setting the rule is named after
   - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L32-L42 - VS Code's planned per-tool translation of the setting, which the per-tool ask is
+  - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26 - an approval setting's policy value alone, which is why the rule is the operator's daemon setting
+  - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L530-L531 - the setting's id, the one name VS Code's agent host schema has for it
 ---
 
 ## Context
@@ -50,7 +52,8 @@ An Always grant is kept in the host's own `permissions`, root config.
 A call that asks to leave the sandbox offers Allow and Skip and keeps nothing.
 The host also checks the operator's managed rules on every question, each on the questions of its kind.
 A managed deny is refused before any client is asked, and a managed ask asks.
-A tool that the host root config key `eligibleForAutoApproval` sets to `false` is the managed layer's per-tool ask.
+A tool that the daemon setting `eligibleForAutoApproval` sets to `false` is the managed layer's per-tool ask.
+VS Code's host declares no root config key for it, and takes the setting's policy value alone.
 It asks on every call, in every backend.
 Its question offers Allow Once and Skip alone, and nothing answers it but a person, Allow All and grants included.
 That is VS Code's own planned translation of the setting.

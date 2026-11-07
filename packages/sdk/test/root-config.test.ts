@@ -6,7 +6,7 @@ import { CLIENT_QUEUE_BYTES, REPLAY_BYTES, clientQueueBytes, replayBytes } from 
 import { vscodeRootProperties } from '../src/vscoderootconfig.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
-import type { HostOptions } from '../src/types/host.js';
+import type { HostOptions, RootConfigStore } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Users } from '../src/types/users.js';
 
@@ -224,7 +224,7 @@ it('declares every key VS Code pushes, as VS Code declares it', async () => {
     'migrateLegacyCopilotCliEnabled', 'sessionCatalogEnabled', 'showExternalSessions',
     'autoArchiveMergedSessionsAfterDays', 'autoDeleteArchivedMergedSessionsAfterDays',
     'copilotMultiRootEnabled', 'claudeMultiRootEnabled', 'codexMultiRootEnabled',
-    'editAutoApprovePatterns', 'terminalAutoApproveRules', 'eligibleForAutoApproval',
+    'editAutoApprovePatterns', 'terminalAutoApproveRules',
     'agentMerge.enabled', 'agentMerge.addressReviews', 'agentMerge.fixCI',
     'agentMerge.resolveConflicts', 'agentMerge.mergePullRequest', 'agentMerge.mergeMethod',
     'agentMerge.replyAttribution', 'automationsEnabled', 'automationRunTimeoutMinutes',
@@ -396,53 +396,30 @@ it('says nothing for a push that changes nothing, a replace with the values held
   expect(said()).toBe(2);
 });
 
-it('declares eligibleForAutoApproval as VS Code does, and keeps it for the whole host', async () => {
+/*
+ * `eligibleForAutoApproval` is the operator's daemon setting: VS Code's agent
+ * host declares no root config key for it, and takes the setting's policy
+ * value alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L530-L531
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26
+ */
+it('declares no eligibleForAutoApproval in root config, as VS Code\'s host declares none, and refuses a push of it', async () => {
   const { signedIn, rootOf, heardOnRoot } = served(false);
   const admin = await signedIn('admin', 'admin');
-  const member = await signedIn('member', 'member');
 
-  /*
-   * The property is `chat.tools.eligibleForAutoApproval`'s,
-   * `chat.shared.contribution.ts:881` at `a959ba62444`, under the name this
-   * host reads: a map of tool name to boolean, where `false` means the call
-   * asks every time. `additionalProperties` is the value each member carries.
-   * `propertyNames`, which the setting fills with the names a client draws, is
-   * not copied: a rule for a tool this host has never heard of is still a rule.
-   */
   const { schema } = (await rootOf(admin.client)).config as { schema: { properties: Record<string, Record<string, unknown>> } };
-  expect(schema.properties.eligibleForAutoApproval).toEqual({
-    type: 'object',
-    title: 'Eligible for Auto Approval',
-    description: "Controls which tools are eligible for automatic approval. Tools set to 'false' will always present a confirmation and will never offer the option to auto-approve. The default behavior (or setting a tool to 'true') may result in the tool offering auto-approval options.",
-    default: {},
-    additionalProperties: { type: 'boolean', title: 'Eligible' },
+  expect(schema.properties).not.toHaveProperty('eligibleForAutoApproval');
+
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'tracker/create': false } } } },
   });
-
-  const rules = { 'tracker/create': false };
-  const push = async (client: Client): Promise<void> => {
-    await client.handle({
-      method: 'dispatchAction',
-      params: { channel: ROOT, action: { type: 'root/configChanged', config: { eligibleForAutoApproval: rules } } },
-    });
-    await settle();
-  };
-
-  // A rule about every session's tool calls is the host's, not one window's:
-  // saying it changes what everybody's sessions do, so it needs config:change.
-  await push(member.client);
-  expect(heardOnRoot(member.heard)).toEqual([
-    expect.objectContaining({ rejectionReason: expect.stringContaining('config:change') }),
+  await settle();
+  expect(heardOnRoot(admin.heard)).toEqual([
+    expect.objectContaining({ rejectionReason: expect.stringContaining('eligibleForAutoApproval') }),
   ]);
-
-  // The admin heard the member's refusal, as every client of the root does,
-  // and then its own push taken.
-  await push(admin.client);
-  expect(heardOnRoot(admin.heard).filter((one) => one.rejectionReason === undefined)).toEqual([
-    expect.objectContaining({ action: { type: 'root/configChanged', config: { eligibleForAutoApproval: rules } } }),
-  ]);
-  // Kept in the host's half, so the member that could not push it reads it.
-  const held = (await rootOf(member.client)).config as { values: Record<string, unknown> };
-  expect(held.values.eligibleForAutoApproval).toEqual(rules);
+  const held = (await rootOf(admin.client)).config as { values: Record<string, unknown> };
+  expect(held.values).not.toHaveProperty('eligibleForAutoApproval');
 });
 
 it('takes the three approval keys only with config:change, since they are the host\'s', async () => {
@@ -664,13 +641,13 @@ it('declares the two limits, each with its default', async () => {
   expect(schema.properties.clientQueueBytes).toEqual({
     type: 'number',
     title: 'Client Queue Bytes',
-    description: expect.stringContaining('At least 1048576.'),
+    description: expect.stringContaining('At least 1048576; 0 sets no limit'),
     default: 16777216,
   });
   expect(schema.properties.replayBytes).toEqual({
     type: 'number',
     title: 'Replay Bytes',
-    description: expect.stringContaining('At least 1048576.'),
+    description: expect.stringContaining('At least 1048576; 0 sets no limit'),
     default: 33554432,
   });
 });
@@ -709,6 +686,16 @@ it('reads a pushed limit at the time of use, and its default when it cannot', as
   expect(await held()).toMatchObject({ clientQueueBytes: 1024, replayBytes: 'plenty' });
   expect(clientQueueBytes(await held())).toBe(CLIENT_QUEUE_BYTES);
   expect(replayBytes(await held())).toBe(REPLAY_BYTES);
+
+  /*
+   * `0` sets no limit, VS Code's: its host writes to an open socket whatever
+   * the socket holds, and replays by the count alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/webSocketTransport.ts#L80-L85
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4247-L4250
+   */
+  await push({ clientQueueBytes: 0, replayBytes: 0 });
+  expect(clientQueueBytes(await held())).toBe(Number.POSITIVE_INFINITY);
+  expect(replayBytes(await held())).toBe(Number.POSITIVE_INFINITY);
 });
 
 it('refuses a limit pushed without config:write, as it does any other host key', async () => {
@@ -809,18 +796,12 @@ it('refuses what the daemon would not take, naming the key', async () => {
 });
 
 /*
- * A key nobody declares, which is refused where a declared one is kept.
- *
- * A declared key this host does not act on is kept, because `values` is state
- * a client reads back and a setting that silently reverted is worse than one
- * that does nothing. A key with no property is not a setting at all: no client
- * can draw it, and echoing it would report something nobody can explain.
- *
- * Refused key by key rather than action by action, because a client newer than
- * this host sends its whole patch at connect and one unknown key must not lose
- * the other forty.
+ * A key nobody declares, applied and kept as a declared one is, as VS Code's
+ * host applies a root patch whatever keys it carries: what the host has a
+ * client learns from the declared properties.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2878-L2898
  */
-it('refuses an undeclared key and applies the rest of the push', async () => {
+it('applies an undeclared key with the rest of the push', async () => {
   const { signedIn, rootOf, heardOnRoot } = served();
   const admin = await signedIn('admin', 'admin');
   await admin.client.handle({
@@ -828,37 +809,36 @@ it('refuses an undeclared key and applies the rest of the push', async () => {
     params: { channel: ROOT, action: { type: 'root/configChanged', config: { telemetryLevel: 'off', nonsense: 1 } } },
   });
   await settle();
-  // The echo carries the declared key alone, so no connection - a member
-  // included - hears a value the schema does not describe.
-  expect(heardOnRoot(admin.heard)).toEqual([expect.objectContaining({ action: { type: 'root/configChanged', config: { telemetryLevel: 'off' } } })]);
+  expect(heardOnRoot(admin.heard)).toEqual([expect.objectContaining({ action: { type: 'root/configChanged', config: { telemetryLevel: 'off', nonsense: 1 } } })]);
   const held = (await rootOf(admin.client)).config as { values: Record<string, unknown> };
   expect(held.values.telemetryLevel).toBe('off');
-  expect(held.values.nonsense).toBeUndefined();
+  expect(held.values.nonsense).toBe(1);
 });
 
-it('rejects a push whose every key is undeclared, naming them', async () => {
-  const { signedIn, heardOnRoot, writes } = served();
+it('applies a push whose every key is undeclared, and asks the daemon for none of them', async () => {
+  const { signedIn, rootOf, heardOnRoot, writes } = served();
   const admin = await signedIn('admin', 'admin');
   await admin.client.handle({
     method: 'dispatchAction',
     params: { channel: ROOT, action: { type: 'root/configChanged', config: { nonsense: 1, moreNonsense: 2 } } },
   });
   await settle();
-  // Both keys named, in the order the client sent them, and no echo: a refusal
-  // is one connection's answer and no state moved for anybody.
-  expect(heardOnRoot(admin.heard)).toEqual([
-    expect.objectContaining({ rejectionReason: 'root config does not declare nonsense, moreNonsense' }),
+  const heard = heardOnRoot(admin.heard);
+  expect(heard).toEqual([
+    expect.objectContaining({ action: { type: 'root/configChanged', config: { nonsense: 1, moreNonsense: 2 } } }),
   ]);
+  expect(heard[0]).not.toHaveProperty('rejectionReason');
+  expect((await rootOf(admin.client)).config).toMatchObject({ values: { nonsense: 1, moreNonsense: 2 } });
   expect(writes).toEqual([]);
 });
 
 /*
  * The three keys VS Code 1.140 dropped, which a client older than that still
  * pushes: the compact artifact wording and the two title-generation switches.
- * None is declared, so each is refused by task 02's rule and the rest of the
- * push goes through.
+ * None is declared, so no client draws a control for one, and each is kept as
+ * pushed, as any key is.
  */
-it('refuses the keys VS Code dropped, key by key', async () => {
+it('keeps the keys VS Code dropped as pushed, and declares none of them', async () => {
   // No daemon port, so `values` is this host's half alone.
   const { signedIn, rootOf, heardOnRoot } = served(false);
   const admin = await signedIn('admin', 'admin');
@@ -867,31 +847,17 @@ it('refuses the keys VS Code dropped, key by key', async () => {
     params: { channel: ROOT, action: { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true, telemetryLevel: 'off' } } },
   });
   await settle();
-  // The declared key is kept and the removed one never reaches the echo.
   expect(heardOnRoot(admin.heard)).toEqual([
-    expect.objectContaining({ action: { type: 'root/configChanged', config: { telemetryLevel: 'off' } } }),
+    expect.objectContaining({ action: { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true, telemetryLevel: 'off' } } }),
   ]);
   const held = (await rootOf(admin.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
-  expect(held.values).toEqual({ telemetryLevel: 'off' });
-  // Neither key has a property, so no client draws a control for one.
+  expect(held.values).toEqual({ artifactToolsCompactPrompts: true, telemetryLevel: 'off' });
   expect(held.schema.properties).not.toHaveProperty('artifactToolsCompactPrompts');
   expect(held.schema.properties).not.toHaveProperty('deferredTitleGeneration');
   expect(held.schema.properties).not.toHaveProperty('activeAgentTitleGeneration');
-
-  // Pushed alone, each is a refusal that names the key.
-  for (const key of ['deferredTitleGeneration', 'activeAgentTitleGeneration']) {
-    await admin.client.handle({
-      method: 'dispatchAction',
-      params: { channel: ROOT, action: { type: 'root/configChanged', config: { [key]: true } } },
-    });
-    await settle();
-    expect(heardOnRoot(admin.heard).at(-1)).toEqual(
-      expect.objectContaining({ rejectionReason: `root config does not declare ${key}` }),
-    );
-  }
 });
 
-it('keeps only declared keys when a push replaces the lot', async () => {
+it('keeps every key a push that replaces the lot carries', async () => {
   // No daemon port, so `values` is this host's half alone and the whole of it
   // is what these two pushes left.
   const { signedIn, rootOf } = served(false);
@@ -906,10 +872,77 @@ it('keeps only declared keys when a push replaces the lot', async () => {
     params: { channel: ROOT, action: { type: 'root/configChanged', replace: true, config: { telemetryLevel: 'off', nonsense: 1 } } },
   });
   await settle();
-  // The connection's own shell is cleared by the replace, and `nonsense` never
-  // reaches the map they are read from.
+  // The connection's own shell is cleared by the replace, and `nonsense` is
+  // kept beside what it set.
   const held = (await rootOf(admin.client)).config as { values: Record<string, unknown> };
-  expect(held.values).toEqual({ telemetryLevel: 'off' });
+  expect(held.values).toEqual({ telemetryLevel: 'off', nonsense: 1 });
+});
+
+/** A store over one bag, as the daemon's file is one, which every host built over it reads. */
+const kept = (values: Record<string, unknown> = {}): RootConfigStore & { values: Record<string, unknown> } => {
+  const store = {
+    values,
+    read: () => store.values,
+    write: (next: Record<string, unknown>) => { store.values = next; },
+  };
+  return store;
+};
+
+/** The root config values a host built over `store` opens with, as a client subscribing first reads them. */
+const startedWith = async (store: RootConfigStore): Promise<Record<string, unknown>> => {
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], rootConfigStore: store });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'later', protocolVersions: ['0.9.0'] } });
+  const { snapshot } = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as { snapshot: { state: { config: { values: Record<string, unknown> } } } };
+  await host.close();
+  return snapshot.state.config.values;
+};
+
+/*
+ * A start brings back the root config a client pushed, the declared keys
+ * alone, each with a value its property accepts, as VS Code's host writes
+ * every key after a push and restores its persisted values schema by schema.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1284-L1313
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1399
+ */
+it('keeps every key a push carries for the next start, which brings back the declared ones its schema accepts', async () => {
+  const store = kept();
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], rootConfigStore: store });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'one', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
+  const pushed = { defaultShell: '/bin/zsh', telemetryLevel: 'off', nonsense: 1, clientQueueBytes: 'lots' };
+  await client.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config: pushed } } });
+  await settle();
+  expect(store.values).toEqual(pushed);
+  await host.close();
+
+  // `nonsense` has no property, and `clientQueueBytes` is a number.
+  expect(await startedWith(store)).toEqual({ defaultShell: '/bin/zsh', telemetryLevel: 'off' });
+});
+
+/*
+ * Of the declared keys, a start leaves out the six a window pushes at every
+ * connect and that gate a question or a policy, VS Code's
+ * `clientOwnedApprovalRootConfigKeys`: restored, a value kept from one window
+ * could grant again what was tightened while the host was stopped. The terminal
+ * rules and the host's own permissions come back with the rest.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1401-L1416
+ */
+it('leaves the client-owned approval and policy keys a store kept to the next push, as VS Code\'s host restores none of them', async () => {
+  const store = kept({
+    globalAutoApproveEnabled: true,
+    autoApprovePolicyRestricted: false,
+    terminalAutoApproveEnabled: true,
+    editAutoApprovePatterns: { '**/*': true },
+    autoReplyEnabled: true,
+    workspaceTrust: { enabled: true, trustedUris: ['file:///work'] },
+    terminalAutoApproveRules: { npm: true },
+    permissions: { allow: ['WebFetch(example.com)'], deny: [] },
+  });
+  expect(await startedWith(store)).toEqual({
+    terminalAutoApproveRules: { npm: true },
+    permissions: { allow: ['WebFetch(example.com)'], deny: [] },
+  });
 });
 
 it('asks the daemon for its key alone when an undeclared key is beside it', async () => {
@@ -920,12 +953,11 @@ it('asks the daemon for its key alone when an undeclared key is beside it', asyn
     params: { channel: ROOT, action: { type: 'root/configChanged', config: { daemonPort: 9000, nonsense: 1 } } },
   });
   await settle();
-  // The port declares `daemonPort`, so it is the one asked; `nonsense` is not
-  // a key this host could write into `config.json` even if the port would take
-  // it.
+  // The port declares `daemonPort`, so it is the one asked; `nonsense` is the
+  // host's to keep, and no key the daemon writes into `config.json`.
   expect(writes).toEqual([{ daemonPort: 9000 }]);
   expect(heardOnRoot(admin.heard)).toEqual([
-    expect.objectContaining({ action: { type: 'root/configChanged', config: { daemonPort: 9000 } } }),
+    expect.objectContaining({ action: { type: 'root/configChanged', config: { daemonPort: 9000, nonsense: 1 } } }),
   ]);
 });
 

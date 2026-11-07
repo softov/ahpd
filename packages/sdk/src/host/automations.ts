@@ -9,7 +9,7 @@ import { localPath } from '../resources/fileuri.js';
 import { createRuleEngine } from '../automations/triggers.js';
 import { wakeMessage } from '../automations/wakemessage.js';
 import { bag } from '../utils/values.js';
-import { AUTOMATIONS, chatUriFor } from './channels.js';
+import { AUTOMATIONS, chatUriFor, isAutomationResource } from './channels.js';
 import { CLOSING, need, noProvider } from './common.js';
 import { refusalReason } from './gate.js';
 import type { Bag } from '../types/common.js';
@@ -87,9 +87,9 @@ const eventTitle = (type: string, id: string): string =>
 const eventName = (type: TriggerTypeDefinition, id: string): string =>
   type.events.find((one) => one.id === id)?.title ?? id;
 
-/** The resource an automation id names, or the URI it already is. */
+/** The resource an automation id names, or the URI it already is: any URI in the `ahp-automation` scheme. */
 const automationResource = (id: string): string =>
-  (id.startsWith('ahp-automation:/') ? id : `ahp-automation:/${id}`);
+  (isAutomationResource(id) ? id : `ahp-automation:/${id}`);
 
 /**
  * Whose an automation is, as the entry a client reads carries it.
@@ -235,7 +235,7 @@ export function createAutomations(ctx: HostContext): Automations {
     options, sessions, byChat, senders, charged, origins, kept,
     dispatch, log, fire, statusOf, principalFor, admitted, placedIn,
     resolveCreatedSessionConfig, createProviderSession, backendsOwn, modelIn, unheld, forWhom, leadOf,
-    turnInstructions,
+    scratchFolder, turnInstructions,
   } = ctx;
 
   /**
@@ -758,11 +758,12 @@ export function createAutomations(ctx: HostContext): Automations {
       }
     }
     const config = wanted.config ?? {};
-    // The same steps a client's `createSession` takes: the host's own keys
-    // are not the backend's to read, and a worktree is made at the first send,
+    // The same steps a client's `createSession` takes: the folder the daemon's
+    // `workspacelessFolder` says where none is named, the host's own keys are
+    // not the backend's to read, and a worktree is made at the first send,
     // which a run makes at once.
-    const where = wanted.workingDirectory;
-    await resolveCreatedSessionConfig(uri, wanted.workingDirectory, config);
+    const where = wanted.workingDirectory ?? await scratchFolder(uri);
+    await resolveCreatedSessionConfig(uri, where, config);
     /*
      * The two checks a client's `createSession` makes, asked here too and before
      * anything runs in the machine - an automation is nobody at the keyboard to

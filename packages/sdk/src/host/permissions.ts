@@ -51,22 +51,15 @@ export const MANAGED_CONFIRMATION_OPTIONS: readonly Bag[] = [ALLOW_ONCE_OPTION, 
 /**
  * Whether the operator's rule makes a tool ask every time.
  *
- * `eligibleForAutoApproval` is VS Code's map of tool name to boolean, kept in
- * root config, and `false` is the one value that asks. An exact name is read
- * first and answers on its own: a `true` there keeps the tool eligible even
- * when its server is named with `false`. A name that is not there falls back
- * to `<server>/*`, one key for every tool of that server - the part of the
- * name before its first slash.
- *
- * A value that is not a boolean is not the `false` that asks, and a rule that
- * is not an object names nothing: both leave the call as it was. The rule is
- * read where it is kept, on each call, so a push reaches a session already
- * running.
+ * `rules` is the daemon's `eligibleForAutoApproval`, VS Code's map of tool
+ * name to boolean, and `false` is the one value that asks. An exact name is
+ * read first and answers on its own: a `true` there keeps the tool eligible
+ * even when its server is named with `false`. A name that is not there falls
+ * back to `<server>/*`, one key for every tool of that server - the part of
+ * the name before its first slash. No rules name no tool.
  */
-export const asksForTool = (rootConfig: Record<string, unknown>, tool: string): boolean => {
-  const held = rootConfig.eligibleForAutoApproval;
-  if (held === null || typeof held !== 'object' || Array.isArray(held)) return false;
-  const rules = held as Record<string, unknown>;
+export const asksForTool = (rules: Readonly<Record<string, boolean>> | undefined, tool: string): boolean => {
+  if (rules === undefined) return false;
   if (Object.hasOwn(rules, tool)) return rules[tool] === false;
   const slash = tool.indexOf('/');
   if (slash <= 0) return false;
@@ -103,16 +96,15 @@ export const mcpServerOf = (contributor: unknown, customizations: unknown): stri
  * `asksForTool` reads an exact name before the server's `<server>/*`. A call
  * no server contributes is named by its full tool name alone.
  */
-export const alwaysAsks = (rootConfig: Record<string, unknown>, toolName: string, offered: readonly string[], server?: string): boolean => {
-  if (asksForTool(rootConfig, toolName)) return true;
-  if (offered.includes(toolName) && asksForTool(rootConfig, `ahp/${toolName}`)) return true;
-  const held = rootConfig.eligibleForAutoApproval;
-  if (held === null || typeof held !== 'object' || Array.isArray(held) || server === undefined) return false;
-  const rules = Object.entries(held as Record<string, unknown>).flatMap(([key, value]) =>
+export const alwaysAsks = (rules: Readonly<Record<string, boolean>> | undefined, toolName: string, offered: readonly string[], server?: string): boolean => {
+  if (asksForTool(rules, toolName)) return true;
+  if (offered.includes(toolName) && asksForTool(rules, `ahp/${toolName}`)) return true;
+  if (rules === undefined || server === undefined) return false;
+  const named = Object.entries(rules).flatMap(([key, value]) =>
     (key.startsWith(`${server}/`) ? [{ tool: key.slice(server.length + 1), value }] : []));
-  const exact = rules.filter((one) => one.tool !== '*' && (one.tool === toolName || toolName.endsWith(`__${one.tool}`)));
+  const exact = named.filter((one) => one.tool !== '*' && (one.tool === toolName || toolName.endsWith(`__${one.tool}`)));
   if (exact.length > 0) return exact.some((one) => one.value === false);
-  return rules.some((one) => one.tool === '*' && one.value === false);
+  return named.some((one) => one.tool === '*' && one.value === false);
 };
 
 /**

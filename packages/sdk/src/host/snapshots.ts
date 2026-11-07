@@ -3,7 +3,7 @@ import { Status, idOf } from '../sessions/catalog.js';
 import { windowOf } from '../sessions/paging.js';
 import { RpcError } from '../rpc.js';
 import { runState } from './automations.js';
-import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, MARKS, chatUriFor, servedIn, schemeOf, spaceOf, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
+import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, ANNOTATIONS_PATH_SEGMENT, chatUriFor, servedIn, schemeOf, spaceOf, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { ownerFilter } from '../utils/values.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
@@ -48,7 +48,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
     mergedConfig, sessionSchema, storedConfig, contributedDefaults,
-    unavailableProvider, startedBy, chatCatalogOf, movable, restoredSubagentSummary, activityOf,
+    unavailableProvider, getChatOrigin, chatCatalogOf, movable, restoredSubagentSummary, activityOf,
     restoreSession, restoredSubagents, restoredParentChat, linkedTurns, titles,
     recordedChats, recordedChat, homeId,
   } = ctx;
@@ -194,7 +194,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const canvases = talking.chat.channel === undefined ? ctx.canvases.listOf(chatUri) : undefined;
     const state: Bag = {
       ...talking.chat.chatState(),
-      ...startedBy(chatUri),
+      origin: getChatOrigin(chatUri),
       /*
        * The session's default chat holds the title it was given, or none,
        * which reads as its session's: whoever titles the session, a client
@@ -381,8 +381,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * there is a failed open, and a client that treats the three as one
      * hydration renders nothing at all.
      */
-    if (channel.endsWith(MARKS) && sessionChannel(channel)) {
-      const owning = channel.slice(0, -MARKS.length);
+    if (channel.endsWith(ANNOTATIONS_PATH_SEGMENT) && sessionChannel(channel)) {
+      const owning = channel.slice(0, -ANNOTATIONS_PATH_SEGMENT.length);
       const id = idOf(owning);
       /*
        * Asked of `restoreSession`, which consults the catalogue itself, rather than of
@@ -703,7 +703,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           title: channel === leadUri ? leadTitle(besides || workers.length > 0) : title,
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
-          ...startedBy(),
+          origin: getChatOrigin(),
           turns: ctx.withSender(owning, ctx.stampedCalls(owning, channel, linkedTurns(owning, turns, workers))),
           // Kept in the session's record. A client that typed into this row
           // and came back finds what it typed, which is what a draft is for.
@@ -743,7 +743,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
             title: leadTitle(besides || workers.length > 0),
             status: Status.Idle | kept.chatFlags(id, leadUri),
             modifiedAt: listedAt,
-            ...startedBy(lead?.uri),
+            origin: getChatOrigin(lead?.uri),
           },
           /*
            * And every other chat the store recorded for it.
@@ -761,7 +761,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
               title: one.title ?? title,
               status: Status.Idle | kept.chatFlags(id, one.uri),
               modifiedAt: listedAt,
-              ...startedBy(one.uri),
+              origin: getChatOrigin(one.uri),
             })),
           // And the workers this session ran, each read-only and linked from
           // the call that spawned it - which is what makes a restored

@@ -40,7 +40,7 @@ The session was the cofold build, `claude-deepseek-build:/2c79b19f-3ef4-4a95-ad5
 ## What others do
 
 VS Code counts a row by its branch when the session has a worktree, and by its session otherwise, as [`getSummaryChangesetKind`](https://github.com/microsoft/vscode/blob/171e90619c7/src/vs/platform/agentHost/node/agentHostChangesetSummary.ts#L11-L15) says.
-ahpd follows this in `summaryKindOf`.
+ahpd follows this in its own `getSummaryChangesetKind`.
 While a client subscribes, VS Code watches the repository roots of the session for edits made outside the host ([`ChangesetFileMonitorCoordinator`](https://github.com/microsoft/vscode/blob/171e90619c7/src/vs/platform/agentHost/node/agentHostChangesetFileMonitorCoordinator.ts#L43-L55)).
 A refresh then recomputes the subscribed changesets and the branch summary together.
 

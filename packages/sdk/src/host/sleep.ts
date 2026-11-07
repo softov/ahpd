@@ -2,7 +2,7 @@ import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { RpcError } from '../rpc.js';
-import { baseOf, chatIdFor, chatOfCanvas, chatUriFor, MARKS, spaceOf } from './channels.js';
+import { ANNOTATIONS_PATH_SEGMENT, chatIdFor, chatOfCanvas, chatUriFor, ownerUriOf, spaceOf } from './channels.js';
 import { CLOSING, ENDINGS } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
@@ -86,7 +86,7 @@ const WAITING_CALL = new Set(['pending-confirmation', 'pending-result-confirmati
 export function createSleep(ctx: HostContext): Sleep {
   const {
     options, sessions, byChat, connections, restarting, kept, owners, wheres, moves,
-    running, log, activeSessionsChanged, markSummaryDirty, liveRows, dirOf, stopUnwatched, sessionFor, sessionHolding,
+    hasActiveTurn, log, activeSessionsChanged, markSummaryDirty, getOverlaySessionSummaries, dirOf, stopUnwatched, sessionFor, sessionHolding,
     unavailableProvider, restoreSession, nameOf, storedConfig, charged, charge, recordedChats, spawn, recordSessionProvider, dispatch, leadOf,
     heldStates,
   } = ctx;
@@ -123,9 +123,9 @@ export function createSleep(ctx: HostContext): Sleep {
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentHostSubscriptionService.ts#L42-L62
    */
   const residentOf = (channel: string): string | undefined => {
-    if (channel.endsWith(MARKS)) return undefined;
-    const base = chatOfCanvas(channel) ?? baseOf(channel);
-    return sessionHolding(base) ?? (spaceOf(base) === 'chat' ? sessionFor(base) : base);
+    if (channel.endsWith(ANNOTATIONS_PATH_SEGMENT)) return undefined;
+    const owner = chatOfCanvas(channel) ?? ownerUriOf(channel);
+    return sessionHolding(owner) ?? (spaceOf(owner) === 'chat' ? sessionFor(owner) : owner);
   };
 
   /**
@@ -143,7 +143,7 @@ export function createSleep(ctx: HostContext): Sleep {
       if (session !== channel) found.add(session);
     }
     for (const [uri, held] of sessions) {
-      if ([...held.chats].every(([chat, one]) => one.allTurns().length === 0 && !running(chat))) found.delete(uri);
+      if ([...held.chats].every(([chat, one]) => one.allTurns().length === 0 && !hasActiveTurn(chat))) found.delete(uri);
     }
     return found;
   };
@@ -183,7 +183,7 @@ export function createSleep(ctx: HostContext): Sleep {
     const id = idOf(uri);
     if (held === undefined || restarting.has(uri) || closing.has(id) || waking.has(id) || holds.has(id)) return false;
     for (const [chatUri, chat] of held.chats) {
-      if (running(chatUri) || pending(chatUri) || waitingOnPerson(chat)) return false;
+      if (hasActiveTurn(chatUri) || pending(chatUri) || waitingOnPerson(chat)) return false;
       if (chat.resumable?.() === false || chat.busy?.() === true) return false;
       // A chat with no conversation yet has nothing to resume by.
       if (chat.agentId() === undefined || chat.allTurns().length === 0) return false;
@@ -218,7 +218,7 @@ export function createSleep(ctx: HostContext): Sleep {
      * and the wake resumes what the backend was holding rather than making a
      * new one. Disposing here would put the transcript out of its reach.
      */
-    const row = liveRows().find((one) => one.resource === uri);
+    const row = getOverlaySessionSummaries().find((one) => one.resource === uri);
     const stopping: Promise<void>[] = [];
     for (const [chatUri, chat] of held.chats) {
       stopping.push(Promise.resolve(chat.close('stopping')).catch(() => {}));
@@ -433,6 +433,14 @@ export function createSleep(ctx: HostContext): Sleep {
     if (owner.subagents !== undefined) await ctx.restoredSubagents(id, owner, seed as unknown as WireTurn<Turn>[]);
     // A host that closed while this resume read its record starts no agent.
     if (ctx.closed) throw new Error(CLOSING);
+    /*
+     * A backend's session this host never ran stays external once opened, until
+     * a person's turn adopts it: written down before its provider is, since a
+     * provider recorded is what says this host ran a session, as VS Code's
+     * registry keeps a restored session's external flag.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14724
+     */
+    if (ctx.isExternal(named)) kept.setExternal?.(id, true);
     /*
      * The session is the owner's, whatever chat it comes back as.
      *

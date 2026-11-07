@@ -3,7 +3,11 @@
     "isolation": {
       "title": "Aislamiento",
       "description": "Dónde debe hacer los cambios el agente",
-      "enum": { "folder": "Carpeta", "worktree": "Worktree" }
+      "enum": { "folder": "Carpeta", "worktree": "Worktree" },
+      "enumDescriptions": {
+        "folder": "Trabajar directamente en la carpeta",
+        "worktree": "Trabajar en un worktree de git propio, para que dos sesiones de un mismo repositorio no editen una encima de la otra"
+      }
     },
     "branch": {
       "title": "Rama",

@@ -165,14 +165,19 @@ it('deletes a running session\'s copy once its agent has stopped, so what the ag
 it('deletes a row it only listed, through the agent that owns it, and tells every client', async () => {
   const order: string[] = [];
   const deleted: Deleted[] = [];
+  // Written an hour ago, by a session this host never ran.
+  const stamp = new Date(Date.now() - 60 * 60 * 1000).toISOString();
   const row: Listed = {
     id: 'listed',
     title: 'Listed',
-    createdAt: '2026-01-01T00:00:00.000Z',
-    modifiedAt: '2026-01-01T00:00:00.000Z',
+    createdAt: stamp,
+    modifiedAt: stamp,
     workingDirectories: [`file://${dir}`],
   };
   const { client, peer: p } = await serving(recording(order, deleted, [row]));
+  // Shown by the root's `showExternalSessions`, as a client that lists the
+  // sessions a backend keeps of its own pushes it.
+  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { showExternalSessions: 'last30Days' } } } });
   // Listed first, which is the only thing that gives the host an owner for it.
   const listed = await listing(client);
   expect(listed).toContain('ahp-session:/listed');

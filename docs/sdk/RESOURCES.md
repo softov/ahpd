@@ -17,7 +17,7 @@ Terms, one line each:
 
 ## What `file:` serves
 
-The whole filesystem this process can see, as the reference host serves it: any directory may be listed and any file read, and the connection token is the boundary rather than the directories the daemon was started with. A window's folder dialog walks the disk through `resourceList` and checks the pick with `resourceResolve`, which a host that refused everything outside its own paths could not answer - `paths` says where the catalogue looks and where a session goes when a client names none, and it never said who may read what.
+The whole filesystem this process can see, as the reference host serves it: any directory may be listed and any file read by a connection the token admits. A window's folder dialog walks the disk through `resourceList` and checks the pick with `resourceResolve`. `paths` says where the catalogue looks and, under the default `workspacelessFolder`, where a session goes when a client names none.
 
 Reading resolves the path through symlinks where it exists, so what is opened is what a listing showed rather than the text that was sent. Writing resolves the *parent* instead, because the thing being written may not be there yet, and the final open carries `O_NOFOLLOW` and refuses a symbolic link rather than following it out of where the write was aimed. A read reports its own encoding: bytes that are valid UTF-8 with no zero byte come back `utf-8`, and anything else comes back `base64` whatever the client asked for, so a client that asked for text and got a PNG is not handed four hundred thousand replacement characters.
 
@@ -75,7 +75,7 @@ Resources have no key of their own. What changes what a client can reach is whic
 
 | Key | Values | Default | What changes |
 | --- | --- | --- | --- |
-| `paths` | list of directories | the directory the daemon was started in | The directories this host serves, the first of them where a session goes when a client names none. It does not restrict what a client may read - the first directory is the session default, not a boundary |
+| `paths` | list of directories | the directory the daemon was started in | The directories this host serves. The first is the session default, where a session goes when a client names none under the default `workspacelessFolder`; a client reads anywhere this process can, as [What `file:` serves](#what-file-serves) says |
 | `plugins` | a list of specs | none | Which plugins are loaded, and so which schemes this host serves |
 
 Everything else about the daemon's keys is [HOST.md](HOST.md#configuration-keys), and a host built from the SDK is given its file store and its schemes directly - [BUILD-A-HOST.md](BUILD-A-HOST.md).

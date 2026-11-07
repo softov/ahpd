@@ -13,6 +13,7 @@ import { CREATED_BY_META, SEND_REMOTE_MESSAGE } from '../sessions/remotesession.
 import { SESSION_TOOL_NAMES } from '../tools/session.js';
 import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
 import { groupOf } from '../access/users.js';
+import { teamsOf } from '../usage/scopes.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
 import { chatIdFor, chatUriFor, schemeOf } from './channels.js';
 import { AGENT_CLIENT_SCHEME } from './clienturi.js';
@@ -418,10 +419,10 @@ interface ChatStart {
 export function createTooling(ctx: HostContext): Tooling {
   const {
     options, sessions, byChat, kept, terminals, learned, rootConfig, sentBy, about,
-    activeClientsOf, leadOf, clientResources, allRows, setArtifacts, forWhom,
+    activeClientsOf, leadOf, clientResources, listSessions, setArtifacts, forWhom,
     principalFor, senderOf, senders,
     chatSummary, persistChatTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
-    resolveCreatedSessionConfig, createProviderSession, backendsOwn, removeSession, spawn,
+    resolveCreatedSessionConfig, createProviderSession, backendsOwn, removeSession, scratchFolder, spawn,
   } = ctx;
   ctx.agentOrchestrationLimitsScope = options.agentOrchestrationLimitsScope ?? 'sessionTree';
   /**
@@ -593,6 +594,7 @@ export function createTooling(ctx: HostContext): Tooling {
     titleStrategy: strategyOf(uri),
     config: kept.config(idOf(uri)),
     bindings: sessionBindings(uri),
+    startedWorkspaceless: ctx.startedWorkspaceless.has(uri),
   });
   /**
    * One tool's definition for a session, shaped for it, or nothing where the
@@ -1514,11 +1516,12 @@ export function createTooling(ctx: HostContext): Tooling {
    *
    * Every operation here is one a client already has - a command, or an
    * action a client may dispatch - reached from a turn rather than a socket.
-   * The catalogue is `allRows()`, which is what `listSessions` answers; a
-   * message is a turn this host starts, or a message it queues on the chat,
-   * which is what `chat/turnStarted` and `chat/pendingMessageSet` come to; a
-   * session is `createProviderSession`, which is what `createSession` comes to. Nothing is reachable from here that is not
-   * reachable from a client, and the reverse is nearly true.
+   * The catalogue is `listSessions()`, which is what the `listSessions`
+   * command answers; a message is a turn this host starts, or a message it
+   * queues on the chat, which is what `chat/turnStarted` and
+   * `chat/pendingMessageSet` come to; a session is `createProviderSession`,
+   * which is what `createSession` comes to. Nothing is reachable from here
+   * that is not reachable from a client, and the reverse is nearly true.
    */
   /**
    * The agent a session runs, as `ToolCall.provider`: the one its tools were
@@ -1861,6 +1864,10 @@ export function createTooling(ctx: HostContext): Tooling {
     person: () => personOfCall(uri, chatUri),
     may: (grant) => mayDo(chatUri, grant),
     refusal: (grant) => refusalOf(chatUri, grant),
+    teams: () => {
+      const person = personOf(chatUri);
+      return person === undefined || person === 'nobody' ? [] : teamsOf(person);
+    },
     /*
      * The catalogue, cut down to what this call's person may read.
      *
@@ -1872,8 +1879,8 @@ export function createTooling(ctx: HostContext): Tooling {
      * a call nobody is behind, which reads as it did.
      */
     sessions: async () => {
-      const rows = await allRows();
-      return mayDo(chatUri, 'session:read') ? rows : [];
+      const summaries = await listSessions();
+      return mayDo(chatUri, 'session:read') ? summaries : [];
     },
     chats: chatsOf,
     models: modelsKnown,
@@ -1975,9 +1982,10 @@ export function createTooling(ctx: HostContext): Tooling {
       };
       // The same steps `createSession` takes for a client, in the same order:
       // the host's keys kept apart from the backend's, and a worktree made at
-      // the first send.
-      const where = asked.workingDirectory;
-      await resolveCreatedSessionConfig(made, asked.workingDirectory, config);
+      // the first send. None named, the daemon's `workspacelessFolder` says
+      // where it works.
+      const where = asked.workingDirectory ?? await scratchFolder(made);
+      await resolveCreatedSessionConfig(made, where, config);
       // The owner of the session this one was made inside, which is what a
       // tool acting for somebody means: the work is theirs whichever session
       // it ends up running in. And the session, chat and turn it was made
@@ -2053,6 +2061,8 @@ export function createTooling(ctx: HostContext): Tooling {
         isolation,
         ...(sender === undefined ? {} : { sender }),
       });
+      // Whether its chats may move, which a session changing its workspace's may not.
+      for (const one of sessions.get(uri)?.chats.keys() ?? []) ctx.updateChatMovability(one);
     },
     scheduleWake: (delaySeconds, prompt) => {
       const at = (options.now?.() ?? new Date()).getTime() + delaySeconds * 1000;
@@ -2155,7 +2165,8 @@ export function createTooling(ctx: HostContext): Tooling {
       person: () => person,
       may: (grant) => callerMay(caller, grant),
       refusal: (grant) => refusalReason(person ?? 'host', grant),
-      sessions: async () => (callerMay(caller, 'session:read') ? await allRows() : []),
+      teams: () => (caller.root === true || caller.principal === undefined ? [] : teamsOf(caller.principal)),
+      sessions: async () => (callerMay(caller, 'session:read') ? await listSessions() : []),
       chats: chatsOf,
       models: modelsKnown,
       providers: providersKnown,
@@ -2199,8 +2210,9 @@ export function createTooling(ctx: HostContext): Tooling {
           ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
           ...(asked.model !== undefined ? { model: asked.model } : {}),
         };
-        const where = asked.workingDirectory;
-        await resolveCreatedSessionConfig(made, asked.workingDirectory, config);
+        // None named, the daemon's `workspacelessFolder` says where it works.
+        const where = asked.workingDirectory ?? await scratchFolder(made);
+        await resolveCreatedSessionConfig(made, where, config);
         await createProviderSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
           sender === undefined ? undefined : forWhom(sender, caller.principal));
         ctx.oweTree(made, {}, undefined, () => ({}));
@@ -2267,14 +2279,19 @@ export function createTooling(ctx: HostContext): Tooling {
         run: async (input: Record<string, unknown>): Promise<string> => {
           try {
             /*
-             * A tool the operator's rule names is refused here.
+             * A tool the operator's rule names is refused here where the
+             * daemon's `managedRules` is `checked`.
              *
              * The rule is the operator saying the call asks every time, and
              * this door has no session to ask in: a refusal is the one answer
              * that keeps the rule. The message names the key so a person can
-             * find what refused them.
+             * find what refused them. Under `handed` the host checks no
+             * managed rule, VS Code's host, and this door has no runtime to
+             * hand the rule to, as VS Code's agents that take no managed
+             * settings get none, so the call runs.
+             * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
              */
-            if (asksForTool(rootConfig, `ahp/${definition.name}`)) {
+            if (options.managedRules !== 'handed' && asksForTool(options.eligibleForAutoApproval, `ahp/${definition.name}`)) {
               throw new Error(`${definition.name} asks every time: eligibleForAutoApproval names ahp/${definition.name}, and /mcp has no session to ask in`);
             }
             const answer = await one.run(input, sessionlessContext(caller));
@@ -2389,6 +2406,7 @@ export function createTooling(ctx: HostContext): Tooling {
     for (const opened of served.get(uri) ?? []) opened.close();
     served.delete(uri);
     decided.delete(uri);
+    ctx.startedWorkspaceless.delete(uri);
   };
 
   /**
@@ -2417,6 +2435,9 @@ export function createTooling(ctx: HostContext): Tooling {
     ...clientTools(uri),
     ...contributingTo(uri, provider).flatMap((one): BoundTool[] => {
       const definition = shapedDefinition(one, uri);
+      // Deferred as the session asks, where it asks, as VS Code's
+      // `getDefinitionForSession` answers a definition's `deferLoading`.
+      const deferLoading = one.forSession?.(toolSession(uri))?.deferLoading ?? one.deferLoading;
       return definition === undefined ? [] : [{
         /*
          * A frozen copy: this one leaves the host with the backend, and a
@@ -2447,7 +2468,7 @@ export function createTooling(ctx: HostContext): Tooling {
         },
         ...(one.effects !== undefined ? { effects: frozenCopy(one.effects) } : {}),
         ...(one.confirm !== undefined ? { confirm: one.confirm } : {}),
-        ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
+        ...(deferLoading !== undefined ? { deferLoading } : {}),
       }];
     }),
   ];

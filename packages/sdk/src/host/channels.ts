@@ -1,6 +1,8 @@
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { idOf } from '../sessions/catalog.js';
 import { bag, ownerOf } from '../utils/values.js';
+import { parseNonPtyShellTerminalUri } from '../vscode/nonptyshellterminaluri.js';
+import { URI } from '../vscode/uri.js';
 import type { ServedChannel, ServedMethod } from '../types/plugin.js';
 import type { Owner } from '../types/usage.js';
 
@@ -24,11 +26,20 @@ export const RESTART_NEEDED = 'x-ahpd/restartNeeded';
 export const isRootChannel = (channel: string): boolean => channel === ROOT || channel.startsWith('ahp-root:');
 /** The automation catalogue, which belongs to the host rather than to a session. */
 export const AUTOMATIONS = 'ahp-automations://';
-/** The catalogue narrowed to the caller's own automations, which is the one filter there is. */
+/**
+ * The catalogue narrowed to one owner, an RFC 6570 template the handshake
+ * advertises and a client expands; `me` is the one owner it takes.
+ */
+export const AUTOMATIONS_TEMPLATE = `${AUTOMATIONS}{?owner}`;
+/** The catalogue narrowed to the caller's own automations: the template with `owner` `me`. */
 export const AUTOMATIONS_ME = `${AUTOMATIONS}?owner=me`;
 
-/** What a session's annotations channel is called, under the session's own URI. */
-export const MARKS = '/annotations';
+/**
+ * The segment a session's annotations channel adds to the session's URI, as
+ * VS Code's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/annotationsUri.ts#L22-L23
+ */
+export const ANNOTATIONS_PATH_SEGMENT = '/annotations';
 
 /** The scheme a URI names, lowercased, or the empty string when it names none. */
 export const schemeOf = (uri: string): string => (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1] ?? '').toLowerCase();
@@ -60,9 +71,16 @@ export const servedIn = (channels: Readonly<Record<string, ServedChannel>> | und
 export const methodIn = (methods: Readonly<Record<string, ServedMethod>> | undefined, name: string): ServedMethod | undefined =>
   (methods !== undefined && name.startsWith('x-') && Object.hasOwn(methods, name) ? methods[name] : undefined);
 
-/** A session's own channel under a name: the name, less `/annotations` or `/changeset/<scope>`. */
-export const baseOf = (uri: string): string => {
-  if (uri.endsWith(MARKS)) return uri.slice(0, -MARKS.length);
+/**
+ * The channel a name is nested under, the name less `/annotations` or
+ * `/changeset/<scope>`: an annotations channel's `sessionUri` and a
+ * changeset's `ownerUri`, as VS Code parses each back. Any other name is its
+ * own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/annotationsUri.ts#L30-L42
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/changesetUri.ts#L314
+ */
+export const ownerUriOf = (uri: string): string => {
+  if (uri.endsWith(ANNOTATIONS_PATH_SEGMENT)) return uri.slice(0, -ANNOTATIONS_PATH_SEGMENT.length);
   const cut = uri.indexOf('/changeset/');
   return cut > 0 ? uri.slice(0, cut) : uri;
 };
@@ -167,10 +185,10 @@ export const subagentChatUri = (session: string, toolCallId: string): string =>
   `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent(toolCallId)}`;
 
 /**
- * The client actions a worker's chat takes: answers to what it asked, drafts
- * of them, a stop, and a client's run of a tool the worker called and the
- * confirmation of its result, as VS Code's host serves a subagent chat's
- * calls.
+ * The client actions on a worker's chat that go to the backend running the
+ * worker: answers to what it asked, drafts of them, a stop, and a client's run
+ * of a tool the worker called and the confirmation of its result, as VS Code's
+ * host serves a subagent chat's calls.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1621-L1645
  */
 export const WORKER_ACTIONS = new Set([
@@ -238,32 +256,17 @@ export const chatOfCanvas = (resource: string): string | undefined => {
   catch { return undefined; }
 };
 
-/** The authority a terminal this host keeps after its process is gone is named under. */
-const RETAINED = 'ahp-terminal://shell/';
-
 /**
- * How this host names a terminal a tool result may name.
- *
- * The reference's shape, a `shell` authority with the chat and a key the
- * terminal is kept under, so the name says where its output is once nothing is
- * running: the chat finds the session that holds it now, and the key the file.
- * The chat is base64url and the key escaped, as `subagentChatUri` writes a
- * session and a call. A `!` command's key is its tool call; a backend's
- * terminal has a key of its own.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/common/nonPtyShellTerminalUri.ts#L17-L29
+ * The chat and the tool call a retained terminal link names, read from the
+ * text a client sent as VS Code's `resourceChat` reads a link's chat, or
+ * nothing when the text is no such link. A `!` command's tool call is the
+ * call it answers; a backend's terminal carries a key of its own there.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSubscriptionService.ts#L64-L72
  */
-export const retainedTerminalUri = (chat: string, key: string): string =>
-  `${RETAINED}${Buffer.from(chat, 'utf8').toString('base64url')}/${encodeURIComponent(key)}`;
-
-/** The chat and the key a retained terminal's name carries, or nothing when it is not one. */
-export const retainedTerminalOf = (uri: string): { chat: string; key: string } | undefined => {
-  if (!uri.startsWith(RETAINED)) return undefined;
-  const [encoded = '', ...rest] = uri.slice(RETAINED.length).split('/');
-  if (encoded === '' || rest.length === 0) return undefined;
+export const nonPtyShellTerminalOf = (uri: string): { chat: string; toolCallId: string } | undefined => {
   try {
-    const chat = Buffer.from(encoded, 'base64url').toString('utf8');
-    const key = decodeURIComponent(rest.join('/'));
-    return chat.startsWith('ahp-chat:') && key !== '' ? { chat, key } : undefined;
+    const link = parseNonPtyShellTerminalUri(URI.parse(uri));
+    return link === undefined ? undefined : { chat: link.chat.toString(), toolCallId: link.toolCallId };
   }
   catch { return undefined; }
 };
@@ -330,6 +333,16 @@ export const parseResourceWatchChannelUri = (uri: string): WatchDescriptor | und
  * under the host's own channel, which VS Code's client matches by scheme.
  */
 export const isAutomations = (channel: string): boolean => channel.startsWith('ahp-automations:');
+
+/**
+ * Whether a URI names one automation: any URI in the `ahp-automation` scheme,
+ * as VS Code's automation service takes an automation's resource. A text that
+ * reads as no URI names none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1513-L1517
+ */
+export const isAutomationResource = (resource: string): boolean => {
+  try { return URI.parse(resource).scheme === 'ahp-automation'; } catch { return false; }
+};
 
 /** The text after a channel URI's `?`, or the empty string when it carries none. */
 export const queryOf = (channel: string): string => {

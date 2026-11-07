@@ -1,8 +1,9 @@
 import { ROOT, chatUriFor, subagentChatUri } from './channels.js';
 import { accountKey } from './root.js';
-import { Status, idFor, idOf, titleFrom, uriFor } from '../sessions/catalog.js';
+import { SESSION_META_EXTERNAL_KEY, Status, idFor, idOf, normalizeTitle, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { isDeepStrictEqual } from 'node:util';
+import { isWorkspaceless } from './lifecycle.js';
 import type { Summary, SummaryChat } from '../types/catalog.js';
 import type { ChangesSummary } from '../types/changes.js';
 import type { Agent, Listed } from '../types/agent.js';
@@ -27,14 +28,40 @@ export interface RestoredWorker {
   one: Bag;
 }
 
+/** Why a move is refused: VS Code's reason, from its fixed set, and its words. */
+export interface MoveRefusal {
+  reason: string;
+  message: string;
+}
+
+/**
+ * The root's `showExternalSessions` values, `ChatExternalSessionsMode`'s five,
+ * and the bounds each reads, VS Code's agent service's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L204-L206
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L241
+ */
+const EXTERNAL_SESSIONS_MODES = ['none', 'recent', 'last24Hours', 'last7Days', 'last30Days'] as const;
+type ExternalSessionsMode = typeof EXTERNAL_SESSIONS_MODES[number];
+const DAY_MS = 24 * 60 * 60 * 1000;
+const EXTERNAL_SESSION_MAX_AGE_MS = 30 * DAY_MS;
+const RECENT_EXTERNAL_SESSION_LIMIT = 2;
+const RECENT_LOCAL_SESSION_UPDATE_LIMIT = 2;
+
 /** The session list and each row of it. */
 export interface Catalogue {
   statusOf(uri: string): number;
-  startedBy(chat?: string): Bag;
+  /** A chat's `ChatOrigin`: what it was made from, else `user`. */
+  getChatOrigin(chat?: string): Bag;
   chatSummary(session: string, uri: string, chat: Session): Bag;
   /** Whether a chat, or a worker inside one of its calls, has a turn in progress. */
-  running(uri: string): boolean;
-  /** Whether a chat may be moved: not the default, resumable, and running nothing. */
+  hasActiveTurn(uri: string): boolean;
+  /** Whether a chat is one a move is ever made of: moves on, a chat of its session's backend, not its default, resumable. */
+  isStructurallyMovable(uri: string): boolean;
+  /** Why a session refuses a move out of it or into it now: archived, or changing its workspace. */
+  sessionMoveRefusal(session: string): MoveRefusal | undefined;
+  /** Why a chat refuses its move now for its own state: no folder, or no turn yet. */
+  chatMoveRefusal(uri: string, ownSession?: boolean): MoveRefusal | undefined;
+  /** Whether a chat may be moved now: one a move is made of, refused by nothing, and running nothing. */
   movable(uri: string): boolean;
   /** Publish whether a chat may be moved, where that changed, on the chat and on its session. */
   updateChatMovability(uri: string): void;
@@ -111,17 +138,23 @@ export interface Catalogue {
   /** Announce to every client a listed session this host did not have. */
   announceSurfacedSession(summary: Summary): void;
   /**
-   * The rows of the sessions this host is running, built now.
+   * The summaries of the sessions this host is running, built now.
    *
    * The half of the answer that is never held, and rebuilt on every
-   * `listSessions` because a live row moves on its own and holding it would
-   * make it a second behind.
+   * `listSessions` because a live summary moves on its own and holding it
+   * would make it a second behind.
    */
-  liveRows(): Summary[];
-  /** The whole catalogue as a client is handed it: the live rows and the held ones. */
-  allRows(): Promise<Summary[]>;
+  getOverlaySessionSummaries(): Summary[];
+  /** The whole catalogue as a client is handed it: the live summaries and the held ones. */
+  listSessions(): Promise<Summary[]>;
   /** Tell every client what a refresh changed among the listed sessions: announced, updated, or retracted. */
   publishSurfacedSessions(before: Summary[], after: Summary[]): void;
+  /** Whether a session is external: a backend's session made outside this host that no person's turn has adopted. */
+  isExternal(uri: string): boolean;
+  /** An external session made this host's own by a person's turn going out in it. */
+  adoptExternalSession(uri: string): void;
+  /** The external sessions the mode shows announced where no client holds them, and the ones it hides retracted. */
+  reconcileExternalSessions(): Promise<void>;
   /** The provider a stored session recorded, where this host does not serve it. */
   unavailableProvider(id: string): string | undefined;
   readStored(): Promise<void>;
@@ -135,7 +168,40 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   } = ctx;
 
   /**
-   * How a chat came to exist.
+   * The sessions external to this host, by URI: a backend's session made
+   * outside it, listed or opened here, that no person's turn has adopted, as
+   * VS Code's registry keeps a discovered session external.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostCatalogListReader.ts#L148
+   */
+  const externalSessions = new Set<string>();
+  /**
+   * The external sessions a client holds a row of, answered by a listing or
+   * announced and not retracted since, as VS Code keeps the external sessions
+   * it has broadcast: what a change of mode is measured against.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5825
+   */
+  const exposedExternalSessions = new Set<string>();
+  /**
+   * The `modifiedAt` each live external session was last reconciled at, so a
+   * row that moved for anything else reconciles nothing, as VS Code keeps it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1541-L1548
+   */
+  const externalReconciliationModifiedAt = new Map<string, string>();
+  /**
+   * When the two most recently updated sessions of this host's own were
+   * updated, newest first, as the first listing found them: what `recent` hides
+   * an older external session behind, as VS Code reads the local updates it
+   * kept when it starts.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1271-L1272
+   */
+  let recentLocalSessionUpdateSnapshot: number[] | undefined;
+  /** What the last listing that hid a session logged, so a listing that hides the same says nothing again. */
+  let lastHiddenSessionsLog: string | undefined;
+
+  /**
+   * How a chat came to exist: its `ChatOrigin`, as VS Code's host reads a
+   * chat's origin.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L866
    *
    * `ChatOrigin` has four kinds - `user`, `fork`, `sideChat` and `tool`. A
    * chat made out of another says which, from `madeFrom`; every other chat
@@ -144,10 +210,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * `tool` in their own rows.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L678-L692
    */
-  const startedBy = (chat?: string): Bag => {
-    const made = chat === undefined ? undefined : madeFrom.get(chat);
-    return { origin: made ?? { kind: 'user' } };
-  };
+  const getChatOrigin = (chat?: string): Bag => (chat === undefined ? undefined : madeFrom.get(chat)) ?? { kind: 'user' };
   /**
    * One chat, as its session's catalogue lists it: the summary fields of the
    * state the chat holds.
@@ -172,7 +235,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     return {
       ...counted,
       resource: uri,
-      ...startedBy(uri),
+      origin: getChatOrigin(uri),
       // Its agent, where it is not its session's, as its state says it.
       ...(foreign === undefined ? {} : { provider: foreign.agent.provider }),
       // The title its state opens with: a default chat's own, or none.
@@ -208,28 +271,24 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   });
 
   /**
-   * Whether a chat may be moved, which is what a client offers a control for.
+   * Whether a chat is one a move is ever made of, whatever its state.
    *
-   * Four things, and all of them ask one question - would a move work. The chat
-   * must be one this host is running as a chat of a session, so a worker is
-   * never movable on its own and neither is a conversation read back from a
+   * Moving chats has to be on, `chatMoves.enabled` in root config, as VS Code's
+   * host offers a move only while a window has turned it on. The chat must be
+   * one this host is running as a chat of a session, so a worker is never
+   * movable on its own and neither is a conversation read back from a
    * transcript. It must not be the chat its session hands a client that names
    * none: the protocol says that one MUST NOT move, and a session whose default
-   * left would have to answer a client naming no chat with a question. Its
-   * backend must be able to take the conversation back by the id it kept it
-   * under, because a move starts the backend again with `resume` set to that
-   * id. And nothing may be running: a move closes a process and starts another,
-   * and the one moment that costs nothing is between turns.
+   * left would have to answer a client naming no chat with a question.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L58-L67
    *
-   * A chat of another backend than the session's is not movable at all: a move
-   * starts it again on the destination's backend, which is a harness that has
-   * never seen its transcript.
-   *
-   * And moving chats has to be on, `chatMoves.enabled` in root config, as VS
-   * Code's host offers a move only while a window has turned it on.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L62-L67
+   * A move here starts the chat's backend again with `resume` set to the id
+   * the backend kept the conversation under, so that backend must be able to
+   * take it back by that id. A chat of another backend than the session's is
+   * never one: a move starts it again on the destination's backend, which is a
+   * harness that has never seen its transcript.
    */
-  const movable = (uri: string): boolean => {
+  const isStructurallyMovable = (uri: string): boolean => {
     if (ctx.rootConfig['chatMoves.enabled'] !== true) return false;
     const held = sessions.get(sessionHolding(uri) ?? '');
     const chat = held === undefined ? undefined : held.chats.get(uri);
@@ -238,12 +297,78 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     if (held.defaultChat === uri) return false;
     const own = chat.agentId();
     if (own === undefined || own === '') return false;
-    if (chat.resumable?.() === false) return false;
-    return !running(uri);
+    return chat.resumable?.() !== false;
   };
 
   /**
-   * Whether a chat, or any worker chat beneath it, is running a turn.
+   * Why a session refuses a chat's move out of it or into it now, in VS Code's
+   * reason and words, or nothing: it is archived, or its workspace is changing
+   * (a move of its folders, asked for by its agent and made when the turn that
+   * asked ends).
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9505-L9519
+   */
+  const sessionMoveRefusal = (session: string): MoveRefusal | undefined => {
+    if ((kept.flags(idOf(session)) & Status.IsArchived) !== 0) return { reason: 'sessionArchived', message: `Session ${session} is archived.` };
+    if (ctx.moving.has(session)) return { reason: 'sessionQuarantined', message: `Session ${session} is changing its workspace or can't run turns.` };
+    return undefined;
+  };
+
+  /**
+   * Why a chat refuses its move now for its own state, in VS Code's reason and
+   * words, or nothing: it works in no folder or in a scratch folder a staying
+   * chat shares, or it has no turn yet, so nothing of it exists beyond its
+   * composer. Its turns are read off its held state and
+   * off its backend, which holds the turns of a chat read back from its record
+   * whether or not anybody holds the chat's state.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L8150-L8176
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9523-L9525
+   */
+  const chatMoveRefusal = (uri: string, ownSession = false): MoveRefusal | undefined => {
+    const session = sessionHolding(uri);
+    const held = sessions.get(session ?? '');
+    const lead = held && leadOf(held);
+    if ((lead?.workingDirectories() ?? []).length === 0) return { reason: 'workspaceless', message: `Chat ${uri} has no folder.` };
+    /*
+     * A chat of a workspace-less session works in the session's scratch
+     * folder, which the session's default chat, staying where it is, works in
+     * too, as VS Code refuses a chat whose scratch folder a staying chat uses.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9526-L9528
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatMovability.ts#L314
+     */
+    if (session !== undefined && isWorkspaceless(session, ctx.dirOf(session))) {
+      return { reason: 'workspaceless', message: `Chat ${uri} works in a scratch folder that another chat of ${session} also uses.` };
+    }
+    const state = ctx.stateOf(uri);
+    const active = state?.activeTurn;
+    const chat = held?.chats.get(uri);
+    const started = (Array.isArray(state?.turns) && state.turns.length > 0) || (active !== undefined && active !== null)
+      || (chat !== undefined && (chat.allTurns().length > 0 || (chat.status() & Status.InProgress) !== 0));
+    if (!started) {
+      return { reason: 'notStarted', message: `Chat ${uri} has no turns yet; send a message before moving it${ownSession ? ' to its own session' : ''}.` };
+    }
+    return undefined;
+  };
+
+  /**
+   * Whether a chat may be moved now, which is what a client offers a control
+   * for: it is one a move is made of, and nothing about it or its own session
+   * would refuse its move, as VS Code's host decides `movable`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L69-L83
+   *
+   * And nothing may be running in it: a move here closes a process and starts
+   * another, and the one moment that costs nothing is between turns, as plan
+   * host/47-p1 decided (Softov, 2026-10-03: "Not during a turn").
+   */
+  const movable = (uri: string): boolean => {
+    const session = sessionHolding(uri);
+    return session !== undefined && isStructurallyMovable(uri) && sessionMoveRefusal(session) === undefined
+      && chatMoveRefusal(uri) === undefined && !hasActiveTurn(uri);
+  };
+
+  /**
+   * Whether a chat, or any worker chat beneath it, has an active turn, as VS
+   * Code's host names a turn in progress.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L575-L583
    *
    * Asked of a chat's backend, which is the one doing the work, and of a
    * worker's held state, which is the whole of what a worker is. Walked to the
@@ -251,7 +376,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * carries all of them: a chat whose worker is mid-turn is a chat with
    * something in flight.
    */
-  const running = (uri: string): boolean => {
+  const hasActiveTurn = (uri: string): boolean => {
     const lead = sessions.get(sessionHolding(uri) ?? '')?.chats.get(uri);
     // The chat's own turn from its start as every client holds it, and the
     // backend's while it works.
@@ -272,50 +397,33 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   /**
-   * Each chat's `movable` as last published, so only a change is sent.
-   *
-   * Per chat and for as long as this host holds it, which is the same span the
-   * answer covers: a chat the host does not run is one nothing can move, and
-   * its entry goes when this is next asked about it.
-   */
-  const publishedMovable = new Map<string, boolean>();
-  /**
-   * Publish a chat's current eligibility to move, where it changed, as VS
-   * Code's movability update publishes it through `setChatMovable`, which
-   * says nothing for an unchanged value.
+   * Publish a chat's current eligibility to move, where it differs from what
+   * the chat's held state says, else what its row in its session's held state
+   * says, absent read as `false`, as VS Code's movability update publishes it
+   * through `setChatMovable`: `chat/movableChanged` on the chat where its state
+   * is held, and `session/chatUpdated` on the session for its row. A chat whose
+   * answer neither holds has its rows built from the answer as they are read.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatMovability.ts#L251-L258
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2147-L2160
    *
-   * Called at the moments the answer can change - a turn starting or ending, a
-   * worker's starting or ending, the default chat moving to another - and
-   * silent for every one of them that changed nothing.
-   *
-   * `chat/movableChanged` is the answer to whoever is watching the chat, and
-   * the row in its session's catalogue follows the chat's state as every row
-   * does, so a client watching only the list is told by the session's own
-   * `session/chatUpdated`.
-   *
-   * The first call for a chat is its birth, which says nothing. Every road to a
-   * running backend goes through `spawn`, which asks once as the chat is set
-   * up, so the answer a chat was born with is recorded before anything can
-   * change it - and a chat that can move from the day it is opened is not one
-   * that has to be told so twice.
+   * Called at the moments the answer can change: a turn starting or ending, a
+   * worker's starting or ending, the default chat moving to another, its
+   * session archived or unarchived, and its session's workspace move asked for
+   * or made.
    */
   const updateChatMovability = (uri: string): void => {
     const session = sessionHolding(uri);
     const held = session === undefined ? undefined : sessions.get(session);
-    const chat = held === undefined ? undefined : held.chats.get(uri);
-    if (session === undefined || held === undefined || chat === undefined) {
-      // Gone, so nothing is holding an answer for it any more.
-      publishedMovable.delete(uri);
-      return;
-    }
+    if (session === undefined || held === undefined || !held.chats.has(uri)) return;
     const now = movable(uri);
-    const was = publishedMovable.get(uri);
-    if (was === now) return;
-    publishedMovable.set(uri, now);
-    if (was === undefined) return;
-    ctx.dispatch(uri, { type: 'chat/movableChanged', movable: now });
+    const listed = (): Bag | undefined => (Array.isArray(ctx.stateOf(session)?.chats) ? ctx.stateOf(session)?.chats as Bag[] : [])
+      .find((one) => one.resource === uri);
+    const state = ctx.stateOf(uri);
+    if (((state?.movable ?? listed()?.movable ?? false) === true) === now) return;
+    if (state !== undefined) ctx.dispatch(uri, { type: 'chat/movableChanged', movable: now });
+    // The row, which the chat's own action may have moved already.
+    const row = listed();
+    if (row !== undefined && (row.movable === true) !== now) ctx.dispatch(session, { type: 'session/chatUpdated', chat: uri, changes: { movable: now } });
   };
 
   /**
@@ -456,7 +564,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const held = sessions.get(uri);
     if (!held)
       return Status.Idle | kept.flags(idOf(uri));
-    return drivingOf(held).status | kept.flags(idOf(uri));
+    return (aggregateChatSummaries(held).status ?? Status.Idle) | kept.flags(idOf(uri));
   };
   /** The activity bits of a status, without the session's own two flags. */
   const activityBits = (status: number): number => status & (Status.IsRead - 1);
@@ -489,37 +597,51 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     }),
   ];
   /**
-   * The chat that decides a session's status and activity, as the reference
-   * host aggregates a session made of chats.
+   * A session's chats aggregated into its own summary fields, as VS Code's
+   * host aggregates a session's chat catalog: the status and the activity of
+   * the chat that drives the session, and the latest change across its chats.
    *
    * A chat that needs input makes the session need input; else a chat that
    * runs makes it run; else the activity bits are the default chat's, or the
    * most recently modified chat's when it has none, and a failed chat stays on
    * its own row. `InputNeeded` carries `InProgress`, so a chat that runs is one
    * whose bits under `InputNeeded` are `InProgress` alone. The activity is the
-   * deciding chat's. A worker chat is a chat of the session and counts.
-   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
+   * driving chat's. A worker chat is a chat of the session and counts. A
+   * session with no chat aggregates to nothing, and a chat whose state names
+   * no change adds none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
    */
-  const drivingOf = (held: Held): { status: number; activity: string | undefined } => {
+  const aggregateChatSummaries = (held: Held): { status?: number; activity?: string; modifiedAt?: number } => {
     const chats = chatsOf(held);
     const base = chats.find((one) => one.uri === held.defaultChat)
       ?? [...chats].sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt))[0];
-    const asking = chats.find((one) => (one.status & Status.InputNeeded) === Status.InputNeeded);
-    const running = chats.find((one) => (one.status & Status.InputNeeded) === Status.InProgress);
-    if (asking !== undefined) return { status: Status.InputNeeded, activity: asking.activity };
-    if (running !== undefined) return { status: Status.InProgress, activity: running.activity };
-    return base === undefined
-      ? { status: Status.Idle, activity: undefined }
-      : { status: activityBits(base.status), activity: base.activity };
+    if (base === undefined) return {};
+    const inputChat = chats.find((one) => (one.status & Status.InputNeeded) === Status.InputNeeded);
+    const inProgressChat = chats.find((one) => (one.status & Status.InputNeeded) === Status.InProgress);
+    const driver = inputChat ?? inProgressChat ?? base;
+    const status = inputChat !== undefined ? Status.InputNeeded : inProgressChat !== undefined ? Status.InProgress : activityBits(base.status);
+    const times = chats.map((one) => Date.parse(one.modifiedAt)).filter(Number.isFinite);
+    return {
+      status,
+      ...(driver.activity !== undefined ? { activity: driver.activity } : {}),
+      ...(times.length > 0 ? { modifiedAt: Math.max(...times) } : {}),
+    };
   };
-  /** The most recent change across every chat of a session, as the protocol aggregates `modifiedAt`. */
-  const modifiedOf = (held: Held): string => chatsOf(held)
-    .map((one) => one.modifiedAt)
-    .filter((one) => one !== '')
-    .sort()
-    .at(-1) ?? held.createdAt;
-  /** What a session is doing: the activity of the chat that decides its status. */
-  const activityOf = (held: Held): string | undefined => drivingOf(held).activity;
+  /**
+   * A session's last change: its chats' latest, rolled into the session's own
+   * where it is later, as VS Code's host rolls the aggregate's `modifiedAt`
+   * into the session's catalogue timestamp. A row's `modifiedAt` moves
+   * forward only, so a chat that goes takes nothing back with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
+   */
+  const modifiedOf = (held: Held): string => {
+    const latest = aggregateChatSummaries(held).modifiedAt;
+    const current = Date.parse(held.modifiedAt);
+    if (latest !== undefined && (!Number.isFinite(current) || latest > current)) held.modifiedAt = new Date(latest).toISOString();
+    return held.modifiedAt;
+  };
+  /** What a session is doing: the activity of the chat that drives it. */
+  const activityOf = (held: Held): string | undefined => aggregateChatSummaries(held).activity;
 
   /**
    * How many sessions are running a turn, as VS Code's host counts its active
@@ -554,16 +676,17 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   /** The diff stat of a folder with nothing changed. */
   const NO_CHANGES = { files: 0, additions: 0, deletions: 0 };
   /**
-   * Which of the two counts a session's row carries.
+   * Which of the two counts a session's row carries, as VS Code's host decides
+   * its summary changeset kind: a session that works in a tree of its own is
+   * counted by its branch, and one in a folder somebody chose is counted by
+   * its own checkpoints.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetSummary.ts#L11-L15
    *
-   * The reference host's `getSummaryChangesetKind`: a session that works in a
-   * tree of its own is counted by its branch, and one in a folder somebody
-   * chose is counted by its own checkpoints. Read from the worktree record,
-   * the value that outlives a restart: the record is written where the tree
-   * is made, and the config that asked for one is said to a session while it
-   * runs.
+   * Read from the worktree record, the value that outlives a restart: the
+   * record is written where the tree is made, and the config that asked for
+   * one is said to a session while it runs.
    */
-  const summaryKindOf = (uri: string): 'branch' | 'session' =>
+  const getSummaryChangesetKind = (uri: string): 'branch' | 'session' =>
     (ctx.worktreeOf(uri) === undefined ? 'session' : 'branch');
   /**
    * The diff stat a catalogue row carries, which a session's own state does
@@ -727,6 +850,22 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     provisionalSessionKeys.delete(uri);
     dirty.delete(uri);
     marked.delete(uri);
+    externalSessions.delete(uri);
+    exposedExternalSessions.delete(uri);
+    externalReconciliationModifiedAt.delete(uri);
+  };
+  /**
+   * A row the mode no longer shows, taken back from every client while its
+   * session stays, as VS Code retracts a surfaced session: what was sent for
+   * it is dropped, so it is announced whole if the mode shows it again.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1442-L1455
+   */
+  const retractSurfacedSession = (uri: string): void => {
+    lastNotified.delete(uri);
+    dirty.delete(uri);
+    marked.delete(uri);
+    exposedExternalSessions.delete(uri);
+    ctx.broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
   };
   /**
    * A session already in the catalogue changed: its summary marked dirty, as
@@ -761,7 +900,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     // Marked, and the flush put back, where the row changed since it was last
     // marked, as the reference host marks a session dirty where its summary's
     // fields changed.
-    const row = JSON.stringify(rowOf(uri));
+    const fields = rowOf(uri);
+    /*
+     * A live external session that moved under `recent` reconciles what the
+     * mode shows, since the two it shows are the two updated last, as VS Code
+     * reconciles on an external session's `modifiedAt`.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1541-L1548
+     */
+    const modifiedAt = typeof fields.modifiedAt === 'string' ? fields.modifiedAt : undefined;
+    if (externalSessions.has(uri) && modifiedAt !== undefined && getExternalSessionsMode() === 'recent'
+      && externalReconciliationModifiedAt.get(uri) !== modifiedAt) {
+      externalReconciliationModifiedAt.set(uri, modifiedAt);
+      void reconcileExternalSessions();
+    }
+    const row = JSON.stringify(fields);
     if (marked.get(uri) === row) return;
     marked.set(uri, row);
     dirty.add(uri);
@@ -836,6 +988,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    */
   const flushSessionSummary = (uri: string, row: Bag): void => {
     if (provisionalSessionKeys.has(uri)) return;
+    // An external session no client holds a row of has nothing to change, as
+    // VS Code emits nothing for a summary it has not published.
+    if (externalSessions.has(uri) && !exposedExternalSessions.has(uri)) return;
     const before = lastNotified.get(uri);
     const changes: Bag = {};
     for (const [key, value] of Object.entries(row)) {
@@ -918,7 +1073,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       for (;;) {
         queuedChangesSummaries.delete(uri);
         const source = options.changes;
-        const branch = summaryKindOf(uri) === 'branch';
+        const branch = getSummaryChangesetKind(uri) === 'branch';
         let read: ChangesSummary | undefined;
         try {
           const tree = ctx.worktreeOf(uri);
@@ -1322,12 +1477,15 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * A row for a session listed from the turns this host keeps for it.
    *
    * Its title is the one the session was given, kept as its default chat's in
-   * a record that keeps none of the session's, and else its first turn's, as
-   * a backend titles a session after its first prompt. Its
-   * dates are its first turn's start and its last turn's end, which is where
-   * the protocol's reducer moves a chat when a turn completes. A turn that
-   * names no start adds nothing to them, and a row with no start at all dates
-   * from the epoch, as a transcript entry with no time does.
+   * a record that keeps none of the session's, and else its first turn's
+   * message, normalized as VS Code's host seeds a title from a first message:
+   * empty where that turn says nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L189-L199
+   *
+   * Its dates are its first turn's start and its last turn's end, which is
+   * where the protocol's reducer moves a chat when a turn completes. A turn
+   * that names no start adds nothing to them, and a row with no start at all
+   * dates from the epoch, as a transcript entry with no time does.
    */
   const keptRow = (id: string, folder: string, turns: readonly Bag[]): Listed => {
     const startOf = (turn: Bag): number => (typeof turn.startedAt === 'string' ? Date.parse(turn.startedAt) : Number.NaN);
@@ -1344,7 +1502,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const epoch = new Date(0).toISOString();
     return {
       id,
-      title: named ?? titleFrom(typeof said === 'string' ? said : '', 'New session'),
+      title: named ?? normalizeTitle(typeof said === 'string' ? said : ''),
       createdAt: first === undefined ? epoch : new Date(startOf(first)).toISOString(),
       modifiedAt: last === undefined
         ? epoch
@@ -1383,6 +1541,15 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     // backend that dropped its keys stops being answered with them.
     if (row._meta === undefined) listedMeta.delete(resource);
     else listedMeta.set(resource, row._meta);
+    /*
+     * External where this host never ran the session, which is a session with
+     * no provider recorded, since running one is what records it, and where the
+     * store says it opened one that nobody adopted, as VS Code registers a
+     * discovered session external and a session it made not.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10687
+     */
+    if (kept.external?.(row.id) ?? kept.provider(row.id) === undefined) externalSessions.add(resource);
+    else externalSessions.delete(resource);
     return {
       resource,
       provider,
@@ -1407,27 +1574,36 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * which is what a client opening a link from another machine finds. The row
    * every client now holds is the one the next change is measured from, as it
    * is for that one.
+   *
+   * An external row the mode does not show is announced to nobody, and one it
+   * shows is one a client now holds, as VS Code asks its mode before it
+   * announces a surfaced session and keeps the external ones it broadcast.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6053-L6086
    */
   const announceSurfacedSession = (summary: Summary): void => {
+    if (readSessionExternal(summary)) {
+      if (!shouldIncludeSession(summary, getExternalSessionsMode(), Date.now())) return;
+      exposedExternalSessions.add(summary.resource);
+    }
     const { resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary as unknown as Bag;
     lastNotified.set(String(resource), mutable);
     ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
   };
 
   /**
-   * The rows of the sessions this host is running, built now, on each answer,
-   * each the summary `summaryOf` projects, as VS Code's host lists a live
-   * session through the summary it announces.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1458-L1477
+   * The summaries of the sessions this host is running, built now, on each
+   * answer, each the one `summaryOf` projects, as VS Code's host overlays its
+   * live sessions' summaries on a listing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1004-L1026
    *
-   * A live row changes every second and building one reads a handful of
-   * in-memory objects, while a backend row costs a pass over every transcript
+   * A live summary changes every second and building one reads a handful of
+   * in-memory objects, while a listed one costs a pass over every transcript
    * on the machine. The held catalogue keeps the expensive half and this is
    * built for each answer, so a session somebody is looking at is current. A
-   * session not yet announced is nobody's row, as VS Code's host lists no idle
-   * provisional session.
+   * session not yet announced is listed to nobody, as VS Code's host lists no
+   * idle provisional session.
    */
-  const liveRows = (): Summary[] => [...sessions.keys()]
+  const getOverlaySessionSummaries = (): Summary[] => [...sessions.keys()]
     .filter((uri) => !provisionalSessionKeys.has(uri))
     .flatMap((uri) => {
       const summary = summaryOf(uri);
@@ -1435,39 +1611,162 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     });
 
   /**
-   * Every row a client is handed, as one list: the running sessions now, the
-   * held rows behind them, most recently modified first.
+   * Every session summary, as one list: the running sessions' now and the held
+   * ones behind them, as VS Code's host computes its sessions with the live
+   * ones overlaid.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5137
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5487-L5538
    *
-   * One place for the two halves to be put together, because they are one
-   * answer: `listSessions` pages over this and so does the `list_sessions`
-   * tool. A session this host is running is dropped out of the held rows by
-   * its id, since it is in the first half and a row twice is a row a client
-   * has to reconcile, and so is one not yet announced.
+   * A session this host is running is dropped out of the held summaries by its
+   * id, since it is in the first half and a session listed twice is one a
+   * client has to reconcile, and so is one not yet announced.
    */
-  const allRows = async (): Promise<Summary[]> => {
-    const running = liveRows();
-    const claimed = new Set([...running.map((row) => idFor(row.resource)), ...[...provisionalSessionKeys].map(idFor)]);
+  const computeSessions = async (): Promise<Summary[]> => {
+    const running = getOverlaySessionSummaries();
+    const claimed = new Set([...running.map((summary) => idFor(summary.resource)), ...[...provisionalSessionKeys].map(idFor)]);
     const listed = await ctx.listedSessions();
+    return [...running, ...listed.filter((summary) => !claimed.has(idFor(summary.resource))).map(getSurfacedSessionSummary)];
+  };
+  /**
+   * Every session summary a client is handed: the sessions the mode shows, most
+   * recently modified first, as VS Code's host lists its sessions, which are
+   * the rows the client then holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5539-L5555
+   *
+   * One answer for the `listSessions` command, which pages over it, and the
+   * `list_sessions` tool.
+   */
+  const listSessions = async (): Promise<Summary[]> => {
+    const combined = await computeSessions();
+    const mode = getExternalSessionsMode();
+    const now = Date.now();
+    const recentSessionKeys = mode === 'recent' ? getRecentSessionKeys(combined, now) : undefined;
+    const visible = combined.filter((row) => shouldIncludeSession(row, mode, now, recentSessionKeys));
+    logHiddenSessions(combined.length - visible.length, combined.length, mode);
+    for (const row of visible) if (readSessionExternal(row)) exposedExternalSessions.add(row.resource);
     // The protocol says a server SHOULD order them most-recently-modified
     // first, and a client that has to sort a list it was handed is a client
     // doing the server's job.
-    return [...running, ...listed.filter((row) => !claimed.has(idFor(row.resource))).map(hereNow)]
-      .sort((a_, b_) => b_.modifiedAt.localeCompare(a_.modifiedAt));
+    return visible.sort((a_, b_) => b_.modifiedAt.localeCompare(a_.modifiedAt));
   };
   /**
-   * A held row with what this host knows about it read again.
+   * Which external sessions a listing shows, by the root's
+   * `showExternalSessions`: one of its five values, and `none`, its default,
+   * for anything else, as VS Code's agent service reads it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5656-L5662
+   */
+  const getExternalSessionsMode = (): ExternalSessionsMode =>
+    EXTERNAL_SESSIONS_MODES.find((mode) => mode === ctx.rootConfig.showExternalSessions) ?? 'none';
+  /** Whether a row is an external session's, read off its `_meta`, as VS Code reads one. */
+  const readSessionExternal = (row: Summary): boolean =>
+    ((row as unknown as Bag)._meta as Bag | undefined)?.[SESSION_META_EXTERNAL_KEY] === true;
+  /**
+   * Whether a listing shows a row: every session this host made, and an
+   * external one by the mode and the time it was last updated, as VS Code's
+   * agent service decides.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5764-L5791
+   */
+  const shouldIncludeSession = (row: Summary, mode: ExternalSessionsMode, now: number, recentSessionKeys?: ReadonlySet<string>): boolean => {
+    if (!readSessionExternal(row)) return true;
+    const modifiedTime = Date.parse(row.modifiedAt);
+    switch (mode) {
+      case 'recent':
+        return modifiedTime >= now - 7 * DAY_MS && (recentSessionKeys === undefined || recentSessionKeys.has(row.resource));
+      case 'last24Hours':
+        return modifiedTime >= now - DAY_MS;
+      case 'last7Days':
+        return modifiedTime >= now - 7 * DAY_MS;
+      case 'last30Days':
+        return modifiedTime >= now - EXTERNAL_SESSION_MAX_AGE_MS;
+      case 'none':
+        return false;
+    }
+  };
+  /**
+   * The external sessions `recent` shows: the two updated most recently, in
+   * the last seven days and no earlier than the second most recent update of
+   * a session of this host's own, as VS Code's agent service picks them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5681-L5703
+   */
+  const getRecentSessionKeys = (rows: readonly Summary[], now: number): ReadonlySet<string> => {
+    const supersededBefore = recentLocalSessionUpdateSnapshot?.[RECENT_LOCAL_SESSION_UPDATE_LIMIT - 1] ?? now - 7 * DAY_MS;
+    return new Set(rows
+      .filter((row) => readSessionExternal(row)
+        && Date.parse(row.modifiedAt) >= now - 7 * DAY_MS
+        && Date.parse(row.modifiedAt) >= supersededBefore)
+      .sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt) || (a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : 0))
+      .slice(0, RECENT_EXTERNAL_SESSION_LIMIT)
+      .map((row) => row.resource));
+  };
+  /**
+   * A line in the log where a listing hid sessions, and once for each count
+   * and mode, as VS Code's agent service says it, so a session the mode keeps
+   * out reads differently from one nothing found.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5645-L5654
+   */
+  const logHiddenSessions = (hidden: number, total: number, mode: ExternalSessionsMode): void => {
+    const signature = `${hidden}/${total}/${mode}`;
+    if (signature === lastHiddenSessionsLog) return;
+    lastHiddenSessionsLog = signature;
+    if (hidden > 0) ctx.log(`listSessions hid ${hidden} of ${total} session(s) (showExternalSessions: '${mode}')`);
+  };
+  /**
+   * The external sessions the mode shows announced where no client holds them,
+   * and the ones it hides retracted where one does, as VS Code reconciles its
+   * listing after a change of mode or an adoption.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5946-L6019
+   */
+  const reconcileExternalSessions = async (): Promise<void> => {
+    const combined = await computeSessions();
+    const mode = getExternalSessionsMode();
+    const now = Date.now();
+    const recentSessionKeys = mode === 'recent' ? getRecentSessionKeys(combined, now) : undefined;
+    for (const row of combined) {
+      if (!readSessionExternal(row)) continue;
+      const shown = shouldIncludeSession(row, mode, now, recentSessionKeys);
+      const exposed = exposedExternalSessions.has(row.resource);
+      if (shown && !exposed) announceSurfacedSession(row);
+      else if (!shown && exposed) retractSurfacedSession(row.resource);
+    }
+  };
+  /**
+   * An external session made this host's own by a person's turn going out in
+   * it, as VS Code's host adopts one on its first outgoing user turn: no
+   * longer external, so every mode shows it, its state and its row said
+   * without the mark, the row announced where no client held it, and what the
+   * mode shows reconciled, since `recent` counts the external sessions left.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/externalSessionAdoption/externalSessionAdoptionContribution.ts#L25-L30
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1471-L1481
+   */
+  const adoptExternalSession = (uri: string): void => {
+    if (!externalSessions.delete(uri)) return;
+    kept.setExternal?.(idFor(uri), false);
+    externalReconciliationModifiedAt.delete(uri);
+    const exposed = exposedExternalSessions.delete(uri);
+    if (sessions.has(uri)) {
+      changesetsAndMetaChanged(uri);
+      if (exposed) markSummaryDirty(uri);
+      else sessionAdded(uri);
+    }
+    void reconcileExternalSessions();
+  };
+  /**
+   * A held listed session's summary with what this host knows about it read
+   * again, as VS Code's host keeps a surfaced session's summary current with
+   * its flags and its metadata.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L650-L653
    *
    * What a backend said about a session is held, because learning it cost a
    * pass over every transcript on the machine. What this host knows about it is
-   * not held and not asked for either: a row a client marked read, and the
+   * not held and not asked for either: a session a client marked read, and the
    * counts and facts of a directory read since, move on their own and cost
    * nothing to read.
    *
-   * Read here, as the answer is made, so a client that marked a row and
+   * Read here, as the answer is made, so a client that marked a session and
    * listed again is handed the flag it has just set, and the list it holds
    * agrees with the notification that told it about the change.
    */
-  const hereNow = (row: Summary): Summary => ({
+  const getSurfacedSessionSummary = (row: Summary): Summary => ({
     resource: row.resource,
     provider: row.provider,
     title: row.title,
@@ -1493,8 +1792,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * A row this host is running is left out entirely. `markSummaryDirty` speaks for
    * it, every second or so, and a row listed here is built from a listing that
    * is already behind by the time it is answered.
+   *
+   * An external session is said only while the mode shows it: announced as it
+   * comes into view, retracted as it leaves, and nothing said of one no client
+   * was shown, as VS Code announces the external sessions its mode includes.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6053-L6086
    */
   const publishSurfacedSessions = (before: Summary[], after: Summary[]): void => {
+    // The updates `recent` cuts at, as the first listing finds them.
+    recentLocalSessionUpdateSnapshot ??= after
+      .filter((row) => !readSessionExternal(row))
+      .map((row) => Date.parse(row.modifiedAt))
+      .filter(Number.isFinite)
+      .sort((a, b) => b - a)
+      .slice(0, RECENT_LOCAL_SESSION_UPDATE_LIMIT);
     /*
      * Nothing is said on the first fill.
      *
@@ -1504,17 +1815,31 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * own `listSessions`.
      */
     if (before.length === 0) return;
+    const mode = getExternalSessionsMode();
+    const now = Date.now();
+    const recentSessionKeys = mode === 'recent' ? getRecentSessionKeys([...getOverlaySessionSummaries(), ...after], now) : undefined;
     const was = new Map(before.map((row) => [row.resource, row]));
     for (const row of after) {
       const had = was.get(row.resource);
       was.delete(row.resource);
       if (sessions.has(row.resource))
         continue;
-      if (had === undefined) {
+      if (readSessionExternal(row)) {
+        const exposed = exposedExternalSessions.has(row.resource);
+        if (!shouldIncludeSession(row, mode, now, recentSessionKeys)) {
+          if (exposed) retractSurfacedSession(row.resource);
+          continue;
+        }
+        if (!exposed) {
+          announceSurfacedSession(row);
+          continue;
+        }
+      }
+      else if (had === undefined) {
         announceSurfacedSession(row);
         continue;
       }
-      if (!surfacedSessionChanged(had, row)) continue;
+      if (had === undefined || !surfacedSessionChanged(had, row)) continue;
       // Measured against the row the clients hold: what this listing read
       // before, when nothing was said about it since.
       const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = row;
@@ -1525,7 +1850,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       flushSessionSummary(row.resource, mutable);
     }
     const claimed = registeredAndBackingIds();
-    for (const [resource] of was) {
+    for (const [resource, row] of was) {
       /*
        * A session this host is running is not one that went away.
        *
@@ -1538,28 +1863,31 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        */
       if (sessions.has(resource) || claimed.has(idFor(resource)))
         continue;
+      // An external session no client was shown goes without a word.
+      const told = !readSessionExternal(row) || exposedExternalSessions.has(resource);
       removeNotifiedSummary(resource);
-      ctx.broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: resource });
+      if (told) ctx.broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: resource });
     }
   };
   /**
-   * Whether a listed row says anything a client does not already hold.
-   *
-   * The fields a listing can change and nothing else: `resource`, `provider`
-   * and `createdAt` say who the row is, and `_meta` has the session's own
-   * channel to change it on. Everything else on a row is read off the
-   * transcript, so it is one of these or it stays as it is.
+   * Whether a listed row says anything a client does not already hold: its
+   * title, its last change, its project, its folders, its `_meta` or its
+   * origin, the fields VS Code's host compares before it says a surfaced
+   * session's metadata moved. `resource`, `provider` and `createdAt` say who
+   * the row is, and its status and its counts are said where they move.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1346-L1364
    */
   const surfacedSessionChanged = (was: Summary, now: Summary): boolean => {
-    // `changes` is a row's own field and not on `Summary`, the way `_meta` is
-    // not either: both are spread onto the row by the module that owns them.
+    // `project` and `_meta` are spread onto a row by the module that owns
+    // them, and `Summary` declares neither.
     const before = was as unknown as Bag;
     const after = now as unknown as Bag;
     return was.title !== now.title
       || was.modifiedAt !== now.modifiedAt
-      || was.status !== now.status
-      || JSON.stringify(was.workingDirectories ?? []) !== JSON.stringify(now.workingDirectories ?? [])
-      || JSON.stringify(before.changes ?? null) !== JSON.stringify(after.changes ?? null);
+      || !isDeepStrictEqual(before.project, after.project)
+      || !isDeepStrictEqual(was.workingDirectories ?? [], now.workingDirectories ?? [])
+      || !isDeepStrictEqual(before._meta, after._meta)
+      || !isDeepStrictEqual(was.origin, now.origin);
   };
 
   /**
@@ -1645,9 +1973,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        */
       const relayed = !subagents.has(chat) && held.chats.get(chat)?.channel !== undefined;
       if (row !== undefined && relayed) {
-        const flags = (status: unknown): number => Number(status ?? 0) & ~(Status.IsRead - 1);
-        const now = flags(own.status);
-        if (now !== flags(row.status)) {
+        // The read and archived bits, which VS Code's host calls a status's meta flags.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3374-L3377
+        const metaFlags = (status: unknown): number => Number(status ?? 0) & ~(Status.IsRead - 1);
+        const now = metaFlags(own.status);
+        if (now !== metaFlags(row.status)) {
           const status = (Number(row.status ?? Status.Idle) & (Status.IsRead - 1)) | now;
           ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes: { status } });
         }
@@ -1752,10 +2082,12 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   return {
-    statusOf, startedBy, chatSummary, movable, running, updateChatMovability, chatsReordered, subagentSummary, restoredSubagentSummary,
+    statusOf, getChatOrigin, chatSummary, isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, movable, hasActiveTurn, updateChatMovability,
+    chatsReordered, subagentSummary, restoredSubagentSummary,
     chatCatalogOf, onChatSummaryChanged, syncSessionInputNeeded, inputNeededOf, changesetsAndMetaChanged, activeCount,
     activityOf, markSessionProvisional, sessionAdded, provisional: (uri: string) => provisionalSessionKeys.has(uri), materialized, failSessionCreationIfStillCreating,
     markSummaryDirty, flushPendingSessionSummaries, refreshSessionChangesSummary, removeNotifiedSummary, activeSessionsChanged, setAgentModels, publishAgentInfos, publishAccountInfo,
-    listing, registerListedSession, announceSurfacedSession, liveRows, allRows, publishSurfacedSessions, unavailableProvider, readStored,
+    listing, registerListedSession, announceSurfacedSession, getOverlaySessionSummaries, listSessions, publishSurfacedSessions, unavailableProvider, readStored,
+    isExternal: (uri: string) => externalSessions.has(uri), adoptExternalSession, reconcileExternalSessions,
   };
 }

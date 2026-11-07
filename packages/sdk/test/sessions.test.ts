@@ -889,6 +889,22 @@ it('keeps which harness a session runs on across a restart, and forgets it with 
   expect(memorySessions().provider('a')).toBeUndefined();
 });
 
+it('keeps a session opened and not adopted external across a restart, and writes nothing once it is adopted', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  store.setProvider('a', 'claude');
+  store.setExternal?.('a', true);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', provider: 'claude', external: true });
+  // Read back by a second store on the same folder, which is what a restart is.
+  const second = fileSessions({ dir });
+  expect(second.external?.('a')).toBe(true);
+  second.setExternal?.('a', false);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', provider: 'claude' });
+  expect(fileSessions({ dir }).external?.('a')).toBeUndefined();
+});
+
 it('keeps the name a session is held under across a restart, and writes no file for a name alone', async () => {
   const dir = join(root, 'sessions');
   const store = fileSessions({ dir });

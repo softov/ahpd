@@ -376,6 +376,37 @@ it('says a create of what it holds again, and refuses another create there and a
   expect(((await entries(client))[0] as { definition: { title: string } }).definition.title).toBe(DEFINITION.title);
 });
 
+/*
+ * An automation's resource is any URI in the `ahp-automation` scheme, and a
+ * create at a URI in another is refused in the words of VS Code's automation
+ * service.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1513-L1517
+ */
+it('takes a create at any URI in the ahp-automation scheme, and refuses one in another scheme in VS Code\'s words', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  const send = (clientSeq: number, resource: string) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: AUTOMATIONS, clientSeq, action: { type: 'automation/createRequested', resource, definition: DEFINITION } },
+  });
+  await send(1, 'ahp-automation:nightly');
+  await send(2, 'ahp-automation://catalog/weekly');
+  await send(3, 'ahp-automations://nightly');
+  await settle();
+
+  const own = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; origin?: { clientSeq: number }; rejectionReason?: string })
+    .filter((n) => n.channel === AUTOMATIONS && n.origin !== undefined);
+  expect(own.map((n) => [n.origin?.clientSeq, n.rejectionReason])).toEqual([
+    [1, undefined],
+    [2, undefined],
+    [3, 'Automation resource must use the ahp-automation scheme: ahp-automations://nightly'],
+  ]);
+  expect((await entries(client)).map((one) => (one as { resource: string }).resource).sort())
+    .toEqual(['ahp-automation://catalog/weekly', 'ahp-automation:nightly']);
+});
+
 it('patches rather than overwrites, so one client does not revert another', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);
@@ -552,6 +583,21 @@ describe('a template that names client plugins', () => {
       params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
     }) as { _meta?: Record<string, unknown> };
     expect('vscode.autonomousAutomations' in (answer._meta ?? {})).toBe(false);
+    expect('ahpd.automations' in (answer._meta ?? {})).toBe(false);
+  });
+
+  /*
+   * The catalogue narrowed to one owner is a template the client expands, as
+   * the protocol advertises the logs channel's.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/common/commands.ts#L281-L290
+   */
+  it('advertises the catalogue narrowed to one owner as a template a client expands', async () => {
+    const host = createHost({ path: DIR, agents: [echo({ path: DIR })], automations: memoryAutomations() });
+    const answer = await host.accept(peer()).handle({
+      method: 'initialize',
+      params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
+    }) as { _meta?: Record<string, unknown> };
+    expect(answer._meta?.['ahpd.automations']).toBe('ahp-automations://{?owner}');
   });
 });
 
@@ -1446,6 +1492,43 @@ it('writes a definition down before it holds and says it, and a failed write cha
   expect(() => store.create('ahp-automation:/two', {})).toThrow('the disk is full');
   expect(store.get('ahp-automation:/two')).toBeUndefined();
   expect(said).toEqual([{ automation: ONE }]);
+});
+
+/*
+ * A run's changes are written down beside the definition, every run the
+ * automation keeps, and a store reading its record back takes the runs back
+ * with the definition, a run that was not over failed as interrupted, as VS
+ * Code's automation service persists, restores and recovers its runs beside
+ * its catalogue.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L184-L201
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L779-L803
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L994-L1010
+ */
+it('writes the runs down beside the definition, and takes both back at a start', async () => {
+  const written: { runsOf?: string; runs?: AutomationRun[] }[] = [];
+  const store = memoryAutomations({ persist: (change) => { written.push(change as { runsOf?: string; runs?: AutomationRun[] }); } });
+  store.create(ONE, {});
+  const done = await store.run(ONE, { kind: 'manual' }, async () => 'ahp-session:/done');
+  await settle();
+  store.settle?.(String(done?.resource), { status: 'completed' });
+  const going = await store.run(ONE, { kind: 'manual' }, async () => 'ahp-session:/going');
+  await settle();
+
+  const last = written.filter((one) => one.runsOf === ONE).at(-1)?.runs ?? [];
+  expect(last.map((one) => [one.resource, one.lifecycle.status, one.sessions])).toEqual([
+    [going?.resource, 'running', ['ahp-session:/going']],
+    [done?.resource, 'completed', ['ahp-session:/done']],
+  ]);
+
+  // A store reading that record back holds both runs again, newest first.
+  const again = memoryAutomations();
+  again.create(ONE, {}, undefined, undefined, undefined, last);
+  expect(again.runOf(String(done?.resource))?.lifecycle.status).toBe('completed');
+  expect(again.runOf(String(going?.resource))?.lifecycle).toMatchObject({
+    status: 'failed',
+    error: { errorType: 'automationExecution', message: 'Automation execution was interrupted before its initial prompt completed.' },
+  });
+  expect((again.get(ONE)?.runs ?? []).map((one) => (one as { resource: string }).resource)).toEqual([going?.resource, done?.resource]);
 });
 
 it('keeps the newest ended runs, and only that many of them', async () => {

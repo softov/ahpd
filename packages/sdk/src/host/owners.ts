@@ -62,19 +62,20 @@ export function createOwners(ctx: HostContext): Owners {
   /** What each session's work is charged to, refusal included, by session uri. */
   const charged = new Map<string, ScopeAnswer | undefined>();
 
+  ctx.rootOwner = options.rootOwner ?? 'host';
   /**
    * Whose work a session started on this connection is.
    *
    * A typed reference, the spelling the usage rules use. A person who has signed in owns what
    * they start, a plugin owns what it starts as `plugin:<name>`, and a root
-   * connection is the host itself rather than somebody. A host with no users
-   * directory has nobody to name at all, so a session there records no owner
-   * rather than one that says nothing.
+   * connection's is the host itself under the daemon's `rootOwner` `host`, or
+   * no one's under `none`, VS Code's. A host with no users directory has nobody
+   * to name at all, so a session there records no owner.
    */
   const ownerFor = (connection: Connection): Owner | undefined => {
     if (options.users === undefined) return undefined;
     if (connection.principal !== undefined) return ownerOfPrincipal(connection.principal);
-    return connection.root === true ? `root:${options.hostName ?? 'host'}` : undefined;
+    return connection.root === true && ctx.rootOwner === 'host' ? `root:${options.hostName ?? 'host'}` : undefined;
   };
 
   /**
@@ -128,8 +129,7 @@ export function createOwners(ctx: HostContext): Owners {
    *
    * The owner beside it says whose the work is; this says which window asked,
    * and only a window can be asked something back - a folder to trust is asked
-   * of the window that sent the turn, and the folders it said yes to are kept
-   * on its connection.
+   * of the window that sent the turn.
    *
    * Kept and let go of exactly as `senders` is, because it answers the same
    * question about the same span: a turn nobody's window sent - an automation's,

@@ -1080,14 +1080,13 @@ describe('a tool a person calls with no session', () => {
    * two people these cases name. `contribution` adds a plugin's read of the
    * host's events, which is how a case watches `tool_call`.
    */
-  const hosting = (more: HostTool[] = [], contribution?: Contribution, agents?: Agent[]) => {
-    // A third person holding the grant a root config push needs, so a case can
-    // set the operator's rule the way a window does.
-    const users = directory({ member: MEMBER, guest: GUEST, owner: ['config:change'] });
+  const hosting = (more: HostTool[] = [], contribution?: Contribution, agents?: Agent[], over: Partial<HostOptions> = {}) => {
+    const users = directory({ member: MEMBER, guest: GUEST });
     const store = fileSessions({ dir: join(root, 'sessions') });
     const base: HostOptions = {
       path: root, agents: agents ?? [claude({ paths: [root] })], ...machine(),
       users, sessions: store, tools: [...hostTools(), ...more], sleepAfterMinutes: 0,
+      ...over,
     };
     return { host: createHost(contribution === undefined ? base : foldHostOptions(base, [contribution]).options), users, store };
   };
@@ -1149,15 +1148,8 @@ describe('a tool a person calls with no session', () => {
       sessionless: true,
       run: () => { calls.push(name); return name; },
     });
-    const { host, users } = hosting([probe('notify'), probe('ping')]);
-    const client = host.accept(peer());
-    await hello(client);
-    await signIn(client, 'owner');
-    await client.handle({
-      method: 'dispatchAction',
-      params: { channel: ROOT, action: { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'ahp/notify': false } } } },
-    });
-    await settle();
+    // The operator's rule, the daemon's setting.
+    const { users, host } = hosting([probe('notify'), probe('ping')], undefined, undefined, { eligibleForAutoApproval: { 'ahp/notify': false } });
     const member = await principal(users, 'member');
 
     await expect(run(host, { principal: member }, 'notify', {})).rejects.toThrow('eligibleForAutoApproval');
@@ -1165,6 +1157,23 @@ describe('a tool a person calls with no session', () => {
     expect(calls).toEqual([]);
     expect(await run(host, { principal: member }, 'ping', {})).toBe('ping');
     expect(calls).toEqual(['ping']);
+  });
+
+  /*
+   * Under `managedRules: handed` the host checks no managed rule, VS Code's
+   * host, and this door has no runtime to hand one to, so the call runs.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
+   */
+  it('runs a tool the operator\'s rule names when the daemon hands the managed rules on', async () => {
+    const calls: string[] = [];
+    const notify: HostTool = {
+      definition: { name: 'notify', title: 'notify', description: 'notify, and sessionless.', inputSchema: { type: 'object', properties: {} } },
+      sessionless: true,
+      run: () => { calls.push('notify'); return 'notify'; },
+    };
+    const { users, host } = hosting([notify], undefined, undefined, { eligibleForAutoApproval: { 'ahp/notify': false }, managedRules: 'handed' });
+    expect(await run(host, { principal: await principal(users, 'member') }, 'notify', {})).toBe('notify');
+    expect(calls).toEqual(['notify']);
   });
 
   it('makes a session the caller owns, with no parent, when it is independent', async () => {

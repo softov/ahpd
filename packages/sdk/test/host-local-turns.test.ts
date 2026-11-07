@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, machine, peer, sdk, settle, wrote,
+  resetSdk, actions, claude, createHost, echo, emit, hello, machine, peer, sdk, sessionQueries, settle, wrote,
 } from './support/host.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { uriOf } from '../src/resources/resources.js';
@@ -553,6 +553,19 @@ describe('a session that ran only commands', () => {
     // The prune of the first listing is what lost such a session: a second one still holds it.
     expect((await listed(client)).map((one) => one.resource)).toContain(LIVE);
     expect(keptIn(store, 'live').map((one) => one.turnId)).toEqual(['t1', 't2']);
+    await host.close();
+  });
+
+  /*
+   * Titled by its first message as VS Code's host seeds a title from one:
+   * trimmed, its whitespace collapsed to single spaces, and cut at 200
+   * characters.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L252-L255
+   */
+  it('is titled by its first message on one line, cut at 200 characters, as VS Code\'s host seeds a title', async () => {
+    const { client, host } = await reopened([`!echo a\n\n   b ${'x'.repeat(250)}  `]);
+    const row = (await listed(client)).find((one) => one.resource === LIVE);
+    expect(row?.title).toBe(Array.from(`!echo a b ${'x'.repeat(250)}`).slice(0, 200).join(''));
     await host.close();
   });
 

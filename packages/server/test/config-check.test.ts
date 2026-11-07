@@ -451,6 +451,34 @@ describe('the managedSettingsPermissions key', () => {
   });
 });
 
+/*
+ * The operator's per-tool eligibility is a daemon setting in VS Code's map
+ * shape, a tool's name to a boolean, held at the start as the managed
+ * permissions are.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26
+ */
+describe('the eligibleForAutoApproval key', () => {
+  it('takes a map of tools to booleans, and refuses a value that is not one, naming the tool', () => {
+    const eligible = { 'ahp/create_session': false, 'tracker/*': false, 'tracker/read': true };
+    expect(folded({ eligibleForAutoApproval: eligible }).eligibleForAutoApproval).toEqual(eligible);
+    expect(refusal({ eligibleForAutoApproval: { Bash: 'no' } })).toBe(`${config}: eligibleForAutoApproval.Bash holds "no", which is not true or false`);
+  });
+});
+
+/*
+ * Who checks the managed rules is a daemon setting: this host's own check, or
+ * VS Code's, which hands them to the backends and checks none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
+ */
+describe('the managedRules key', () => {
+  it('is checked where the file says nothing, takes checked or handed, and refuses another value by name', () => {
+    expect(folded({}).managedRules).toBe('checked');
+    expect(folded({ managedRules: 'checked' }).managedRules).toBe('checked');
+    expect(folded({ managedRules: 'handed' }).managedRules).toBe('handed');
+    expect(refusal({ managedRules: 'backend' })).toBe(`${config}: managedRules must be one of checked, handed`);
+  });
+});
+
 describe('the modelProxy key', () => {
   it('is the model names and nothing else, with no providers of its own', () => {
     expect(folded({}).modelProxy).toEqual({ models: {}, sessionCalls: 'record' });

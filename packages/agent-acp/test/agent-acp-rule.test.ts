@@ -178,6 +178,8 @@ async function talking(options: { rules?: Record<string, boolean> } = {}) {
     users: anyone(),
     tools: [hostTool(ran)],
     toolsServers: servers,
+    // The operator's rule, the daemon's setting.
+    ...(options.rules === undefined ? {} : { eligibleForAutoApproval: options.rules }),
   });
   const p = peer();
   const client = host.accept(p);
@@ -186,15 +188,6 @@ async function talking(options: { rules?: Record<string, boolean> } = {}) {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   await signIn(client);
-  if (options.rules !== undefined) {
-    await client.handle({
-      method: 'dispatchAction',
-      params: {
-        channel: 'ahp-root://',
-        action: { type: 'root/configChanged', config: { eligibleForAutoApproval: options.rules } },
-      },
-    });
-  }
   const uri = 'ahp-session:/rule';
   await client.handle({
     method: 'createSession',
@@ -311,6 +304,12 @@ it('runs a host tool the rule does not name without asking', async () => {
   expect(results(p, chatUri)).toEqual([{ isError: false, content: [{ type: 'text', text: 'the sessions' }] }]);
 });
 
+/*
+ * A question about a tool the operator's rule names offers VS Code's Allow Once
+ * and Skip, as VS Code's host puts a question a managed policy asks; the agent
+ * is answered with its own once option of the kind picked.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L610
+ */
 it('offers the host\'s Allow Once and Skip alone for a matched tool the agent asks about itself', async () => {
   const { client, peer: p, uri, chatUri } = await talking({ rules: { shell: false } });
   begin(client, chatUri, 'execrun');

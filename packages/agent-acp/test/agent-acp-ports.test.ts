@@ -712,7 +712,7 @@ it('says what the host decides a question by on its ready, and offers no options
     terminals: new Map(),
     elicitations: new Map(),
     mapping: { turnId: 't1', parts: [], calls: new Map(), opening: [] },
-    ownerOf: () => undefined,
+    clientToolOf: () => undefined,
     openCall: (call: { toolCallId: string }) => { opened.push(call.toolCallId); },
     options: {},
   } as unknown as SessionContext;

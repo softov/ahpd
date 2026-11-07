@@ -39,16 +39,20 @@ export interface Held {
    */
   additional: string[] | undefined;
   /**
-   * ISO 8601, when the session was first started.
-   *
-   * Not when it last moved. `createdAt` is an identity field - the protocol
-   * says it never changes, and that it MUST be left out of a summary
-   * *change* - and this used to be answered with the modification time, so a
-   * row's age moved every time somebody said something to it. A resumed
-   * session takes the catalogue's value rather than the moment it was
-   * resumed, because it was not created then either.
+   * ISO 8601, when the session was first started: the catalogue's value for a
+   * session resumed or woken, and the moment it was made for one made here.
+   * An identity field, which the protocol says never changes and MUST be left
+   * out of a summary change.
    */
   createdAt: string;
+  /**
+   * ISO 8601, when the session last moved: the catalogue's value for a
+   * session resumed or woken, the moment it was made for one made here, and
+   * from then on the latest `modifiedAt` its chats reach where that is later.
+   * Its row's `modifiedAt`, which moves forward only.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
+   */
+  modifiedAt: string;
   /** Milliseconds, when the session last emitted or received an action. What a sleep for quiet is measured from. */
   quietSince: number;
 }

@@ -84,7 +84,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/w
 
 const { createHost } = await import('../src/host.js');
 const { fileSessions } = await import('../src/sessions/sessions.js');
-const { chatUriFor, retainedTerminalOf } = await import('../src/host/channels.js');
+const { chatUriFor, nonPtyShellTerminalOf } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 const { shellTerminals } = await import('../src/machines/terminals.js');
 const { uriOf } = await import('../src/resources/fileuri.js');
@@ -448,7 +448,7 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
     { type: 'text', text: notice },
     {
       type: 'terminal',
-      resource: expect.stringMatching(/^ahp-terminal:\/\/shell\//),
+      resource: expect.stringMatching(/^agenthost-terminal:\/\/shell\//),
       title: 'Run shell command',
       isPty: false,
       result: { exitCode: 0, preview: 'BEGIN', truncated: true },
@@ -456,7 +456,7 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
   ]);
   // Named after the call's chat, as the host holds it, and the call.
   const resource = String(call?.content?.[1]?.resource);
-  expect(retainedTerminalOf(resource)).toEqual({ chat: chatUriFor(uri), key: 'toolu_big' });
+  expect(nonPtyShellTerminalOf(resource)).toEqual({ chat: chatUriFor(uri), toolCallId: 'toolu_big' });
 
   /*
    * The channel the call names, subscribed after the command is over: exited,

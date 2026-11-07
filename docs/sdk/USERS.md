@@ -277,7 +277,9 @@ That exception needs an id, so a client is told which one it is.
 The value is `user:<id>` for a person and `root:<host>` for the deployment's own
 token, which is a typed reference like any other rather than the absence of one.
 Where there is nobody to name the key is absent, not empty: that is every host
-with no users directory, and every connection on one that has not signed in.
+with no users directory, every connection on one that has not signed in, and
+the deployment's own token under the daemon's `rootOwner` `none`, VS Code's,
+where the sessions it starts are no one's.
 A client that signs in after connecting is told nothing at the sign-in - the
 protocol declares that result empty - so it takes the root state snapshot again
 and reads the key there.

@@ -9,6 +9,7 @@ import { configOf } from '../sessions/remotesession.js';
 import { CLOSING, noProvider } from './common.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
+import { getAgentHostChatId } from '../vscode/chatid.js';
 import { preambleOf, withPreamble } from './preamble.js';
 import { readAggregate, sessionFlag, settledMessage, startsRead } from './chatactions.js';
 import { needsAsyncRewrite } from './attachments.js';
@@ -63,9 +64,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     charged, getProviderForChat, chatConfig, chatIdOf, chatShown,
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
-    isolating, keepChat, recordSessionProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
-    movable, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
-    ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
+    isolating, keepChat, recordSessionProvider, kept, leadOf, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
+    isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, hasActiveTurn, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
+    ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, scratchFolder, seeded,
     projectActionForClient, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
     snapshotOf, spawn, subagentSummary, subagents, markSummaryDirty, unheld, visible, unavailableProvider, wake,
   } = ctx;
@@ -202,7 +203,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         backends: new Map(),
         workingDirectory: held.workingDirectory,
         additional: folders,
+        // Dated now, as VS Code's host dates the session it makes for a moved chat.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9141-L9142
         createdAt: now.toISOString(),
+        modifiedAt: now.toISOString(),
         quietSince: now.getTime(),
       };
       sessions.set(into, made);
@@ -928,14 +932,15 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      */
     listSessions: async (params) => {
       /*
-       * The running sessions built now and the held rows behind them.
+       * The running sessions' summaries built now and the held ones behind
+       * them.
        *
-       * Neither half waits for the other: a live row is read out of memory and
-       * is never stale, and the listed ones are whatever the last refresh
+       * Neither half waits for the other: a live summary is read out of memory
+       * and is never stale, and the listed ones are whatever the last refresh
        * found. So a client is answered in the time it takes to sort, however
        * long a pass over the machine's transcripts takes.
        */
-      const every = await allRows();
+      const every = await ctx.listSessions();
       /*
        * The caller's own rows, where they asked for them.
        *
@@ -1084,7 +1089,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           .filter((entry): entry is string => typeof entry === 'string')
           .map((entry) => localPath(entry));
         const asked = wanted[0];
-        const where = asked;
+        // None named, the daemon's `workspacelessFolder` says where it works.
+        const where = asked ?? await scratchFolder(uri);
         // The peers of the first, which the protocol says are equal to each
         // other and to it in everything but which one the process is rooted
         // at. A backend that cannot take them is told none.
@@ -1254,6 +1260,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       if (!chatUri.startsWith('ahp-chat:'))
         throw new RpcError(INVALID_PARAMS, `Chat URI must use the ahp-chat scheme: ${chatUri}`);
+      // Nor one whose chat id another chat of the session has, as VS Code reads
+      // a chat's id off its URI.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L64-L69
+      const chatId = getAgentHostChatId(chatUri);
+      const collision = [held.defaultChat, ...held.chats.keys()]
+        .find((existing) => existing !== chatUri && getAgentHostChatId(existing) === chatId);
+      if (collision !== undefined)
+        throw new RpcError(INVALID_PARAMS, `Chat URI ${chatUri} has the same chat id as the existing chat ${collision}`);
       claimable(chatUri, 'chat');
       /*
        * Made out of another chat, when a client asks for that.
@@ -1535,12 +1549,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           + ' Turn on chats with their own agents to move it to a session of another agent.');
       }
       /*
-       * The chat's own answer, which the client was handed before it asked:
-       * `movable` is what a move control is drawn from, and a chat that
-       * changed under the client between then and now is refused rather than
-       * moved from a state nobody was shown.
+       * A chat a move is made of, checked now rather than read from `movable`,
+       * which also says the chat's state: a move refuses that with its own
+       * reason. Running nothing is this host's, since a move here closes a
+       * process and starts another (plan host/47-p1).
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9214-L9223
        */
-      if (!movable(chatUri)) throw refused('notMovable', `Chat ${chatUri} can't be moved.`);
+      if (!isStructurallyMovable(chatUri) || hasActiveTurn(chatUri)) throw refused('notMovable', `Chat ${chatUri} can't be moved.`);
       const destination = (typeof params.destination === 'object' && params.destination !== null
         ? params.destination
         : {}) as Record<string, unknown>;
@@ -1550,12 +1565,34 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           ? 'a move needs a destination'
           : `a ${kind} destination is not one this host serves yet`);
       }
+      // A chat with no turn yet, refused before anything else is asked of the
+      // move, as VS Code's host refuses it.
+      const unstarted = chatMoveRefusal(chatUri, kind === 'newSession');
+      if (unstarted?.reason === 'notStarted') throw refused(unstarted.reason, unstarted.message);
       // The anchor, which the protocol requires to be another chat of the
       // destination and never the chat itself.
       const anchor = destination.after === undefined ? undefined : String(destination.after);
       if (anchor !== undefined && anchor === chatUri) throw refused('invalidAnchor', 'A chat can\'t be placed after itself.');
+      /*
+       * What the sessions and the chat itself refuse a move between sessions
+       * for, in VS Code's order: each session archived or changing its
+       * workspace, the source first, then the chat with no folder. A reorder
+       * within the session is refused none of them.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9505-L9525
+       */
+      const refuseState = (target: string | undefined): void => {
+        for (const one of target === undefined ? [found.uri] : [found.uri, target]) {
+          const refusal = sessionMoveRefusal(one);
+          if (refusal !== undefined) throw refused(refusal.reason, refusal.message);
+        }
+        const refusal = chatMoveRefusal(chatUri, target === undefined);
+        if (refusal !== undefined) throw refused(refusal.reason, refusal.message);
+      };
       // A session made for the chat, which has no chats to be placed among yet.
-      if (kind === 'newSession') return await movedTo(chatUri, found, held, undefined, anchor);
+      if (kind === 'newSession') {
+        refuseState(undefined);
+        return await movedTo(chatUri, found, held, undefined, anchor);
+      }
       /*
        * The source's own session, which is the reorder. Anywhere else is a move
        * between sessions, and this host makes one only where it can start the
@@ -1619,6 +1656,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         throw refused('unsupported', `a move between computers is not supported yet: ${chatUri} runs on`
           + ` ${mine ?? 'this host'} and ${to} on ${theirs ?? 'this host'}`);
       }
+      refuseState(to);
       if (anchor !== undefined && !dest.chats.has(anchor))
         throw refused('invalidAnchor', `Chat ${anchor} is not a visible chat of ${to}.`);
       return await movedTo(chatUri, found, held, to, anchor);

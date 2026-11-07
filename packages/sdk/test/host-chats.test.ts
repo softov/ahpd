@@ -1145,6 +1145,20 @@ describe('more than one chat in a session', () => {
   /** What a chat said, as the text each of its turns opened with. */
   const said = (read: Read): (string | undefined)[] => read.state.turns.map((one) => one.message?.text);
 
+  /**
+   * A chat's first turn, run to its end: a chat with no turn yet is one no move
+   * is made of, as VS Code's host refuses moving it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L8150-L8160
+   */
+  const firstTurn = async (client: { handle(request: unknown): Promise<unknown> }, chat: string, turnId: string): Promise<void> => {
+    await send(client, chat, turnId, 'first');
+    await vi.waitFor(async () => {
+      const read = await opened(client, chat);
+      expect(read.state.turns.length).toBeGreaterThan(0);
+      expect((read.state as { activeTurn?: unknown }).activeTurn ?? undefined).toBeUndefined();
+    });
+  };
+
   const send = async (
     client: { handle(request: unknown): Promise<unknown> },
     channel: string,
@@ -1405,6 +1419,42 @@ describe('more than one chat in a session', () => {
     }
   });
 
+  /*
+   * A row's time moves forward only, so a chat closed takes nothing back with
+   * it, as VS Code's host rolls a session's chats into the session's catalogue
+   * timestamp only where they are later.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
+   */
+  it('keeps the time a closed chat brought its session to', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await chatty(join(root, 'sessions'), backend([]));
+      await send(client, LIVE, 't0', 'here');
+      await flushed();
+      await send(client, PEER, 't1', 'over here');
+      await flushed();
+      const rowAt = async (): Promise<string | undefined> => ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+        items: { resource: string; modifiedAt: string }[];
+      }).items.find((one) => one.resource === LIVE)?.modifiedAt;
+      const held = await rowAt();
+      expect(held).toBeDefined();
+      const since = p.notes.length;
+
+      expect(await client.handle({ method: 'disposeChat', params: { channel: PEER } })).toBeNull();
+      await settle();
+      await flushed();
+
+      expect(await rowAt()).toBe(held);
+      expect(p.notes.slice(since)
+        .filter((n) => n.method === 'root/sessionSummaryChanged')
+        .map((n) => (n.params as { changes: { modifiedAt?: string } }).changes.modifiedAt)
+        .filter((one) => one !== undefined)).toEqual([]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not rebuild the chats of a session inside a machine', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
@@ -1472,6 +1522,7 @@ describe('more than one chat in a session', () => {
       await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
       await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
       await settle();
+      await firstTurn(client, PEER, 't0');
       expect((await opened(client, PEER)).state.movable).toBeUndefined();
       await expect(client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'newSession' } } }))
         .rejects.toMatchObject({ code: -32602, message: 'Moving chats is not enabled.', data: { reason: 'disabled' } });
@@ -1499,6 +1550,7 @@ describe('more than one chat in a session', () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const { client } = await chatty(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
       const session = await opened(client, LIVE);
       const rows = session.state.chats ?? [];
       expect(rows.map((one) => one.resource)).toEqual([session.state.defaultChat, PEER]);
@@ -1520,10 +1572,62 @@ describe('more than one chat in a session', () => {
     }
   });
 
+  /*
+   * A chat with no turn yet is no chat a move is made of, and the end of its
+   * first turn makes it one, said on the chat and on its row where the answer
+   * differs from what they hold, as VS Code's host says a chat's `movable`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L69-L83
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2147-L2160
+   */
+  it('offers no move for a peer chat before its first turn, and says it movable once that turn ends', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await chatty(join(root, 'sessions'), backend([]));
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      expect((await opened(client, LIVE)).state.chats?.find((one) => one.resource === PEER)).not.toHaveProperty('movable');
+      await firstTurn(client, PEER, 't0');
+      expect(moves(p, PEER)).toEqual([true]);
+      expect(actions(p, LIVE).filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === PEER)
+        .map((e) => (e.action.changes as { movable?: boolean }).movable).filter((one) => one !== undefined)).toEqual([true]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * An archived session's chats are not offered a move and a move out of it is
+   * refused in VS Code's words, and unarchiving it offers the move again.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9505-L9509
+   */
+  it('offers no move while its session is archived, refuses one in VS Code\'s words, and offers it again unarchived', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await apart(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
+      p.notes.length = 0;
+      const archive = async (isArchived: boolean): Promise<void> => {
+        await client.handle({ method: 'dispatchAction', params: { channel: LIVE, action: { type: 'session/isArchivedChanged', isArchived } } });
+        await settle(8);
+      };
+      await archive(true);
+      expect(moves(p, PEER)).toEqual([false]);
+      await expect(client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'session', session: TWO } } }))
+        .rejects.toMatchObject({ code: -32602, message: expect.stringMatching(/^Session \S+ is archived\.$/), data: { reason: 'sessionArchived' } });
+      await archive(false);
+      expect(moves(p, PEER)).toEqual([false, true]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('takes the move away for the length of a turn, and gives it back after', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const { client, p } = await chatty(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
+      p.notes.length = 0;
       await send(client, PEER, 't1', 'over here');
 
       // A move closes the backend and starts it again, and a turn is the one
@@ -1550,6 +1654,8 @@ describe('more than one chat in a session', () => {
     try {
       const starts: Start[] = [];
       const { client, p } = await chatty(join(root, 'sessions'), backend(starts));
+      await firstTurn(client, PEER, 't0');
+      p.notes.length = 0;
       expect((await opened(client, PEER)).state.movable).toBe(true);
 
       // A worker, opened by the backend on the start the host handed it. A move
@@ -1612,6 +1718,7 @@ describe('more than one chat in a session', () => {
     try {
       const starts: Start[] = [];
       const { client, p } = await three(join(root, 'sessions'), backend(starts));
+      await firstTurn(client, THIRD, 't0');
       const first = (await opened(client, LIVE)).state.defaultChat as string;
       /*
        * A worker on the peer chat, which is a chat of the session without being
@@ -1675,6 +1782,7 @@ describe('more than one chat in a session', () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const { client, p } = await three(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
       const first = (await opened(client, LIVE)).state.defaultChat as string;
 
       // `after` is optional and its absence is not "leave it where it is": it
@@ -1697,6 +1805,7 @@ describe('more than one chat in a session', () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const { client, p } = await three(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
       const first = (await opened(client, LIVE)).state.defaultChat as string;
       const before = listed(await opened(client, LIVE));
       const ask = (channel: string, destination: unknown) =>
@@ -1707,6 +1816,13 @@ describe('more than one chat in a session', () => {
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L90-L144
       await expect(ask(first, { kind: 'session', session: LIVE }))
         .rejects.toMatchObject({ code: -32602, message: `Chat ${first} can't be moved.`, data: { reason: 'notMovable' } });
+      // A chat with no turn yet, of which nothing exists beyond its composer,
+      // whether it is reordered or made a session of its own.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L8150-L8176
+      await expect(ask(THIRD, { kind: 'session', session: LIVE }))
+        .rejects.toMatchObject({ message: `Chat ${THIRD} has no turns yet; send a message before moving it.`, data: { reason: 'notStarted' } });
+      await expect(ask(THIRD, { kind: 'newSession' }))
+        .rejects.toMatchObject({ message: `Chat ${THIRD} has no turns yet; send a message before moving it to its own session.`, data: { reason: 'notStarted' } });
       /*
        * A chat this host is not running, which is not a chat at all here.
        *
@@ -1739,6 +1855,37 @@ describe('more than one chat in a session', () => {
       expect(listed(await opened(client, LIVE))).toEqual(before);
     }
     finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * A chat of a workspace-less session works in the session's scratch folder,
+   * which its default chat, staying, works in too: it is offered no move and
+   * a move is refused, in VS Code's reason and words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9526-L9528
+   */
+  it('refuses a move of a chat working in its session\'s scratch folder, which the default chat shares', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('USERPROFILE', root);
+    try {
+      const { client } = await hostAt(join(root, 'sessions'), backend([]), { workspacelessFolder: 'scratch' });
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await opened(client, LIVE);
+      await firstTurn(client, PEER, 't0');
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      await expect(client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'newSession' } } }))
+        .rejects.toMatchObject({
+          code: -32602,
+          message: `Chat ${PEER} works in a scratch folder that another chat of ${LIVE} also uses.`,
+          data: { reason: 'workspaceless' },
+        });
+    }
+    finally {
+      vi.unstubAllEnvs();
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -1836,6 +1983,7 @@ describe('more than one chat in a session', () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const { client } = await apart(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
       const mark = async (channel: string, action: Record<string, unknown>) => {
         await client.handle({ method: 'dispatchAction', params: { channel, action } });
         await settle(8);
@@ -1909,6 +2057,7 @@ describe('more than one chat in a session', () => {
       const held = ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
         items: { resource: string; modifiedAt: string }[];
       }).items.find((one) => one.resource === LIVE)?.modifiedAt as string;
+      const since = p.notes.length;
 
       const answer = await client.handle({
         method: 'moveChat',
@@ -1946,22 +2095,26 @@ describe('more than one chat in a session', () => {
       /*
        * And the root rows, which is the catalogue both sessions are drawn from.
        *
-       * A row carries the time of its newest chat, so the chat arriving moves
-       * the destination's row forward and the chat leaving moves the source's
-       * row back to the newest of what it still holds. A row that kept the
-       * moved chat's time is a row a client draws in the wrong place.
+       * A row's time is the latest its chats have brought it to, and it moves
+       * forward only, as VS Code's host rolls a session's chats into the
+       * session's catalogue timestamp only where they are later: the chat
+       * arriving moves the destination's row to its own newer time, and the
+       * source's row keeps the time the chat brought it to.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
        */
-      // Each change carries the fields that moved, so the times are the
-      // changes that carried one.
-      const rows = p.notes
+      // Each change carries the fields that moved, so the times the move said
+      // are the changes after it that carried one.
+      const rows = p.notes.slice(since)
         .filter((n) => n.method === 'root/sessionSummaryChanged')
         .map((n) => n.params as { session: string; changes: { modifiedAt?: string } })
         .filter((one) => one.changes.modifiedAt !== undefined);
-      const cameTo = rows.filter((one) => one.session === 'ahp-session:/two');
-      const wentFrom = rows.filter((one) => one.session === 'ahp-session:/live');
-      expect(cameTo.at(-1)?.changes.modifiedAt).toBeDefined();
-      expect(wentFrom.at(-1)?.changes.modifiedAt).toBeDefined();
-      expect(String(wentFrom.at(-1)?.changes.modifiedAt) < held).toBe(true);
+      expect(rows.filter((one) => one.session === TWO).at(-1)?.changes.modifiedAt).toBe(held);
+      expect(rows.filter((one) => one.session === LIVE)).toEqual([]);
+      const after = ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+        items: { resource: string; modifiedAt: string }[];
+      }).items;
+      expect(after.find((one) => one.resource === LIVE)?.modifiedAt).toBe(held);
+      expect(after.find((one) => one.resource === TWO)?.modifiedAt).toBe(held);
 
       // Its turns came with it, and it goes on from there.
       expect(said(await opened(client, PEER))).toEqual(['over here']);
@@ -1989,6 +2142,7 @@ describe('more than one chat in a session', () => {
     try {
       const starts: Start[] = [];
       const { client, p } = await apart(join(root, 'sessions'), backend(starts));
+      await firstTurn(client, PEER, 't0');
       // A worker on the chat that is about to move, which is a chat of the
       // session that is not one a client opened.
       const worker = starts.find((one) => one.chatId === UUID)
@@ -2078,6 +2232,7 @@ describe('more than one chat in a session', () => {
       });
       await settle(20);
       await opened(client, LIVE);
+      await firstTurn(client, PEER, 't0');
       const before = starts.length;
 
       await expect(client.handle({
@@ -2724,6 +2879,9 @@ describe('a chat of another backend', () => {
     second.client.handle({ method: 'createChat', params: { channel: LIVE, chat: THIRD } });
     second.client.handle({ method: 'createSession', params: { channel: TWO, provider: 'one' } });
     await settle(8);
+    // Its first turn, which a chat has run before a move is made of it.
+    await send(second.client, THIRD, 't0', 'first');
+    await vi.waitFor(async () => { expect((await opened(second.client, THIRD)).state.turns.length).toBeGreaterThan(0); });
 
     const here = await opened(second.client, LIVE);
     expect(here.state.chats?.find((chat) => chat.resource === THIRD)?.movable).toBe(true);

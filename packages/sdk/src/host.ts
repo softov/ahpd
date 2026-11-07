@@ -53,7 +53,7 @@ import { bag, ownerFilter, ownerOfPrincipal } from './utils/values.js';
 import { reason } from './host/common.js';
 import { clientQueueBytes, replayBytes } from './host/limits.js';
 import {
-  ROOT, RESTART_NEEDED, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, MARKS, spaceOf, servedIn, methodIn, baseOf, named,
+  ROOT, RESTART_NEEDED, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, spaceOf, servedIn, methodIn, named,
   chatUriFor, subagentChatUri, WORKER_ACTIONS, toolCallOfSubagentChat, isAutomations, automationOwner,
   parseResourceWatchChannelUri, schemeOf,
 } from './host/channels.js';
@@ -1533,7 +1533,7 @@ export function createHost(options: HostOptions): Host {
     madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, relaunches: new Map(), chatRelaunches: new Map(), resumedTurns: new Map(), cancelledTurns: new Map(), learned, starting,
     logs, detached, refuse,
     serverSeq: 0,
-    closed: false, shutdown: () => host.close(), refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Set<string>(), described, links,
+    closed: false, shutdown: () => host.close(), refusing: undefined, bareSessions: new Set<string>(), startedWorkspaceless: new Set<string>(), commandTurns: new Set<string>(), described, links,
     watches, marksOf, restoredSessions, activeClientsOf,
     restartNeeded: false,
     markRestart: () => {
@@ -1663,7 +1663,7 @@ export function createHost(options: HostOptions): Host {
     contributedDefaults, storedConfig,
     rootConfig, descriptors, daemonSchema, daemonProperties, daemonHeld,
     advertisedSchemes, advertisedChannels, advertisedMethods,
-    statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary,
+    statusOf, getChatOrigin, chatSummary, subagentSummary, restoredSubagentSummary,
     activityOf, sessionAdded, markSummaryDirty, activeSessionsChanged, setAgentModels, publishAccountInfo,
     listing, unavailableProvider, readStored,
     unstamped, withWorkerUri, stampedCalls, withSender,

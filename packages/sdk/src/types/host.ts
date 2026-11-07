@@ -786,6 +786,27 @@ export interface HostOptions {
    */
   unofferedModel?: 'fail' | 'keep';
   /**
+   * Where a session that names no folder works.
+   *
+   * `first`, the default, names it none, so it works in the first folder this
+   * host serves. `scratch` is VS Code's: a folder of its own,
+   * `<home>/.copilot/chats/<session id>`, made when the session is, made again
+   * when a start finds it gone, and removed with the session, as VS Code's
+   * host works a workspace-less session in its scratch folder.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/workspacelessScratchDir.ts#L14-L20
+   */
+  workspacelessFolder?: 'first' | 'scratch';
+  /**
+   * Whose work a session a root connection starts is, under a users directory.
+   *
+   * `host`, the default, is the host itself, `root:<hostName>`, the owner the
+   * usage rules charge it to. `none` is VS Code's: no owner, as VS Code's host
+   * records no principal for a session made without a validated identity.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10144-L10146
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L316-L317
+   */
+  rootOwner?: 'host' | 'none';
+  /**
    * Whether a turn's sender is said on what clients read.
    *
    * `said`, the default, puts who sent each turn under `_meta['ahpd.sender']`
@@ -885,14 +906,47 @@ export interface HostOptions {
    * in VS Code's shape: managed `ask` and `deny` rules, the Allow All lock,
    * and the domains a fetch stays within.
    *
-   * The host checks the rules of `deny` and `ask`, and `limitTo`, on every
-   * tool question of their kind, beside the session's permissions, and the
-   * lock takes the host's Allow All away from every session. Handed to every
-   * backend on `Start.managedSettings` as well, as VS Code hands its runtime
+   * Under `managedRules: 'checked'` the host checks the rules of `deny` and
+   * `ask`, and `limitTo`, on every tool question of their kind, beside the
+   * session's permissions. The lock takes the host's Allow All away from every
+   * session under either value. Handed to every backend on
+   * `Start.managedSettings` as well, as VS Code hands its runtime
    * `managedSettings: { permissions }`, for a runtime that enforces them on
    * the calls it never asks the host about.
    */
   managedSettingsPermissions?: ManagedSettingsPermissions;
+  /**
+   * The operator's per-tool approval eligibility, VS Code's
+   * `chat.tools.eligibleForAutoApproval` map of tool name to boolean, which
+   * VS Code's host takes from that setting's policy value alone: a tool set
+   * to `false` asks every time, the managed layer's per-tool ask.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L42
+   *
+   * Under `managedRules: 'checked'` the host reads it on every tool question,
+   * beside the managed rules, and it hands it to every backend on
+   * `Start.managedSettings` with them under either value.
+   */
+  eligibleForAutoApproval?: Record<string, boolean>;
+  /**
+   * Who checks the managed rules, `managedSettingsPermissions` and
+   * `eligibleForAutoApproval`, on a tool question.
+   *
+   * `checked`, the default, is this host's own check: each managed family on
+   * every question of its kind from every backend, a `deny` refusing the call
+   * and an `ask`, or a tool its eligibility sets `false`, putting the question
+   * with Allow Once and Skip alone, and `/mcp` refusing a host tool its
+   * eligibility sets `false`. `handed` is VS Code's: the host checks no
+   * managed rule and marks nothing, hands the rules to the backends on
+   * `Start.managedSettings` for the runtimes that take them, and puts a
+   * question a backend marked `managedApprovalRequired` with Allow Once and
+   * Skip, as VS Code's host keeps the merged permissions for its runtimes and
+   * checks none; `/mcp`, with no runtime to hand a rule to, runs the tool. The
+   * start's check of the managed document and the Allow All lock hold under
+   * both.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostManagedSettingsService.ts
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
+   */
+  managedRules?: 'checked' | 'handed';
   /**
    * How a session's shell commands are read before their rules are matched.
    *
@@ -985,6 +1039,25 @@ export interface HostOptions {
    * Left out, root config is the host's own three keys and nothing else.
    */
   rootConfig?: RootConfigPort;
+  /**
+   * Where the root config a client pushed is kept between starts.
+   *
+   * Written whole after each change a client or this host makes to it, and
+   * read once, when the host is built, as VS Code's host keeps its root config
+   * in a file it writes after each change and reads at its start. What is
+   * written is every key this host keeps for its clients, a backend's account
+   * aside, which its harness says. A start brings back the keys the root
+   * config's schema declares, each with a value its property accepts, and
+   * leaves the client-owned approval and policy keys to each window's next
+   * push.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1284-L1313
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1416
+   *
+   * Left out, the root config lasts as long as the process, which is what a
+   * host embedded in something short-lived wants. The daemon keeps it in
+   * `root-config.json` beside its configuration.
+   */
+  rootConfigStore?: RootConfigStore;
   /**
    * What this host says about itself when a window asks.
    *
@@ -1100,6 +1173,19 @@ export interface RootConfigAnswer {
   restartNeeded?: boolean;
 }
 
+/**
+ * Where the root config a client pushed is kept between starts.
+ *
+ * One bag of values, written whole and read whole: the host decides what goes
+ * in and what comes back, and the store keeps what it is given.
+ */
+export interface RootConfigStore {
+  /** What was kept last, read once when the host is built; empty where nothing was. */
+  read(): Record<string, unknown>;
+  /** Keep these values in place of what was kept. */
+  write(values: Record<string, unknown>): void;
+}
+
 /** What a host knows about itself, for the window's diagnostics. */
 export interface Diagnostics {
   /** The version `serverInfo` and the network diagnostics report. */
@@ -1143,6 +1229,12 @@ export interface ToolSession {
   config?: Record<string, unknown> | undefined;
   /** The connectors this session may use, by alias. */
   bindings?: Record<string, string> | undefined;
+  /**
+   * Whether the session started workspace-less, as VS Code's accessor
+   * answers: marked workspace-less now, or at any time since this host took
+   * it, a workspace it took since included.
+   */
+  startedWorkspaceless?: boolean | undefined;
 }
 
 /**
@@ -1220,10 +1312,11 @@ interface HostToolCommon {
   /**
    * The shape one session asks for, as VS Code's `getDefinitionForSession`
    * tailors a tool's wording to a session: `undefined` leaves the tool as it
-   * is, and `definition` is merged over the tool's own.
+   * is, `definition` is merged over the tool's own, and `deferLoading` is the
+   * session's answer over the tool's own.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L93
    */
-  forSession?: (session: ToolSession) => { definition?: Partial<ToolDefinition> } | undefined;
+  forSession?: (session: ToolSession) => { definition?: Partial<ToolDefinition>; deferLoading?: boolean } | undefined;
   /**
    * A host-side hint that the harness may hide this tool behind tool search.
    *
@@ -1391,6 +1484,16 @@ export interface ToolCall {
    */
   refusal(grant: Grant): string;
   /**
+   * The teams the person behind this call is on.
+   *
+   * The person is the one `may` answers for, and they are on each team one of
+   * their memberships names, so a tool that acts on something charged to a
+   * team, such as a machine, keeps it to that team's people. Empty for a call
+   * nobody is behind, for a turn this host's own root connection sent, and on
+   * a host with no users directory, where nobody is on a team.
+   */
+  teams(): string[];
+  /**
    * Every session this host knows, running or on disk, the calling one included.
    *
    * The catalogue's own rows, as `listSessions` answers them, so a tool says
@@ -1549,8 +1652,9 @@ export interface ToolCall {
  * than empty strings so a tool may ask whether there is one, and a tool that
  * needs one throws rather than letting the host guess on the caller's behalf.
  *
- * What is left is the person: `person()` names the caller, `may` and
- * `refusal` answer for them, and the tools that reach a chat or a session take
+ * What is left is the person: `person()` names the caller and `teams()` the
+ * teams they are on, `may` and `refusal` answer for them, and the tools that
+ * reach a chat or a session take
  * one as an argument instead of reading it from the call. `ask` is left out
  * with the two channel URIs: a call with no chat has nobody in it to ask.
  */
@@ -1679,20 +1783,6 @@ export interface Connection {
    * is who it was, so this is the only thing the expiry path needs beside it.
    */
   principalUntil?: number;
-  /**
-   * The folders this window said yes to when the host asked it about one.
-   *
-   * A move into a folder the window never pushed asks it then and there, and
-   * the answer is the whole of what it said about that folder - so it is kept
-   * here rather than thrown away when the backend starts in it: the move
-   * starts the backend again, and the process that starts has never heard the
-   * question. It stands until the
-   * window pushes a `workspaceTrust` value, which answers for every folder at
-   * once and so puts the folder-by-folder answers behind it.
-   *
-   * Per connection: it is what one window said, and it dies with the socket.
-   */
-  trustedFolders?: string[];
   /**
    * Tokens this client pushed, by protected resource identifier.
    *

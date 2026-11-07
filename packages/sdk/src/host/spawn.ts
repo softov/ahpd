@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState, ErrorInfo, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
@@ -28,6 +28,7 @@ import { vscodeRootProperties } from '../vscoderootconfig.js';
 import { PENDING_CONFIRMATION_FIELDS } from '../types/agent.js';
 import type { PendingConfirmation } from '../types/agent.js';
 import { sameFolder, trusted } from './trust.js';
+import { isWorktreeUnderRepository } from '../repo/worktrees.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
@@ -38,6 +39,8 @@ import type { Session, SubagentChat, SubagentRequest } from '../types/session.js
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
+import { isWorkspaceless } from './lifecycle.js';
+import { AGENT_HOST_WORKSPACELESS_INSTRUCTIONS } from '../vscode/workspacelessinstructions.js';
 import type { Move } from './lifecycle.js';
 import type { HostContext } from './context.js';
 import type { Origin } from './state.js';
@@ -173,7 +176,7 @@ function heldResources(store: ResourceStore): ResourceStore {
 
 export function createSpawn(ctx: HostContext): Spawn {
   const {
-    options, sessions, byChat, subagents, owners, kept, names, births, about,
+    options, sessions, byChat, subagents, owners, kept, names, births, moves, about,
     dispatch, log, described, links, restoredSessions,
     sessionHolding, dirOf, operationsMoved, refreshWatched, refreshFacts,
     fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, enteredIn, inMachine, bringBackOf,
@@ -442,10 +445,11 @@ export function createSpawn(ctx: HostContext): Spawn {
     const subCommands = commandLine === undefined ? [] : splitForRules(commandLine, signal.shellLanguage ?? 'bash')?.subCommands ?? [];
     /*
      * The terminal rules and the edit patterns are the host's one value each,
-     * which on a host with people answer the owner's turns alone, as the
-     * host's shell answers read them.
+     * read for every question whoever sent its turn, as VS Code's host reads
+     * them from its root config for every question.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L875
      */
-    const owners = options.users === undefined || senderOf(String(action.turnId ?? '')) === kept.owner(idOf(session));
     const pushed = ctx.rootConfig['terminalAutoApproveRules'];
     const terminalRules = pushed !== null && typeof pushed === 'object'
       ? pushed as TerminalAutoApproveRules
@@ -480,8 +484,8 @@ export function createSpawn(ctx: HostContext): Spawn {
       globalAutoApprove: ctx.rootConfig.globalAutoApproveEnabled === true,
       sessionAutoApprove: ctx.rootConfig.autoApprovePolicyRestricted !== true && owning?.config.autoApprove === 'autoApprove',
       bypassLocked: managedSettings?.disableBypassPermissionsMode === 'disable',
-      terminalAutoApprove: ctx.rootConfig.terminalAutoApproveEnabled !== false && owners,
-      ...(owners ? { editPatterns } : {}),
+      terminalAutoApprove: ctx.rootConfig.terminalAutoApproveEnabled !== false,
+      editPatterns,
       sensitive,
       ...(commandLine === undefined ? {} : {
         evaluateShell: (classifiers) => approver.evaluation(commandLine, {
@@ -491,18 +495,21 @@ export function createSpawn(ctx: HostContext): Spawn {
       }),
       exists: existsSync,
     };
-    // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
-    // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
-    const eligible = toolName === undefined || !alwaysAsks(ctx.rootConfig, toolName,
-      ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
-      mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
     /*
      * The operator's managed rules, read on every question beside the
-     * session's permissions; a question a managed rule asks, its backend's
-     * mark or this host's, answers to nobody but a person, as one the
-     * operator's `eligibleForAutoApproval` names.
+     * session's permissions where the daemon's `managedRules` is `checked`;
+     * under `handed` the backends are handed them and the host checks none, as
+     * VS Code's host. A question a managed rule asks, its backend's mark or
+     * this host's, answers to nobody but a person, as one the operator's
+     * `eligibleForAutoApproval` names.
      */
-    const managedSays = managedDecision(managedSettings, approval, subCommands);
+    const checked = options.managedRules !== 'handed';
+    // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
+    // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
+    const eligible = !checked || toolName === undefined || !alwaysAsks(options.eligibleForAutoApproval, toolName,
+      ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
+      mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
+    const managedSays = checked ? managedDecision(managedSettings, approval, subCommands) : undefined;
     const managed = signal.managedApprovalRequired === true || managedSays === 'ask' || !eligible;
     if (managedSays === 'deny' || isForbiddenSnapshotWrite(approval) || isDeniedByPermissions(approval, subCommands)) {
       queueMicrotask(() => { backend()?.confirm(toolCallId, false); });
@@ -1010,6 +1017,16 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
     if (resuming?.resume !== undefined) restoredSessions.add(uri);
     /*
+     * A session's own scratch folder, made again when a start finds it gone,
+     * as VS Code's agent makes a recorded scratch folder again before a chat
+     * runs in it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1785-L1791
+     */
+    const workspaceless = isWorkspaceless(uri, workingDirectory);
+    if (workspaceless && workingDirectory !== undefined) mkdirSync(workingDirectory, { recursive: true });
+    // Kept before its tools are bound, which is what `set_workspace` is offered by.
+    if (workspaceless) ctx.startedWorkspaceless.add(uri);
+    /*
      * What this session's turns cost, kept against each turn until it ends.
      *
      * Only where the host was given somewhere to keep usage: a host with no
@@ -1102,22 +1119,17 @@ export function createSpawn(ctx: HostContext): Spawn {
      * What this backend is told about the folders it is handed.
      *
      * Read from the host's one `workspaceTrust`, which the last push from any
-     * window set, as the reference host reads it for every session it starts,
-     * and from the folders the window that sent the turn said yes to one at a
-     * time.
-     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162
+     * window set. Every start reads it, whoever sent the turn and when nobody
+     * did, as VS Code's host reads its one trust value for every session it
+     * starts and every hook it runs.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L166-L169
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8621
      *
-     * On a host with people, only a turn the session's owner sends reads it. A
-     * turn somebody else sends into this session is not theirs to widen, which
-     * is why the two are compared; and an automation, a host tool and a daemon
-     * coming back up send nothing, so what they start there is untrusted.
-     * Where the host has no people directory there is nobody to compare:
-     * `ownerFor` answers `undefined` for every connection, and every start
-     * reads the host's value.
-     *
-     * A worktree this host made is read as the repository it was cut from: it
-     * is a folder the window has never opened and so cannot have pushed, and
-     * one the host made is trusted exactly when its repository is.
+     * A folder is trusted by its own trust, and a worktree this host made in
+     * its repository's `<repo>.worktrees` by its repository's as well, as VS
+     * Code's host grants a session's working directory its trust. A worktree
+     * under a configured root is read by its own alone.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L512-L520
      *
      * One folder is trusted without a connection: the one a plugin asked for
      * with `session:trust`, kept with the session. Nobody at the keyboard
@@ -1129,33 +1141,28 @@ export function createSpawn(ctx: HostContext): Spawn {
     const trustedBy = (folder: string): boolean => {
       const asked = kept.trustedFolder?.(idOf(uri));
       if (asked !== undefined && sameFolder(asked, folder)) return true;
-      if (options.users !== undefined) {
-        const who = sender === undefined ? undefined : ctx.ownerFor(sender);
-        if (who === undefined || who !== kept.owner(idOf(uri))) return false;
-      }
+      const trust = ctx.rootConfig.workspaceTrust;
       const made = ctx.worktreeOf(uri);
-      const vouched = made !== undefined && sameFolder(made.path, folder) ? made.repository : folder;
-      return trusted(vouched, ctx.rootConfig.workspaceTrust, sender?.trustedFolders);
+      return trusted(folder, trust)
+        || (made !== undefined && sameFolder(made.path, folder) && isWorktreeUnderRepository(made.path, made.repository) && trusted(made.repository, trust));
     };
     /*
      * Whether a command or tool this session runs is answered by the host's
      * rules, or asks every time because the operator said so.
      *
-     * The operator's `eligibleForAutoApproval` rule is read first, and without
-     * a connection: it is the host's setting rather than a window's, so it
-     * applies to every session on the host, an automation's among them. A tool
-     * it names is `ask`, which is a call that asks every time and offers no
-     * "always" option - before any terminal rule could approve it.
+     * The operator's `eligibleForAutoApproval` setting is read first: it is
+     * the daemon's, so it applies to every session on the host, an
+     * automation's among them. A tool it sets to `false` is `ask`, which is a
+     * call that asks every time and offers no "always" option - before any
+     * terminal rule could approve it.
      *
      * The terminal rules and the edit patterns are the host's one value each,
-     * which the last push from any window set, as the reference host reads
-     * them for every session it runs; on a host with people they answer the
-     * owner's turns alone, as `trustedBy` reads trust. Where no window pushed
-     * rules the daemon's setting applies - VS Code's table or none - and a
-     * pushed empty table is no rules: an empty object is a table with nothing
-     * in it, not a window that never spoke.
-     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L361
-     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L884
+     * which the last push from any window set, read for every line whoever
+     * sent its turn, as the reference host reads them for every question.
+     * Where no window pushed rules the daemon's setting applies - VS Code's
+     * table or none - and a pushed empty table is a table with no rules in it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L875
      *
      * Only `approved` is an approval. A command a deny rule named, and a line no
      * rule could read, are both `undefined`, which leaves the backend to ask.
@@ -1163,13 +1170,9 @@ export function createSpawn(ctx: HostContext): Spawn {
     const getAutoApproval = (kind: AutoApprovalKind, line: string, shell?: CommandShell, tool?: string): AutoApproval | undefined => {
       /* The tool's name: its own for `tool`, and the one that runs the line for `shell`. */
       const named = kind === 'tool' ? line : tool;
-      if (named !== undefined && asksForTool(ctx.rootConfig, named)) return 'ask';
+      if (named !== undefined && asksForTool(options.eligibleForAutoApproval, named)) return 'ask';
       if (kind === 'tool') return undefined;
       if (shell === undefined) return undefined;
-      if (options.users !== undefined) {
-        const who = sender === undefined ? undefined : ctx.ownerFor(sender);
-        if (who === undefined || who !== kept.owner(idOf(uri))) return undefined;
-      }
       if (ctx.rootConfig['terminalAutoApproveEnabled'] === false) return undefined;
       const pushed = ctx.rootConfig['terminalAutoApproveRules'];
       const rules = pushed !== null && typeof pushed === 'object'
@@ -1209,9 +1212,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      * tools every session is offered; what the session was asked for joins
      * them after, which is where a request's own words belong - it may name a
      * tool that only its session has, so nothing in front of it could account
-     * for that.
+     * for that. A workspace-less session is told last that it works in a
+     * scratch folder, as VS Code's agents append that to what they are told.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/prompts/promptRegistry.ts#L220-L229
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2159-L2162
      */
-    const told = [...ctx.instructions(uri), ...(askedInstructions ?? [])];
+    const told = [...ctx.instructions(uri), ...(askedInstructions ?? []), ...(workspaceless ? [AGENT_HOST_WORKSPACELESS_INSTRUCTIONS] : [])];
     /*
      * Whether the backend loads the person's own settings, read off the store
      * rather than off a request: a restart has no request, and what the session
@@ -1248,7 +1254,12 @@ export function createSpawn(ctx: HostContext): Spawn {
       chatUri,
       trusted: trustedBy,
       getAutoApproval,
-      ...(options.managedSettingsPermissions === undefined ? {} : { managedSettings: { permissions: options.managedSettingsPermissions } }),
+      ...(options.managedSettingsPermissions === undefined && options.eligibleForAutoApproval === undefined ? {} : {
+        managedSettings: {
+          ...(options.managedSettingsPermissions === undefined ? {} : { permissions: options.managedSettingsPermissions }),
+          ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
+        },
+      }),
       ...(userSettings === undefined ? {} : { userSettings }),
       /*
        * The tools bound to this session: this host's own, and whatever the
@@ -1783,6 +1794,8 @@ export function createSpawn(ctx: HostContext): Spawn {
           && ctx.moving.get(uri)?.chat === chatUri) {
           const move = ctx.moving.get(uri) as Move;
           ctx.moving.delete(uri);
+          // Whether its chats may move, which the move asked for kept from them.
+          for (const one of sessions.get(uri)?.chats.keys() ?? []) updateChatMovability(one);
           if (action.type === 'chat/turnComplete') {
             void ctx.moveSession(uri, move).catch((error: unknown) => {
               log(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1897,6 +1910,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const made = used.create(wired);
     const session = made instanceof Promise ? await made : made;
     titled = session;
+    const now = new Date().toISOString();
     const held = existing ?? {
       agent: own?.agent ?? agent,
       chats: new Map<string, Session>(),
@@ -1905,10 +1919,13 @@ export function createSpawn(ctx: HostContext): Spawn {
       backends: new Map<string, { agent: Agent; config: Record<string, unknown> }>(),
       workingDirectory,
       additional,
-      // The catalogue's value for a session being resumed; now, for one being
-      // started. A second chat in a session that already exists takes the
-      // session's own, because `sessions.get` answered above.
-      createdAt: births.get(uri) ?? new Date().toISOString(),
+      // The catalogue's values for a session being resumed or woken; now, for
+      // one being started, as VS Code's host dates a session it makes. A
+      // second chat in a session that already exists takes the session's own,
+      // because `sessions.get` answered above.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10712-L10713
+      createdAt: births.get(uri) ?? now,
+      modifiedAt: moves.get(uri) ?? now,
       quietSince: 0,
     };
     // Loaded now, which is activity: a session resumed a moment ago is not one
@@ -2007,14 +2024,11 @@ export function createSpawn(ctx: HostContext): Spawn {
       },
     });
     /*
-     * The answer this chat is born with, written down and not said.
-     *
-     * A move is offered for a chat by its own state and by its session's row,
-     * and both are built from `movable` read now - so nothing has been
-     * announced for a change to be compared against, and a chat that can move
-     * from its first moment needs no `chat/movableChanged` to say so. This is
-     * the one road every start of a backend goes through, so it is also the
-     * only place the baseline can be set without a second one to keep in step.
+     * Whether this chat may move, said where what its state or its session's
+     * row holds differs. Both are built from `movable` as they are read, so a
+     * chat whose state or row was built before this start is told what it is
+     * now, and one built now is told nothing more. This is the one road every
+     * start of a backend goes through.
      */
     updateChatMovability(chatUri);
     /*

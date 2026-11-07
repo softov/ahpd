@@ -469,6 +469,16 @@ export const sessionTools = (): HostTool[] => [
       },
       annotations: { title: 'Set Workspace', readOnlyHint: false, destructiveHint: true },
     },
+    /*
+     * Deferred, as VS Code's is, and offered up front to a session that
+     * started workspace-less, whose first turn its instructions point at this
+     * tool, as VS Code's host offers it there; it stays so after a workspace
+     * is taken, since a tool list that moved would miss the prompt cache.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L300-L307
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L2255-L2258
+     */
+    deferLoading: true,
+    forSession: ({ startedWorkspaceless }) => (startedWorkspaceless === true ? { deferLoading: false } : undefined),
     run: (input, at) => {
       const tool = 'set_workspace';
       allowed(at, 'session:write');

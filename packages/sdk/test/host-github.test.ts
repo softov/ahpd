@@ -50,6 +50,30 @@ describe('what GitHub knows about the branch', () => {
     };
   };
   const onBranch = (branch: string) => ({ branchName: branch, hasGitHubRemote: true, githubOwner: 'softov', githubRepo: 'ahpd' });
+  /**
+   * A session made and watched, and `github`: its GitHub state once a turn
+   * named `turnId` has ended in its chat, which is when the folder is read
+   * again.
+   */
+  const turning = async (client: ReturnType<ReturnType<typeof createHost>['accept']>, session: string) => {
+    await client.handle({ method: 'createSession', params: { channel: session, provider: 'claude' } });
+    await settle();
+    const opened = await client.handle({ method: 'subscribe', params: { channel: session } }) as { snapshot: { state: { defaultChat: string } } };
+    const chat = opened.snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    const github = async (on: string, turnId: string) => {
+      void client.handle({
+        method: 'dispatchAction',
+        params: { channel: on, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+      });
+      await settle();
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      await settle(8);
+      const state = await client.handle({ method: 'subscribe', params: { channel: session } }) as { snapshot: { state: { _meta?: Record<string, unknown> } } };
+      return state.snapshot.state._meta?.github as { pullRequestUrls?: string[]; pullRequestBranchName?: string } | undefined;
+    };
+    return { chat, github };
+  };
 
   it('advertises the resource on every backend, so a client lends its token', async () => {
     const { port } = lookup(() => []);
@@ -157,7 +181,7 @@ describe('what GitHub knows about the branch', () => {
    * its host in lower case and no trailing slash, each once, ten at most.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1435-L1447
    */
-  it('writes the branch\'s pull requests as VS Code\'s host writes them, each once and ten at most', async () => {
+  it('writes the pull request the branch\'s lookup found as VS Code\'s host writes it, and the baseline each once and ten at most', async () => {
     const requests = [
       { url: 'https://GitHub.com/softov/ahpd/pull/12/', state: 'open' as const },
       { url: 'https://github.com/softov/ahpd/pull/12', state: 'open' as const },
@@ -177,9 +201,86 @@ describe('what GitHub knows about the branch', () => {
     }).snapshot.state;
     const ten = Array.from({ length: 10 }, (_, at) => `https://github.com/softov/ahpd/pull/${12 - at}`);
     const github = state._meta?.github as { pullRequestUrls?: string[]; initialPullRequestUrls?: string[] };
-    expect(github.pullRequestUrls).toEqual(ten);
+    // The one the lookup resolved, its host in lower case and no trailing slash.
+    expect(github.pullRequestUrls).toEqual(['https://github.com/softov/ahpd/pull/12']);
     expect(github.initialPullRequestUrls).toEqual(ten);
     expect(state._meta?.githubData).toEqual({ [HOME]: github });
+  });
+
+  /*
+   * The lookup VS Code's host runs for a session's checkout: never for the
+   * base branch, and once a pull request is known for the branch, no other is
+   * looked for there; a switch to a branch with none keeps the known ones.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L219-L275
+   */
+  it('keeps the pull requests it knew across branches, and asks nothing for the base branch or for another on a branch it answered', async () => {
+    const git: Record<string, unknown> = { ...onBranch('fix/a'), baseBranchName: 'main' };
+    let requests: { url: string; state: 'open' | 'closed' | 'merged' }[] = [{ url: 'https://github.com/softov/ahpd/pull/1', state: 'open' }];
+    const { port, asked } = lookup(() => requests);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(git), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const { chat, github } = await turning(client, 'ahp-session:/moves');
+    expect((await github(chat, 't1'))?.pullRequestUrls).toEqual(['https://github.com/softov/ahpd/pull/1']);
+    // Another pull request on the same branch is not taken: one is known there.
+    requests = [{ url: 'https://github.com/softov/ahpd/pull/2', state: 'open' }];
+    expect((await github(chat, 't2'))?.pullRequestUrls).toEqual(['https://github.com/softov/ahpd/pull/1']);
+    // A branch with none keeps the known one, though it was asked about.
+    git.branchName = 'fix/b';
+    requests = [];
+    expect(await github(chat, 't3')).toMatchObject({ pullRequestUrls: ['https://github.com/softov/ahpd/pull/1'], pullRequestBranchName: 'fix/a' });
+    expect(asked.map((one) => one.branch)).toContain('fix/b');
+    // The base branch's pull request is nobody's work: none is taken there.
+    git.branchName = 'main';
+    requests = [{ url: 'https://github.com/softov/ahpd/pull/9', state: 'open' }];
+    expect(await github(chat, 't4')).toMatchObject({ pullRequestUrls: ['https://github.com/softov/ahpd/pull/1'], pullRequestBranchName: 'fix/a' });
+  });
+
+  /*
+   * With the root's automatic attachment off, VS Code's host looks nothing up
+   * and keeps the pull requests a session recorded as artifacts or associated.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L188-L218
+   */
+  it('looks up no pull request with automatic attachment off', async () => {
+    const { port } = lookup(() => [{ url: 'https://github.com/softov/ahpd/pull/3', state: 'open' }]);
+    // The folder is on its branch from the moment the setting is in force.
+    const git: Record<string, unknown> = {};
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(git), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { autoAttachPullRequests: false } } } });
+    const { chat, github } = await turning(client, 'ahp-session:/off');
+    Object.assign(git, onBranch('fix/c'));
+    expect(await github(chat, 't1')).toEqual({ owner: 'softov', repo: 'ahpd' });
+  });
+
+  /*
+   * Turned off with pull requests held, VS Code's restricted mode keeps each
+   * list to the session's artifacts and associated pull requests: the found
+   * one, the baseline's and the selection all go when none of them is either.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestAssociationResolver.ts#L392-L418
+   */
+  it('keeps the lists to the session\'s own pull requests once automatic attachment is off', async () => {
+    const { port } = lookup(() => [{ url: 'https://github.com/softov/ahpd/pull/4', state: 'open' }]);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/d')), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const { chat, github } = await turning(client, 'ahp-session:/restricted');
+    expect(await github(chat, 't1')).toMatchObject({
+      pullRequestUrls: ['https://github.com/softov/ahpd/pull/4'],
+      initialPullRequestUrls: ['https://github.com/softov/ahpd/pull/4'],
+    });
+    await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { autoAttachPullRequests: false } } } });
+    expect(await github(chat, 't2')).toEqual({ owner: 'softov', repo: 'ahpd', initialPullRequestUrls: [], associatedPullRequestUrls: [] });
   });
 
   it('names the owner and repository alone when the branch has no pull request, and keeps what it held when GitHub does not answer', async () => {

@@ -46,7 +46,7 @@ const complete = (related: PullRequest[]): boolean =>
   related.length > 0 && related.every((one) => one.state !== 'open') && related.some((one) => one.state === 'merged');
 
 export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
-  const { options, sessions, kept, restarting, githubFacts, worktreeOf, dirOf, getAuthToken, log, running } = ctx;
+  const { options, sessions, kept, restarting, githubFacts, worktreeOf, dirOf, getAuthToken, log, hasActiveTurn } = ctx;
 
   // How the pass learns the state of a pull request, from the host's own
   // option: set here because the pass is where it is read.
@@ -82,7 +82,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
     if (restarting.has(uri)) return true;
     const held = sessions.get(uri);
     if (held === undefined) return false;
-    for (const chatUri of held.chats.keys()) if (running(chatUri)) return true;
+    for (const chatUri of held.chats.keys()) if (hasActiveTurn(chatUri)) return true;
     return false;
   };
 
@@ -201,9 +201,9 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
     return found.filter((one) => !before.has(urlKey(one.url)));
   };
 
-  /** The row of a session as the catalogue answers it now. */
+  /** The summary of a session as the catalogue answers it now. */
   const rowNow = async (uri: string): Promise<Summary | undefined> =>
-    (await ctx.allRows()).find((one) => one.resource === uri);
+    (await ctx.listSessions()).find((one) => one.resource === uri);
 
   /** Archive one inactive session whose related pull requests are merged. */
   const archiveOne = async (row: Summary, days: number): Promise<boolean> => {
@@ -257,7 +257,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
     let looked = 0;
     let archivedCount = 0;
     let deletedCount = 0;
-    for (const row of await ctx.allRows()) {
+    for (const row of await ctx.listSessions()) {
       if (ctx.closed) return;
       const uri = row.resource;
       if (busy(uri)) continue;

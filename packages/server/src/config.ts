@@ -299,6 +299,22 @@ export interface Config {
    */
   unofferedModel?: 'fail' | 'keep';
   /**
+   * Where a session that names no folder works.
+   *
+   * `first`, the default, is the first folder this daemon serves. `scratch` is
+   * VS Code's: a folder of its own under `~/.copilot/chats`, made when the
+   * session is and removed with it.
+   */
+  workspacelessFolder?: 'first' | 'scratch';
+  /**
+   * Whose work a session a root connection starts is, under a users directory.
+   *
+   * `host`, the default, is the host itself, `root:<hostName>`. `none` is VS
+   * Code's: no owner, as its host records no principal for a session made
+   * without a validated identity.
+   */
+  rootOwner?: 'host' | 'none';
+  /**
    * Whether a turn's sender is said on what clients read.
    *
    * `said`, the default, puts who sent each turn on its start and its message.
@@ -392,13 +408,29 @@ export interface Config {
    * take Allow All away, and `limitTo`, the `Domain` rules a fetch stays
    * within.
    *
-   * The host checks each rule on the tool questions of its kind beside the
-   * session's permissions, the lock takes the host's
-   * Allow All away, and the whole is handed to every backend, as VS Code
-   * hands its runtime managed settings. Absent is no managed permissions at
-   * all.
+   * Under `managedRules: checked` the host checks each rule on the tool
+   * questions of its kind beside the session's permissions; the lock takes
+   * the host's Allow All away, and the whole is handed to every backend, as
+   * VS Code hands its runtime managed settings, under either value. Absent is
+   * no managed permissions at all.
    */
   managedSettingsPermissions?: ManagedSettingsPermissions;
+  /**
+   * The operator's per-tool approval eligibility, VS Code's
+   * `chat.tools.eligibleForAutoApproval` map of tool name to boolean: under
+   * `managedRules: checked` a tool set to `false` asks every time, with no
+   * "always" option, beside the managed permissions. Absent names no tool.
+   */
+  eligibleForAutoApproval?: Record<string, boolean>;
+  /**
+   * Who checks the managed rules on a tool question.
+   *
+   * `checked`, the default, is this host's own check of each rule on every
+   * question of its kind. `handed` is VS Code's: the host hands the rules to
+   * the backends and checks none, and a question a backend marked managed is
+   * put with Allow Once and Skip alone.
+   */
+  managedRules?: 'checked' | 'handed';
   /**
    * How long a streamed delta waits for the next one before it is sent.
    *
@@ -538,6 +570,18 @@ export const shellEnvProblems = (held: unknown): string[] => {
     }
   }
   return problems;
+};
+
+/**
+ * What is wrong with an `eligibleForAutoApproval` value, one line each, or
+ * nothing: each tool's value is `true` or `false`, as VS Code's setting
+ * declares it.
+ */
+export const eligibilityProblems = (held: unknown): string[] => {
+  // Not a map at all is the schema's to refuse, with the key's own name.
+  if (typeof held !== 'object' || held === null || Array.isArray(held)) return [];
+  return Object.entries(held).flatMap(([tool, value]) => (typeof value === 'boolean' ? []
+    : [`eligibleForAutoApproval.${tool} holds ${JSON.stringify(value)}, which is not true or false`]));
 };
 
 /**
@@ -726,6 +770,17 @@ export const automationStatePath = (): string => join(configDir(), 'automations-
  * session's business.
  */
 export const customizationStatePath = (): string => join(configDir(), 'customizations-state.json');
+
+/**
+ * Where the root config a client pushed is kept between starts.
+ *
+ * Beside the customizations for the same reason as those: one small file
+ * beside a hand-edited `config.json`, written whenever a window pushes a
+ * setting or a person picks Always Allow, as VS Code's host keeps
+ * `agent-host-config.json` in its global storage.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostBootstrap.ts#L136
+ */
+export const rootConfigPath = (): string => join(configDir(), 'root-config.json');
 
 /**
  * The one file an earlier daemon kept every automation in.

@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../tools/artifacts.js';
-import { idOf } from '../sessions/catalog.js';
+import { SESSION_META_EXTERNAL_KEY, SESSION_META_WORKSPACELESS_KEY, idOf } from '../sessions/catalog.js';
+import { isWorkspaceless } from './lifecycle.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { CREATED_BY_META, MULTI_ROOT_META, REMOTE_ORIGIN_META, SPAWN_DEPTH_META, depthOf } from '../sessions/remotesession.js';
 import { reason } from '../utils/values.js';
@@ -217,6 +218,24 @@ export function createFacts(ctx: HostContext): Facts {
       .slice(0, MAX_SESSION_PULL_REQUEST_REFERENCES);
   };
   /**
+   * GitHub state with a pull request moved to the front of its list, the list
+   * kept behind it, with the branch it is for, and the held state kept only
+   * where it names that pull request, in any case, as VS Code's host writes it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1448-L1465
+   */
+  const withMostRecentSessionPullRequest = (held: Bag, url: string, branch: string): Bag => {
+    const urls = Array.isArray(held.pullRequestUrls) ? held.pullRequestUrls.filter((one): one is string => typeof one === 'string') : [];
+    const pullRequestUrls = pullRequestUrlsOf([url, ...urls]);
+    const { pullRequestState, pullRequestStateUrl, ...rest } = held;
+    const stateApplies = typeof pullRequestStateUrl === 'string' && pullRequestStateUrl.toLowerCase() === pullRequestUrls[0]?.toLowerCase();
+    return {
+      ...rest,
+      pullRequestUrls,
+      pullRequestBranchName: branch,
+      ...(stateApplies && pullRequestState !== undefined ? { pullRequestState, pullRequestStateUrl } : {}),
+    };
+  };
+  /**
    * Add to a session's pull request baseline what VS Code's host adds to one.
    *
    * Only a folder-isolated session has a baseline, or one that holds one
@@ -359,6 +378,12 @@ export function createFacts(ctx: HostContext): Facts {
         : { [REMOTE_ORIGIN_META]: { session: origin.session, chat: origin.chat, depth: origin.depth }, [SPAWN_DEPTH_META]: depthOf(byAgent, origin) }),
       ...(made === undefined ? {} : { [CREATED_BY_META]: made }),
       ...(multiRoot === undefined ? {} : { [MULTI_ROOT_META]: multiRoot }),
+      // A backend's session made outside this host and adopted by nobody here,
+      // marked where the window reads it.
+      ...(ctx.isExternal(uri) ? { [SESSION_META_EXTERNAL_KEY]: true } : {}),
+      // And one working in its own scratch folder, which the window draws as a
+      // chat with no workspace.
+      ...(isWorkspaceless(uri, dir) ? { [SESSION_META_WORKSPACELESS_KEY]: true } : {}),
     };
     if (dir === undefined) {
       const meta = { ...byAgent, ...pluginMeta(uri), ...sent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };
@@ -550,11 +575,23 @@ export function createFacts(ctx: HostContext): Facts {
    * Ask GitHub about the branch a directory is on, answering whether what it
    * said differs from what was held.
    *
-   * Only where the git facts name a GitHub remote and a branch. Asked with a
-   * token a client lent when one has, and otherwise however the port can;
-   * an answer that fails keeps what was held rather than erasing it, since
-   * the network being down is not the pull request being gone. The state is
-   * of the newest request, which is the one the row draws.
+   * Only where the git facts name a GitHub remote. The pull request of the
+   * branch is looked up as VS Code's host looks one up for a session: with the
+   * root's `autoAttachPullRequests` on, for a branch that is not the base, and
+   * until one is known for that branch; the one found goes first and the ones
+   * known stay behind it, so a switch to a branch with none keeps them. A
+   * known one's state is read again whenever the folder is, as VS Code's host
+   * syncs a pull request's status on a git state refresh. With the setting
+   * off nothing is looked up, and the list keeps the pull requests a session
+   * there recorded or associated, as VS Code's restricted reconciliation keeps
+   * the artifact and explicit ones.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L175-L275
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestAssociationResolver.ts#L203-L265
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestStatusService.ts#L142-L144
+   *
+   * Asked with a token a client lent when one has, and otherwise however the
+   * port can; an answer that fails keeps what was held, since the network
+   * being down is not the pull request being gone.
    */
   const refreshPullRequests = async (dir: string): Promise<boolean> => {
     if (options.github === undefined) return false;
@@ -562,35 +599,73 @@ export function createFacts(ctx: HostContext): Facts {
     const owner = git?.githubOwner;
     const repo = git?.githubRepo;
     const branch = git?.branchName;
-    if (typeof owner !== 'string' || typeof repo !== 'string' || typeof branch !== 'string') {
-      return githubFacts.delete(dir);
+    if (typeof owner !== 'string' || typeof repo !== 'string') return githubFacts.delete(dir);
+    const before = githubFacts.get(dir);
+    const held: Bag = { ...(before?.owner === owner && before.repo === repo ? before : {}), owner, repo };
+    /** Hold `now` for the directory, answering whether it differs from what was held. */
+    const put = (now: Bag): boolean => {
+      if (before !== undefined && JSON.stringify(before) === JSON.stringify(now)) return false;
+      githubFacts.set(dir, now);
+      return true;
+    };
+    const urls = Array.isArray(held.pullRequestUrls) ? held.pullRequestUrls.filter((one): one is string => typeof one === 'string') : [];
+    if (ctx.rootConfig.autoAttachPullRequests === false) {
+      /*
+       * Each list kept to the candidates, a session's pull request artifacts
+       * and the ones associated with it, as VS Code's restricted mode keeps a
+       * session's state: its baseline as well, and the selected pull request
+       * with its status gone where the list's first is no candidate.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestAssociationResolver.ts#L249-L258
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestAssociationResolver.ts#L392-L418
+       */
+      const candidatesOf = (uri: string): string[] => [
+        ...artifactsIn(kept.artifacts(idOf(uri))).filter((one) => one.type === 'pullRequest').map((one) => String(one.link)),
+        ...(kept.pullRequests(idOf(uri))?.associatedPullRequestUrls ?? []),
+      ];
+      let baselineMoved = false;
+      for (const uri of inThere(dir)) {
+        const baseline = kept.pullRequests(idOf(uri));
+        if (baseline?.initialPullRequestUrls === undefined) continue;
+        const own = new Set(candidatesOf(uri).map(urlKey));
+        const initial = baseline.initialPullRequestUrls.filter((url) => own.has(urlKey(url)));
+        if (initial.length === baseline.initialPullRequestUrls.length) continue;
+        kept.setPullRequests(idOf(uri), { ...baseline, initialPullRequestUrls: initial });
+        baselineMoved = true;
+      }
+      const candidates = new Set(inThere(dir).flatMap(candidatesOf).map(urlKey));
+      const restricted = urls.filter((url) => candidates.has(urlKey(url)));
+      const { pullRequestUrls: _urls, pullRequestBranchName: _branch, pullRequestState: _state, pullRequestStateUrl: _stateUrl, ...rest } = held;
+      const keepsSelected = urls[0] !== undefined && restricted[0] !== undefined && urlKey(urls[0]) === urlKey(restricted[0]);
+      const moved = put(keepsSelected ? { ...held, pullRequestUrls: restricted } : rest);
+      return moved || baselineMoved;
     }
     const resource = String(options.github.resource.resource ?? '');
+    const token = getAuthToken(resource, normalizeScopes(options.github.resource.scopes_supported));
+    const answered = typeof branch === 'string' && held.pullRequestBranchName === branch;
+    if (typeof branch !== 'string' || branch === git?.baseBranchName || (answered && urls[0] === undefined)) return put(held);
     let found;
     try {
-      found = await options.github.forBranch({ owner, repo }, branch, getAuthToken(resource, normalizeScopes(options.github.resource.scopes_supported)), dir);
+      found = answered && options.github.byUrl !== undefined
+        ? await options.github.byUrl(urls[0] as string, token, dir).then((one) => (one === undefined ? [] : [one]))
+        : await options.github.forBranch({ owner, repo }, branch, token, dir);
     }
     catch (error) {
       log(`${dir}: GitHub did not answer for ${branch}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
-    const newest = found[0];
-    const now: Bag = {
-      owner,
-      repo,
-      ...(newest === undefined ? {} : {
-        pullRequestUrls: pullRequestUrlsOf(found.map((one) => one.url)),
-        pullRequestBranchName: branch,
-        pullRequestState: newest.state,
-        pullRequestStateUrl: newest.url,
-      }),
-    };
+    if (answered) {
+      const known = found.find((one) => urlKey(one.url) === urlKey(urls[0] as string));
+      return put(known === undefined ? held : { ...held, pullRequestState: known.state, pullRequestStateUrl: urls[0] });
+    }
     listed.set(dir, found);
-    const before = githubFacts.get(dir);
-    if (before !== undefined && JSON.stringify(before) === JSON.stringify(now)) return false;
-    githubFacts.set(dir, now);
+    const newest = found[0];
+    const moved = put(newest === undefined ? held : {
+      ...withMostRecentSessionPullRequest(held, newest.url, branch),
+      pullRequestState: newest.state,
+      pullRequestStateUrl: pullRequestUrlsOf([newest.url])[0],
+    });
     for (const uri of inThere(dir)) captureBaseline(uri);
-    return true;
+    return moved;
   };
 
   /**
@@ -614,26 +689,7 @@ export function createFacts(ctx: HostContext): Facts {
     // client never sees the artifact without the promotion that came with it.
     promotePullRequest(uri, pullRequest.url);
 
-    const held = githubFacts.get(dir) ?? {};
-    const urls = Array.isArray(held.pullRequestUrls)
-      ? held.pullRequestUrls.filter((one): one is string => typeof one === 'string')
-      : [];
-    // The URL first in the list VS Code's host writes.
-    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1449-L1465
-    const pullRequestUrls = pullRequestUrlsOf([pullRequest.url, ...urls]);
-    const now: Bag = {
-      ...held,
-      pullRequestUrls,
-      pullRequestBranchName: pullRequest.branch,
-    };
-    // The state is kept only while it names the URL being associated, in any case.
-    delete now.pullRequestState;
-    delete now.pullRequestStateUrl;
-    if (typeof held.pullRequestStateUrl === 'string' && held.pullRequestStateUrl.toLowerCase() === pullRequestUrls[0]?.toLowerCase()) {
-      now.pullRequestState = held.pullRequestState;
-      now.pullRequestStateUrl = held.pullRequestStateUrl;
-    }
-    githubFacts.set(dir, now);
+    githubFacts.set(dir, withMostRecentSessionPullRequest(githubFacts.get(dir) ?? {}, pullRequest.url, pullRequest.branch));
     metaChanged(dir);
   };
 
