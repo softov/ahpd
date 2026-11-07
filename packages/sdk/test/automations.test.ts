@@ -376,6 +376,37 @@ it('says a create of what it holds again, and refuses another create there and a
   expect(((await entries(client))[0] as { definition: { title: string } }).definition.title).toBe(DEFINITION.title);
 });
 
+/*
+ * An automation's resource is any URI in the `ahp-automation` scheme, and a
+ * create at a URI in another is refused in the words of VS Code's automation
+ * service.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1513-L1517
+ */
+it('takes a create at any URI in the ahp-automation scheme, and refuses one in another scheme in VS Code\'s words', async () => {
+  const { client, peer: p } = await connected();
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+  const send = (clientSeq: number, resource: string) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: AUTOMATIONS, clientSeq, action: { type: 'automation/createRequested', resource, definition: DEFINITION } },
+  });
+  await send(1, 'ahp-automation:nightly');
+  await send(2, 'ahp-automation://catalog/weekly');
+  await send(3, 'ahp-automations://nightly');
+  await settle();
+
+  const own = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; origin?: { clientSeq: number }; rejectionReason?: string })
+    .filter((n) => n.channel === AUTOMATIONS && n.origin !== undefined);
+  expect(own.map((n) => [n.origin?.clientSeq, n.rejectionReason])).toEqual([
+    [1, undefined],
+    [2, undefined],
+    [3, 'Automation resource must use the ahp-automation scheme: ahp-automations://nightly'],
+  ]);
+  expect((await entries(client)).map((one) => (one as { resource: string }).resource).sort())
+    .toEqual(['ahp-automation://catalog/weekly', 'ahp-automation:nightly']);
+});
+
 it('patches rather than overwrites, so one client does not revert another', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);

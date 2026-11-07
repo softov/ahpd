@@ -9,7 +9,7 @@ import { localPath } from '../resources/fileuri.js';
 import { createRuleEngine } from '../automations/triggers.js';
 import { wakeMessage } from '../automations/wakemessage.js';
 import { bag } from '../utils/values.js';
-import { AUTOMATIONS, chatUriFor } from './channels.js';
+import { AUTOMATIONS, chatUriFor, isAutomationResource } from './channels.js';
 import { CLOSING, need, noProvider } from './common.js';
 import { refusalReason } from './gate.js';
 import type { Bag } from '../types/common.js';
@@ -87,9 +87,9 @@ const eventTitle = (type: string, id: string): string =>
 const eventName = (type: TriggerTypeDefinition, id: string): string =>
   type.events.find((one) => one.id === id)?.title ?? id;
 
-/** The resource an automation id names, or the URI it already is. */
+/** The resource an automation id names, or the URI it already is: any URI in the `ahp-automation` scheme. */
 const automationResource = (id: string): string =>
-  (id.startsWith('ahp-automation:/') ? id : `ahp-automation:/${id}`);
+  (isAutomationResource(id) ? id : `ahp-automation:/${id}`);
 
 /**
  * Whose an automation is, as the entry a client reads carries it.

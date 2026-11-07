@@ -1,6 +1,7 @@
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { idOf } from '../sessions/catalog.js';
 import { bag, ownerOf } from '../utils/values.js';
+import { URI } from '../vscode/uri.js';
 import type { ServedChannel, ServedMethod } from '../types/plugin.js';
 import type { Owner } from '../types/usage.js';
 
@@ -330,6 +331,16 @@ export const parseResourceWatchChannelUri = (uri: string): WatchDescriptor | und
  * under the host's own channel, which VS Code's client matches by scheme.
  */
 export const isAutomations = (channel: string): boolean => channel.startsWith('ahp-automations:');
+
+/**
+ * Whether a URI names one automation: any URI in the `ahp-automation` scheme,
+ * as VS Code's automation service takes an automation's resource. A text that
+ * reads as no URI names none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1513-L1517
+ */
+export const isAutomationResource = (resource: string): boolean => {
+  try { return URI.parse(resource).scheme === 'ahp-automation'; } catch { return false; }
+};
 
 /** The text after a channel URI's `?`, or the empty string when it carries none. */
 export const queryOf = (channel: string): string => {

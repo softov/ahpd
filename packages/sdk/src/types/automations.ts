@@ -14,7 +14,7 @@ import type { Owner } from './usage.js';
  * done, and which of the three verbs may be used on it now.
  */
 export interface Automation {
-  /** `ahp-automation:/<id>`. The channel a run is reported against names it. */
+  /** A URI in the `ahp-automation` scheme, `ahp-automation:/<id>` for one this host names. The channel a run is reported against names it. */
   resource: string;
   /** What the client asked for. Opaque here except for `enabled` and `title`. */
   definition: Bag;

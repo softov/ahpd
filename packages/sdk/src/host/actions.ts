@@ -6,7 +6,7 @@ import { disableConditionsProblem } from '../automations/automations.js';
 import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn } from './gate.js';
-import { AUTOMATIONS, chatUriFor, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { AUTOMATIONS, chatUriFor, isAutomationResource, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './sessionlifecycle.js';
@@ -632,8 +632,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const store = options.automations;
       if (!store) { no(`${type} needs an automations store, and this host has none`); return; }
       const resource = String(action.resource ?? '');
-      if (!resource.startsWith('ahp-automation:/')) {
-        no(`${resource || 'That'} is not an automation URI`);
+      // Any URI in the scheme, as VS Code's automation service takes one, and refused in its words.
+      if (!isAutomationResource(resource)) {
+        no(`Automation resource must use the ahp-automation scheme: ${resource}`);
         return;
       }
       /*

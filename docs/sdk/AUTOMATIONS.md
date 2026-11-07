@@ -241,7 +241,7 @@ Automations are driven over the protocol, and over the HTTP API where the daemon
 | `listAutomationTriggerDefinitions` | Every event trigger type this host fires: `session`, `watch`, and each plugin's |
 | `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI once the run is recorded, its session made after. A press while a run of it is going is answered with that run, and a `requestId` asked again with the run it made. Refused when there is no such automation. A switched-off automation runs, and the run does not count against an `afterRuns` cap |
 | `fetchAutomationRuns` | Bring one more page of an automation's runs into view. A cursor that is not the entry's own is refused |
-| `automation/createRequested` | Write one into the catalogue |
+| `automation/createRequested` | Write one into the catalogue, at any URI in the `ahp-automation` scheme; a URI in another is refused "Automation resource must use the ahp-automation scheme", and a create where one is kept with another definition "Automation already exists", in VS Code's words |
 | `automation/updateRequested` | Patch one - absent keys are left alone, so two clients editing different fields do not revert each other |
 | `automation/removed` | Take one out |
 | `automationRun/cancelRequested` | Stop a run: the turns its sessions are running stop, and the run settles as they end; a run with no session yet settles `cancelled` at once. Answered to the client that asked; refused for a run that is unknown, already over, or running no turn |
