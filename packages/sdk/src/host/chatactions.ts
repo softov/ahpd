@@ -1372,7 +1372,9 @@ export function chatAction(
        * session or to one chat in it.
        *
        * A key the schema does not declare goes to the backend too, which
-       * takes it or says why it did not.
+       * takes it or says why it did not. A backend that takes no key at all
+       * refuses it in the reference host's words for a key it cannot write.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
        */
       const asked = Object.entries(config)
         .filter(([key]) => {
@@ -1381,7 +1383,7 @@ export function chatAction(
           return property === undefined || property.sessionMutable === true;
         });
       if (asked.length > 0 && session.setConfig === undefined) {
-        refused(`${asked[0]?.[0] ?? ''} is not a config key this backend takes`);
+        refused(`Session configuration '${asked[0]?.[0] ?? ''}' is not writable.`);
         break;
       }
       /*
@@ -1423,8 +1425,10 @@ export function chatAction(
        * The keys the schema does not declare, which are the backend's to
        * judge before the change is said: the schema this host checks says
        * nothing of them, and a backend may take a key it does not advertise
-       * or refuse one it does not serve, in its own words. A refusal puts back
-       * each such key taken before it.
+       * or refuse one it does not serve, in its own words. A refusal with no
+       * words of the backend's is the reference host's for a key it cannot
+       * write. A refusal puts back each such key taken before it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
        */
       const unschemed = asked.filter(([key]) => propertyOf(owning?.agent, key) === undefined);
       const judged = async (): Promise<string | undefined> => {
@@ -1434,7 +1438,7 @@ export function chatAction(
             .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
           if (answer !== true) {
             for (const back of done) void Promise.resolve(session.setConfig?.(back, before.get(back)));
-            return typeof answer === 'string' ? answer : `${key} is not a config key this backend takes`;
+            return typeof answer === 'string' ? answer : `Session configuration '${key}' is not writable.`;
           }
           done.push(key);
         }

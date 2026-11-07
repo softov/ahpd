@@ -587,8 +587,10 @@ describe('a session\'s config across a restart', () => {
   /*
    * A change is said in the client's own keys, as VS Code's host says a
    * client's config action: an answer that is neither `true` nor a sentence
-   * takes nothing, and no key of the backend's own goes out in its place.
+   * takes nothing, refused in VS Code's words for a key it cannot write, and
+   * no key of the backend's own goes out in its place.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
    */
   it('says a change in the client\'s own keys, and takes no answer under the backend\'s', async () => {
     const { echo } = await import('../../../examples/echo/agent.js');
@@ -611,8 +613,28 @@ describe('a session\'s config across a restart', () => {
     await settle();
     const answered = actions(p, uri).filter((e) => e.origin?.clientSeq === 1);
     expect(answered.map((e) => [e.action.type, e.rejectionReason]))
-      .toEqual([['session/configChanged', 'mode is not a config key this backend takes']]);
+      .toEqual([['session/configChanged', 'Session configuration \'mode\' is not writable.']]);
     expect(actions(p, uri).some((e) => Object.hasOwn((e.action.config ?? {}) as Record<string, unknown>, 'permissionMode'))).toBe(false);
+  });
+
+  // A backend that takes no key at all, in VS Code's words for a key it cannot write.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
+  it('refuses a key a backend that takes none is sent, in VS Code\'s words', async () => {
+    const { echo } = await import('../../../examples/echo/agent.js');
+    const p = peer();
+    const host = createHost({ path: '/tmp', agents: [echo({ path: '/tmp', pace: 0 })], ...machine(), sessions: memorySessions() });
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/plain';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, clientSeq: 1, action: { type: 'session/configChanged', config: { mode: 'plan' } } },
+    });
+    await settle();
+    expect(actions(p, uri).filter((e) => e.origin?.clientSeq === 1).map((e) => e.rejectionReason))
+      .toEqual(['Session configuration \'mode\' is not writable.']);
   });
 
   /** A host over a store already holding a config for the session `stale`, as a restart finds it. */
