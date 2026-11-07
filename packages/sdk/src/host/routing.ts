@@ -5,7 +5,7 @@ import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import {
   ROOT, isRootChannel, isAutomations, automationsChannel, schemeOf, spaceOf, baseOf,
-  chatOfCanvas, chatUriFor, subagentChatUri, toolCallOfSubagentChat, shapedSession,
+  chatOfCanvas, chatUriFor, nonPtyShellTerminalOf, subagentChatUri, toolCallOfSubagentChat, shapedSession,
 } from './channels.js';
 import type { ChannelKind, Space } from './channels.js';
 import type { Home } from './gate.js';
@@ -259,6 +259,8 @@ export function createRouting(ctx: HostContext): Routing {
      */
     const canvasChat = chatOfCanvas(channel);
     if (canvasChat !== undefined) return channelKind(canvasChat);
+    // A retained terminal link is a terminal's, live or rebuilt from what was kept.
+    if (nonPtyShellTerminalOf(channel) !== undefined) return 'terminal';
     const held = claims.get(channel) ?? claims.get(baseOf(channel));
     if (held !== undefined) return held.kind === 'terminal' ? 'terminal' : held.kind === 'watch' ? 'other' : 'session';
     const space = spaceHere(channel);

@@ -1,6 +1,6 @@
 # Terminals
 
-A **terminal** is a shell on the machine the daemon runs on, opened as a channel of its own: under the URI a client chose, or, for one this host opens for a chat, `ahp-terminal://shell/<base64url(chat)>/<key>`. It is a real process with a real filesystem under it, so it is opened only for somebody who signed in and whose role covers `terminal:create` - a terminal is arbitrary code on the machine, and the grant is what decides who gets one. What it opens, and how its output reaches a client, is `packages/sdk/src/machines/terminals.ts` and `packages/sdk/src/host/terminals.ts`.
+A **terminal** is a shell on the machine the daemon runs on, opened as a channel of its own: under the URI a client chose, or, for one this host opens for a chat, VS Code's retained terminal link `agenthost-terminal://shell/<session id>/<tool call>`, whose JSON query names the storage, the session, the chat and the tool call, and whose chat and tool call find its output once the process is gone. It is a real process with a real filesystem under it, so it is opened only for somebody who signed in and whose role covers `terminal:create` - a terminal is arbitrary code on the machine, and the grant is what decides who gets one. What it opens, and how its output reaches a client, is `packages/sdk/src/machines/terminals.ts` and `packages/sdk/src/host/terminals.ts`.
 
 Terms, one line each:
 

@@ -1,9 +1,10 @@
 /**
  * The URI VS Code's URL approval, its URL globs and its domain matcher parse a
- * URL with.
+ * URL with, an automation's resource is read with, and a retained terminal
+ * link is built and read with.
  *
- * Vendored from VS Code's `uri.ts`: the parse, the validation, `with` and the
- * printing, with both encoders, as VS Code has them. Its file paths (`file`,
+ * Vendored from VS Code's `uri.ts`: the parse, `from`, the validation, `with`
+ * and the printing, with both encoders, as VS Code has them. Its file paths (`file`,
  * `fsPath`, `joinPath`), its test for a URI-like object (`isUri`) and its
  * marshalling (`toJSON`, `revive`) are left out, since nothing here reads a
  * URI as a path, meets a URI it did not make or sends one. The adaptations are
@@ -196,6 +197,25 @@ export class URI implements UriComponents {
       percentDecode(match[9] || _empty),
       _strict
     );
+  }
+
+  /**
+   * Creates new URI from uri components.
+   *
+   * Unless `strict` is `true` the scheme is defaults to be `file`. This function performs
+   * validation and should be used for untrusted uri components retrieved from storage,
+   * user input, command arguments etc
+   */
+  static from(components: UriComponents, strict?: boolean): URI {
+    const result = new URI(
+      components.scheme,
+      components.authority,
+      components.path,
+      components.query,
+      components.fragment,
+      strict
+    );
+    return result;
   }
 
   // ---- printing/externalize ---------------------------

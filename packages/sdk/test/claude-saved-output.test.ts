@@ -8,7 +8,7 @@ import {
 } from './support/host.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { uriOf } from '../src/resources/resources.js';
-import { chatUriFor, retainedTerminalOf } from '../src/host/channels.js';
+import { chatUriFor, nonPtyShellTerminalOf } from '../src/host/channels.js';
 import type { Bag } from '../src/types/common.js';
 import type { SessionStore } from '../src/types/sessions.js';
 
@@ -103,7 +103,7 @@ it('names the terminal on the call, and answers a subscribe from what was kept',
   const { client, chat, output, notice, content } = await ranTooLarge(dir, fileSessions({ dir: join(dir, 'sessions') }));
   expect(content[0]).toEqual({ type: 'text', text: notice });
   const resource = String(content[1]?.resource);
-  expect(retainedTerminalOf(resource)).toEqual({ chat, key: 'toolu_big' });
+  expect(nonPtyShellTerminalOf(resource)).toEqual({ chat, toolCallId: 'toolu_big' });
 
   const terminal = await stateOf(client, resource);
   expect(terminal.content).toEqual([{ type: 'unclassified', value: output }]);

@@ -1,6 +1,7 @@
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { idOf } from '../sessions/catalog.js';
 import { bag, ownerOf } from '../utils/values.js';
+import { parseNonPtyShellTerminalUri } from '../vscode/nonptyshellterminaluri.js';
 import { URI } from '../vscode/uri.js';
 import type { ServedChannel, ServedMethod } from '../types/plugin.js';
 import type { Owner } from '../types/usage.js';
@@ -244,32 +245,17 @@ export const chatOfCanvas = (resource: string): string | undefined => {
   catch { return undefined; }
 };
 
-/** The authority a terminal this host keeps after its process is gone is named under. */
-const RETAINED = 'ahp-terminal://shell/';
-
 /**
- * How this host names a terminal a tool result may name.
- *
- * The reference's shape, a `shell` authority with the chat and a key the
- * terminal is kept under, so the name says where its output is once nothing is
- * running: the chat finds the session that holds it now, and the key the file.
- * The chat is base64url and the key escaped, as `subagentChatUri` writes a
- * session and a call. A `!` command's key is its tool call; a backend's
- * terminal has a key of its own.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/common/nonPtyShellTerminalUri.ts#L17-L29
+ * The chat and the tool call a retained terminal link names, read from the
+ * text a client sent as VS Code's `resourceChat` reads a link's chat, or
+ * nothing when the text is no such link. A `!` command's tool call is the
+ * call it answers; a backend's terminal carries a key of its own there.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSubscriptionService.ts#L64-L72
  */
-export const retainedTerminalUri = (chat: string, key: string): string =>
-  `${RETAINED}${Buffer.from(chat, 'utf8').toString('base64url')}/${encodeURIComponent(key)}`;
-
-/** The chat and the key a retained terminal's name carries, or nothing when it is not one. */
-export const retainedTerminalOf = (uri: string): { chat: string; key: string } | undefined => {
-  if (!uri.startsWith(RETAINED)) return undefined;
-  const [encoded = '', ...rest] = uri.slice(RETAINED.length).split('/');
-  if (encoded === '' || rest.length === 0) return undefined;
+export const nonPtyShellTerminalOf = (uri: string): { chat: string; toolCallId: string } | undefined => {
   try {
-    const chat = Buffer.from(encoded, 'base64url').toString('utf8');
-    const key = decodeURIComponent(rest.join('/'));
-    return chat.startsWith('ahp-chat:') && key !== '' ? { chat, key } : undefined;
+    const link = parseNonPtyShellTerminalUri(URI.parse(uri));
+    return link === undefined ? undefined : { chat: link.chat.toString(), toolCallId: link.toolCallId };
   }
   catch { return undefined; }
 };
