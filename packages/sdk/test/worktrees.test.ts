@@ -418,7 +418,6 @@ describe('a session with a working tree of its own', () => {
       params: { channel: live.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
     });
     await new Promise((resolve) => { setTimeout(resolve, 60); });
-    await a.handle({ method: 'disposeSession', params: { channel: uri } });
     const rows = await a.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string }[];
     };
