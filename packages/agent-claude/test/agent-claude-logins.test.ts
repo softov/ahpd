@@ -613,6 +613,41 @@ describe('a failed login', () => {
     expect(sdk.said.filter((one) => one.query === 0)).toHaveLength(2);
   });
 
+  /*
+   * The queue hands its entries over in the order they went, as VS Code's
+   * prompt queue shifts them, so a steering message whose blocks are built
+   * waits behind one whose attachments are still being read. At the move both
+   * leave the queue, so the next login is sent the prompt again and each of
+   * them once, in that order.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L69-L94
+   */
+  it('sends a built steering message held behind one still being read at the move to the next login once, behind the prompt', async () => {
+    const { session } = await answeredOnce(twoLogins());
+    session.sendMessage('t2', 'two');
+    await settle();
+    const note = join(mkdtempSync(join(tmpdir(), 'ahpd-logins-note-')), 'note.txt');
+    writeFileSync(note, 'one\n');
+    let release = (): void => {};
+    blocks.gate = new Promise<void>((resolve) => { release = resolve; });
+    const attachment = { type: 'resource', uri: `file://${note}`, label: 'note.txt', contentType: 'text/plain' } as unknown as MessageAttachment;
+    expect(session.sendSteeringMessage?.({ id: 's1', text: 'and three', attachments: [attachment] })).toBe(true);
+    expect(session.sendSteeringMessage?.({ id: 's2', text: 'and four' })).toBe(true);
+    await settle();
+    // Neither sent yet: the first is still being read, and the second waits behind it.
+    expect(sdk.said.map((one) => one.content)).toEqual(['one', 'two']);
+    sdk.push(...failure('rate_limit', SPENT, inAnHour()));
+    await settle();
+    release();
+    await settle();
+
+    const sent = sdk.said.filter((one) => one.query === 1).map((one) => JSON.stringify(one.content));
+    expect(sent).toHaveLength(3);
+    expect(sent[0]).toBe('"two"');
+    expect(sent[1]).toContain('and three');
+    expect(sent[2]).toBe('"and four"');
+    expect(sdk.said.filter((one) => one.query === 0)).toHaveLength(2);
+  });
+
   it('ends a turn that failed after it showed a part with the failure, and runs nothing again', async () => {
     const { session, chat } = await answeredOnce(twoLogins());
     session.sendMessage('t2', 'two');
