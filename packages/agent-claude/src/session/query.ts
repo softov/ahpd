@@ -4,7 +4,7 @@ import type { Bag } from '@ahpd/sdk';
 import type { HookCallback, Options, query, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { clearFor } from '../catalog.js';
 import { bag, list, str, UUID } from './common.js';
-import type { SessionContext } from './context.js';
+import type { PendingSdkMessage, SessionContext } from './context.js';
 import { BEFORE_TOKEN } from '../logins.js';
 import { hostHoldsTasks, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
 import { resolveClaudeAgentName } from './customizations.js';
@@ -42,14 +42,13 @@ const HANDSHAKE_MS = 120000;
 /** What this area offers the rest of the session. */
 export interface Query {
   /**
-   * Messages to go out on the CLI's input stream: VS Code's queue's to-yield
-   * list.
-   *
-   * The SDK's own shape, because a message with attachments goes as content
-   * blocks and one with none as a string.
+   * The prompts to go out on the CLI's input stream, in the order they were
+   * pushed: VS Code's queue's to-yield list, the first of the two a pending
+   * message goes through. A prompt whose blocks are still being built holds
+   * the ones behind it back.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L57
    */
-  toYield: SDKUserMessage[];
+  toYield: PendingSdkMessage[];
   /**
    * Start a CLI for this session on the agent named, and read it: the query
    * this session reads from then on, asked what it has until one answers. A
@@ -283,9 +282,9 @@ export function createQuery(ctx: SessionContext): Query {
    */
   const namedUnder = (id: string): { sessionId: string } | Record<string, never> => (UUID.test(id) ? { sessionId: id } : {});
 
-  // The input stream. A query with a live stream stays open between turns,
-  // which is what makes a session one conversation.
-  const toYield: SDKUserMessage[] = [];
+  // The input stream's queue. A query with a live stream stays open between
+  // turns, which is what makes a session one conversation.
+  const toYield: PendingSdkMessage[] = [];
 
   /**
    * Which query reads `toYield` now: the count of queries this session built.
@@ -305,22 +304,22 @@ export function createQuery(ctx: SessionContext): Query {
 
   /**
    * The input stream one query reads: VS Code's prompt queue's `iterable`,
-   * handed to the query as its prompt.
+   * handed to the query as its prompt. Each prompt it hands the SDK moves
+   * from the to-yield list to the yielded one, as the reference's does, and a
+   * steering message the session held as waiting is said taken out as it goes.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L43-L44
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L64-L91
    */
-  async function* iterable(mine: number): AsyncGenerator<(typeof toYield)[number]> {
+  async function* iterable(mine: number): AsyncGenerator<SDKUserMessage> {
     for (;;) {
-      while (mine === bound && toYield.length > 0) {
-        const next = toYield.shift() as (typeof toYield)[number];
-        // The CLI holds it from here, which a stop reads for the steering the CLI runs after it.
-        const pending = next.uuid === undefined ? undefined : ctx.yielded.get(next.uuid);
-        if (pending !== undefined) pending.read = true;
-        yield next;
-        if (ctx.steering !== undefined) {
-          const said = ctx.steering;
+      while (mine === bound && toYield[0]?.sdkMessage !== undefined) {
+        const next = toYield.shift() as PendingSdkMessage;
+        ctx.yielded.set(next.sdkUuid, next);
+        if (next.steeringPendingId !== undefined && str(bag(ctx.steering).id) === next.steeringPendingId) {
           ctx.steering = undefined;
-          ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: String(said.id ?? '') });
+          ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: next.steeringPendingId });
         }
+        yield next.sdkMessage as SDKUserMessage;
       }
       if (ctx.disposed || mine !== bound) return;
       await new Promise<void>((resolve) => { ctx.pendingPromptDeferred = resolve; });
@@ -1119,16 +1118,16 @@ export function createQuery(ctx: SessionContext): Query {
             continue;
           }
           /*
-           * A turn with a prompt still among the yielded entries.
+           * A turn with a prompt still in the queue, handed or not yet.
            *
            * A steering message the CLI read after the turn's last tool call is
            * run once this result is out, as a turn of the CLI's own, and its
            * answer is this turn's: the turn stays open until a result has named
-           * every prompt handed over in it, as the reference completes a turn
-           * only when its prompts are settled. A result that failed ends it.
+           * every prompt pushed in it, as the reference completes a turn only
+           * when its prompts are settled. A result that failed ends it.
            * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L688-L705
            */
-          if (turn && wrong === undefined && [...ctx.yielded.values()].some((pending) => pending.turnId === running)) continue;
+          if (turn && wrong === undefined && [...ctx.toYield, ...ctx.yielded.values()].some((pending) => pending.turnId === running)) continue;
           if (turn) {
             /*
              * Every turn that ends says how it ended.

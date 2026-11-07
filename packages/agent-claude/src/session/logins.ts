@@ -353,9 +353,15 @@ export function createLogins(ctx: SessionContext): Logins {
     const held = move;
     const turn = ctx.active;
     if (held === undefined || turn === undefined || held.turn !== String(turn.id)) return;
-    // The turn's steering messages still among the yielded entries, which the
+    // The turn's steering messages still in the queue, handed or not, which the
     // CLI takes with it when it is put away.
-    const steers = [...ctx.yielded.values()].filter((pending) => pending.steering && pending.turnId === held.turn);
+    const steers = [...ctx.yielded.values(), ...ctx.toYield]
+      .filter((pending) => pending.steeringPendingId !== undefined && pending.turnId === held.turn);
+    // They go to the new CLI behind the turn's prompt, each under a new uuid.
+    for (const one of steers) {
+      const at = ctx.toYield.indexOf(one);
+      if (at >= 0) ctx.toYield.splice(at, 1);
+    }
     const restarted = await restartAt(held.turn, held, login);
     // A CLI that did not start ends the turn in the SDK's words.
     if (restarted.unstarted !== undefined && !ctx.disposed) {

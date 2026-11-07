@@ -1,4 +1,4 @@
-import type { query } from '@anthropic-ai/claude-agent-sdk';
+import type { query, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
 import type { AgentLogins } from '../logins.js';
 import type { OfferedModel } from '../models.js';
@@ -17,31 +17,29 @@ import type { Turns } from './turns.js';
 import type { Workers } from './workers.js';
 
 /**
- * A prompt the CLI was handed, for as long as no result has named it: VS
- * Code's pending SDK message.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L24-L32
+ * A prompt this session hands the CLI, from the moment it is pushed until a
+ * result names it: VS Code's pending SDK message, one record through the
+ * queue's two lists, `toYield` until the input stream hands it to the SDK and
+ * `yielded` from then until a result names it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L14-L32
  */
 export interface PendingSdkMessage {
-  /** What it said, which a turn opened for its answer carries. */
-  message: Bag;
-  /** Whether it steers a turn rather than starting one. */
-  steering: boolean;
+  /** The message as the SDK takes it, once its blocks are built. */
+  sdkMessage?: SDKUserMessage;
+  /** The uuid it goes under, which the CLI writes it under and names its answer by. */
+  sdkUuid: string;
   /** The turn its answer belongs to: its own, or the one it steers. */
   turnId: string;
-  /** A steering message's own id, the one a client knows it by. */
-  id?: string;
+  /** A steering message's own id, the one a client knows it by; a turn's prompt has none. */
+  steeringPendingId?: string;
+  /** What it said, which a turn opened for its answer carries. */
+  message: Bag;
   /**
    * What the CLI said it did with it, from the `state` of its
    * `command_lifecycle` frames: nothing yet, `queued` once it holds it,
    * `started` once it took it in.
    */
   lifecycle: 'sent' | 'queued' | 'started';
-  /**
-   * Whether the CLI was handed it: the SDK read it off the input stream, and
-   * the CLI holds it whatever this session does next. Unset while it waits
-   * there, and while its blocks are built.
-   */
-  read?: boolean;
 }
 
 /**
@@ -320,15 +318,15 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   steering: Bag | undefined;
   /**
    * Every prompt the CLI was handed that no result has named yet: VS Code's
-   * yielded entries.
+   * yielded list, the second of the two the pending messages go through.
    *
    * Keyed by the uuid it was sent under. The CLI names the prompts an answer
    * is for in `user_message_uuids`, on the answer's frames and on its result,
    * and the turn a prompt belongs to is the turn those frames and that result
    * are about. A steering message it reads after the turn's last tool call is
    * run as a turn of its own once the turn's result is out, so a turn is not
-   * over while one of its prompts is here. A CLI that is put away, or that
-   * dies, takes the rest with it.
+   * over while one of its prompts is here or waits in `toYield`. A CLI that is
+   * put away, or that dies, takes the rest with it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L57-L58
    */
   yielded: Map<string, PendingSdkMessage>;

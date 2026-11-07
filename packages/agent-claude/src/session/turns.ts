@@ -69,29 +69,26 @@ export function createTurns(ctx: SessionContext): Turns {
    * A message onto the CLI's own input stream, as what it is.
    *
    * Where a turn beginning and a message steering one reach the CLI: the
-   * pending prompt is completed in one place, and a message's attachments
-   * become the blocks the CLI takes whichever way it arrived. A message with
-   * none is a string. `uuid` is the id the CLI writes the prompt under and
-   * names its answer by, and `pending` is the answer that is to come, held
-   * among the yielded entries until a result names the uuid.
+   * pending message goes into the to-yield list at once and its blocks are
+   * built there, a message's attachments becoming the blocks the CLI takes
+   * whichever way it arrived; a message with none is a string. `pending` is
+   * the answer that is to come, from then until a result names its uuid.
    */
-  const push = async (
-    text: string,
-    attachments?: MessageAttachment[],
-    uuid?: string,
-    pending?: PendingSdkMessage,
-  ): Promise<void> => {
-    // Held before the wait: a result read while the blocks are built is not
-    // this prompt's answer, and has to know that one is still to come.
-    if (uuid !== undefined && pending !== undefined) ctx.yielded.set(uuid, pending);
+  const push = async (text: string, attachments: MessageAttachment[] | undefined, pending: PendingSdkMessage): Promise<void> => {
+    // In the queue before the wait: a result read while the blocks are built
+    // is not this prompt's answer, and has to know that one is still to come.
+    ctx.toYield.push(pending);
     const to = ctx.query;
     const content = await blocksFor(text, attachments);
-    // A CLI put away meanwhile took its yielded entries with it, and the one
-    // in its place is sent them by whatever put it there.
-    if (ctx.query !== to) return;
-    // So did a stop, of a message the CLI was not yet handed.
-    if (uuid !== undefined && pending !== undefined && ctx.yielded.get(uuid) !== pending) return;
-    ctx.toYield.push({
+    // A stop, a withdrawal or a CLI put away took it out of the queue meanwhile.
+    const at = ctx.toYield.indexOf(pending);
+    if (at < 0) return;
+    // A CLI in the place of the one it was for is sent it by whatever put it there.
+    if (ctx.query !== to) {
+      ctx.toYield.splice(at, 1);
+      return;
+    }
+    pending.sdkMessage = {
       type: 'user',
       message: { role: 'user', content },
       parent_tool_use_id: null,
@@ -100,9 +97,9 @@ export function createTurns(ctx: SessionContext): Turns {
        * VS Code's Claude agent injects one.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1271-L1282
        */
-      ...(pending?.steering === true ? { priority: 'now' as const } : {}),
-      ...(uuid === undefined ? {} : { uuid: uuid as `${string}-${string}-${string}-${string}-${string}` }),
-    });
+      ...(pending.steeringPendingId === undefined ? {} : { priority: 'now' as const }),
+      uuid: pending.sdkUuid as `${string}-${string}-${string}-${string}-${string}`,
+    };
     ctx.pendingPromptDeferred?.();
     ctx.pendingPromptDeferred = undefined;
   };
@@ -126,25 +123,31 @@ export function createTurns(ctx: SessionContext): Turns {
   };
 
   /**
-   * The running turn's prompt as it went to the CLI, with what rode on it: VS
-   * Code's pending message's `sdkMessage`.
+   * The running turn's prompt as it went to the CLI, with what rode on it: the
+   * text and the attachments its pending message's `sdkMessage` was built from.
    *
    * A side chat's first prompt carries text of its own beside the message's,
    * and a message's attachments are blocks of their own, so a prompt sent
    * again is this. A turn whose prompt is out is the one steering goes into.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L25
    */
-  let sdkMessage: { turn: string; text: string; attachments?: MessageAttachment[] } | undefined;
+  let prompt: { turn: string; text: string; attachments?: MessageAttachment[] } | undefined;
 
   const again = async (steers: readonly PendingSdkMessage[]): Promise<void> => {
     const turn = ctx.active;
-    if (turn !== undefined && sdkMessage?.turn === String(turn.id)) {
-      const uuid = writtenAs(String(turn.id), true);
-      await push(sdkMessage.text, sdkMessage.attachments, uuid, { message: bag(turn.message), steering: false, turnId: String(turn.id), lifecycle: 'sent' });
+    if (turn !== undefined && prompt?.turn === String(turn.id)) {
+      const sdkUuid = writtenAs(String(turn.id), true);
+      await push(prompt.text, prompt.attachments, { sdkUuid, turnId: String(turn.id), message: bag(turn.message), lifecycle: 'sent' });
     }
     // Behind the prompt, in the order they went.
     for (const one of steers) {
-      void push(str(one.message.text) ?? '', attachedTo(one.message), crypto.randomUUID(), { ...one, lifecycle: 'sent', read: false });
+      void push(str(one.message.text) ?? '', attachedTo(one.message), {
+        sdkUuid: crypto.randomUUID(),
+        turnId: one.turnId,
+        ...(one.steeringPendingId === undefined ? {} : { steeringPendingId: one.steeringPendingId }),
+        message: one.message,
+        lifecycle: 'sent',
+      });
     }
   };
 
@@ -402,17 +405,17 @@ export function createTurns(ctx: SessionContext): Turns {
      */
     const sent = carried === undefined ? text : `${carried}\n\n${text}`;
     carried = undefined;
-    sdkMessage = { turn: turnId, text: sent, ...(attachments === undefined ? {} : { attachments }) };
-    await push(sent, attachments, writtenAs(turnId, false), { message: bag(turn.message), steering: false, turnId, lifecycle: 'sent' });
+    prompt = { turn: turnId, text: sent, ...(attachments === undefined ? {} : { attachments }) };
+    await push(sent, attachments, { sdkUuid: writtenAs(turnId, false), turnId, message: bag(turn.message), lifecycle: 'sent' });
   };
 
   /**
    * The first turn handed and not yet begun, begun once nothing runs, nothing
-   * prepares and nothing is yielded: called where a turn is handed and where
-   * one ends, however it ended, since each send is its own.
+   * prepares and no prompt is in the queue: called where a turn is handed and
+   * where one ends, however it ended, since each send is its own.
    */
   const sendNext = (): void => {
-    if (ctx.disposed || ctx.active !== undefined || ctx.preparingTurn !== undefined || ctx.yielded.size > 0) return;
+    if (ctx.disposed || ctx.active !== undefined || ctx.preparingTurn !== undefined || ctx.toYield.length > 0 || ctx.yielded.size > 0) return;
     const next = handed.shift();
     if (next !== undefined) void beginTurn(next.turnId, next.text, next.model, next.from, next.attachments, next.options);
   };
@@ -470,7 +473,7 @@ export function createTurns(ctx: SessionContext): Turns {
      * turn's prompt goes under its turn's id, and a new one otherwise.
      */
     sendSteeringMessage: ({ id, text, attachments }) => {
-      if (ctx.active === undefined || sdkMessage?.turn !== String(ctx.active.id)) return false;
+      if (ctx.active === undefined || prompt?.turn !== String(ctx.active.id)) return false;
       const message = {
         text,
         origin: { kind: 'user' },
@@ -478,7 +481,13 @@ export function createTurns(ctx: SessionContext): Turns {
       };
       // Held until the CLI reads it, which is when its removal is said.
       ctx.steering = { id, message };
-      void push(text, attachments, UUID.test(id) ? id : crypto.randomUUID(), { message, steering: true, turnId: String(ctx.active.id), id, lifecycle: 'sent' });
+      void push(text, attachments, {
+        sdkUuid: UUID.test(id) ? id : crypto.randomUUID(),
+        turnId: String(ctx.active.id),
+        steeringPendingId: id,
+        message,
+        lifecycle: 'sent',
+      });
       return true;
     },
 
@@ -495,14 +504,10 @@ export function createTurns(ctx: SessionContext): Turns {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6884-L6905
      */
     withdrawSteeringMessage: (id) => {
+      const unread = ctx.toYield.findIndex((one) => one.steeringPendingId === id);
+      if (unread >= 0) ctx.toYield.splice(unread, 1);
       for (const [uuid, pending] of [...ctx.yielded]) {
-        if (!pending.steering || pending.id !== id || pending.lifecycle === 'started') continue;
-        const unread = ctx.toYield.findIndex((one) => one.uuid === uuid);
-        if (unread >= 0) {
-          ctx.toYield.splice(unread, 1);
-          ctx.yielded.delete(uuid);
-          continue;
-        }
+        if (pending.steeringPendingId !== id || pending.lifecycle === 'started') continue;
         // The SDK's own request for the control the CLI names
         // `cancel_async_message`, which the SDK's types leave undeclared.
         const handle = ctx.query as (typeof ctx.query & { cancelAsyncMessage(messageUuid: string): Promise<boolean> }) | undefined;
@@ -688,9 +693,8 @@ export function createTurns(ctx: SessionContext): Turns {
           if (aborts || made === undefined || made === stopping) ctx.endSubagent(scope.parent, 'cancelled');
         }
       }
-      // What the CLI was not handed goes with the stop, its entries with it.
+      // What the CLI was not handed goes with the stop.
       ctx.toYield.length = 0;
-      for (const [uuid, one] of [...ctx.yielded]) if (one.read !== true) ctx.yielded.delete(uuid);
       ctx.steering = undefined;
       ctx.preparingTurn = undefined;
       const turn = ctx.active;
@@ -718,15 +722,17 @@ export function createTurns(ctx: SessionContext): Turns {
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L2606-L2636
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L907-L916
          */
-        const left = [...ctx.yielded].filter(([, one]) => one.steering && one.turnId === stopping && one.lifecycle !== 'started');
-        const [first] = left;
-        if (first !== undefined) {
-          const [uuid, held] = first;
-          for (const [, one] of left) one.turnId = uuid;
-          held.steering = false;
+        const left = [...ctx.yielded.values()]
+          .filter((one) => one.steeringPendingId !== undefined && one.turnId === stopping && one.lifecycle !== 'started');
+        const [held] = left;
+        if (held !== undefined) {
+          const queuedMessageId = held.steeringPendingId;
+          for (const one of left) one.turnId = held.sdkUuid;
+          // From here it is the prompt of the turn it opens.
+          delete held.steeringPendingId;
           const attachments = attachedTo(held.message);
-          sdkMessage = { turn: uuid, text: str(held.message.text) ?? '', ...(attachments === undefined ? {} : { attachments }) };
-          const promoted = { id: uuid, startedAt: new Date().toISOString(), message: held.message, responseParts: [], usage: undefined } as Bag;
+          prompt = { turn: held.sdkUuid, text: str(held.message.text) ?? '', ...(attachments === undefined ? {} : { attachments }) };
+          const promoted = { id: held.sdkUuid, startedAt: new Date().toISOString(), message: held.message, responseParts: [], usage: undefined } as Bag;
           ctx.active = promoted;
           ctx.setModifiedAt(String(promoted.startedAt));
           ctx.newTurn();
@@ -734,10 +740,10 @@ export function createTurns(ctx: SessionContext): Turns {
           ctx.failed = undefined;
           ctx.emit('chat', {
             type: 'chat/turnStarted',
-            turnId: uuid,
+            turnId: held.sdkUuid,
             startedAt: promoted.startedAt,
             message: held.message,
-            ...(held.id === undefined ? {} : { queuedMessageId: held.id }),
+            ...(queuedMessageId === undefined ? {} : { queuedMessageId }),
           });
         }
       }
