@@ -150,10 +150,14 @@ it('offers VS Code\'s options, in its words, on a question its backend put with 
   await host.close();
 });
 
+/*
+ * The operator's rule is the daemon's `eligibleForAutoApproval`, as VS Code's
+ * host takes the setting from its policy value alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L42
+ */
 it('offers Allow Once and Skip alone where the operator\'s rule makes the tool ask, whatever the session allows', async () => {
   const answers: Answer[] = [];
-  const { host, dispatch, turn } = await serving(asking(answers));
-  await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { bash: false } } });
+  const { host, dispatch, turn } = await serving(asking(answers), { eligibleForAutoApproval: { bash: false } });
   await dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: ['bash'], deny: [] } } });
   const ready = await turn('t1');
   expect(ready.options).toEqual(ONCE);
@@ -169,26 +173,23 @@ it('offers Allow Once and Skip alone where the operator\'s rule makes the tool a
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1338-L1344
  */
 it('reads an MCP tool\'s server from the customization its call\'s contributor names', async () => {
-  const answers: Answer[] = [];
-  const { host, p, dispatch, turn } = await serving(asking(answers, 'mcp__tracker__create', { id: 'mcp:tracker', name: 'my.tracker' }));
-  await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'my.tracker/create': false } } });
-  expect((await turn('t1')).options).toEqual(ONCE);
-  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't1'), 'the first turn');
-  await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'other.tracker/create': false } } });
-  expect((await turn('t2')).options).toEqual(STANDARD);
-  await host.close();
+  const tracker = { id: 'mcp:tracker', name: 'my.tracker' };
+  const named = await serving(asking([], 'mcp__tracker__create', tracker), { eligibleForAutoApproval: { 'my.tracker/create': false } });
+  expect((await named.turn('t1')).options).toEqual(ONCE);
+  await named.host.close();
+  const other = await serving(asking([], 'mcp__tracker__create', tracker), { eligibleForAutoApproval: { 'other.tracker/create': false } });
+  expect((await other.turn('t1')).options).toEqual(STANDARD);
+  await other.host.close();
 });
 
 /* A call no MCP server contributes is named by its full tool name alone. */
 it('names an MCP tool a call carries no contributor for by its full tool name alone', async () => {
-  const answers: Answer[] = [];
-  const { host, p, dispatch, turn } = await serving(asking(answers, 'mcp__my_tracker__create'));
-  await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'my.tracker/create': false, 'my_tracker/create': false } } });
-  expect((await turn('t1')).options).toEqual(STANDARD);
-  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't1'), 'the first turn');
-  await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'mcp__my_tracker__create': false } } });
-  expect((await turn('t2')).options).toEqual(ONCE);
-  await host.close();
+  const servers = await serving(asking([], 'mcp__my_tracker__create'), { eligibleForAutoApproval: { 'my.tracker/create': false, 'my_tracker/create': false } });
+  expect((await servers.turn('t1')).options).toEqual(STANDARD);
+  await servers.host.close();
+  const full = await serving(asking([], 'mcp__my_tracker__create'), { eligibleForAutoApproval: { 'mcp__my_tracker__create': false } });
+  expect((await full.turn('t1')).options).toEqual(ONCE);
+  await full.host.close();
 });
 
 it('keeps an Allow in this Session answer in the session\'s permissions, and answers the next question about the tool itself', async () => {
@@ -568,5 +569,14 @@ it('hands a backend the managed settings on its start', async () => {
   const { host, turn } = await serving(asking(answers, 'bash', undefined, {}, starts), { managedSettingsPermissions: managed });
   await turn('t1');
   expect(starts[0]?.managedSettings).toEqual({ permissions: managed });
+  await host.close();
+});
+
+it('hands a backend the operator\'s eligibility beside the managed rules on its start', async () => {
+  const starts: Start[] = [];
+  const eligible = { bash: false, 'tracker/*': false };
+  const { host, turn } = await serving(asking([], 'bash', undefined, {}, starts), { eligibleForAutoApproval: eligible });
+  await turn('t1');
+  expect(starts[0]?.managedSettings).toEqual({ eligibleForAutoApproval: eligible });
   await host.close();
 });

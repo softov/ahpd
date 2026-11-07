@@ -495,7 +495,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     };
     // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
     // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
-    const eligible = toolName === undefined || !alwaysAsks(ctx.rootConfig, toolName,
+    const eligible = toolName === undefined || !alwaysAsks(options.eligibleForAutoApproval, toolName,
       ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
       mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
     /*
@@ -1135,11 +1135,11 @@ export function createSpawn(ctx: HostContext): Spawn {
      * Whether a command or tool this session runs is answered by the host's
      * rules, or asks every time because the operator said so.
      *
-     * The operator's `eligibleForAutoApproval` rule is read first, and without
-     * a connection: it is the host's setting rather than a window's, so it
-     * applies to every session on the host, an automation's among them. A tool
-     * it names is `ask`, which is a call that asks every time and offers no
-     * "always" option - before any terminal rule could approve it.
+     * The operator's `eligibleForAutoApproval` setting is read first: it is
+     * the daemon's, so it applies to every session on the host, an
+     * automation's among them. A tool it sets to `false` is `ask`, which is a
+     * call that asks every time and offers no "always" option - before any
+     * terminal rule could approve it.
      *
      * The terminal rules and the edit patterns are the host's one value each,
      * which the last push from any window set, read for every line whoever
@@ -1155,7 +1155,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const getAutoApproval = (kind: AutoApprovalKind, line: string, shell?: CommandShell, tool?: string): AutoApproval | undefined => {
       /* The tool's name: its own for `tool`, and the one that runs the line for `shell`. */
       const named = kind === 'tool' ? line : tool;
-      if (named !== undefined && asksForTool(ctx.rootConfig, named)) return 'ask';
+      if (named !== undefined && asksForTool(options.eligibleForAutoApproval, named)) return 'ask';
       if (kind === 'tool') return undefined;
       if (shell === undefined) return undefined;
       if (ctx.rootConfig['terminalAutoApproveEnabled'] === false) return undefined;
@@ -1236,7 +1236,12 @@ export function createSpawn(ctx: HostContext): Spawn {
       chatUri,
       trusted: trustedBy,
       getAutoApproval,
-      ...(options.managedSettingsPermissions === undefined ? {} : { managedSettings: { permissions: options.managedSettingsPermissions } }),
+      ...(options.managedSettingsPermissions === undefined && options.eligibleForAutoApproval === undefined ? {} : {
+        managedSettings: {
+          ...(options.managedSettingsPermissions === undefined ? {} : { permissions: options.managedSettingsPermissions }),
+          ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
+        },
+      }),
       ...(userSettings === undefined ? {} : { userSettings }),
       /*
        * The tools bound to this session: this host's own, and whatever the

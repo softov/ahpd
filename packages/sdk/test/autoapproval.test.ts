@@ -110,12 +110,20 @@ const approval = (start: Start | undefined, line: string, tool?: string): string
 const toolApproval = (start: Start | undefined, name: string): string | undefined =>
   start?.getAutoApproval?.('tool', name);
 
-/** A host with a people directory, and one connection per token, on `store` where a case gives one. */
-function serving(terminalAutoApproveDefaults: 'vscode' | 'none' = 'vscode', store?: SessionStore, listed = false) {
+/**
+ * A host with a people directory, and one connection per token: on `store`
+ * and with the backend `listed` where a case gives them, and with the
+ * operator's `eligibleForAutoApproval` where a case sets it.
+ */
+function serving(
+  terminalAutoApproveDefaults: 'vscode' | 'none' = 'vscode',
+  { store, listed = false, eligibleForAutoApproval }: { store?: SessionStore; listed?: boolean; eligibleForAutoApproval?: Record<string, boolean> } = {},
+) {
   const { agent, start } = backend(listed);
   const host = createHost({
     path: DIR, agents: [agent], users: directory(), terminalAutoApproveDefaults,
     ...(store === undefined ? {} : { sessions: store }),
+    ...(eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval }),
   });
   const join = async (token: string, clientId: string): Promise<Client> => {
     const client = host.accept(peer());
@@ -191,7 +199,7 @@ it('reads the last push of any window when two windows push rules', async () => 
  */
 it('answers a command by the host\'s rules in a session somebody other than its owner started again', async () => {
   const store = memorySessions();
-  const first = serving('vscode', store);
+  const first = serving('vscode', { store });
   const bo = await first.signedIn('admin-two', 'bo');
   await first.opening(bo, 'bo-one');
   // One turn, so the session is one the next daemon reads back.
@@ -202,7 +210,7 @@ it('answers a command by the host\'s rules in a session somebody other than its 
   await settle();
 
   // The daemon again on the same store, where Ana's turn starts Bo's session.
-  const second = serving('vscode', store, true);
+  const second = serving('vscode', { store, listed: true });
   const ana = await second.signedIn('admin', 'ana');
   await second.pushing(ana, { terminalAutoApproveRules: { 'make test': true } });
   await ana.handle({
@@ -252,11 +260,15 @@ it('asks every command when the window turned the check off', async () => {
   expect(approval(start(), 'make test')).toBe('not-needed');
 });
 
+/*
+ * The operator's rule is the daemon's `eligibleForAutoApproval`, as VS Code's
+ * host takes the setting from its policy value alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L42
+ */
 it('asks for a tool the rule names, in every session', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, opening, start } = serving('vscode', { eligibleForAutoApproval: { 'tracker/create': false, 'mail/send': true } });
   const ana = await signedIn('admin', 'ana');
   const bo = await signedIn('admin-two', 'bo');
-  await pushing(ana, { eligibleForAutoApproval: { 'tracker/create': false, 'mail/send': true } });
   await opening(ana, 'ana-one');
 
   expect(toolApproval(start(), 'tracker/create')).toBe('ask');
@@ -270,9 +282,8 @@ it('asks for a tool the rule names, in every session', async () => {
 });
 
 it('matches a whole server with `/*`, and an exact key wins', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, opening, start } = serving('vscode', { eligibleForAutoApproval: { 'tracker/*': false, 'tracker/read': true } });
   const ana = await signedIn('admin', 'ana');
-  await pushing(ana, { eligibleForAutoApproval: { 'tracker/*': false, 'tracker/read': true } });
   await opening(ana, 'ana-one');
 
   expect(toolApproval(start(), 'tracker/create')).toBe('ask');
@@ -283,12 +294,9 @@ it('matches a whole server with `/*`, and an exact key wins', async () => {
 });
 
 it('asks for a shell the rule names, before a terminal rule answers', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, pushing, opening, start } = serving('vscode', { eligibleForAutoApproval: { Bash: false } });
   const ana = await signedIn('admin', 'ana');
-  await pushing(ana, {
-    terminalAutoApproveRules: { 'ls -la': true },
-    eligibleForAutoApproval: { Bash: false },
-  });
+  await pushing(ana, { terminalAutoApproveRules: { 'ls -la': true } });
   await opening(ana, 'ana-one');
 
   // The terminal rule approves the line, and the tool it runs under is one

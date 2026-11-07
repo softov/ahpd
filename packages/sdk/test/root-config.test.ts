@@ -224,7 +224,7 @@ it('declares every key VS Code pushes, as VS Code declares it', async () => {
     'migrateLegacyCopilotCliEnabled', 'sessionCatalogEnabled', 'showExternalSessions',
     'autoArchiveMergedSessionsAfterDays', 'autoDeleteArchivedMergedSessionsAfterDays',
     'copilotMultiRootEnabled', 'claudeMultiRootEnabled', 'codexMultiRootEnabled',
-    'editAutoApprovePatterns', 'terminalAutoApproveRules', 'eligibleForAutoApproval',
+    'editAutoApprovePatterns', 'terminalAutoApproveRules',
     'agentMerge.enabled', 'agentMerge.addressReviews', 'agentMerge.fixCI',
     'agentMerge.resolveConflicts', 'agentMerge.mergePullRequest', 'agentMerge.mergeMethod',
     'agentMerge.replyAttribution', 'automationsEnabled', 'automationRunTimeoutMinutes',
@@ -396,53 +396,30 @@ it('says nothing for a push that changes nothing, a replace with the values held
   expect(said()).toBe(2);
 });
 
-it('declares eligibleForAutoApproval as VS Code does, and keeps it for the whole host', async () => {
+/*
+ * `eligibleForAutoApproval` is the operator's daemon setting: VS Code's agent
+ * host declares no root config key for it, and takes the setting's policy
+ * value alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L530-L531
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26
+ */
+it('declares no eligibleForAutoApproval in root config, as VS Code\'s host declares none, and refuses a push of it', async () => {
   const { signedIn, rootOf, heardOnRoot } = served(false);
   const admin = await signedIn('admin', 'admin');
-  const member = await signedIn('member', 'member');
 
-  /*
-   * The property is `chat.tools.eligibleForAutoApproval`'s,
-   * `chat.shared.contribution.ts:881` at `a959ba62444`, under the name this
-   * host reads: a map of tool name to boolean, where `false` means the call
-   * asks every time. `additionalProperties` is the value each member carries.
-   * `propertyNames`, which the setting fills with the names a client draws, is
-   * not copied: a rule for a tool this host has never heard of is still a rule.
-   */
   const { schema } = (await rootOf(admin.client)).config as { schema: { properties: Record<string, Record<string, unknown>> } };
-  expect(schema.properties.eligibleForAutoApproval).toEqual({
-    type: 'object',
-    title: 'Eligible for Auto Approval',
-    description: "Controls which tools are eligible for automatic approval. Tools set to 'false' will always present a confirmation and will never offer the option to auto-approve. The default behavior (or setting a tool to 'true') may result in the tool offering auto-approval options.",
-    default: {},
-    additionalProperties: { type: 'boolean', title: 'Eligible' },
+  expect(schema.properties).not.toHaveProperty('eligibleForAutoApproval');
+
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'tracker/create': false } } } },
   });
-
-  const rules = { 'tracker/create': false };
-  const push = async (client: Client): Promise<void> => {
-    await client.handle({
-      method: 'dispatchAction',
-      params: { channel: ROOT, action: { type: 'root/configChanged', config: { eligibleForAutoApproval: rules } } },
-    });
-    await settle();
-  };
-
-  // A rule about every session's tool calls is the host's, not one window's:
-  // saying it changes what everybody's sessions do, so it needs config:change.
-  await push(member.client);
-  expect(heardOnRoot(member.heard)).toEqual([
-    expect.objectContaining({ rejectionReason: expect.stringContaining('config:change') }),
+  await settle();
+  expect(heardOnRoot(admin.heard)).toEqual([
+    expect.objectContaining({ rejectionReason: expect.stringContaining('eligibleForAutoApproval') }),
   ]);
-
-  // The admin heard the member's refusal, as every client of the root does,
-  // and then its own push taken.
-  await push(admin.client);
-  expect(heardOnRoot(admin.heard).filter((one) => one.rejectionReason === undefined)).toEqual([
-    expect.objectContaining({ action: { type: 'root/configChanged', config: { eligibleForAutoApproval: rules } } }),
-  ]);
-  // Kept in the host's half, so the member that could not push it reads it.
-  const held = (await rootOf(member.client)).config as { values: Record<string, unknown> };
-  expect(held.values.eligibleForAutoApproval).toEqual(rules);
+  const held = (await rootOf(admin.client)).config as { values: Record<string, unknown> };
+  expect(held.values).not.toHaveProperty('eligibleForAutoApproval');
 });
 
 it('takes the three approval keys only with config:change, since they are the host\'s', async () => {

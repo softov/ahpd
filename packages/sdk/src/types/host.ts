@@ -894,6 +894,17 @@ export interface HostOptions {
    */
   managedSettingsPermissions?: ManagedSettingsPermissions;
   /**
+   * The operator's per-tool approval eligibility, VS Code's
+   * `chat.tools.eligibleForAutoApproval` map of tool name to boolean, which
+   * VS Code's host takes from that setting's policy value alone: a tool set
+   * to `false` asks every time, the managed layer's per-tool ask.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L42
+   *
+   * The host reads it on every tool question, beside the managed rules, and
+   * hands it to every backend on `Start.managedSettings` with them.
+   */
+  eligibleForAutoApproval?: Record<string, boolean>;
+  /**
    * How a session's shell commands are read before their rules are matched.
    *
    * The port the sdk's own splitter fills by default: `getAutoApproval` reads

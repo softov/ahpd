@@ -20,7 +20,7 @@ import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type Op
 import { isRecord, secretRef } from '@ahpd/sdk';
 import type { IssuerVerify, ManagedSettingsPermissions, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
 import type { Config, HttpSetting, RoutesSetting } from '../config.js';
-import { asSpec, configDir, configPath, loadConfig, managedPermissionsProblems, shellEnvProblems } from '../config.js';
+import { asSpec, configDir, configPath, eligibilityProblems, loadConfig, managedPermissionsProblems, shellEnvProblems } from '../config.js';
 import { sourceOf, pluginIdOf, pluginIdsOf, runPlugins } from '../plugins.js';
 import { proxyConfiguration, proxyProblems, proxySchema, type ProxyConfiguration } from '../proxy/providers.js';
 
@@ -120,6 +120,8 @@ export interface Options {
   terminalAutoApproveDefaults: 'vscode' | 'none';
   /** The managed permissions every session is held to, absent when the deployment set none. */
   managedSettingsPermissions?: ManagedSettingsPermissions;
+  /** The tools whose calls ask every time, by `false`, absent when the deployment named none. */
+  eligibleForAutoApproval?: Record<string, boolean>;
   /**
    * A module whose default export reads a session's shell commands, as the
    * file's `commandParser` names it.
@@ -506,6 +508,22 @@ const shellEnvField: MapSchema = {
 };
 
 /**
+ * The operator's per-tool approval eligibility, with the declaration and the
+ * words of VS Code's `chat.tools.eligibleForAutoApproval`, which VS Code's
+ * host takes from that setting's policy value alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26
+ *
+ * The value schema is what a client draws a row from. Each value is held by
+ * `eligibilityProblems`, because `check` copies a map value without a check.
+ */
+const eligibleForAutoApprovalField: MapSchema = {
+  type: 'object',
+  title: 'Eligible for Auto Approval',
+  additionalProperties: { type: 'boolean', title: 'Eligible' },
+  description: "Controls which tools are eligible for automatic approval. Tools set to 'false' will always present a confirmation and will never offer the option to auto-approve. The default behavior (or setting a tool to 'true') may result in the tool offering auto-approval options. A tool is named as its backend names it, a tool this host offers as ahp/<name>, an MCP server's tool as <server>/<tool>, and every tool of a server as <server>/*. Set in the configuration file only.",
+};
+
+/**
  * The MCP servers every session is offered, by the name a person gave them.
  *
  * The value schema is one server, so a client draws a row per server; the
@@ -703,6 +721,7 @@ export const serverFields = {
     additionalProperties: false,
     description: 'The managed permissions every session on the host is held to, in VS Code\'s shape: deny and ask rules in the managed rule grammar (Shell, Read, Write, Domain), disableBypassPermissionsMode "disable" to take Allow All away, and limitTo, the Domain rules a fetch stays within, each Domain or Domain(<host>) with the host as VS Code\'s network filter normalizes it. A Domain rule names a host whatever the scheme, port or path of a URL. A rule the managed grammar refuses stops the start. The host checks each rule on the tool questions of its kind beside the session\'s permissions, and hands the whole to every backend. Set in the configuration file only.',
   },
+  eligibleForAutoApproval: asJsonSchema(eligibleForAutoApprovalField),
   commandParser: {
     type: 'string',
     title: 'Command parser',
@@ -1077,10 +1096,11 @@ export const servedPluginWriteFields = {
  * still writes `providers` is refused too. That is a bad value rather than an
  * unknown key, so it stops the start the same way one does. `shellEnv` is checked the same way for
  * the same reason: its names and values are held on their own, because the
- * schema cannot say that an object is a map. `managedSettingsPermissions` is
- * too, for its rules: a rule of the managed grammar, and a `Domain` boundary
- * rule with its host written as VS Code's network filter normalizes one, are
- * more than a schema pattern says.
+ * schema cannot say that an object is a map, and so is
+ * `eligibleForAutoApproval`, whose every value is a boolean.
+ * `managedSettingsPermissions` is too, for its rules: a rule of the managed
+ * grammar, and a `Domain` boundary rule with its host written as VS Code's
+ * network filter normalizes one, are more than a schema pattern says.
  */
 export function checkConfig(file: object, source: (key: string) => string): string[] {
   const warnings: string[] = [];
@@ -1104,6 +1124,8 @@ export function checkConfig(file: object, source: (key: string) => string): stri
   if (shellEnvBad.length > 0) stop(shellEnvBad.map((one) => `${source('shellEnv')}: ${one}`).join('\n'));
   const managedBad = managedPermissionsProblems((file as Config).managedSettingsPermissions);
   if (managedBad.length > 0) stop(managedBad.map((one) => `${source('managedSettingsPermissions')}: ${one}`).join('\n'));
+  const eligibleBad = eligibilityProblems((file as Config).eligibleForAutoApproval);
+  if (eligibleBad.length > 0) stop(eligibleBad.map((one) => `${source('eligibleForAutoApproval')}: ${one}`).join('\n'));
   return warnings;
 }
 
@@ -1298,6 +1320,7 @@ const noCwd = input['noCwd'] === true;
   const clientToolCallDisconnectTimeoutMs = given('clientToolCallDisconnectTimeoutMs');
   const shellEnv = given('shellEnv');
   const managedSettingsPermissions = given('managedSettingsPermissions');
+  const eligibleForAutoApproval = given('eligibleForAutoApproval');
   // File-only, and already absolute: `anchored` resolved it against the file.
   const commandParser = file.commandParser;
   const deltaWindowMs = given('deltaWindowMs');
@@ -1348,6 +1371,7 @@ const noCwd = input['noCwd'] === true;
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',
     ...(managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions }),
+    ...(eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval }),
     ...(commandParser === undefined ? {} : { commandParser }),
     ...(deltaWindowMs === undefined ? {} : { deltaWindowMs }),
     ...(sleepAfterMinutes === undefined ? {} : { sleepAfterMinutes }),

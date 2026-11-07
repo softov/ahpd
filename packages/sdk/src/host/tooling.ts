@@ -2277,7 +2277,7 @@ export function createTooling(ctx: HostContext): Tooling {
              * that keeps the rule. The message names the key so a person can
              * find what refused them.
              */
-            if (asksForTool(rootConfig, `ahp/${definition.name}`)) {
+            if (asksForTool(options.eligibleForAutoApproval, `ahp/${definition.name}`)) {
               throw new Error(`${definition.name} asks every time: eligibleForAutoApproval names ahp/${definition.name}, and /mcp has no session to ask in`);
             }
             const answer = await one.run(input, sessionlessContext(caller));

@@ -400,6 +400,13 @@ export interface Config {
    */
   managedSettingsPermissions?: ManagedSettingsPermissions;
   /**
+   * The operator's per-tool approval eligibility, VS Code's
+   * `chat.tools.eligibleForAutoApproval` map of tool name to boolean: a tool
+   * set to `false` asks every time, with no "always" option, beside the
+   * managed permissions. Absent names no tool.
+   */
+  eligibleForAutoApproval?: Record<string, boolean>;
+  /**
    * How long a streamed delta waits for the next one before it is sent.
    *
    * Milliseconds, a whole number from 0 to 1000. Within the window the deltas
@@ -538,6 +545,18 @@ export const shellEnvProblems = (held: unknown): string[] => {
     }
   }
   return problems;
+};
+
+/**
+ * What is wrong with an `eligibleForAutoApproval` value, one line each, or
+ * nothing: each tool's value is `true` or `false`, as VS Code's setting
+ * declares it.
+ */
+export const eligibilityProblems = (held: unknown): string[] => {
+  // Not a map at all is the schema's to refuse, with the key's own name.
+  if (typeof held !== 'object' || held === null || Array.isArray(held)) return [];
+  return Object.entries(held).flatMap(([tool, value]) => (typeof value === 'boolean' ? []
+    : [`eligibleForAutoApproval.${tool} holds ${JSON.stringify(value)}, which is not true or false`]));
 };
 
 /**

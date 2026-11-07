@@ -272,9 +272,9 @@ export interface Start {
    * from any window set, whoever sent the turn and for a start nobody sent, as
    * `trusted` reads the host's trust.
    *
-   * The operator's rule is read first and without a connection, because it is
-   * the host's own setting rather than a window's: `eligibleForAutoApproval`
-   * names tools whose calls ask every time. A matched call is `ask`, whatever
+   * The operator's rule is read first, the daemon's `eligibleForAutoApproval`
+   * setting, which names tools whose calls ask every time and which a backend
+   * also finds on `managedSettings`. A matched call is `ask`, whatever
    * permission mode or terminal rule would otherwise let it run, and the
    * question it is answered with must offer no "always" option. A rule matches
    * a tool named exactly, and every tool of a server through `<server>/*`.
@@ -302,8 +302,12 @@ export interface Start {
    * managed rule denies, and marks a question a managed rule asks with
    * `managedApprovalRequired`. Absent where the operator set none.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1107
+   *
+   * `eligibleForAutoApproval` beside the rules is the operator's per-tool
+   * eligibility, VS Code's map of tool name to boolean: a tool set to
+   * `false` asks every time, with no "always" option.
    */
-  managedSettings?: { permissions: ManagedSettingsPermissions };
+  managedSettings?: { permissions?: ManagedSettingsPermissions; eligibleForAutoApproval?: Record<string, boolean> };
   /**
    * Whether this session loads the settings of the person who runs the daemon.
    *
