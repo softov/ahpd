@@ -21,10 +21,10 @@ import type { Worktrees } from '../src/types/worktrees.js';
  * A folder VS Code has not vouched for is a folder whose project files an
  * agent must not load, and the host is the only thing that knows which those
  * are: trust arrives from a window as one value for the whole host, which the
- * last push sets, and on a host with people it answers the turns the session's
- * owner sends. So the start carries the answer, and this is what that answer is
- * in each of the cases the decision names.
- * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162
+ * last push sets and every turn reads, whoever sent it. So the start carries
+ * the answer, and this is what that answer is in each of the cases the spec
+ * names.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L166-L169
  */
 
 const DIR = mkdtempSync(join(tmpdir(), 'ahpd-trust-'));
