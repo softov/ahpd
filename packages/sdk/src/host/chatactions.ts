@@ -426,14 +426,9 @@ export function chatAction(
    * A worker's chat is read-only, whichever side of a restart it is on.
    *
    * Nobody types into a subagent: its conversation is the harness's work
-   * inside somebody else's call. What a client may still send on one is
-   * an answer to what the worker asked there and a stop, and those are
-   * the lead chat's backend's to act on, since that backend runs the
-   * worker. A command typed into one runs as this host's local command,
-   * ahead of the admission that refuses any other start in the reference
-   * host's words for a read-only chat; anything else is refused here, before
-   * the resume below, which would start an agent for a chat the client
-   * cannot write to.
+   * inside somebody else's call. A command typed into one runs as this host's
+   * local command, ahead of the admission that refuses any other start in the
+   * reference host's words for a read-only chat.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
    */
   const worker = toolCallOfSubagentChat(channel) !== undefined;
@@ -445,8 +440,23 @@ export function chatAction(
     else unsent(channel, 'rejected', 'readOnly', 'This chat is read-only.');
     return;
   }
+  /*
+   * A person watches a worker's chat and sends it no message, as the protocol
+   * reads a read-only chat: a pending message and a resume are refused in the
+   * words VS Code's turn admission refuses a request to one with. Every other
+   * action is the chat's own: an answer, a stop or a client's run of a call
+   * goes to the backend that runs the worker, below, and anything else is
+   * applied to the worker chat's state alone, as VS Code's host applies a
+   * client action to its channel.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/state.ts#L394-L395
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+   */
+  if (worker && (type === 'chat/pendingMessageSet' || type === 'chat/turnResume')) {
+    refuse(connection.peer, channel, action, origin, 'This chat is read-only.');
+    return;
+  }
   if (worker && !WORKER_ACTIONS.has(type)) {
-    refuse(connection.peer, channel, action, origin, `${channel} is a read-only subagent chat`);
+    dispatch(channel, action, origin);
     return;
   }
   /*

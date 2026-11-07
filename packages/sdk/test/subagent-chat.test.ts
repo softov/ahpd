@@ -564,6 +564,24 @@ it('takes a draft answer on a worker chat', async () => {
   expect(refusals()).toEqual([]);
 });
 
+/*
+ * A read-only chat is one a person watches and sends no message: a worker's
+ * chat takes a draft as its own, and refuses a pending message in the words
+ * VS Code's turn admission refuses a request to a read-only chat with.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/state.ts#L394-L395
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+ */
+it('takes a draft on a worker chat as the chat\'s own, and refuses a message sent there as read-only', async () => {
+  const { ask, worker, send, refusals } = await waiting();
+  await send(worker, { type: 'chat/draftChanged', draft: { text: 'typed' } });
+  expect(refusals()).toEqual([]);
+  const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { draft?: { text?: string } } } };
+  expect(opened.snapshot.state.draft?.text).toBe('typed');
+  expect(told).toEqual([]);
+  await send(worker, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and then', origin: { kind: 'user' } } });
+  expect(refusals()).toEqual(['This chat is read-only.']);
+});
+
 it('takes an approval given on a worker chat to the session\'s backend', async () => {
   const { worker, send, refusals } = await waiting();
   await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: true, confirmed: 'user-action' });
