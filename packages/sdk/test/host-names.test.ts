@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   resetSdk, actions, claude, createHost, hello, machine, open,
-  peer, sdk, serving, sessionQueries, settle, running, wrote, firstMessage,
+  peer, sdk, serving, sessionQueries, settle, showExternal, running, wrote, firstMessage,
 } from './support/host.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 
@@ -259,7 +259,9 @@ describe('a session a client names', () => {
 
   it('keeps a session a backend keeps on disk when it is made again under its name, and refuses its id under another', async () => {
     const { echo } = await import('../../../examples/echo/agent.js');
-    const stamp = new Date(0).toISOString();
+    // Written an hour ago and never run by this host: a client lists it by the
+    // mode that shows the sessions a backend keeps of its own.
+    const stamp = new Date(Date.now() - 60 * 60 * 1000).toISOString();
     const host = createHost({
       path: '/tmp',
       agents: [{ ...echo({ path: '/tmp', pace: 0 }), list: async () => [{ id: 'kept', title: 'Kept', createdAt: stamp, modifiedAt: stamp, workingDirectories: ['file:///tmp'] }] }],
@@ -267,6 +269,7 @@ describe('a session a client names', () => {
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/kept', provider: 'echo' } }))
       .resolves.toBeNull();
@@ -317,7 +320,8 @@ describe('a session a client names', () => {
  * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083
  */
 describe('a session asked for by the name a client computed', () => {
-  const listed = { sessionId: 'row', summary: 'A real title', lastModified: 1_700_000_000_000, cwd: '/home/softov' };
+  // Written an hour ago, inside the window of the mode a client lists it by.
+  const listed = { sessionId: 'row', summary: 'A real title', lastModified: Date.now() - 60 * 60 * 1000, cwd: '/home/softov' };
   const ROW = 'ahp-session:/row';
   const derived = (session: string) =>
     `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
@@ -328,6 +332,9 @@ describe('a session asked for by the name a client computed', () => {
     wrote(listed.sessionId, listed.cwd);
     const client = serving('/home/softov').accept(p);
     await client.handle(hello(['0.9.0']));
+    // A transcript this host never ran, which a client lists by the root's
+    // `showExternalSessions`.
+    await showExternal(client);
     // Listed first: that is when this host learns whose the row is, and it is
     // what a client does before it opens one.
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
