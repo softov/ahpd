@@ -343,7 +343,17 @@ it('leaves the session\'s provider as its own when a chat of it was recorded on 
  * file.
  */
 
-const STAMP = new Date(0).toISOString();
+/** When each row was written: an hour ago, inside the window of the mode that shows it. */
+const STAMP = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+/**
+ * The root's `showExternalSessions`, pushed as a window pushes it: which of the
+ * sessions a backend lists that this host never ran a listing shows. A row no
+ * record names a harness for is one of those.
+ */
+async function showExternal(client: ReturnType<typeof serving>['client']): Promise<void> {
+  await client.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config: { showExternalSessions: 'last30Days' } } } });
+}
 
 /** A backend over a fixed catalogue, with a record of what it was asked to start. */
 function harness(provider: string, ids: string[], started: string[]): Agent {
@@ -385,6 +395,7 @@ describe('a row two harnesses both list', () => {
       harness('two', ['shared', 'mine'], two),
     ]);
     await settle();
+    await showExternal(client);
     expect(await catalogue(client)).toEqual(['ahp-session:/shared', 'ahp-session:/mine']);
   });
 
@@ -414,6 +425,7 @@ describe('a row two harnesses both list', () => {
       harness('two', ['unrecorded'], two),
     ]);
     await settle();
+    await showExternal(client);
     // A session from before this was recorded, and one whose harness is gone,
     // both open somewhere rather than nowhere.
     expect(await catalogue(client)).toEqual(['ahp-session:/unrecorded']);
@@ -589,6 +601,7 @@ describe('a row two harnesses both list', () => {
       harness('two', ['only-theirs'], two),
     ]);
     await settle();
+    await showExternal(client);
     expect(await catalogue(client)).toEqual(['ahp-session:/only-mine', 'ahp-session:/only-theirs']);
   });
 
