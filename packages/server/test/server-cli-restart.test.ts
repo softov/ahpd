@@ -26,7 +26,7 @@ describe('start, stop and status', () => {
       body: '{}',
     });
     expect(answered.status).toBe(200);
-    expect(await answered.json()).toEqual({ restarting: true, pid: before.pid });
+    expect(await answered.json()).toEqual({ restarting: true, pid: before.pid, restartDelayMs: 3000 });
 
     await gone(before.pid);
     expect(alive(before.pid)).toBe(false);
@@ -264,7 +264,7 @@ describe('start, stop and status', () => {
       body: '{}',
     });
     expect(answered.status).toBe(200);
-    expect(await answered.json()).toEqual({ restarting: true, pid: daemon.pid });
+    expect(await answered.json()).toEqual({ restarting: true, pid: daemon.pid, restartDelayMs: 3000 });
 
     // The stop the restart begins with is the manager's, so no successor is
     // started from here, and the record goes before it is asked: the daemon the
