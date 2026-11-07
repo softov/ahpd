@@ -103,8 +103,8 @@ describe('a command typed into the conversation', () => {
     expect(result.success).toBe(true);
     expect(result.content.find((one) => one.type === 'text')?.text).toContain('ran-from-the-composer');
     // The terminal it ran in, so a client can watch the output arrive rather
-    // than wait for the whole of it.
-    expect(result.content.find((one) => one.type === 'terminal')?.resource).toMatch(/^ahp-terminal:/);
+    // than wait for the whole of it, by VS Code's link for a call's terminal.
+    expect(result.content.find((one) => one.type === 'terminal')?.resource).toMatch(/^agenthost-terminal:\/\/shell\//);
 
     // And in the snapshot, not only in the stream: a client that subscribes
     // afterwards reads the transcript rather than the actions it missed.
@@ -217,7 +217,7 @@ describe('a command typed into the conversation', () => {
     pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
     await until(() => changed() !== undefined && pty.typed.length > 0);
     // With no `_meta`, which the reducer would put in place of the call's own.
-    const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
+    const named = { type: 'terminal', resource: expect.stringMatching(/^agenthost-terminal:\/\/shell\//), title: 'Terminal', isPty: true };
     expect(changed()?.content).toEqual([named]);
     expect(changed()).not.toHaveProperty('_meta');
     expect(rootList(p).map((one) => one.resource)).toEqual([(changed()?.content as { resource: string }[])[0]?.resource]);
@@ -647,7 +647,7 @@ describe('a command typed into the conversation', () => {
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!echo said-on-pipes', origin: { kind: 'user' } } } },
     });
     const said = await ended(p, chatUri, 't1');
-    const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: false };
+    const named = { type: 'terminal', resource: expect.stringMatching(/^agenthost-terminal:\/\/shell\//), title: 'Terminal', isPty: false };
     expect(said.find((one) => one.type === 'chat/toolCallContentChanged')?.content).toEqual([named]);
     const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { content: unknown[] } | undefined;
     expect(done?.content[0]).toMatchObject({ ...named, result: { exitCode: 0 } });
@@ -1253,7 +1253,7 @@ describe('a terminal a backend opens', () => {
     // the session's - which is what makes the root list and session cleanup
     // both know about it.
     expect(listed()).toHaveLength(1);
-    expect(listed()[0]?.resource).toMatch(/^ahp-terminal:\//);
+    expect(listed()[0]?.resource).toMatch(/^agenthost-terminal:\/\/shell\//);
     expect(listed()[0]?.claim).toMatchObject({ kind: 'session', session: 'ahp-session:/shells' });
     expect(opened.uri).toBe(listed()[0]?.resource);
 
