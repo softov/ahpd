@@ -418,7 +418,7 @@ interface ChatStart {
 export function createTooling(ctx: HostContext): Tooling {
   const {
     options, sessions, byChat, kept, terminals, learned, rootConfig, sentBy, about,
-    activeClientsOf, leadOf, clientResources, allRows, setArtifacts, forWhom,
+    activeClientsOf, leadOf, clientResources, listSessions, setArtifacts, forWhom,
     principalFor, senderOf, senders,
     chatSummary, persistChatTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
     resolveCreatedSessionConfig, createProviderSession, backendsOwn, removeSession, spawn,
@@ -1514,11 +1514,12 @@ export function createTooling(ctx: HostContext): Tooling {
    *
    * Every operation here is one a client already has - a command, or an
    * action a client may dispatch - reached from a turn rather than a socket.
-   * The catalogue is `allRows()`, which is what `listSessions` answers; a
-   * message is a turn this host starts, or a message it queues on the chat,
-   * which is what `chat/turnStarted` and `chat/pendingMessageSet` come to; a
-   * session is `createProviderSession`, which is what `createSession` comes to. Nothing is reachable from here that is not
-   * reachable from a client, and the reverse is nearly true.
+   * The catalogue is `listSessions()`, which is what the `listSessions`
+   * command answers; a message is a turn this host starts, or a message it
+   * queues on the chat, which is what `chat/turnStarted` and
+   * `chat/pendingMessageSet` come to; a session is `createProviderSession`,
+   * which is what `createSession` comes to. Nothing is reachable from here
+   * that is not reachable from a client, and the reverse is nearly true.
    */
   /**
    * The agent a session runs, as `ToolCall.provider`: the one its tools were
@@ -1872,8 +1873,8 @@ export function createTooling(ctx: HostContext): Tooling {
      * a call nobody is behind, which reads as it did.
      */
     sessions: async () => {
-      const rows = await allRows();
-      return mayDo(chatUri, 'session:read') ? rows : [];
+      const summaries = await listSessions();
+      return mayDo(chatUri, 'session:read') ? summaries : [];
     },
     chats: chatsOf,
     models: modelsKnown,
@@ -2157,7 +2158,7 @@ export function createTooling(ctx: HostContext): Tooling {
       person: () => person,
       may: (grant) => callerMay(caller, grant),
       refusal: (grant) => refusalReason(person ?? 'host', grant),
-      sessions: async () => (callerMay(caller, 'session:read') ? await allRows() : []),
+      sessions: async () => (callerMay(caller, 'session:read') ? await listSessions() : []),
       chats: chatsOf,
       models: modelsKnown,
       providers: providersKnown,

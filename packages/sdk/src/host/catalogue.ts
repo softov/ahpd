@@ -36,10 +36,11 @@ export interface MoveRefusal {
 /** The session list and each row of it. */
 export interface Catalogue {
   statusOf(uri: string): number;
-  startedBy(chat?: string): Bag;
+  /** A chat's `ChatOrigin`: what it was made from, else `user`. */
+  getChatOrigin(chat?: string): Bag;
   chatSummary(session: string, uri: string, chat: Session): Bag;
   /** Whether a chat, or a worker inside one of its calls, has a turn in progress. */
-  running(uri: string): boolean;
+  hasActiveTurn(uri: string): boolean;
   /** Whether a chat is one a move is ever made of: moves on, a chat of its session's backend, not its default, resumable. */
   isStructurallyMovable(uri: string): boolean;
   /** Why a session refuses a move out of it or into it now: archived, or changing its workspace. */
@@ -123,15 +124,15 @@ export interface Catalogue {
   /** Announce to every client a listed session this host did not have. */
   announceSurfacedSession(summary: Summary): void;
   /**
-   * The rows of the sessions this host is running, built now.
+   * The summaries of the sessions this host is running, built now.
    *
    * The half of the answer that is never held, and rebuilt on every
-   * `listSessions` because a live row moves on its own and holding it would
-   * make it a second behind.
+   * `listSessions` because a live summary moves on its own and holding it
+   * would make it a second behind.
    */
-  liveRows(): Summary[];
-  /** The whole catalogue as a client is handed it: the live rows and the held ones. */
-  allRows(): Promise<Summary[]>;
+  getOverlaySessionSummaries(): Summary[];
+  /** The whole catalogue as a client is handed it: the live summaries and the held ones. */
+  listSessions(): Promise<Summary[]>;
   /** Tell every client what a refresh changed among the listed sessions: announced, updated, or retracted. */
   publishSurfacedSessions(before: Summary[], after: Summary[]): void;
   /** The provider a stored session recorded, where this host does not serve it. */
@@ -147,7 +148,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   } = ctx;
 
   /**
-   * How a chat came to exist.
+   * How a chat came to exist: its `ChatOrigin`, as VS Code's host reads a
+   * chat's origin.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L866
    *
    * `ChatOrigin` has four kinds - `user`, `fork`, `sideChat` and `tool`. A
    * chat made out of another says which, from `madeFrom`; every other chat
@@ -156,10 +159,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * `tool` in their own rows.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L678-L692
    */
-  const startedBy = (chat?: string): Bag => {
-    const made = chat === undefined ? undefined : madeFrom.get(chat);
-    return { origin: made ?? { kind: 'user' } };
-  };
+  const getChatOrigin = (chat?: string): Bag => (chat === undefined ? undefined : madeFrom.get(chat)) ?? { kind: 'user' };
   /**
    * One chat, as its session's catalogue lists it: the summary fields of the
    * state the chat holds.
@@ -184,7 +184,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     return {
       ...counted,
       resource: uri,
-      ...startedBy(uri),
+      origin: getChatOrigin(uri),
       // Its agent, where it is not its session's, as its state says it.
       ...(foreign === undefined ? {} : { provider: foreign.agent.provider }),
       // The title its state opens with: a default chat's own, or none.
@@ -299,11 +299,13 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const movable = (uri: string): boolean => {
     const session = sessionHolding(uri);
     return session !== undefined && isStructurallyMovable(uri) && sessionMoveRefusal(session) === undefined
-      && chatMoveRefusal(uri) === undefined && !running(uri);
+      && chatMoveRefusal(uri) === undefined && !hasActiveTurn(uri);
   };
 
   /**
-   * Whether a chat, or any worker chat beneath it, is running a turn.
+   * Whether a chat, or any worker chat beneath it, has an active turn, as VS
+   * Code's host names a turn in progress.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L575-L583
    *
    * Asked of a chat's backend, which is the one doing the work, and of a
    * worker's held state, which is the whole of what a worker is. Walked to the
@@ -311,7 +313,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * carries all of them: a chat whose worker is mid-turn is a chat with
    * something in flight.
    */
-  const running = (uri: string): boolean => {
+  const hasActiveTurn = (uri: string): boolean => {
     const lead = sessions.get(sessionHolding(uri) ?? '')?.chats.get(uri);
     // The chat's own turn from its start as every client holds it, and the
     // backend's while it works.
@@ -499,7 +501,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const held = sessions.get(uri);
     if (!held)
       return Status.Idle | kept.flags(idOf(uri));
-    return drivingOf(held).status | kept.flags(idOf(uri));
+    return (aggregateChatSummaries(held).status ?? Status.Idle) | kept.flags(idOf(uri));
   };
   /** The activity bits of a status, without the session's own two flags. */
   const activityBits = (status: number): number => status & (Status.IsRead - 1);
@@ -532,46 +534,51 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     }),
   ];
   /**
-   * The chat that decides a session's status and activity, as the reference
-   * host aggregates a session made of chats.
+   * A session's chats aggregated into its own summary fields, as VS Code's
+   * host aggregates a session's chat catalog: the status and the activity of
+   * the chat that drives the session, and the latest change across its chats.
    *
    * A chat that needs input makes the session need input; else a chat that
    * runs makes it run; else the activity bits are the default chat's, or the
    * most recently modified chat's when it has none, and a failed chat stays on
    * its own row. `InputNeeded` carries `InProgress`, so a chat that runs is one
    * whose bits under `InputNeeded` are `InProgress` alone. The activity is the
-   * deciding chat's. A worker chat is a chat of the session and counts.
-   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
+   * driving chat's. A worker chat is a chat of the session and counts. A
+   * session with no chat aggregates to nothing, and a chat whose state names
+   * no change adds none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
    */
-  const drivingOf = (held: Held): { status: number; activity: string | undefined } => {
+  const aggregateChatSummaries = (held: Held): { status?: number; activity?: string; modifiedAt?: number } => {
     const chats = chatsOf(held);
     const base = chats.find((one) => one.uri === held.defaultChat)
       ?? [...chats].sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt))[0];
-    const asking = chats.find((one) => (one.status & Status.InputNeeded) === Status.InputNeeded);
-    const running = chats.find((one) => (one.status & Status.InputNeeded) === Status.InProgress);
-    if (asking !== undefined) return { status: Status.InputNeeded, activity: asking.activity };
-    if (running !== undefined) return { status: Status.InProgress, activity: running.activity };
-    return base === undefined
-      ? { status: Status.Idle, activity: undefined }
-      : { status: activityBits(base.status), activity: base.activity };
+    if (base === undefined) return {};
+    const inputChat = chats.find((one) => (one.status & Status.InputNeeded) === Status.InputNeeded);
+    const inProgressChat = chats.find((one) => (one.status & Status.InputNeeded) === Status.InProgress);
+    const driver = inputChat ?? inProgressChat ?? base;
+    const status = inputChat !== undefined ? Status.InputNeeded : inProgressChat !== undefined ? Status.InProgress : activityBits(base.status);
+    const times = chats.map((one) => Date.parse(one.modifiedAt)).filter(Number.isFinite);
+    return {
+      status,
+      ...(driver.activity !== undefined ? { activity: driver.activity } : {}),
+      ...(times.length > 0 ? { modifiedAt: Math.max(...times) } : {}),
+    };
   };
   /**
-   * A session's last change: the latest change across every chat of it, as
-   * the protocol aggregates `modifiedAt`, rolled into the session's own where
-   * it is later, as VS Code's host rolls its chats' latest into the session's
-   * catalogue timestamp. A row's `modifiedAt` moves forward only, so a chat
-   * that goes takes nothing back with it.
+   * A session's last change: its chats' latest, rolled into the session's own
+   * where it is later, as VS Code's host rolls the aggregate's `modifiedAt`
+   * into the session's catalogue timestamp. A row's `modifiedAt` moves
+   * forward only, so a chat that goes takes nothing back with it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3365
    */
   const modifiedOf = (held: Held): string => {
-    const latest = Math.max(...chatsOf(held).map((one) => Date.parse(one.modifiedAt)).filter(Number.isFinite));
+    const latest = aggregateChatSummaries(held).modifiedAt;
     const current = Date.parse(held.modifiedAt);
-    if (Number.isFinite(latest) && (!Number.isFinite(current) || latest > current)) held.modifiedAt = new Date(latest).toISOString();
+    if (latest !== undefined && (!Number.isFinite(current) || latest > current)) held.modifiedAt = new Date(latest).toISOString();
     return held.modifiedAt;
   };
-  /** What a session is doing: the activity of the chat that decides its status. */
-  const activityOf = (held: Held): string | undefined => drivingOf(held).activity;
+  /** What a session is doing: the activity of the chat that drives it. */
+  const activityOf = (held: Held): string | undefined => aggregateChatSummaries(held).activity;
 
   /**
    * How many sessions are running a turn, as VS Code's host counts its active
@@ -606,16 +613,17 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   /** The diff stat of a folder with nothing changed. */
   const NO_CHANGES = { files: 0, additions: 0, deletions: 0 };
   /**
-   * Which of the two counts a session's row carries.
+   * Which of the two counts a session's row carries, as VS Code's host decides
+   * its summary changeset kind: a session that works in a tree of its own is
+   * counted by its branch, and one in a folder somebody chose is counted by
+   * its own checkpoints.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetSummary.ts#L11-L15
    *
-   * The reference host's `getSummaryChangesetKind`: a session that works in a
-   * tree of its own is counted by its branch, and one in a folder somebody
-   * chose is counted by its own checkpoints. Read from the worktree record,
-   * the value that outlives a restart: the record is written where the tree
-   * is made, and the config that asked for one is said to a session while it
-   * runs.
+   * Read from the worktree record, the value that outlives a restart: the
+   * record is written where the tree is made, and the config that asked for
+   * one is said to a session while it runs.
    */
-  const summaryKindOf = (uri: string): 'branch' | 'session' =>
+  const getSummaryChangesetKind = (uri: string): 'branch' | 'session' =>
     (ctx.worktreeOf(uri) === undefined ? 'session' : 'branch');
   /**
    * The diff stat a catalogue row carries, which a session's own state does
@@ -970,7 +978,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       for (;;) {
         queuedChangesSummaries.delete(uri);
         const source = options.changes;
-        const branch = summaryKindOf(uri) === 'branch';
+        const branch = getSummaryChangesetKind(uri) === 'branch';
         let read: ChangesSummary | undefined;
         try {
           const tree = ctx.worktreeOf(uri);
@@ -1470,19 +1478,19 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   /**
-   * The rows of the sessions this host is running, built now, on each answer,
-   * each the summary `summaryOf` projects, as VS Code's host lists a live
-   * session through the summary it announces.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1458-L1477
+   * The summaries of the sessions this host is running, built now, on each
+   * answer, each the one `summaryOf` projects, as VS Code's host overlays its
+   * live sessions' summaries on a listing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1004-L1026
    *
-   * A live row changes every second and building one reads a handful of
-   * in-memory objects, while a backend row costs a pass over every transcript
+   * A live summary changes every second and building one reads a handful of
+   * in-memory objects, while a listed one costs a pass over every transcript
    * on the machine. The held catalogue keeps the expensive half and this is
    * built for each answer, so a session somebody is looking at is current. A
-   * session not yet announced is nobody's row, as VS Code's host lists no idle
-   * provisional session.
+   * session not yet announced is listed to nobody, as VS Code's host lists no
+   * idle provisional session.
    */
-  const liveRows = (): Summary[] => [...sessions.keys()]
+  const getOverlaySessionSummaries = (): Summary[] => [...sessions.keys()]
     .filter((uri) => !provisionalSessionKeys.has(uri))
     .flatMap((uri) => {
       const summary = summaryOf(uri);
@@ -1490,39 +1498,46 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     });
 
   /**
-   * Every row a client is handed, as one list: the running sessions now, the
-   * held rows behind them, most recently modified first.
+   * Every session summary a client is handed, as one list: the running
+   * sessions' now, the held ones behind them, most recently modified first, as
+   * VS Code's host lists its sessions with the live ones overlaid.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5137
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5487-L5538
    *
    * One place for the two halves to be put together, because they are one
-   * answer: `listSessions` pages over this and so does the `list_sessions`
-   * tool. A session this host is running is dropped out of the held rows by
-   * its id, since it is in the first half and a row twice is a row a client
-   * has to reconcile, and so is one not yet announced.
+   * answer: the `listSessions` command pages over this and so does the
+   * `list_sessions` tool. A session this host is running is dropped out of
+   * the held summaries by its id, since it is in the first half and a session
+   * listed twice is one a client has to reconcile, and so is one not yet
+   * announced.
    */
-  const allRows = async (): Promise<Summary[]> => {
-    const running = liveRows();
-    const claimed = new Set([...running.map((row) => idFor(row.resource)), ...[...provisionalSessionKeys].map(idFor)]);
+  const listSessions = async (): Promise<Summary[]> => {
+    const running = getOverlaySessionSummaries();
+    const claimed = new Set([...running.map((summary) => idFor(summary.resource)), ...[...provisionalSessionKeys].map(idFor)]);
     const listed = await ctx.listedSessions();
     // The protocol says a server SHOULD order them most-recently-modified
     // first, and a client that has to sort a list it was handed is a client
     // doing the server's job.
-    return [...running, ...listed.filter((row) => !claimed.has(idFor(row.resource))).map(hereNow)]
+    return [...running, ...listed.filter((summary) => !claimed.has(idFor(summary.resource))).map(getSurfacedSessionSummary)]
       .sort((a_, b_) => b_.modifiedAt.localeCompare(a_.modifiedAt));
   };
   /**
-   * A held row with what this host knows about it read again.
+   * A held listed session's summary with what this host knows about it read
+   * again, as VS Code's host keeps a surfaced session's summary current with
+   * its flags and its metadata.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L650-L653
    *
    * What a backend said about a session is held, because learning it cost a
    * pass over every transcript on the machine. What this host knows about it is
-   * not held and not asked for either: a row a client marked read, and the
+   * not held and not asked for either: a session a client marked read, and the
    * counts and facts of a directory read since, move on their own and cost
    * nothing to read.
    *
-   * Read here, as the answer is made, so a client that marked a row and
+   * Read here, as the answer is made, so a client that marked a session and
    * listed again is handed the flag it has just set, and the list it holds
    * agrees with the notification that told it about the change.
    */
-  const hereNow = (row: Summary): Summary => ({
+  const getSurfacedSessionSummary = (row: Summary): Summary => ({
     resource: row.resource,
     provider: row.provider,
     title: row.title,
@@ -1701,9 +1716,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        */
       const relayed = !subagents.has(chat) && held.chats.get(chat)?.channel !== undefined;
       if (row !== undefined && relayed) {
-        const flags = (status: unknown): number => Number(status ?? 0) & ~(Status.IsRead - 1);
-        const now = flags(own.status);
-        if (now !== flags(row.status)) {
+        // The read and archived bits, which VS Code's host calls a status's meta flags.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3374-L3377
+        const metaFlags = (status: unknown): number => Number(status ?? 0) & ~(Status.IsRead - 1);
+        const now = metaFlags(own.status);
+        if (now !== metaFlags(row.status)) {
           const status = (Number(row.status ?? Status.Idle) & (Status.IsRead - 1)) | now;
           ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes: { status } });
         }
@@ -1808,11 +1825,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   return {
-    statusOf, startedBy, chatSummary, isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, movable, running, updateChatMovability,
+    statusOf, getChatOrigin, chatSummary, isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, movable, hasActiveTurn, updateChatMovability,
     chatsReordered, subagentSummary, restoredSubagentSummary,
     chatCatalogOf, onChatSummaryChanged, syncSessionInputNeeded, inputNeededOf, changesetsAndMetaChanged, activeCount,
     activityOf, markSessionProvisional, sessionAdded, provisional: (uri: string) => provisionalSessionKeys.has(uri), materialized, failSessionCreationIfStillCreating,
     markSummaryDirty, flushPendingSessionSummaries, refreshSessionChangesSummary, removeNotifiedSummary, activeSessionsChanged, setAgentModels, publishAgentInfos, publishAccountInfo,
-    listing, registerListedSession, announceSurfacedSession, liveRows, allRows, publishSurfacedSessions, unavailableProvider, readStored,
+    listing, registerListedSession, announceSurfacedSession, getOverlaySessionSummaries, listSessions, publishSurfacedSessions, unavailableProvider, readStored,
   };
 }

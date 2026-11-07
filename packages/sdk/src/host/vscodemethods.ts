@@ -277,7 +277,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
    */
   const treeInUse = async (path: string): Promise<boolean> => {
     const here = atPath(path);
-    if ((await ctx.allRows()).some((row) => row.workingDirectories.some((one) => atPath(localPath(one)) === here))) return true;
+    if ((await ctx.listSessions()).some((summary) => summary.workingDirectories.some((one) => atPath(localPath(one)) === here))) return true;
     for (const held of ctx.relays.values()) {
       for (const one of held.values()) if (atPath(one.folder) === here) return true;
     }

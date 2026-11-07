@@ -62,8 +62,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     charged, getProviderForChat, chatConfig, chatIdOf, chatShown,
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
-    isolating, keepChat, recordSessionProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
-    isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, running, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
+    isolating, keepChat, recordSessionProvider, kept, leadOf, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
+    isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, hasActiveTurn, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
     ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     projectActionForClient, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
     snapshotOf, spawn, subagentSummary, subagents, markSummaryDirty, unheld, visible, unavailableProvider, wake,
@@ -932,14 +932,15 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      */
     listSessions: async (params) => {
       /*
-       * The running sessions built now and the held rows behind them.
+       * The running sessions' summaries built now and the held ones behind
+       * them.
        *
-       * Neither half waits for the other: a live row is read out of memory and
-       * is never stale, and the listed ones are whatever the last refresh
+       * Neither half waits for the other: a live summary is read out of memory
+       * and is never stale, and the listed ones are whatever the last refresh
        * found. So a client is answered in the time it takes to sort, however
        * long a pass over the machine's transcripts takes.
        */
-      const every = await allRows();
+      const every = await ctx.listSessions();
       /*
        * The caller's own rows, where they asked for them.
        *
@@ -1527,7 +1528,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * process and starts another (plan host/47-p1).
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9214-L9223
        */
-      if (!isStructurallyMovable(chatUri) || running(chatUri)) throw refused('notMovable', `Chat ${chatUri} can't be moved.`);
+      if (!isStructurallyMovable(chatUri) || hasActiveTurn(chatUri)) throw refused('notMovable', `Chat ${chatUri} can't be moved.`);
       const destination = (typeof params.destination === 'object' && params.destination !== null
         ? params.destination
         : {}) as Record<string, unknown>;

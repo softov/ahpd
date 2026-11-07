@@ -1650,7 +1650,7 @@ export function createHost(options: HostOptions): Host {
     contributedDefaults, storedConfig,
     rootConfig, descriptors, daemonSchema, daemonProperties, daemonHeld,
     advertisedSchemes, advertisedChannels, advertisedMethods,
-    statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary,
+    statusOf, getChatOrigin, chatSummary, subagentSummary, restoredSubagentSummary,
     activityOf, sessionAdded, markSummaryDirty, activeSessionsChanged, setAgentModels, publishAccountInfo,
     listing, unavailableProvider, readStored,
     unstamped, withWorkerUri, stampedCalls, withSender,

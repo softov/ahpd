@@ -86,7 +86,7 @@ const WAITING_CALL = new Set(['pending-confirmation', 'pending-result-confirmati
 export function createSleep(ctx: HostContext): Sleep {
   const {
     options, sessions, byChat, connections, restarting, kept, owners, wheres, moves,
-    running, log, activeSessionsChanged, markSummaryDirty, liveRows, dirOf, stopUnwatched, sessionFor, sessionHolding,
+    hasActiveTurn, log, activeSessionsChanged, markSummaryDirty, getOverlaySessionSummaries, dirOf, stopUnwatched, sessionFor, sessionHolding,
     unavailableProvider, restoreSession, nameOf, storedConfig, charged, charge, recordedChats, spawn, recordSessionProvider, dispatch, leadOf,
     heldStates,
   } = ctx;
@@ -143,7 +143,7 @@ export function createSleep(ctx: HostContext): Sleep {
       if (session !== channel) found.add(session);
     }
     for (const [uri, held] of sessions) {
-      if ([...held.chats].every(([chat, one]) => one.allTurns().length === 0 && !running(chat))) found.delete(uri);
+      if ([...held.chats].every(([chat, one]) => one.allTurns().length === 0 && !hasActiveTurn(chat))) found.delete(uri);
     }
     return found;
   };
@@ -183,7 +183,7 @@ export function createSleep(ctx: HostContext): Sleep {
     const id = idOf(uri);
     if (held === undefined || restarting.has(uri) || closing.has(id) || waking.has(id) || holds.has(id)) return false;
     for (const [chatUri, chat] of held.chats) {
-      if (running(chatUri) || pending(chatUri) || waitingOnPerson(chat)) return false;
+      if (hasActiveTurn(chatUri) || pending(chatUri) || waitingOnPerson(chat)) return false;
       if (chat.resumable?.() === false || chat.busy?.() === true) return false;
       // A chat with no conversation yet has nothing to resume by.
       if (chat.agentId() === undefined || chat.allTurns().length === 0) return false;
@@ -218,7 +218,7 @@ export function createSleep(ctx: HostContext): Sleep {
      * and the wake resumes what the backend was holding rather than making a
      * new one. Disposing here would put the transcript out of its reach.
      */
-    const row = liveRows().find((one) => one.resource === uri);
+    const row = getOverlaySessionSummaries().find((one) => one.resource === uri);
     const stopping: Promise<void>[] = [];
     for (const [chatUri, chat] of held.chats) {
       stopping.push(Promise.resolve(chat.close('stopping')).catch(() => {}));
