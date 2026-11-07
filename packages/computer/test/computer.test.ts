@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { computerProvider } from '../src/provider.js';
+import { dockerRuntime } from '../src/runtime.js';
 import { computerTools } from '../src/tools.js';
 import type { ComputerRuntime, MachineSpec } from '../src/runtime.js';
 import type { ToolCall } from '../../sdk/src/types/host.js';
@@ -114,8 +115,8 @@ const fake = () => {
     takeOut: async (id, paths) => { calls.push(`takeOut ${id} ${paths.join(',')}`); },
     capabilities: () => ({
       runtime: 'docker',
-      actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
-      resources: ['status', 'capabilities', 'stats', 'state'],
+      actions: ['create', 'start', 'stop', 'restart', 'exec', 'delete'],
+      resources: ['status', 'capabilities', 'state', 'stats'],
     }),
     // Every image is here and nothing builds or pulls one: a machine is made
     // from an image this runtime already has, and which one is the caller's
@@ -554,6 +555,20 @@ it('destroys a machine, and refuses what is not one', async () => {
   await expect(provider.remove('computer://box/status')).rejects.toMatchObject({ code: -32602 });
 });
 
+/*
+ * The Docker runtime names its verbs as Docker Engine's API names the
+ * operations it serves them with, removing a machine as `delete` as the
+ * scheme's resourceDelete does, and its resources `state` and `stats` as
+ * ContainerInspect's State and ContainerStats answer them.
+ */
+it('names the Docker runtime\'s verbs as Docker Engine\'s API does, removing a machine as delete', () => {
+  expect(dockerRuntime({ command: 'docker', label: 'ahpd.computer=1' }).capabilities()).toEqual({
+    runtime: 'docker',
+    actions: ['create', 'start', 'stop', 'restart', 'exec', 'delete'],
+    resources: ['status', 'capabilities', 'state', 'stats'],
+  });
+});
+
 it('says in capabilities what a create body may contain', async () => {
   const { runtime, held } = fake();
   held.set('box', { name: 'box', image: 'debian:bookworm-slim', Created: '2026-09-22T00:00:00Z' });
@@ -562,7 +577,7 @@ it('says in capabilities what a create body may contain', async () => {
     actions: string[];
     manifest: { type: string; properties: Record<string, { default?: string }> };
   };
-  expect(caps.actions).toEqual(['create', 'destroy', 'exec', 'start', 'stop', 'restart']);
+  expect(caps.actions).toEqual(['create', 'start', 'stop', 'restart', 'exec', 'delete']);
   // No `mounts`: this host does not let a body name any, so a client drawing a
   // form from the schema draws no field for something it would be refused.
   expect(Object.keys(caps.manifest.properties)).toEqual(['runtime', 'source', 'image', 'devcontainer', 'cpus', 'memory', 'workdir']);

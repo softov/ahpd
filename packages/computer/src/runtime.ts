@@ -3443,10 +3443,20 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       };
     },
 
+    /*
+     * The verbs as Docker Engine's API names the operations it serves them
+     * with - ContainerCreate, ContainerStart, ContainerStop, ContainerRestart,
+     * ContainerExec and ContainerDelete - and the resources `state` and `stats`,
+     * what ContainerInspect's State and ContainerStats answer, beside this
+     * scheme's own `status` and `capabilities`. Removing a machine is `delete`,
+     * as the scheme's resourceDelete names it.
+     * https://github.com/moby/moby/blob/dc0ad36c0628d1538be7b2ea27d0bc2d2df955ef/api/swagger.yaml#L8209
+     * https://github.com/moby/moby/blob/dc0ad36c0628d1538be7b2ea27d0bc2d2df955ef/api/swagger.yaml#L9338
+     */
     capabilities: () => ({
       runtime: 'docker',
-      actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
-      resources: ['status', 'capabilities', 'stats', 'state'],
+      actions: ['create', 'start', 'stop', 'restart', 'exec', 'delete'],
+      resources: ['status', 'capabilities', 'state', 'stats'],
     }),
 
     /*

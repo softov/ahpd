@@ -88,9 +88,9 @@ A container someone made with `devcontainer up` by hand carries only the CLI's `
 | `resourceRead` on `computer://ssh.<name>/server` | What an ssh box can run, and the lines that fix what it lacks; see [What the box can run](#what-the-box-can-run) |
 | `resourceRead` / `resourceWrite` on `computer://<id>/state` | `running` or `stopped`; write `running`, `stopped` or `restarted` |
 | `resourceWrite` to `computer://<id>` | Make one |
-| `resourceDelete` on `computer://<id>` | Destroy it and everything in it |
+| `resourceDelete` on `computer://<id>` | Delete it and everything in it |
 
-Reading needs `computer:read`, and making, starting, stopping or destroying needs `computer:write`. No built-in role has `computer:write`, and `file:write` does not include it.
+Reading needs `computer:read`, and making, starting, stopping or deleting needs `computer:write`. The `capabilities` leaf of a Docker machine names its verbs as Docker Engine's API names the operations it serves them with, `create`, `start`, `stop`, `restart`, `exec` and `delete`, and its resources `state` and `stats` as ContainerInspect's State and ContainerStats answer them, beside `status` and `capabilities`; a VM's adds `suspend` and `resume`. No built-in role has `computer:write`, and `file:write` does not include it.
 
 ## How a client finds out
 

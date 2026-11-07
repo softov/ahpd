@@ -238,7 +238,7 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
   const makeTemplate = options.parts === undefined ? undefined : templateMaker(options.parts, options.log);
   const capabilities: RuntimeCapabilities = {
     runtime: maker.kind,
-    actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart', 'suspend', 'resume'],
+    actions: ['create', 'delete', 'exec', 'start', 'stop', 'restart', 'suspend', 'resume'],
     resources: ['status', 'capabilities', 'stats', 'state'],
   };
 

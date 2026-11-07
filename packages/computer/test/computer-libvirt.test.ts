@@ -249,7 +249,9 @@ it.skipIf(!posix)('suspends and resumes a VM, and restarts a suspended one', asy
   const vms = runtime();
   await vms.run(spec());
   expect(vms.suspends?.('vm-1')).toBe(true);
-  expect(vms.capabilities().actions).toEqual(expect.arrayContaining(['suspend', 'resume']));
+  // Removing one is `delete`, as the scheme's resourceDelete names it.
+  expect(vms.capabilities().actions).toEqual(expect.arrayContaining(['suspend', 'resume', 'delete']));
+  expect(vms.capabilities().actions).not.toContain('destroy');
   await vms.suspend?.('vm-1');
   expect(await vms.state('vm-1')).toBe('suspended');
   await expect(vms.suspend?.('vm-1')).rejects.toThrow(/vm-1 is paused, so it cannot be suspended/);
