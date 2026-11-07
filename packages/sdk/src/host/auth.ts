@@ -59,25 +59,25 @@ export interface Auth {
   getAuthToken(resource: string, scopes?: readonly string[]): string | undefined;
   advertised(): Set<string>;
   metadataFor(resource: string): Bag;
-  channelAwaiting(resource: string, connection: Connection): string;
-  watchedAs(connection: Connection, session: string): string | undefined;
+  authRequiredChannel(resource: string, connection: Connection): string;
+  subscribedAs(connection: Connection, session: string): string | undefined;
 }
 
 export function createAuth(ctx: HostContext): Auth {
   const { options, agents, connections, sessions } = ctx;
 
   /**
-   * The session's URI when a connection watches it, or nothing when it does
-   * not.
+   * The session's URI when a connection is subscribed to it, or nothing when
+   * it is not.
    *
-   * A session is watched under the one URI it is held by. These are the
+   * A session is subscribed to under the one URI it is held by. These are the
    * sessions a connection signs into an MCP server for, reading the server's
    * `authRequired` state, as a VS Code window reads it and VS Code's host says
    * nothing more, and the only ones its tokens are spent on.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L729-L736
    */
-  const watchedAs = (connection: Connection, session: string): string | undefined =>
-    (connection.watching.has(session) ? session : undefined);
+  const subscribedAs = (connection: Connection, session: string): string | undefined =>
+    (connection.activeSubscriptions.has(session) ? session : undefined);
 
   /*
    * The users directory's protected resource, the one a client authenticates
@@ -176,23 +176,23 @@ export function createAuth(ctx: HostContext): Auth {
     return { resource };
   };
   /**
-   * Where a requirement for that resource is visible, to one connection.
+   * The channel an `auth/required` for that resource names, to one connection.
    *
    * A backend's own resource is the root's business; an MCP server's is the
    * session that server belongs to, which is where its `authRequired` state
-   * is drawn. Only a session the connection watches is one it can see that
-   * state on.
+   * is drawn. Only a session the connection is subscribed to is one it can see
+   * that state on.
    */
-  const channelAwaiting = (resource: string, connection: Connection): string => {
+  const authRequiredChannel = (resource: string, connection: Connection): string => {
     for (const [uri, held] of sessions) {
-      const watched = watchedAs(connection, uri);
-      if (watched === undefined) continue;
+      const subscribed = subscribedAs(connection, uri);
+      if (subscribed === undefined) continue;
       for (const chat of held.chats.values()) {
-        if (chat.awaiting?.().includes(resource) === true) return watched;
+        if (chat.awaiting?.().includes(resource) === true) return subscribed;
       }
     }
     return ROOT;
   };
 
-  return { authenticationResource, resourcesOf, agentsFor, getAuthToken, advertised, metadataFor, channelAwaiting, watchedAs };
+  return { authenticationResource, resourcesOf, agentsFor, getAuthToken, advertised, metadataFor, authRequiredChannel, subscribedAs };
 }

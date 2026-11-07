@@ -408,7 +408,7 @@ export function createFacts(ctx: HostContext): Facts {
   const toldIn = (dir: string): string[] => {
     const told = new Set(inThere(dir));
     for (const connection of connections) {
-      for (const channel of connection.watching) {
+      for (const channel of connection.activeSubscriptions) {
         const at = changesetAt(channel);
         if (at === undefined || at.dir !== dir) continue;
         if (!sessions.has(at.owner) && owners.has(at.owner)) told.add(at.owner);
@@ -428,7 +428,7 @@ export function createFacts(ctx: HostContext): Facts {
     const told = toldIn(dir);
     if (told.length === 0) return false;
     for (const connection of connections) {
-      for (const channel of connection.watching) {
+      for (const channel of connection.activeSubscriptions) {
         if (told.some((uri) => changesetOf(channel, uri))) return true;
       }
     }

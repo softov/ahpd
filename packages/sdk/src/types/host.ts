@@ -188,7 +188,7 @@ export interface ConnectedClient {
   /** The person this connection signed in as, when it did. */
   principal?: Principal;
   /** The channels this client subscribed to, each by the host's own channel. */
-  watching: string[];
+  subscriptions: string[];
   /** When the connection was accepted, as a wall-clock millisecond. */
   connectedAt: number;
 }
@@ -1628,13 +1628,16 @@ export interface Connection {
    */
   locale?: string;
   /**
-   * The channels this client subscribed to, each by the host's own channel
-   * whatever spelling the client used.
+   * The channels this client is subscribed to, each by the host's own channel
+   * whatever spelling the client used: the subscriptions whose actions it is
+   * sent, as VS Code's host sends a channel's actions only to a client whose
+   * subscription to it is active.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4577-L4578
    *
-   * Per connection: two clients can watch one channel, and dropping one must
-   * not stop the other's stream.
+   * Per connection: two clients can subscribe to one channel, and dropping
+   * one must not stop the other's stream.
    */
-  watching: Set<string>;
+  activeSubscriptions: Set<string>;
   /**
    * The person this connection signed in as, when it did.
    *
@@ -1684,7 +1687,7 @@ export interface Connection {
    * lookup by the resource alone never finds it: the protocol has such a token
    * reach that server and never a backend's own resource.
    *
-   * Per connection for the same reason `watching` is, and the specification says
+   * Per connection for the same reason `activeSubscriptions` is, and the specification says
    * so outright: authentication status is per connection, each client
    * authenticating independently. A token one client offered is theirs, spent
    * only on sessions they ask for, and gone when they hang up.

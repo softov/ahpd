@@ -513,7 +513,7 @@ export function createHost(options: HostOptions): Host {
     if (open.kind === 'session') return sessionReducer(open.state as unknown as SessionState, action as unknown as SessionAction, said) as unknown as Bag;
     return chatReducer(open.state as unknown as ChatState, action as unknown as ChatAction, said) as unknown as Bag;
   };
-  /** Everything watching a channel, which is not everything connected. */
+  /** Everything subscribed to a channel, which is not everything connected. */
 
   /**
    * What a client has marked on a session, by that session's id.
@@ -650,7 +650,7 @@ export function createHost(options: HostOptions): Host {
     return params;
   };
   /**
-   * One message, to everyone watching that channel.
+   * One message, to everyone subscribed to that channel.
    *
    * Under the host's own channel, whatever spelling a client subscribed by, as
    * VS Code's host sends every envelope; its client matches the root's and the
@@ -660,7 +660,7 @@ export function createHost(options: HostOptions): Host {
    */
   const broadcast = (channel: string, method: string, params: unknown, per?: (connection: Connection) => unknown): void => {
     for (const connection of connections) {
-      if (!connection.watching.has(channel)) continue;
+      if (!connection.activeSubscriptions.has(channel)) continue;
       const said = per === undefined ? projectNotificationForClient(connection, method, params) : per(connection);
       // Nothing for this connection: a plugin's action it may not see.
       if (said === undefined) continue;
@@ -787,7 +787,7 @@ export function createHost(options: HostOptions): Host {
     return shown === config ? envelope : { ...envelope, action: { ...action, config: shown } };
   };
   /**
-   * One state action, to everyone watching that channel.
+   * One state action, to everyone subscribed to that channel.
    *
    * `serverSeq` moves here, once for each envelope, and in `refuse` for a
    * refusal said to its sender alone. A snapshot is taken *at* a sequence
@@ -1151,7 +1151,7 @@ export function createHost(options: HostOptions): Host {
     const served = servedIn(options.channels, channel);
     if (served?.channel.left === undefined) return;
     for (const one of connections) {
-      if (one.clientId === client && [...one.watching].some((uri) => servedIn(options.channels, uri) === served)) return;
+      if (one.clientId === client && [...one.activeSubscriptions].some((uri) => servedIn(options.channels, uri) === served)) return;
     }
     try { served.channel.left(client); }
     catch (error) { log(`plugin ${served.by}: left on ${served.scheme} failed: ${reason(error)}`); }
@@ -1224,7 +1224,7 @@ export function createHost(options: HostOptions): Host {
     const held = watches.get(channel);
     if (held === undefined) return;
     const watchedBy = (reader: string): boolean => [...connections]
-      .some((connection) => connection.watching.has(channel) && (connection.principal?.id ?? '') === reader);
+      .some((connection) => connection.activeSubscriptions.has(channel) && (connection.principal?.id ?? '') === reader);
     for (const [reader, one] of held.watchers) {
       if (one.grace !== undefined || watchedBy(reader)) continue;
       one.grace = setTimeout(() => {
@@ -1307,7 +1307,7 @@ export function createHost(options: HostOptions): Host {
     const handle = ctx.relayedChannel(channel);
     if (handle === undefined) return;
     for (const connection of connections) {
-      if (connection.watching.has(channel)) return;
+      if (connection.activeSubscriptions.has(channel)) return;
     }
     handle.release();
   };
@@ -1354,7 +1354,7 @@ export function createHost(options: HostOptions): Host {
   const releaseActiveClientForSession = (channel: string, clientId: string): void => {
     const uri = sessionOfChannel(channel);
     for (const connection of connections) {
-      if (connection.clientId === clientId && [...connection.watching].some((one) => sessionOfChannel(one) === uri)) return;
+      if (connection.clientId === clientId && [...connection.activeSubscriptions].some((one) => sessionOfChannel(one) === uri)) return;
     }
     completeDisconnectedClientToolCalls(uri, clientId);
     const held = presence.get(idOf(uri));
@@ -1642,7 +1642,7 @@ export function createHost(options: HostOptions): Host {
     describes, setArtifacts, captureBaseline, recordPullRequest, metaChanged, dirOfFile, wroteThrough,
     refreshWatched, startWatchingDir, stopUnwatched, refreshPullRequests, readFacts, refreshFacts,
     LOGS, TRACES, METRICS, log, fire, telemetered,
-    authenticationResource, resourcesOf, agentsFor, getAuthToken, advertised, metadataFor, channelAwaiting,
+    authenticationResource, resourcesOf, agentsFor, getAuthToken, advertised, metadataFor, authRequiredChannel,
     charged, ownerFor, principals, principalFor, forWhom, senderOf,
     charge, checked, scoping, resolveCreatedSessionConfig,
     sessionMachines, enteredIn, inMachine, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn,
@@ -1801,7 +1801,7 @@ export function createHost(options: HostOptions): Host {
         // One entry per client id and person: people sharing a client id are each listed.
         const seen = new Map<string, ChannelSubscriber>();
         for (const connection of connections) {
-          if (!connection.watching.has(uri)) continue;
+          if (!connection.activeSubscriptions.has(uri)) continue;
           const key = JSON.stringify([connection.clientId, connection.principal === undefined ? '' : ownerOfPrincipal(connection.principal)]);
           if (!seen.has(key)) seen.set(key, { client: connection.clientId, reader: connection.principal });
         }
@@ -1905,7 +1905,7 @@ export function createHost(options: HostOptions): Host {
     ...(connection.protocolVersion === undefined ? {} : { protocolVersion: connection.protocolVersion }),
     ...(connection.locale === undefined ? {} : { locale: connection.locale }),
     ...(connection.principal === undefined ? {} : { principal: connection.principal }),
-    watching: [...connection.watching],
+    subscriptions: [...connection.activeSubscriptions],
     connectedAt: connection.connectedAt,
   });
 
@@ -2146,7 +2146,7 @@ export function createHost(options: HostOptions): Host {
     daemonValuesChanged: () => ctx.daemonValuesChanged(),
     accept(peer: Peer, principal?: Principal, root?: boolean, opened?: Opened) {
       const connection: Connection = {
-        peer, clientId: '', watching: new Set<string>(),
+        peer, clientId: '', activeSubscriptions: new Set<string>(),
         tokens: new Map<string, Credential>(),
         connectedAt: Date.now(),
         // Where the socket came from, when the listener that opened it said.
@@ -2263,7 +2263,7 @@ export function createHost(options: HostOptions): Host {
           // shed one consumer kills the stream the others are reading. Under
           // whatever spelling, the channel it watches is the host's own.
           const channel = meantBy(String(params.channel ?? ''));
-          connection.watching.delete(channel);
+          connection.activeSubscriptions.delete(channel);
           // A subscribe of it still being answered loses its place with it.
           conn.subscriptions.delete(channel);
           // A channel it has let go of owes it nothing; a later subscribe
@@ -2416,7 +2416,7 @@ export function createHost(options: HostOptions): Host {
           return handler(request.params);
         },
         close() {
-          const was = [...connection.watching];
+          const was = [...connection.activeSubscriptions];
           // A container is this connection's own process, and a socket that
           // drops takes its relays with it rather than leaving a host running
           // in a container for nobody.

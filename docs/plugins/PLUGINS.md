@@ -1744,7 +1744,7 @@ After `listening` the host adds each kind's system tunnel, when the list holds n
 
 ### `x-ahpd-clients`
 
-One row for each connection the daemon is serving, keyed by the number the listener gave its socket, as a string. A row carries `socket`, and `clientId`, `name`, `protocolVersion` and `locale` when the connection said them at `initialize`. It carries `principal` when it signed in, `watching` (the channels it subscribed to), and `connectedAt`, a wall-clock millisecond. It also carries `address`, the remote address the socket reported, and `forwardedFor`, the `X-Forwarded-For` text the request carried.
+One row for each connection the daemon is serving, keyed by the number the listener gave its socket, as a string. A row carries `socket`, and `clientId`, `name`, `protocolVersion` and `locale` when the connection said them at `initialize`. It carries `principal` when it signed in, `subscriptions` (the channels it is subscribed to), and `connectedAt`, a wall-clock millisecond. It also carries `address`, the remote address the socket reported, and `forwardedFor`, the `X-Forwarded-For` text the request carried.
 
 A row carries `framesIn`, `framesOut`, `bytesIn` and `bytesOut`: the frames its socket has carried in each direction, and the UTF-8 bytes of those frames. A daemon that counts nothing sends no counters.
 

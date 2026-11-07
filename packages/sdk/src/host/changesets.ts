@@ -501,7 +501,7 @@ export function createChangesets(ctx: HostContext): Changesets {
     if (relaysChangesets(uri)) return;
     const done = new Set<string>();
     for (const connection of connections) {
-      for (const channel of connection.watching) {
+      for (const channel of connection.activeSubscriptions) {
         if (!changesetOf(channel, uri) || done.has(channel)) continue;
         done.add(channel);
         const operations = operationsOf(channel);
@@ -628,7 +628,7 @@ export function createChangesets(ctx: HostContext): Changesets {
     if (relaysChangesets(uri)) return;
     const done = new Set<string>();
     for (const connection of connections) {
-      for (const channel of connection.watching) {
+      for (const channel of connection.activeSubscriptions) {
         if (!changesetOf(channel, uri) || done.has(channel)) continue;
         done.add(channel);
         const at = changesetAt(channel);

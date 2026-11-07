@@ -171,7 +171,7 @@ export function createSleep(ctx: HostContext): Sleep {
   /** Whether any connection is subscribed to the session or to a channel that keeps it resident. */
   const watched = (uri: string): boolean => {
     for (const connection of connections) {
-      for (const channel of connection.watching) {
+      for (const channel of connection.activeSubscriptions) {
         if (channel === uri || residentOf(channel) === uri) return true;
       }
     }

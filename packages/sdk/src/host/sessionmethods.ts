@@ -487,7 +487,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2130-L2199
        */
       const placed = schemeOf(channel) !== 'ahp-otlp' && schemeOf(channel) !== 'ahp-resource-watch';
-      const watched = connection.watching.has(meant);
+      const watched = connection.activeSubscriptions.has(meant);
       const place = (watched ? conn.subscriptions.get(meant) : undefined) ?? {};
       if (placed) conn.subscriptions.set(meant, place);
       const kept = (): boolean => !placed || conn.subscriptions.get(meant) === place;
@@ -506,13 +506,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // A stateless channel is watched from here on and answered with no
       // snapshot, and nothing of it is held to replay.
       if (snapshot === undefined) {
-        connection.watching.add(meant);
+        connection.activeSubscriptions.add(meant);
         return {};
       }
       // Answered to this connection after the snapshot is taken: a session's
       // chats the ones it may see.
       projectSnapshot(connection, channel, snapshot);
-      connection.watching.add(meant);
+      connection.activeSubscriptions.add(meant);
       // Given a baseline, so it owes this client none.
       ctx.clearBaselineDebt(connection.clientId, meant);
       // A client is now in this session, which is the moment a plugin that

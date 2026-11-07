@@ -46,7 +46,7 @@ export function createTelemetry(ctx: HostContext): Telemetry {
   /** Tell whoever is watching an OTLP channel. Never replayed: these are streams. */
   const telling = (method: string, channel: string, payload: Bag): void => {
     for (const connection of connections) {
-      if (connection.watching.has(channel)) connection.peer.notify(method, { channel, payload });
+      if (connection.activeSubscriptions.has(channel)) connection.peer.notify(method, { channel, payload });
     }
   };
 
@@ -155,7 +155,7 @@ export function createTelemetry(ctx: HostContext): Telemetry {
      */
     const reached = ['trace', 'debug', 'info'];
     for (const connection of connections) {
-      for (const channel of connection.watching) {
+      for (const channel of connection.activeSubscriptions) {
         const level = channel.startsWith(`${LOGS}/`) ? channel.slice(LOGS.length + 1).toLowerCase() : undefined;
         // A notification, not an action: it carries no `serverSeq` and moves
         // no state, so it does not belong in the replay buffer.
