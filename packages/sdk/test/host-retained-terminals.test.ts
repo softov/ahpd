@@ -66,6 +66,9 @@ const stateOf = async (client: Client, channel: string): Promise<Bag> =>
   (await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: Bag } }).snapshot.state;
 
 /** A finished turn with one call, whose content names a terminal. */
+/** A turn a chat ran, which a chat has before a move is made of it. */
+const FIRST: Bag = { id: 't0', message: { text: 'first', origin: { kind: 'user' } }, state: 'complete', responseParts: [] };
+
 const naming = (turnId: string, toolCallId: string, resource: string, result?: Bag, status = 'completed'): Bag => ({
   id: turnId,
   message: { text: 'run it', origin: { kind: 'user' } },
@@ -359,6 +362,7 @@ describe('a terminal a backend opens', () => {
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
     }
     await settle();
+    k.turns.set(PEER, [FIRST]);
     // Waiting on its input, so it ends after the move rather than before it.
     // The shell is PowerShell on Windows, which has no `read`.
     const command = process.platform === 'win32' ? '$line = [Console]::In.ReadLine(); echo "late $line"' : 'read line; echo "late $line"';
@@ -535,6 +539,7 @@ describe('an output a backend keeps', () => {
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
     }
     await settle();
+    k.turns.set(PEER, [FIRST]);
     startOf(k, PEER).terminalOutputs?.keep('toolu_1', 'goes', 0);
     k.refuses = (start) => start.chatUri === PEER && start.uri === TWO;
 

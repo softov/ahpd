@@ -63,7 +63,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, dropChat, flushDeltas,
     forWhom, forgetSendersIn, formOrdered, hold,
     isolating, keepChat, recordSessionProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageAttachments, messageFrom, modelIn,
-    movable, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
+    isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, running, updateChatMovability, createProviderSession, openedBy, options, orderChats, oweTree,
     ownerFor, owners, restoreSession, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     projectActionForClient, sessionAdded, sessionChannel, markSessionProvisional, sessionFor, sessionSchema, sessionVisible, sessions, resolveCreatedSessionConfig,
     snapshotOf, spawn, subagentSummary, subagents, markSummaryDirty, unheld, visible, unavailableProvider, wake,
@@ -1518,12 +1518,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           + ' Turn on chats with their own agents to move it to a session of another agent.');
       }
       /*
-       * The chat's own answer, which the client was handed before it asked:
-       * `movable` is what a move control is drawn from, and a chat that
-       * changed under the client between then and now is refused rather than
-       * moved from a state nobody was shown.
+       * A chat a move is made of, checked now rather than read from `movable`,
+       * which also says the chat's state: a move refuses that with its own
+       * reason. Running nothing is this host's, since a move here closes a
+       * process and starts another (plan host/47-p1).
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9214-L9223
        */
-      if (!movable(chatUri)) throw refused('notMovable', `Chat ${chatUri} can't be moved.`);
+      if (!isStructurallyMovable(chatUri) || running(chatUri)) throw refused('notMovable', `Chat ${chatUri} can't be moved.`);
       const destination = (typeof params.destination === 'object' && params.destination !== null
         ? params.destination
         : {}) as Record<string, unknown>;
@@ -1533,12 +1534,34 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           ? 'a move needs a destination'
           : `a ${kind} destination is not one this host serves yet`);
       }
+      // A chat with no turn yet, refused before anything else is asked of the
+      // move, as VS Code's host refuses it.
+      const unstarted = chatMoveRefusal(chatUri, kind === 'newSession');
+      if (unstarted?.reason === 'notStarted') throw refused(unstarted.reason, unstarted.message);
       // The anchor, which the protocol requires to be another chat of the
       // destination and never the chat itself.
       const anchor = destination.after === undefined ? undefined : String(destination.after);
       if (anchor !== undefined && anchor === chatUri) throw refused('invalidAnchor', 'A chat can\'t be placed after itself.');
+      /*
+       * What the sessions and the chat itself refuse a move between sessions
+       * for, in VS Code's order: each session archived or changing its
+       * workspace, the source first, then the chat with no folder. A reorder
+       * within the session is refused none of them.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9505-L9525
+       */
+      const refuseState = (target: string | undefined): void => {
+        for (const one of target === undefined ? [found.uri] : [found.uri, target]) {
+          const refusal = sessionMoveRefusal(one);
+          if (refusal !== undefined) throw refused(refusal.reason, refusal.message);
+        }
+        const refusal = chatMoveRefusal(chatUri, target === undefined);
+        if (refusal !== undefined) throw refused(refusal.reason, refusal.message);
+      };
       // A session made for the chat, which has no chats to be placed among yet.
-      if (kind === 'newSession') return await movedTo(chatUri, found, held, undefined, anchor);
+      if (kind === 'newSession') {
+        refuseState(undefined);
+        return await movedTo(chatUri, found, held, undefined, anchor);
+      }
       /*
        * The source's own session, which is the reorder. Anywhere else is a move
        * between sessions, and this host makes one only where it can start the
@@ -1602,6 +1625,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         throw refused('unsupported', `a move between computers is not supported yet: ${chatUri} runs on`
           + ` ${mine ?? 'this host'} and ${to} on ${theirs ?? 'this host'}`);
       }
+      refuseState(to);
       if (anchor !== undefined && !dest.chats.has(anchor))
         throw refused('invalidAnchor', `Chat ${anchor} is not a visible chat of ${to}.`);
       return await movedTo(chatUri, found, held, to, anchor);

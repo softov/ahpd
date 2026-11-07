@@ -2053,6 +2053,8 @@ export function createTooling(ctx: HostContext): Tooling {
         isolation,
         ...(sender === undefined ? {} : { sender }),
       });
+      // Whether its chats may move, which a session changing its workspace's may not.
+      for (const one of sessions.get(uri)?.chats.keys() ?? []) ctx.updateChatMovability(one);
     },
     scheduleWake: (delaySeconds, prompt) => {
       const at = (options.now?.() ?? new Date()).getTime() + delaySeconds * 1000;

@@ -55,6 +55,8 @@ export function sessionFlag(
   // each client keeping its own.
   ctx.dispatch(uri, action, origin);
   ctx.markSummaryDirty(uri);
+  // Whether its chats may move, which an archived session's may not.
+  if (bit === Status.IsArchived) for (const chat of ctx.sessions.get(uri)?.chats.keys() ?? []) ctx.updateChatMovability(chat);
   // Archived: asleep, or its tree given back where it is asleep already, and
   // let go by the residency where nothing holds it.
   // https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L1457-L1464

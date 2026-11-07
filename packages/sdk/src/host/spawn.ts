@@ -1783,6 +1783,8 @@ export function createSpawn(ctx: HostContext): Spawn {
           && ctx.moving.get(uri)?.chat === chatUri) {
           const move = ctx.moving.get(uri) as Move;
           ctx.moving.delete(uri);
+          // Whether its chats may move, which the move asked for kept from them.
+          for (const one of sessions.get(uri)?.chats.keys() ?? []) updateChatMovability(one);
           if (action.type === 'chat/turnComplete') {
             void ctx.moveSession(uri, move).catch((error: unknown) => {
               log(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1995,14 +1997,11 @@ export function createSpawn(ctx: HostContext): Spawn {
       },
     });
     /*
-     * The answer this chat is born with, written down and not said.
-     *
-     * A move is offered for a chat by its own state and by its session's row,
-     * and both are built from `movable` read now - so nothing has been
-     * announced for a change to be compared against, and a chat that can move
-     * from its first moment needs no `chat/movableChanged` to say so. This is
-     * the one road every start of a backend goes through, so it is also the
-     * only place the baseline can be set without a second one to keep in step.
+     * Whether this chat may move, said where what its state or its session's
+     * row holds differs. Both are built from `movable` as they are read, so a
+     * chat whose state or row was built before this start is told what it is
+     * now, and one built now is told nothing more. This is the one road every
+     * start of a backend goes through.
      */
     updateChatMovability(chatUri);
     /*

@@ -27,6 +27,12 @@ export interface RestoredWorker {
   one: Bag;
 }
 
+/** Why a move is refused: VS Code's reason, from its fixed set, and its words. */
+export interface MoveRefusal {
+  reason: string;
+  message: string;
+}
+
 /** The session list and each row of it. */
 export interface Catalogue {
   statusOf(uri: string): number;
@@ -34,7 +40,13 @@ export interface Catalogue {
   chatSummary(session: string, uri: string, chat: Session): Bag;
   /** Whether a chat, or a worker inside one of its calls, has a turn in progress. */
   running(uri: string): boolean;
-  /** Whether a chat may be moved: not the default, resumable, and running nothing. */
+  /** Whether a chat is one a move is ever made of: moves on, a chat of its session's backend, not its default, resumable. */
+  isStructurallyMovable(uri: string): boolean;
+  /** Why a session refuses a move out of it or into it now: archived, or changing its workspace. */
+  sessionMoveRefusal(session: string): MoveRefusal | undefined;
+  /** Why a chat refuses its move now for its own state: no folder, or no turn yet. */
+  chatMoveRefusal(uri: string, ownSession?: boolean): MoveRefusal | undefined;
+  /** Whether a chat may be moved now: one a move is made of, refused by nothing, and running nothing. */
   movable(uri: string): boolean;
   /** Publish whether a chat may be moved, where that changed, on the chat and on its session. */
   updateChatMovability(uri: string): void;
@@ -208,28 +220,24 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   });
 
   /**
-   * Whether a chat may be moved, which is what a client offers a control for.
+   * Whether a chat is one a move is ever made of, whatever its state.
    *
-   * Four things, and all of them ask one question - would a move work. The chat
-   * must be one this host is running as a chat of a session, so a worker is
-   * never movable on its own and neither is a conversation read back from a
+   * Moving chats has to be on, `chatMoves.enabled` in root config, as VS Code's
+   * host offers a move only while a window has turned it on. The chat must be
+   * one this host is running as a chat of a session, so a worker is never
+   * movable on its own and neither is a conversation read back from a
    * transcript. It must not be the chat its session hands a client that names
    * none: the protocol says that one MUST NOT move, and a session whose default
-   * left would have to answer a client naming no chat with a question. Its
-   * backend must be able to take the conversation back by the id it kept it
-   * under, because a move starts the backend again with `resume` set to that
-   * id. And nothing may be running: a move closes a process and starts another,
-   * and the one moment that costs nothing is between turns.
+   * left would have to answer a client naming no chat with a question.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L58-L67
    *
-   * A chat of another backend than the session's is not movable at all: a move
-   * starts it again on the destination's backend, which is a harness that has
-   * never seen its transcript.
-   *
-   * And moving chats has to be on, `chatMoves.enabled` in root config, as VS
-   * Code's host offers a move only while a window has turned it on.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L62-L67
+   * A move here starts the chat's backend again with `resume` set to the id
+   * the backend kept the conversation under, so that backend must be able to
+   * take it back by that id. A chat of another backend than the session's is
+   * never one: a move starts it again on the destination's backend, which is a
+   * harness that has never seen its transcript.
    */
-  const movable = (uri: string): boolean => {
+  const isStructurallyMovable = (uri: string): boolean => {
     if (ctx.rootConfig['chatMoves.enabled'] !== true) return false;
     const held = sessions.get(sessionHolding(uri) ?? '');
     const chat = held === undefined ? undefined : held.chats.get(uri);
@@ -238,8 +246,60 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     if (held.defaultChat === uri) return false;
     const own = chat.agentId();
     if (own === undefined || own === '') return false;
-    if (chat.resumable?.() === false) return false;
-    return !running(uri);
+    return chat.resumable?.() !== false;
+  };
+
+  /**
+   * Why a session refuses a chat's move out of it or into it now, in VS Code's
+   * reason and words, or nothing: it is archived, or its workspace is changing
+   * (a move of its folders, asked for by its agent and made when the turn that
+   * asked ends).
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9505-L9519
+   */
+  const sessionMoveRefusal = (session: string): MoveRefusal | undefined => {
+    if ((kept.flags(idOf(session)) & Status.IsArchived) !== 0) return { reason: 'sessionArchived', message: `Session ${session} is archived.` };
+    if (ctx.moving.has(session)) return { reason: 'sessionQuarantined', message: `Session ${session} is changing its workspace or can't run turns.` };
+    return undefined;
+  };
+
+  /**
+   * Why a chat refuses its move now for its own state, in VS Code's reason and
+   * words, or nothing: it works in no folder, or it has no turn yet, so nothing
+   * of it exists beyond its composer. Its turns are read off its held state and
+   * off its backend, which holds the turns of a chat read back from its record
+   * whether or not anybody holds the chat's state.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L8150-L8176
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9523-L9525
+   */
+  const chatMoveRefusal = (uri: string, ownSession = false): MoveRefusal | undefined => {
+    const held = sessions.get(sessionHolding(uri) ?? '');
+    const lead = held && leadOf(held);
+    if ((lead?.workingDirectories() ?? []).length === 0) return { reason: 'workspaceless', message: `Chat ${uri} has no folder.` };
+    const state = ctx.stateOf(uri);
+    const active = state?.activeTurn;
+    const chat = held?.chats.get(uri);
+    const started = (Array.isArray(state?.turns) && state.turns.length > 0) || (active !== undefined && active !== null)
+      || (chat !== undefined && (chat.allTurns().length > 0 || (chat.status() & Status.InProgress) !== 0));
+    if (!started) {
+      return { reason: 'notStarted', message: `Chat ${uri} has no turns yet; send a message before moving it${ownSession ? ' to its own session' : ''}.` };
+    }
+    return undefined;
+  };
+
+  /**
+   * Whether a chat may be moved now, which is what a client offers a control
+   * for: it is one a move is made of, and nothing about it or its own session
+   * would refuse its move, as VS Code's host decides `movable`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L69-L83
+   *
+   * And nothing may be running in it: a move here closes a process and starts
+   * another, and the one moment that costs nothing is between turns, as plan
+   * host/47-p1 decided (Softov, 2026-10-03: "Not during a turn").
+   */
+  const movable = (uri: string): boolean => {
+    const session = sessionHolding(uri);
+    return session !== undefined && isStructurallyMovable(uri) && sessionMoveRefusal(session) === undefined
+      && chatMoveRefusal(uri) === undefined && !running(uri);
   };
 
   /**
@@ -272,50 +332,33 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   /**
-   * Each chat's `movable` as last published, so only a change is sent.
-   *
-   * Per chat and for as long as this host holds it, which is the same span the
-   * answer covers: a chat the host does not run is one nothing can move, and
-   * its entry goes when this is next asked about it.
-   */
-  const publishedMovable = new Map<string, boolean>();
-  /**
-   * Publish a chat's current eligibility to move, where it changed, as VS
-   * Code's movability update publishes it through `setChatMovable`, which
-   * says nothing for an unchanged value.
+   * Publish a chat's current eligibility to move, where it differs from what
+   * the chat's held state says, else what its row in its session's held state
+   * says, absent read as `false`, as VS Code's movability update publishes it
+   * through `setChatMovable`: `chat/movableChanged` on the chat where its state
+   * is held, and `session/chatUpdated` on the session for its row. A chat whose
+   * answer neither holds has its rows built from the answer as they are read.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatMovability.ts#L251-L258
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2147-L2160
    *
-   * Called at the moments the answer can change - a turn starting or ending, a
-   * worker's starting or ending, the default chat moving to another - and
-   * silent for every one of them that changed nothing.
-   *
-   * `chat/movableChanged` is the answer to whoever is watching the chat, and
-   * the row in its session's catalogue follows the chat's state as every row
-   * does, so a client watching only the list is told by the session's own
-   * `session/chatUpdated`.
-   *
-   * The first call for a chat is its birth, which says nothing. Every road to a
-   * running backend goes through `spawn`, which asks once as the chat is set
-   * up, so the answer a chat was born with is recorded before anything can
-   * change it - and a chat that can move from the day it is opened is not one
-   * that has to be told so twice.
+   * Called at the moments the answer can change: a turn starting or ending, a
+   * worker's starting or ending, the default chat moving to another, its
+   * session archived or unarchived, and its session's workspace move asked for
+   * or made.
    */
   const updateChatMovability = (uri: string): void => {
     const session = sessionHolding(uri);
     const held = session === undefined ? undefined : sessions.get(session);
-    const chat = held === undefined ? undefined : held.chats.get(uri);
-    if (session === undefined || held === undefined || chat === undefined) {
-      // Gone, so nothing is holding an answer for it any more.
-      publishedMovable.delete(uri);
-      return;
-    }
+    if (session === undefined || held === undefined || !held.chats.has(uri)) return;
     const now = movable(uri);
-    const was = publishedMovable.get(uri);
-    if (was === now) return;
-    publishedMovable.set(uri, now);
-    if (was === undefined) return;
-    ctx.dispatch(uri, { type: 'chat/movableChanged', movable: now });
+    const listed = (): Bag | undefined => (Array.isArray(ctx.stateOf(session)?.chats) ? ctx.stateOf(session)?.chats as Bag[] : [])
+      .find((one) => one.resource === uri);
+    const state = ctx.stateOf(uri);
+    if (((state?.movable ?? listed()?.movable ?? false) === true) === now) return;
+    if (state !== undefined) ctx.dispatch(uri, { type: 'chat/movableChanged', movable: now });
+    // The row, which the chat's own action may have moved already.
+    const row = listed();
+    if (row !== undefined && (row.movable === true) !== now) ctx.dispatch(session, { type: 'session/chatUpdated', chat: uri, changes: { movable: now } });
   };
 
   /**
@@ -1752,7 +1795,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   return {
-    statusOf, startedBy, chatSummary, movable, running, updateChatMovability, chatsReordered, subagentSummary, restoredSubagentSummary,
+    statusOf, startedBy, chatSummary, isStructurallyMovable, sessionMoveRefusal, chatMoveRefusal, movable, running, updateChatMovability,
+    chatsReordered, subagentSummary, restoredSubagentSummary,
     chatCatalogOf, onChatSummaryChanged, syncSessionInputNeeded, inputNeededOf, changesetsAndMetaChanged, activeCount,
     activityOf, markSessionProvisional, sessionAdded, provisional: (uri: string) => provisionalSessionKeys.has(uri), materialized, failSessionCreationIfStillCreating,
     markSummaryDirty, flushPendingSessionSummaries, refreshSessionChangesSummary, removeNotifiedSummary, activeSessionsChanged, setAgentModels, publishAgentInfos, publishAccountInfo,
