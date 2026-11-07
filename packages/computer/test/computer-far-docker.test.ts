@@ -7,6 +7,7 @@ import { fileResources } from '../../sdk/src/resources/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { registryOf } from '../src/parts.js';
 import { dockerAddressOf } from '../src/plugin.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions, HostTool } from '../../sdk/src/types/host.js';
@@ -372,7 +373,7 @@ it('runs a session in a machine on a box\'s Docker nested, reached through that 
 
   // And a command a tool runs there is given the value too.
   const tool = (options.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  await tool.run({ id: 'docker-far.box', command: 'env' }, { provider: 'vaulted' } as never);
+  await tool.run({ id: 'docker-far.box', command: 'env' }, hostCall({ provider: 'vaulted' }));
   const far = held(farFile(at.local)) as Held & { commands?: { env: Record<string, string>; dockerEnv: string[] }[] };
   expect(far.commands?.at(-1)?.env[BOX_TOKEN]).toBe(SECRET);
   expect(far.commands?.at(-1)?.dockerEnv).toContain('DOCKER_HOST');

@@ -12,6 +12,7 @@ import type { Part } from '../src/parts.js';
 import { dockerRuntime, stateVolumeOf } from '../src/runtime.js';
 import { revealed } from '../src/secrets.js';
 import { loadPlugins } from '../../server/src/plugins.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions, HostTool } from '../../sdk/src/types/host.js';
@@ -1046,7 +1047,7 @@ it('gives run_in_computer the calling session agent\'s vault-filled keys, and ev
   const tool = (options.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
   /** The variables the last command was given by name, after a call from `provider`'s session. */
   const ranWith = async (provider?: string): Promise<string[]> => {
-    await tool.run({ id: 'box', command: 'env' }, (provider === undefined ? {} : { provider }) as never);
+    await tool.run({ id: 'box', command: 'env' }, hostCall(provider === undefined ? {} : { provider }));
     const held = JSON.parse(readFileSync(state, 'utf8')) as { commands?: { env: Record<string, string> }[] };
     return Object.keys(held.commands?.at(-1)?.env ?? {}).sort();
   };
@@ -1190,7 +1191,7 @@ it('fails every command into the machine when a vault-named value cannot be read
 
   // A tool's command is a command in the machine too.
   const tool = (again.options.tools ?? []).find((one) => one.definition.name === 'run_in_computer');
-  const said = await Promise.resolve(tool?.run({ id: 'ada', command: 'true' }, {} as never)).catch((error: unknown) => error);
+  const said = await Promise.resolve(tool?.run({ id: 'ada', command: 'true' }, hostCall())).catch((error: unknown) => error);
   expect(String(said instanceof Error ? said.message : said)).toContain('machine need anthropicKey');
 });
 

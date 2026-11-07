@@ -10,6 +10,7 @@ import { fileResources } from '../../sdk/src/resources/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { raise } from '../../sdk/src/plugins/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import { isRunning } from '../src/runtime.js';
 import { routed } from '../src/router.js';
@@ -807,7 +808,7 @@ it('refuses a command in the box when a value there is the vault own, and writes
   // The one check both roads go through: a command a tool runs, and the
   // descriptor a terminal or a backend spawning into the machine is given.
   const tool = (options.tools ?? []).find((one) => one.definition.name === 'run_in_computer') as HostTool;
-  await expect(tool.run({ id: 'ssh.dev02', command: 'env' }, { provider: 'vaulted' } as never))
+  await expect(tool.run({ id: 'ssh.dev02', command: 'env' }, hostCall({ provider: 'vaulted' })))
     .rejects.toThrow(new RegExp(`ssh.dev02 is off this host, and ${BOX_TOKEN} comes from the vault`));
   await expect(options.computers?.how('ssh.dev02', { command: 'env', provider: 'vaulted' }))
     .rejects.toThrow(/a command over ssh carries its variables in the remote command/);
