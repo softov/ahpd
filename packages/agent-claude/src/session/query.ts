@@ -61,8 +61,8 @@ export interface Query {
   startQuery: (agent: string | undefined, first: boolean, cut?: string) => Promise<void>;
   /** Take the session off a CLI still starting, which a stop that aborts the query leaves nobody to answer. */
   abandonStart: () => void;
-  /** The backend's id for the *last* thing in each turn, by this host's turn id. */
-  ends: Map<string, string>;
+  /** Each turn's fork anchor, the backend's id for the last thing in it, by this host's turn id. */
+  forkAnchorUuids: Map<string, string>;
   /** Ask the CLI for a model, and say why it would not take it if it will not. */
   take: (id: string) => Promise<string | undefined>;
   /**
@@ -99,16 +99,18 @@ export interface Query {
 }
 
 /**
- * Where each turn a resumed session opens with ended, from where each turn of
- * its transcript's read ended, in the read's order.
+ * The fork anchor of each turn a resumed session opens with, from the anchors
+ * its transcript's read resolved, in the read's order: VS Code's
+ * `resolveForkAnchorUuid` for every turn at once.
  *
  * The host reads one turn run twice back as one turn, under its first run's
- * id, so such a turn ends where its later run ends: that run follows it in the
+ * id, so such a turn's anchor is its later run's: that run follows it in the
  * read, before the next turn the session opens with. Nothing is taken past a
  * rewind's point, which is the last entry the conversation keeps. A session
  * that opens with no turns named takes the read as it is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L72-L112
  */
-function endsOf(seed: readonly Bag[] | undefined, read: ReadonlyMap<string, string> | undefined, rewindAt: string | undefined): Map<string, string> {
+function resolveForkAnchorUuids(seed: readonly Bag[] | undefined, read: ReadonlyMap<string, string> | undefined, rewindAt: string | undefined): Map<string, string> {
   if (seed === undefined) return new Map(read ?? []);
   const opens = new Set(seed.flatMap((turn) => str(turn.id) ?? []));
   const out = new Map<string, string>();
@@ -301,7 +303,12 @@ export function createQuery(ctx: SessionContext): Query {
    */
   let bound = 0;
 
-  async function* input(mine: number): AsyncGenerator<(typeof toYield)[number]> {
+  /**
+   * The input stream one query reads: VS Code's prompt queue's `iterable`,
+   * handed to the query as its prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L43-L44
+   */
+  async function* iterable(mine: number): AsyncGenerator<(typeof toYield)[number]> {
     for (;;) {
       while (mine === bound && toYield.length > 0) {
         const next = toYield.shift() as (typeof toYield)[number];
@@ -684,11 +691,11 @@ export function createQuery(ctx: SessionContext): Query {
      * in a machine keeps its files there, out of this host's reach.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
      */
-    const under = (options as { sessionId?: string }).sessionId;
-    if (under !== undefined && ctx.options.spawn === undefined) {
+    const { sessionId } = options as { sessionId?: string };
+    if (sessionId !== undefined && ctx.options.spawn === undefined) {
       await (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> } | undefined)?.[Symbol.asyncDispose]?.().catch(() => {});
-      await ctx.options.exits?.get(under);
-      await clearFor(under, ctx.options.cwd);
+      await ctx.options.exits?.get(sessionId);
+      await clearFor(sessionId, ctx.options.cwd);
     }
     const warm = await startup({ options, initializeTimeoutMs: ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS });
     if (ctx.disposed || mine !== bound) {
@@ -696,7 +703,7 @@ export function createQuery(ctx: SessionContext): Query {
       catch { /* A CLI already gone is disposed of all the same. */ }
       throw new Error('The CLI was stopped while it started');
     }
-    const handle = warm.query(input(mine));
+    const handle = warm.query(iterable(mine));
     ctx.query = handle;
     void consume(handle);
     void ctx.describe().catch(() => {});
@@ -715,19 +722,21 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   /**
-   * The backend's id for the *last* thing in each turn, by this host's turn id.
+   * Each turn's fork anchor, the backend's id for the last thing in it, by
+   * this host's turn id: the uuid VS Code's Claude resolves for a fork and
+   * stages for a rewind as its `resumeAnchorUuid`.
    *
    * What both cuts take. A rewind keeps the turn and drops what came after it,
    * a fork copies the conversation through it, and the SDK's rule for
    * `resumeSessionAt` is the same either way: the kept turn's last chain entry,
-   * whatever it is. Cutting at the prompt instead keeps the question and drops
-   * the answer to it, which is a turn a client can still see and the agent no
-   * longer remembers giving.
+   * whatever it is. The turn's answer is kept with it, which the agent then
+   * remembers giving as a client sees it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L545-L558
    *
-   * A resumed session starts with the ends its transcript's read named for
-   * the turns it opens with, and every turn it watches adds its own.
+   * A resumed session starts with the anchors its transcript's read resolved
+   * for the turns it opens with, and every turn it watches adds its own.
    */
-  const ends = new Map<string, string>(endsOf(ctx.options.seed, ctx.options.seedEnds, ctx.options.rewindAt));
+  const forkAnchorUuids = new Map<string, string>(resolveForkAnchorUuids(ctx.options.seed, ctx.options.seedForkAnchorUuids, ctx.options.rewindAt));
 
   /**
    * Ask the CLI for a model, and say why it would not take it if it will not.
@@ -897,7 +906,7 @@ export function createQuery(ctx: SessionContext): Query {
          */
         if (ctx.active !== undefined && type === 'assistant' && str(message.parent_tool_use_id) === undefined) {
           const entry = str(message.uuid);
-          if (entry !== undefined) ends.set(String(ctx.active.id), entry);
+          if (entry !== undefined) forkAnchorUuids.set(String(ctx.active.id), entry);
         }
 
         /*
@@ -1289,5 +1298,5 @@ export function createQuery(ctx: SessionContext): Query {
     return undefined;
   };
 
-  return { toYield, startQuery, abandonStart, ends, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
+  return { toYield, startQuery, abandonStart, forkAnchorUuids, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions };
 }

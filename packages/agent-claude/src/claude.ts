@@ -1,10 +1,10 @@
 import { probe } from './probe.js';
 import { serversFor, toClaudeMcpServers } from './mcp.js';
 import { createSession } from './session.js';
-import { restoreTerminalOutputs } from './session/savedoutput.js';
+import { restore } from './session/savedoutput.js';
 import { configDirOf } from './session/disk.js';
 import type { ParseYaml } from './session/disk.js';
-import { watchFolders } from './session/watch.js';
+import { createClaudeCustomizationWatcher } from './session/watch.js';
 import { turnsOf, subagentsBySdk, subagentsOf } from './transcript.js';
 import { catalogue, findSession, forgetSession, transcriptOf, written } from './catalog.js';
 import { BEFORE_TOKEN, loginsOf } from './logins.js';
@@ -223,16 +223,16 @@ export function claude(options: ClaudeOptions): Agent<Session> {
   let named: Promise<OfferedModel[]> | undefined;
 
   /*
-   * Where each turn of a conversation ended, as the last read of its
-   * transcript named it, by the conversation's id.
+   * The fork anchor of each turn of a conversation, as the last read of its
+   * transcript resolved it, by the conversation's id.
    *
-   * A session names the end of a turn it watched from its CLI's frames, and
+   * A session names the anchor of a turn it watched from its CLI's frames, and
    * the turns a resumed session opens with were watched by a CLI that is gone.
    * The host reads the transcript before it resumes a conversation, so the
    * read names them, and the session that resumes it starts from them. Each
    * read of a conversation replaces what an earlier one named.
    */
-  const readEnds = new Map<string, ReadonlyMap<string, string>>();
+  const readForkAnchorUuids = new Map<string, ReadonlyMap<string, string>>();
   /** The CLIs of this agent's closed sessions still exiting, by the conversation each could write. */
   const exits = new Map<string, Promise<unknown>>();
   /**
@@ -565,7 +565,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L878-L884
      */
     probeChanged: (onChange) => {
-      const stop = watchFolders({ configDir: configDirOf() }, onChange, () => probing > 0);
+      const stop = createClaudeCustomizationWatcher({ configDir: configDirOf() }, onChange, () => probing > 0);
       const logins = options.logins;
       if (logins === undefined) return stop;
       const told = (id: string): void => {
@@ -621,9 +621,9 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSavedChatReader.ts#L67-L68
     transcript: async (id, _at, outputs) => {
       if (await findSession(id) === undefined) return undefined;
-      const ends = new Map<string, string>();
-      const turns = await turnsOf(id, ends);
-      readEnds.set(id, ends);
+      const forkAnchorUuids = new Map<string, string>();
+      const turns = await turnsOf(id, forkAnchorUuids);
+      readForkAnchorUuids.set(id, forkAnchorUuids);
       /*
        * The transcript holds what the model was sent, so a `Bash` call whose
        * output was too large to send comes back with Claude's notice alone.
@@ -631,7 +631,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * as the reference restores a call after building the turns.
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2008-L2009
        */
-      if (outputs !== undefined) restoreTerminalOutputs(turns, outputs);
+      if (outputs !== undefined) restore(turns, outputs);
       return turns;
     },
 
@@ -702,10 +702,10 @@ export function claude(options: ClaudeOptions): Agent<Session> {
         : undefined;
       // The new conversation's name: the chat's own, or else the id it was asked to resume.
       const chatId = start.chatId ?? (resumed === undefined ? start.resume : undefined);
-      // Where the turns read back ended, for a session that carries the same
-      // conversation on. A fork is a conversation of its own, whose entries
-      // its CLI writes.
-      const readBack = resumed === undefined || start.forkAt !== undefined ? undefined : readEnds.get(resumed);
+      // The fork anchors of the turns read back, for a session that carries the
+      // same conversation on. A fork is a conversation of its own, whose
+      // entries its CLI writes.
+      const readBack = resumed === undefined || start.forkAt !== undefined ? undefined : readForkAnchorUuids.get(resumed);
       return createSession({
       ...(inside === undefined ? {} : { spawn: inside, spawnExecutable: executable, spawnConfigDir: configDir }),
       exits,
@@ -790,7 +790,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
         ...(start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
         ...(start.rewindAt !== undefined ? { rewindAt: start.rewindAt } : {}),
       }),
-      ...(readBack === undefined ? {} : { seedEnds: readBack }),
+      ...(readBack === undefined ? {} : { seedForkAnchorUuids: readBack }),
       ...(start.context !== undefined ? { context: start.context } : {}),
       ...(start.seed ? { seed: start.seed } : {}),
       ...(start.onFileEdit ? { onFileEdit: start.onFileEdit } : {}),

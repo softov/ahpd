@@ -201,8 +201,8 @@ export function createSession(options: ClaudeSessionOptions): Session {
     models: () => ctx.models,
     agentId: () => ctx.sdkSessionId,
     busy: () => ctx.hasActiveWork() || ctx.stopped.sessionCrons.length > 0,
-    forkPoint: (turnId) => ctx.ends.get(turnId),
-    endPoint: (turnId) => ctx.ends.get(turnId),
+    forkPoint: (turnId) => ctx.forkAnchorUuids.get(turnId),
+    endPoint: (turnId) => ctx.forkAnchorUuids.get(turnId),
 
     customizations: () => ctx.customizations,
     allTurns: () => ctx.turns,

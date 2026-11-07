@@ -107,13 +107,13 @@ export interface ClaudeSessionOptions extends SessionOptions {
   /** The `CLAUDE_CONFIG_DIR` it reads there, or `false` for the image's own. */
   spawnConfigDir?: string | false;
   /**
-   * Where each turn of `seed` ended, in the CLI's own names, by turn id.
+   * The fork anchor of each turn of `seed`, in the CLI's own names, by turn id.
    *
-   * What the read of the transcript named for the conversation this session
+   * What the read of the transcript resolved for the conversation this session
    * resumes: the entry a fork of a turn copies through and a rewind to it
    * keeps. A turn this session watches run names its own.
    */
-  seedEnds?: ReadonlyMap<string, string>;
+  seedForkAnchorUuids?: ReadonlyMap<string, string>;
   /**
    * The declared options this backend's variant holds.
    *

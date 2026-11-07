@@ -195,7 +195,7 @@ export function createLogins(ctx: SessionContext): Logins {
    * Where a failed turn is cut back to, or nothing when it cannot be.
    *
    * The last turn before it that ran on the CLI, skipping `!` commands, which
-   * the CLI never saw. Its entry in `ends` is where a rewind cuts. A turn read
+   * the CLI never saw. Its fork anchor is where a rewind cuts. A turn read
    * back after a restart has an entry only once the backend records one at the
    * transcript read, and a turn with none cannot be cut back to: the turn ends
    * with its failure rather than run again on a conversation that still holds
@@ -207,7 +207,7 @@ export function createLogins(ctx: SessionContext): Logins {
     for (let i = ctx.turns.length - 1; i >= 0; i--) {
       const turn = bag(ctx.turns[i]);
       if (isCommand(turn)) continue;
-      const at = ctx.ends.get(String(turn.id));
+      const at = ctx.forkAnchorUuids.get(String(turn.id));
       return at === undefined ? undefined : { at };
     }
     if ((ctx.options.resume !== undefined && !ctx.unwritten) || ctx.options.spawn !== undefined) return undefined;
@@ -301,8 +301,8 @@ export function createLogins(ctx: SessionContext): Logins {
    * Cut back to the end of the turn before it, as a rewind cuts, so the failed
    * prompt is not in the conversation the new CLI resumes; or, for a
    * conversation's first turn, started over under its id. The conversation's
-   * entry for this turn goes with the cut or the delete, so it is taken out of
-   * `ends`. The turn's prompt is left to the caller to send.
+   * entry for this turn goes with the cut or the delete, so its fork anchor is
+   * taken out. The turn's prompt is left to the caller to send.
    *
    * A conversation whose delete fails still holds the failed prompt and its
    * reply. It comes back as it is, on the new login, and `failed` says why, for
@@ -328,7 +328,7 @@ export function createLogins(ctx: SessionContext): Logins {
         }
         if (ctx.disposed) return { started: false, ...(failed === undefined ? {} : { failed }) };
       }
-      if (failed === undefined) ctx.ends.delete(turn);
+      if (failed === undefined) ctx.forkAnchorUuids.delete(turn);
       try {
         if (cut.over !== true) await ctx.startQuery(ctx.appliedAgent, false, cut.at);
         else await ctx.startQuery(ctx.appliedAgent, failed === undefined);

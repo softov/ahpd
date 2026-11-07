@@ -152,7 +152,7 @@ const buildTerminalContent = (
  * still keeps gets its terminal again, after the text.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeTerminalOutput.ts#L117-L143
  */
-export function restoreTerminalOutputs(turns: WireTurn<Turn>[], outputs: TerminalOutputs): void {
+export function restore(turns: WireTurn<Turn>[], outputs: TerminalOutputs): void {
   for (const turn of turns as unknown as Bag[]) {
     for (const part of Array.isArray(turn.responseParts) ? turn.responseParts : []) {
       if (bag(part).kind !== 'toolCall') continue;

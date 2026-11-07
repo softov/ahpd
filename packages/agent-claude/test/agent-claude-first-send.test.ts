@@ -40,7 +40,7 @@ const sdk = vi.hoisted(() => ({
 const watched = vi.hoisted(() => ({ changes: [] as (() => void)[] }));
 
 vi.mock('../src/session/watch.js', () => ({
-  watchFolders: (_roots: unknown, onChange: () => void) => {
+  createClaudeCustomizationWatcher: (_roots: unknown, onChange: () => void) => {
     watched.changes.push(onChange);
     return () => {};
   },

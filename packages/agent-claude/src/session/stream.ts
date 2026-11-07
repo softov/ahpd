@@ -4,7 +4,7 @@ import type { Bag, OnWire } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { createTasks } from './tasks.js';
-import { getClaudeToolInputString, lineOf, pastLineOf, titleOf, writeOf } from '../input.js';
+import { getClaudeInvocationMessage, getClaudePastTenseMessage, getClaudeToolInputString, titleOf, writeOf } from '../input.js';
 import { claudeToolDenialCode, getClaudeToolDisplayName, resultContent, toolMetaOf } from '../kinds.js';
 import { ranOn } from '../models.js';
 
@@ -394,8 +394,8 @@ export function createStream(ctx: SessionContext): Stream {
          */
         if (ctx.options.plan === true && name === 'TodoWrite') continue;
         const displayName = displayNameOf(name);
-        const line = lineOf(name, bag(block.input), displayName);
-        ctx.pastLines.set(id, pastLineOf(name, bag(block.input), displayName));
+        const line = getClaudeInvocationMessage(name, displayName, bag(block.input));
+        ctx.pastLines.set(id, getClaudePastTenseMessage(name, displayName, bag(block.input), true));
         const input = getClaudeToolInputString(name, block.input);
         const from = serverOf(name);
         /*
@@ -626,7 +626,7 @@ export function createStream(ctx: SessionContext): Stream {
        */
       const displayName = str(call.displayName) ?? str(call.toolName) ?? 'the tool';
       const said = bag(call.contributor).kind === 'client' ? displayName
-        : !ok ? pastLineOf(str(call.toolName) ?? '', {}, displayName, false)
+        : !ok ? getClaudePastTenseMessage(str(call.toolName) ?? '', displayName, {}, false)
           : ctx.pastLines.get(id) ?? str(call.invocationMessage) ?? displayName;
       ctx.pastLines.delete(id);
       const denial = ok || text === undefined ? undefined : claudeToolDenialCode(text);

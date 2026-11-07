@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { watchFolders } from '../src/session/watch.js';
+import { createClaudeCustomizationWatcher } from '../src/session/watch.js';
 
 /*
  * The watcher of a session's Claude folders, on real folders.
@@ -35,7 +35,7 @@ async function until(count: () => number, want: number): Promise<void> {
 /** Watch `roots`, counting the calls, after the watch had time to start. */
 async function watched(roots: { configDir: string; cwd?: string }): Promise<{ calls: () => number; stop: () => void }> {
   let calls = 0;
-  const stop = watchFolders(roots, () => { calls += 1; });
+  const stop = createClaudeCustomizationWatcher(roots, () => { calls += 1; });
   stops.push(stop);
   await pause(100);
   return { calls: () => calls, stop };
@@ -110,7 +110,7 @@ describe('the watcher of the Claude folders', () => {
     mkdirSync(join(root, 'plugins', 'marketplaces', 'tools'), { recursive: true });
     let quiet = true;
     let calls = 0;
-    stops.push(watchFolders({ configDir: root }, () => { calls += 1; }, () => quiet));
+    stops.push(createClaudeCustomizationWatcher({ configDir: root }, () => { calls += 1; }, () => quiet));
     await pause(100);
     writeFileSync(join(root, 'plugins', 'installed_plugins.json'), '{}\n');
     writeFileSync(join(root, 'plugins', 'marketplaces', 'tools', 'plugin.json'), '{}\n');
@@ -190,7 +190,7 @@ describe('the watcher of the Claude folders', () => {
 
   it('throws nothing for folders it cannot watch', () => {
     const root = fresh();
-    const stop = watchFolders({ configDir: join(root, 'no', 'such'), cwd: join(root, 'missing') }, () => undefined);
+    const stop = createClaudeCustomizationWatcher({ configDir: join(root, 'no', 'such'), cwd: join(root, 'missing') }, () => undefined);
     expect(stop).not.toThrow();
   });
 });

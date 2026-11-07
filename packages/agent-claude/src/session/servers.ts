@@ -8,7 +8,7 @@ import { SDK_DEFAULT_MODEL_VALUE, thinkingFor } from './config.js';
 import { isHostInjectedMcpServerName } from './clienttools.js';
 import { customizationsOf, rootOf } from './customizations.js';
 import { configDirOf, diskOf, managedDirOf } from './disk.js';
-import { watchFolders } from './watch.js';
+import { createClaudeCustomizationWatcher } from './watch.js';
 import type { Published } from './customizations.js';
 import type { Disk, DiskKind } from './disk.js';
 
@@ -534,7 +534,7 @@ export function createServers(ctx: SessionContext): Servers {
    * a machine, whose CLI reads its own config volume.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L500
    */
-  let unwatch = ctx.options.spawn !== undefined ? undefined : watchFolders({
+  let unwatch = ctx.options.spawn !== undefined ? undefined : createClaudeCustomizationWatcher({
     configDir: configDirOf(ctx.options.env),
     ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
   }, () => {

@@ -54,7 +54,9 @@ const MEMORY = new Set(['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']);
 
 /**
  * Watch the Claude folders of a session, and call `onChange` when a
- * customization in them is written, edited or deleted.
+ * customization in them is written, edited or deleted: VS Code's
+ * `ClaudeCustomizationWatcher`, whose disposal is the function this returns.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L454-L476
  *
  * The personal folder and `<cwd>/.claude` are watched where a customization
  * is read from, and `cwd` itself only for its `CLAUDE.md` files and its
@@ -69,7 +71,7 @@ const MEMORY = new Set(['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']);
  * `quiet`, where given, says when a change calls for nothing: one told while
  * it holds is dropped as it arrives.
  */
-export function watchFolders(roots: WatchRoots, onChange: () => void, quiet?: () => boolean): () => void {
+export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: () => void, quiet?: () => boolean): () => void {
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const handles = new Set<FSWatcher>();

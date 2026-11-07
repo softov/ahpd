@@ -2,7 +2,7 @@ import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
-import { getClaudeToolInputString, lineOf, pastLineOf, questionRequest, writeOf } from '../input.js';
+import { getClaudeInvocationMessage, getClaudePastTenseMessage, getClaudeToolInputString, questionRequest, writeOf } from '../input.js';
 import { CLAUDE_QUESTION_CANCELLED_MESSAGE, CLAUDE_USER_DECLINED_MESSAGE, getClaudeConfirmationTitle, toolMetaOf } from '../kinds.js';
 interface PendingInput {
   id: string;
@@ -352,8 +352,8 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L148-L162
       const shownName = ctx.clientToolOf(toolName)?.name ?? toolName;
       const displayName = ctx.displayNameOf(toolName);
-      const invocationMessage = lineOf(toolName, input, displayName);
-      ctx.pastLines.set(id, pastLineOf(toolName, input, displayName));
+      const invocationMessage = getClaudeInvocationMessage(toolName, displayName, input);
+      ctx.pastLines.set(id, getClaudePastTenseMessage(toolName, displayName, input, true));
       const confirmationTitle = getClaudeConfirmationTitle(toolName);
 
       // The call the assistant message opened, if it arrived first. Which of

@@ -6,7 +6,7 @@ import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { getClaudeToolInputString, lineOf, pastLineOf, questionAnswers, questionRequest, titleOf } from './input.js';
+import { getClaudeInvocationMessage, getClaudePastTenseMessage, getClaudeToolInputString, questionAnswers, questionRequest, titleOf } from './input.js';
 import { claudeToolDenialCode, getClaudeToolDisplayName, resultContent, toolMetaOf } from './kinds.js';
 import { ranOn } from './models.js';
 
@@ -45,10 +45,11 @@ function resultText(content: unknown): string | undefined {
  * compaction boundaries and notifications are drawn on their turns.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSavedChatReader.ts#L67-L68
  *
- * `ends`, when given, is filled with where each turn ended, by turn id: the
- * entry a fork of that turn copies through and a rewind to it keeps.
+ * `forkAnchorUuids`, when given, is filled with each turn's fork anchor, by
+ * turn id: the entry a fork of that turn copies through and a rewind to it
+ * keeps.
  */
-export async function turnsOf(sessionId: string, ends?: Map<string, string>): Promise<WireTurn<Turn>[]> {
+export async function turnsOf(sessionId: string, forkAnchorUuids?: Map<string, string>): Promise<WireTurn<Turn>[]> {
   let messages: unknown[];
   try {
     messages = await getSessionMessages(sessionId, { includeSystemMessages: true });
@@ -62,7 +63,7 @@ export async function turnsOf(sessionId: string, ends?: Map<string, string>): Pr
   return buildTurns(answered.size === 0 ? messages : messages.map((message) => {
     const result = answered.get(str(bag(message).uuid) ?? '');
     return result === undefined ? message : { ...bag(message), toolUseResult: result };
-  }), ends);
+  }), forkAnchorUuids);
 }
 
 /** The uuids of the entries that hold the result of an `AskUserQuestion` call. */
@@ -383,8 +384,8 @@ function isCliEcho(content: unknown): boolean {
  */
 const INTERRUPTED = '[Request interrupted by user';
 
-/** One session's history, from the frames a reader already parsed, and where each turn ended when `ends` is given. */
-function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<Turn>[] {
+/** One session's history, from the frames a reader already parsed, and each turn's fork anchor when `forkAnchorUuids` is given. */
+function buildTurns(messages: unknown[], forkAnchorUuids?: Map<string, string>): WireTurn<Turn>[] {
   const built: WireTurn<Turn>[] = [];
   const calls = new Map<string, Bag>();
   /** When each call started, by id, as its own `tool_use` frame says: what its duration is measured from. */
@@ -417,7 +418,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
    */
   const ended = (turn: WireTurn<Turn> | undefined, frame: Bag): void => {
     const entry = str(frame.uuid);
-    if (ends !== undefined && turn !== undefined && entry !== undefined) ends.set(String(turn.id), entry);
+    if (forkAnchorUuids !== undefined && turn !== undefined && entry !== undefined) forkAnchorUuids.set(String(turn.id), entry);
   };
 
   for (const entry of messages) {
@@ -459,7 +460,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         call.success = ok;
         const text = resultText(block.content);
         // A failed call's line and its `error`, as the live call words them.
-        if (!ok) call.pastTenseMessage = pastLineOf(str(call.toolName) ?? '', {}, str(call.displayName) ?? str(call.toolName) ?? 'the tool', false);
+        if (!ok) call.pastTenseMessage = getClaudePastTenseMessage(str(call.toolName) ?? '', str(call.displayName) ?? str(call.toolName) ?? 'the tool', {}, false);
         const denial = ok || text === undefined ? undefined : claudeToolDenialCode(text);
         // `type` on every block: these are MCP's content blocks and it is what
         // tells them apart. Checked, because this is an assignment onto a
@@ -635,10 +636,10 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
            * question waiting on somebody. `success` and `pastTenseMessage`
            * stand until the call's result says otherwise.
            */
-          invocationMessage: lineOf(name, given, displayName),
+          invocationMessage: getClaudeInvocationMessage(name, displayName, given),
           confirmed: 'not-needed',
           success: true,
-          pastTenseMessage: pastLineOf(name, given, displayName),
+          pastTenseMessage: getClaudePastTenseMessage(name, displayName, given, true),
         } satisfies OnWire<ToolCallCompletedState>;
         calls.set(id, call);
         inputs.set(id, given);

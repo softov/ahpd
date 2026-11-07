@@ -41,7 +41,7 @@ const watched = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/session/watch.js', () => ({
-  watchFolders: (_roots: unknown, onChange: () => void) => {
+  createClaudeCustomizationWatcher: (_roots: unknown, onChange: () => void) => {
     watched.changes.push(onChange);
     return () => { watched.stopped += 1; };
   },

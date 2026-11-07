@@ -256,14 +256,15 @@ export function writeOf(name: string, input: Bag): { path: string; apply: (curre
 }
 
 /**
- * The line a call's row draws while it runs, and on its confirmation card.
+ * The line a call's row draws while it runs, and on its confirmation card:
+ * VS Code's `getClaudeInvocationMessage`.
  *
- * VS Code's line for the tools `getClaudeInvocationMessage` maps, in its
- * English and as markdown where it sends markdown, a `Task` or `Agent` call's
- * own description, and the call's display name for any other tool.
+ * VS Code's line for the tools it maps, in its English and as markdown where
+ * it sends markdown, a `Task` or `Agent` call's own description, and the
+ * call's display name for any other tool.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L346-L455
  */
-export function lineOf(name: string, input: Bag, displayName: string): StringOrMarkdown {
+export function getClaudeInvocationMessage(name: string, displayName: string, input: Bag): StringOrMarkdown {
   const path = PATHS[name] === undefined ? undefined : filled(input[PATHS[name]]);
   switch (name) {
     case 'Bash': {
@@ -316,13 +317,13 @@ export function lineOf(name: string, input: Bag, displayName: string): StringOrM
 }
 
 /**
- * The line a call's row draws once it has ended, as VS Code's
- * `getClaudePastTenseMessage` words it: a failed call `"<display name>"
- * failed`, and one that ran the past tense for the tools it maps and the
- * running line for the rest.
+ * The line a call's row draws once it has ended: VS Code's
+ * `getClaudePastTenseMessage`, a failed call `"<display name>" failed`, and
+ * one that ran the past tense for the tools it maps and the running line for
+ * the rest.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L497-L536
  */
-export function pastLineOf(name: string, input: Bag, displayName: string, success = true): StringOrMarkdown {
+export function getClaudePastTenseMessage(name: string, displayName: string, input: Bag, success: boolean): StringOrMarkdown {
   if (!success) return `"${displayName}" failed`;
   switch (name) {
     case 'Bash': {
@@ -340,6 +341,6 @@ export function pastLineOf(name: string, input: Bag, displayName: string, succes
       const skill = filled(input.skill);
       return skill !== undefined ? md(`Ran skill ${appendEscapedMarkdownInlineCode(truncate(skill, 80))}`) : 'Ran skill';
     }
-    default: return lineOf(name, input, displayName);
+    default: return getClaudeInvocationMessage(name, displayName, input);
   }
 }
