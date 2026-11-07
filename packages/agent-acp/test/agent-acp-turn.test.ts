@@ -477,6 +477,10 @@ it('opens a call the agent reported for a client\'s tool with that client on the
   for (const one of starts) {
     expect(one.action.contributor).toEqual({ kind: 'client', clientId: 'a' });
   }
+  // Each named by the tool the client announced, as VS Code's host names a
+  // client's call, so the client knows the call for its own.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L626-L638
+  expect(starts.map((e) => e.action.toolName)).toEqual(['openFile', 'openFile']);
 
   // Said again on the ready, which is where the protocol stops taking one: a
   // contributor that arrives after the start is ignored, so both carry it.

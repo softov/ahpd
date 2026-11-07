@@ -108,15 +108,20 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
    * Which client's tool this is, read off what the agent reported. The name it
    * gave is what it called, so it is read before the title: a title that spells
    * some other client's tool is not what the agent said it reached for.
+   *
+   * A client's call is named by the tool the client announced, as VS Code's
+   * host names one, stripping its client-tool server's prefix where the call
+   * comes in, so the client knows the call for its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L626-L638
    */
-  const owner = turn.ownerOf?.(named, title);
+  const tool = turn.clientToolOf?.(named, title);
   const call: AcpCall = {
     toolCallId: update.toolCallId,
-    toolName: name,
+    toolName: tool?.name ?? name,
     displayName: title,
     readied: false,
     asked: false,
-    ...(owner === undefined ? {} : { owner }),
+    ...(tool === undefined ? {} : { owner: tool.owner }),
   };
   turn.calls.set(update.toolCallId, call);
   // A call ends the run of message chunks before it, held whitespace and all.
@@ -125,7 +130,7 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
     kind: 'toolCall',
     toolCall: {
       toolCallId: update.toolCallId,
-      toolName: name,
+      toolName: call.toolName,
       displayName: title,
       status: 'streaming',
       ...contributorOf(call),

@@ -366,11 +366,20 @@ export interface AcpConnection {
   close(): Promise<void>;
 }
 
+/** A client's tool, by the client that owns it and the name the client announced it with. */
+export interface ClientTool {
+  owner: string;
+  name: string;
+}
+
 /** One tool call the server opened, as the mapping remembers it between updates. */
 export interface AcpCall {
   /** The server's own id for the call, which every action names. */
   toolCallId: string;
-  /** The programmatic name, when the server gave one, and its title otherwise. */
+  /**
+   * The programmatic name, when the server gave one, and its title otherwise;
+   * for a client's tool, the name the client announced it with.
+   */
   toolName: string;
   /** What a client draws instead of the name. */
   displayName: string;
@@ -404,8 +413,9 @@ export interface AcpCall {
   /**
    * The client whose tool this call is for, when the agent reached one.
    *
-   * Read off what the agent reported - see `AcpTurn.ownerOf` - and never set on
-   * a call that is the agent's own, the host's, or one nobody's tool matches.
+   * Read off what the agent reported - see `AcpTurn.clientToolOf` - and never
+   * set on a call that is the agent's own, the host's, or one nobody's tool
+   * matches.
    */
   owner?: string;
 }
@@ -479,14 +489,15 @@ export interface AcpTurn {
   /** What the last `usage_update` said, which is what this turn holds. */
   usage?: Bag;
   /**
-   * Which client's tool a call the agent reported is for, if any.
+   * Which client's tool a call the agent reported is for, if any: the client
+   * that owns it, and the name the client announced it with.
    *
    * The agent reaches a client's tool through the host's own MCP server, so it
    * names the call the way that server spells the tool, or says it in the title
    * when it names nothing. A turn the transcript replays has no session behind
    * it and no lookup: a call with no owner is one nobody's tool matched.
    */
-  ownerOf?(name: string | undefined, title: string): string | undefined;
+  clientToolOf?(name: string | undefined, title: string): ClientTool | undefined;
   /**
    * The calls this turn has started that somebody is to run, waiting for the
    * ready that says each is running to go out.

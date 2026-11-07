@@ -410,7 +410,7 @@ export function createTurn(ctx: SessionContext): Turn {
         // The clients' tools, read off what the host last said this session may
         // offer: a call the agent reports for one is held for the client that
         // owns it, and asks that client to run it.
-        ownerOf: ctx.ownerOf,
+        clientToolOf: ctx.clientToolOf,
         ...(ctx.cumulative !== undefined ? { costAtStart: ctx.cumulative } : {}),
       };
       await ctx.chooseModel(held, chosen);
