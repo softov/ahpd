@@ -637,15 +637,22 @@ asks about the command the model wrote.
 
 ### Chat URIs
 
-A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, the
-shape VS Code's host builds and an older VS Code window computes from the
-session. `defaultChat`, every entry in `chats` and `ChatState.resource` name the
-chat by that one URI, so a client that computed it and a client that read it
-hold the same string.
+A new session's first chat is minted as VS Code's host mints one
+([agentService.ts#L10109-L10150](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10109-L10150)):
+`ahp-chat://default/<base64url(sessionUri)>` for an older VS Code window, one
+that names itself and declares no `vscode.ahpChatUris`, which computes that URI
+from the session; and an opaque `ahp-chat:/<uuid>` for every other client, a
+tool and an automation among them. The handshake declares
+`vscode.ahpChatUris`, so a window mints a session's next chat in the format of
+its default chat, and a session whose default chat is shaped takes no opaque
+chat: `createChat` refuses one with InvalidParams, "Opaque chat URI is not
+allowed in a session with a shaped default chat: <chat>", as VS Code's host
+does. `defaultChat`, every entry in `chats` and `ChatState.resource` name the
+chat by its one URI.
 
-That URI is the session's chat while the session records no other default
-chat, or records that one, as VS Code's host gives a derived default chat an
-owner only while the session's record agrees
+The derived URI is the session's chat while the session records no other
+default chat, or records that one, as VS Code's host gives a derived default
+chat an owner only while the session's record agrees
 ([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
 
 `default` is a **role**: it means whichever chat a client gets when it names

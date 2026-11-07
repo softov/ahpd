@@ -15,7 +15,8 @@ import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
 import { groupOf } from '../access/users.js';
 import { teamsOf } from '../usage/scopes.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
-import { chatIdFor, chatUriFor, schemeOf } from './channels.js';
+import { chatIdFor, schemeOf } from './channels.js';
+import { chatUriFormatOf, mintPeerChatUri } from '../vscode/chatminting.js';
 import { AGENT_CLIENT_SCHEME } from './clienturi.js';
 import { need, noProvider } from './common.js';
 import { asksForTool } from './permissions.js';
@@ -1775,7 +1776,10 @@ export function createTooling(ctx: HostContext): Tooling {
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1375-L1378
     const defaults = calling === undefined ? undefined : creationDefaults(calling);
     const model = asked.model ?? (defaults?.agent === agent ? defaults.model : undefined);
-    const chatUri = `ahp-chat:/${crypto.randomUUID()}`;
+    // Minted in the format of the session's default chat, as VS Code's tool
+    // mints a peer chat, so every client that sees the session addresses it.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1379
+    const chatUri = mintPeerChatUri(chatUriFormatOf(held.defaultChat), at);
     // What the plugins give a chat a tool opens, ahead of the tool's prompt.
     const preambles = options.chatPreambles ?? [];
     const preamble = preambles.length === 0 ? undefined : await preambleOf(preambles, {
@@ -1994,8 +1998,13 @@ export function createTooling(ctx: HostContext): Tooling {
       // carries its creation reference.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1236-L1242
       const madeFrom = { session: uri, chat: chatUri, ...(turn === undefined ? {} : { turnId: turn }) };
+      // Its default chat in the format the window that sent the turn
+      // addresses, as the reference host mints one for the client whose turn
+      // made the session.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10100-L10116
+      const legacyChatUris = turn !== undefined && sentBy.get(turn)?.legacyChatUris === true;
       createProviderSession(made, provider, { ...config, _meta: { [CREATED_BY_META]: madeFrom } }, where, undefined, undefined, undefined,
-        asked.title, forWhom(kept.owner(idOf(uri))));
+        asked.title, { ...forWhom(kept.owner(idOf(uri))), legacyChatUris });
       /*
        * The session this one was made inside, kept with its record.
        *
@@ -2006,13 +2015,14 @@ export function createTooling(ctx: HostContext): Tooling {
        */
       kept.setParent?.(idOf(made), idOf(uri));
       ctx.oweTree(made, {}, undefined, () => ({}));
-      const lead = byChat.get(chatUriFor(made));
-      if (lead === undefined) throw new Error(`${made} did not start`);
+      const opened = sessions.get(made)?.defaultChat;
+      const lead = opened === undefined ? undefined : byChat.get(opened);
+      if (opened === undefined || lead === undefined) throw new Error(`${made} did not start`);
       const firstTurn = crypto.randomUUID();
       remember(chatUri, firstTurn);
       void ctx.startTurn(lead.chat, firstTurn, asked.prompt, model === undefined ? undefined : { id: model }, asked.from);
       countUp(budget, 'sessions');
-      return { session: made, chat: chatUriFor(made) };
+      return { session: made, chat: opened };
     },
     createChat: async (session, asked) => await openChat(session, asked, { uri, chatUri }),
     rename: (session, chat, title) => { renameChat(session, chat, title); },
@@ -2216,12 +2226,13 @@ export function createTooling(ctx: HostContext): Tooling {
         createProviderSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
           sender === undefined ? undefined : forWhom(sender, caller.principal));
         ctx.oweTree(made, {}, undefined, () => ({}));
-        const lead = byChat.get(chatUriFor(made));
-        if (lead === undefined) throw new Error(`${made} did not start`);
+        const opened = sessions.get(made)?.defaultChat;
+        const lead = opened === undefined ? undefined : byChat.get(opened);
+        if (opened === undefined || lead === undefined) throw new Error(`${made} did not start`);
         const first = crypto.randomUUID();
         sent(first);
         void ctx.startTurn(lead.chat, first, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
-        return { session: made, chat: chatUriFor(made) };
+        return { session: made, chat: opened };
       },
       createChat: async (session, asked) => await openChat(session, asked),
       rename: (session, chat, title) => { renameChat(session, chat, title); },

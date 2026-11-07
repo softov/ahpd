@@ -209,6 +209,11 @@ describe('the handshake', () => {
      * are checked as one.
      */
     expect(result._meta['vscode.ahpSessionUris']).toBe(true);
+    // And a chat whose URI names no session, as VS Code's host says it
+    // addresses one, so a window mints a session's next chat in the format of
+    // that session's default chat.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostExtensionProtocol.ts#L158-L163
+    expect(result._meta['vscode.ahpChatUris']).toBe(true);
   });
 
   it('still connects when a channel it was asked for is gone', async () => {

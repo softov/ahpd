@@ -387,9 +387,11 @@ export function createHistory(ctx: HostContext): History {
       if (!row || !owner?.transcript)
         return undefined;
       titles.set(id, row.title);
-      // The session's own transcript is its first chat's, and the outputs
-      // handed with it and the local turns put back in it are that chat's.
-      const built = await ctx.transcriptOf(owner, id, launchWorkingDirectory(id), nameOf(id), chatUriFor(nameOf(id)));
+      // The session's own transcript is its first chat's, the chat its record
+      // keeps under the session's id, and the outputs handed with it and the
+      // local turns put back in it are that chat's.
+      const own = ctx.heldChats(id).find((one) => one.backendId === id)?.uri ?? chatUriFor(nameOf(id));
+      const built = await ctx.transcriptOf(owner, id, launchWorkingDirectory(id), nameOf(id), own);
       if (!built)
         return undefined;
       /*

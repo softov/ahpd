@@ -1496,7 +1496,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const given = kept.customTitle?.(id);
     const named = given !== undefined
       ? given === '' ? undefined : given
-      : name === undefined ? undefined : kept.chatTitle(id, chatUriFor(name));
+      : name === undefined ? undefined : kept.chatTitle(id, ctx.defaultChatFor(name));
     const message = (first ?? turns[0])?.message;
     const said = typeof message === 'object' && message !== null ? (message as { text?: unknown }).text : undefined;
     const epoch = new Date(0).toISOString();

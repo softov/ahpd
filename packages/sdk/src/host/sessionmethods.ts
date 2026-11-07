@@ -10,6 +10,7 @@ import { CLOSING, noProvider } from './common.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { getAgentHostChatId } from '../vscode/chatid.js';
+import { chatUriFormatOf, isShapedChatUri } from '../vscode/chatminting.js';
 import { preambleOf, withPreamble } from './preamble.js';
 import { readAggregate, sessionFlag, settledMessage, startsRead } from './chatactions.js';
 import { needsAsyncRewrite } from './attachments.js';
@@ -1261,6 +1262,11 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       if (!chatUri.startsWith('ahp-chat:'))
         throw new RpcError(INVALID_PARAMS, `Chat URI must use the ahp-chat scheme: ${chatUri}`);
+      // Nor an opaque one in a session whose default chat is shaped, which an
+      // older window that sees the session could not address.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L61-L63
+      if (chatUriFormatOf(held.defaultChat) === 'shaped' && !isShapedChatUri(chatUri))
+        throw new RpcError(INVALID_PARAMS, `Opaque chat URI is not allowed in a session with a shaped default chat: ${chatUri}`);
       // Nor one whose chat id another chat of the session has, as VS Code reads
       // a chat's id off its URI.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L64-L69

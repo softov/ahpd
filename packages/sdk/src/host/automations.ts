@@ -9,7 +9,7 @@ import { localPath } from '../resources/fileuri.js';
 import { createRuleEngine } from '../automations/triggers.js';
 import { wakeMessage } from '../automations/wakemessage.js';
 import { bag } from '../utils/values.js';
-import { AUTOMATIONS, chatUriFor, isAutomationResource } from './channels.js';
+import { AUTOMATIONS, isAutomationResource } from './channels.js';
 import { CLOSING, need, noProvider } from './common.js';
 import { refusalReason } from './gate.js';
 import type { Bag } from '../types/common.js';
@@ -317,7 +317,7 @@ export function createAutomations(ctx: HostContext): Automations {
    * has none, as one between turns has none.
    */
   const stopTurn = (session: string): boolean => {
-    const chat = byChat.get(chatUriFor(session))?.chat;
+    const chat = byChat.get(ctx.defaultChatFor(session))?.chat;
     if (chat === undefined) return false;
     const active = (chat.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
     if (typeof active?.id !== 'string') return false;
@@ -633,7 +633,7 @@ export function createAutomations(ctx: HostContext): Automations {
       return;
     }
     if (overlap === 'steer' && facts !== undefined && flight.session !== undefined) {
-      const chat = byChat.get(chatUriFor(flight.session))?.chat;
+      const chat = byChat.get(ctx.defaultChatFor(flight.session))?.chat;
       if (chat?.sendSteeringMessage?.({ id: crypto.randomUUID(), text: wakeMessage(templateOf(automation), facts) }) === true) {
         log(`${said} into the turn that was already running`);
         return;
@@ -700,7 +700,7 @@ export function createAutomations(ctx: HostContext): Automations {
     if (wanted.text.trim() === '') return;
     const turnId = crypto.randomUUID();
     if (wanted.owner !== undefined) senders.set(turnId, wanted.owner);
-    const chat = byChat.get(chatUriFor(session))?.chat;
+    const chat = byChat.get(ctx.defaultChatFor(session))?.chat;
     if (chat !== undefined) void ctx.startTurn(chat, turnId, wanted.text, modelIn(wanted.model), { origin: { kind: 'automation' } });
   };
 

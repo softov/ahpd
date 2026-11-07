@@ -4,7 +4,8 @@ import type { ChangesetAction, ChangesetFile } from '@microsoft/agent-host-proto
 import { idOf, Status, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { normalizeScopes } from './auth.js';
-import { chatOfCanvas, chatUriFor } from './channels.js';
+import { chatIdFor, chatOfCanvas } from './channels.js';
+import { chatUriFormatOf, mintPeerChatUri } from '../vscode/chatminting.js';
 import { startsRead } from './chatactions.js';
 import type {
   ChangeWords, ChangeWordsAsk, ChangeWordsMode, ChangeWordsSetting, ChangesetOperationContext, ChangesetState,
@@ -320,7 +321,10 @@ export function createChangesets(ctx: HostContext): Changesets {
     const newest = lead.allTurns().at(-1) as Bag | undefined;
     if (newest === undefined) return undefined;
     const message = (newest.message ?? {}) as Bag;
-    const chatUri = `ahp-chat://side/${crypto.randomUUID()}`;
+    // Minted in the format of the session's default chat, as VS Code mints a
+    // peer chat, so every client that sees the session addresses it.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L32-L36
+    const chatUri = mintPeerChatUri(chatUriFormatOf(held.defaultChat), uri);
     const turnId = crypto.randomUUID();
     let watching: ReturnType<typeof watchTurn> | undefined;
     try {
@@ -333,7 +337,7 @@ export function createChangesets(ctx: HostContext): Changesets {
       // Read until something is said in it, written before its state opens.
       startsRead(ctx, uri, chatUri);
       const chat = ctx.spawn(
-        held.agent, uri, chatUri, idOf(chatUri), ctx.backendsOwn(held.config),
+        held.agent, uri, chatUri, chatIdFor(uri, chatUri), ctx.backendsOwn(held.config),
         { context: typeof message.text === 'string' ? message.text : '' },
         held.workingDirectory, undefined, held.additional,
       );

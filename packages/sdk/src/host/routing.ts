@@ -18,6 +18,13 @@ export interface Routing {
   nameOf(id: string): string;
   keepName(id: string): void;
   sessionOfChat(uri: string): string | undefined;
+  /**
+   * A session's default chat: the running session's, or the one its record
+   * marks, or for a session that records none, the default derived from its
+   * URI, as VS Code's host derives one for a session that records none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostLegacyDefaultChat.ts#L10-L28
+   */
+  defaultChatFor(session: string): string;
   sessionFor(channel: string): string;
   meantBy(channel: string): string;
   sessionHolding(chat: string): string | undefined;
@@ -356,5 +363,6 @@ export function createRouting(ctx: HostContext): Routing {
   return {
     spaceHere, nameOf, keepName, sessionOfChat, sessionFor, meantBy, sessionHolding, channelKind, sessionChannel, homeOf,
     projectSnapshot, visible, sessionVisible, chatShown, claimable, unheld, openedBy,
+    defaultChatFor: (session) => defaultChatOf(session) ?? chatUriFor(session),
   };
 }

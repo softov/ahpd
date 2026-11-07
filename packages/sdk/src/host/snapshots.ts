@@ -648,7 +648,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       ? undefined
       : recordedChat(id, channel);
     const stamp = moves.get(owning) ?? new Date().toISOString();
-    if (opened !== undefined && opened.uri !== chatUriFor(nameOf(id))) {
+    if (opened !== undefined && opened.backendId !== id && opened.uri !== chatUriFor(nameOf(id))) {
       const own = await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), nameOf(id), opened.uri);
       return {
         kind: 'chat',
@@ -673,7 +673,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const one = chat ? workers.find((held) => subagentChatUri(nameOf(id), String(held.toolCallId ?? '')) === channel) : undefined;
     if (one !== undefined) {
       const wanted = String(one.toolCallId ?? '');
-      const parentChat = restoredParentChat(nameOf(id), chatUriFor(nameOf(id)), one);
+      const parentChat = restoredParentChat(nameOf(id), ctx.defaultChatFor(nameOf(id)), one);
       return {
         kind: 'chat',
         state: {
@@ -769,7 +769,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           ...workers.map((one) => restoredSubagentSummary(
             nameOf(id),
             subagentChatUri(nameOf(id), String(one.toolCallId ?? '')),
-            restoredParentChat(nameOf(id), chatUriFor(nameOf(id)), one),
+            restoredParentChat(nameOf(id), ctx.defaultChatFor(nameOf(id)), one),
             one as unknown as { toolCallId: string; title: string; turns: Bag[] },
             listedAt,
           )),

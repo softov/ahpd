@@ -228,7 +228,7 @@ export function createOutputs(ctx: HostContext): Outputs {
     if (own === undefined) return undefined;
     const session = ctx.nameOf(id);
     const opened = ctx.kept.nested?.(id) === undefined ? ctx.recordedChat(id, chat) : undefined;
-    if (opened === undefined || opened.uri === chatUriFor(session)) return { session, turns: own };
+    if (opened === undefined || opened.backendId === id || opened.uri === chatUriFor(session)) return { session, turns: own };
     const owner = ctx.owners.get(session) ?? ctx.first;
     const turns = owner === undefined ? undefined : await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), session, chat);
     return turns === undefined ? undefined : { session, turns: turns as unknown as Bag[] };

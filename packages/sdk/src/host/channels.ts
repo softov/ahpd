@@ -1,6 +1,7 @@
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { idOf } from '../sessions/catalog.js';
 import { bag, ownerOf } from '../utils/values.js';
+import { parseChatUri } from '../vscode/chatid.js';
 import { parseNonPtyShellTerminalUri } from '../vscode/nonptyshellterminaluri.js';
 import { URI } from '../vscode/uri.js';
 import type { ServedChannel, ServedMethod } from '../types/plugin.js';
@@ -105,27 +106,16 @@ export const named = (uri: string, what: string): string => {
 };
 
 /**
- * How this host names a session's first chat.
+ * A session's derived default chat, `ahp-chat://default/<base64url(sessionUri)>`,
+ * VS Code's frozen legacy shape.
  *
- * `ahp-chat://default/<base64url(sessionUri)>`, which is the reference
- * implementation's shape and not the one the specification illustrates. That
- * is a deliberate retreat, and it was forced.
- *
- * The specification documents `ahp-chat:/<uuid>` and says the owning session
- * is "**not** encoded in the chat URI - the relationship is expressed via the
- * session's `chats` catalogue". This host published exactly that. VS Code's
- * client computes the other shape from the session instead of reading the
- * catalogue, and subscribes to what it computed - so it asked about a channel
- * that did not exist while the conversation sat on the one it had been told
- * about.
- *
- * Answering *both* was tried first and is not enough, because the disagreement
- * is not only about which channel to open. `defaultChat`, every entry in
- * `chats`, and `ChatState.resource` all name a chat too, and a client that
- * subscribed to one string and is then told the chat is at another cannot pair
- * them up: it holds a subscription nothing refers to and a reference nothing
- * is subscribed to. One name has to win everywhere, and it has to be the one
- * the only other implementation computes.
+ * The default chat of a session made for an older VS Code window, which reads a
+ * chat's session out of its URI and computes this one, and the default this
+ * host derives for a session whose record names none. A session any other
+ * client, a tool or an automation makes has an opaque default chat minted for
+ * it (`mintDefaultChatUri`), whose relationship to the session its `chats`
+ * catalogue carries, as the specification has it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostLegacyDefaultChat.ts#L10-L28
  *
  * It names the session's chat while the session's record says it is the
  * default, or says nothing: see `sessionOfChat`.
@@ -156,13 +146,17 @@ export const shapedSession = (uri: string): string | undefined => {
 
 /**
  * The name a chat's own conversation is kept under, or nothing for a
- * session's first chat.
+ * session's derived default chat.
  *
  * A chat is a conversation of its own, so a backend that can keep more than
  * one keeps each under a name of its own - `Start.chatId`, which is the id
- * inside the chat's URI. The exception is the session's first chat: its
- * conversation *is* the session, and a backend handed a second name for it
- * would open a second one beside the transcript everything else reads.
+ * inside the chat's URI: the chat id a shaped URI carries, as VS Code parses
+ * one, and the id after the scheme of any other. The exception is the
+ * session's first chat: its conversation *is* the session, and a backend
+ * handed a second name for it would open a second one beside the transcript
+ * everything else reads. A first chat minted opaque is told apart by its
+ * record (`ownChat`); this answers from the URI alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L894-L928
  *
  * Read from the URI rather than from `defaultChat`, because a chat that
  * became the default keeps the name it was opened under: disposing the first
@@ -170,7 +164,7 @@ export const shapedSession = (uri: string): string | undefined => {
  * it was.
  */
 export const chatIdFor = (session: string, chatUri: string): string | undefined =>
-  chatUri === chatUriFor(session) ? undefined : idOf(chatUri);
+  chatUri === chatUriFor(session) ? undefined : parseChatUri(chatUri)?.chatId ?? idOf(chatUri);
 
 /**
  * How this host names the chat of one tool call's worker.

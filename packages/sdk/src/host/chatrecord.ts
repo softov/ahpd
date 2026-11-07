@@ -33,6 +33,13 @@ export interface ChatRecord {
   /** One open chat of a session, as the store records it. */
   recordedChat(id: string, chatUri: string): StoredChat | undefined;
   /**
+   * Whether a chat is the session's own conversation, which a backend names by
+   * the session and is handed no name of its own: the chat its record keeps
+   * under the session's id, or for a chat no record holds, the default chat
+   * derived from the session's URI.
+   */
+  ownChat(session: string, chatUri: string): boolean;
+  /**
    * Write down one chat of a session that is running, where it was opened.
    *
    * The provider and config are the chat's own where it runs on a backend of
@@ -255,9 +262,15 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
     }
   };
 
+  const ownChat = (session: string, chatUri: string): boolean => {
+    const id = idOf(session);
+    const held = heldChats(id).find((one) => one.uri === chatUri);
+    return held === undefined ? chatIdFor(session, chatUri) === undefined : held.backendId === id;
+  };
+
   return {
     homeId: (chat) => chatHome.get(chat),
     chatBackings: () => chatBackings,
-    recordedChats, recordedChat, heldChats, keepChat, orderChats, dropChat, forgetChats,
+    recordedChats, recordedChat, ownChat, heldChats, keepChat, orderChats, dropChat, forgetChats,
   };
 }
