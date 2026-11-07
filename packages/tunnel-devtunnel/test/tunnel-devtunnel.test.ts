@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
+import { createServer as createHttpServer, get as httpGet } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import { connect, createServer } from 'node:net';
-import type { AddressInfo } from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 import { afterEach, expect, it, vi } from 'vitest';
 import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import type { Host as DaemonHost } from '../../sdk/src/types/host.js';
@@ -96,6 +98,47 @@ it('carries a connection from the well-known port to the one the daemon bound', 
     client.on('error', fail);
   });
   expect(answer).toBe('seen frame');
+});
+
+/*
+ * Over a guarded daemon the hop sets the daemon's own token on every request
+ * it carries, a WebSocket upgrade among them, as VS Code's CLI injects its
+ * agent host's token into each request arriving over a tunnel
+ * (cli/src/tunnels/agent_host.rs L1651-L1709 at 6b68d3fe).
+ */
+it('sets the daemon\'s token as the tkn of every request it carries, an upgrade among them', async () => {
+  const seen: string[] = [];
+  const daemon = createHttpServer((asked, answer) => { seen.push(asked.url ?? ''); answer.end('plain'); });
+  daemon.on('upgrade', (asked: IncomingMessage, socket: Socket) => {
+    seen.push(asked.url ?? '');
+    socket.end('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
+  });
+  await new Promise<void>((done) => { daemon.listen(0, '127.0.0.1', done); });
+  closing.push(() => new Promise<void>((done) => { daemon.closeAllConnections(); daemon.close(() => done()); }));
+  const bound = (daemon.address() as AddressInfo).port;
+  const hop = await forward(0, bound, () => {}, 's3cret');
+  closing.push(() => hop.close());
+
+  // A plain request, with a query and a token of the client's own.
+  const plain = await new Promise<string>((done, fail) => {
+    httpGet({ host: '127.0.0.1', port: hop.port, path: '/api/x?a=1&tkn=derived' }, (answer) => {
+      let body = '';
+      answer.on('data', (chunk) => { body += String(chunk); });
+      answer.on('end', () => { done(body); });
+    }).on('error', fail);
+  });
+  expect(plain).toBe('plain');
+
+  // A WebSocket handshake, written by hand as a client sends one.
+  const upgraded = await new Promise<string>((done, fail) => {
+    const client = connect({ host: '127.0.0.1', port: hop.port }, () => {
+      client.write('GET /?tkn=derived HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: x\r\nSec-WebSocket-Version: 13\r\n\r\n');
+    });
+    client.on('data', (chunk) => { done(String(chunk)); client.destroy(); });
+    client.on('error', fail);
+  });
+  expect(upgraded).toContain('101 Switching Protocols');
+  expect(seen).toEqual(['/api/x?a=1&tkn=s3cret', '/?tkn=s3cret']);
 });
 
 // The fake SDK ------------------------------------------------------------
@@ -380,6 +423,23 @@ it('says the derived token on a guarded daemon, and never the connector\'s', asy
   expect(said[1]).toContain(await deriveConnectionToken(REMOTE.id));
   expect(said[1]).toContain('this daemon requires its own');
   for (const line of [...said, ...logged]) expect(line).not.toContain(TOKEN);
+});
+
+it('says no derived token where the hop carries the guarded daemon\'s own', async () => {
+  const { cloud } = fakeCloud({ found: REMOTE });
+  const daemon = createServer(() => {});
+  await new Promise<void>((done) => { daemon.listen(0, '127.0.0.1', done); });
+  closing.push(() => new Promise<void>((done) => { daemon.close(() => done()); }));
+  const { kind, said } = kindFor(serviceOver(cloud), {
+    connector: 'mine',
+    guarded: () => true,
+    connectionToken: () => 's3cret',
+    daemonPort: () => (daemon.address() as AddressInfo).port,
+  });
+
+  await kind.create(tunnel({ purpose: 'system', settings: { connector: 'mine', port: TUNNEL_PORT } }), reporting().report);
+  expect(said.some((line) => line.includes('this daemon requires its own'))).toBe(false);
+  await kind.invoke('stop', tunnel({ purpose: 'system', settings: { connector: 'mine', port: TUNNEL_PORT } }), reporting().report);
 });
 
 it('reports a connector that is not open, and starts nothing', async () => {

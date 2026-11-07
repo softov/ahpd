@@ -1314,7 +1314,7 @@ does not stop the next handler or the action it observed.
 | `resource_write` | `uri` |
 | `users_changed` | nothing |
 | `terminal_open` | `terminal`, `cwd` |
-| `listening` | `runtime`, `host`, `port`, `guarded` |
+| `listening` | `runtime`, `host`, `port`, `guarded`, and `connectionToken` where one is required, the daemon's endpoint record for the plugins in its own process, as VS Code's local endpoint record carries it |
 | `stopping` | nothing |
 | `log` | `line`, the same string `onEvent` receives |
 

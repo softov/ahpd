@@ -7,15 +7,24 @@
  * on, so unless somebody has started it on exactly 31546 the two do not meet.
  *
  * This is what makes them meet: a loopback listener on the well-known port
- * that pipes each connection to the daemon's. It is a socket-to-socket copy
- * and reads nothing - the frames crossing it are the protocol's, the tap in
- * the daemon is what writes them down.
+ * that carries each connection to the daemon's. For a daemon that requires no
+ * token it is a socket-to-socket copy that reads nothing. For one that does,
+ * it carries each request, a WebSocket upgrade among them, with the daemon's
+ * own token set as its `tkn`, as VS Code's CLI injects its agent host's token
+ * into each request arriving over a tunnel: reaching the tunnel already took
+ * the Dev Tunnels access boundary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/cli/src/tunnels/agent_host.rs#L1651-L1709
+ *
+ * The token is the request's one `tkn`, since the daemon reads one and the
+ * one a client derived from the tunnel's id is not the daemon's own.
  *
  * Loopback on both ends. The tunnel reaches this from the machine it is
  * hosted on, which is this one, so a forwarder bound anywhere else would be an
  * unauthenticated way in that the daemon's own bind decision refused.
  */
 
+import { createServer as createHttpServer, request as httpRequest } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import { createServer, connect } from 'node:net';
 import type { AddressInfo, Server, Socket } from 'node:net';
 
@@ -27,19 +36,28 @@ export interface Forward {
   close(): Promise<void>;
 }
 
+/** A request's path and query with `tkn` set to the token. */
+const withToken = (url: string | undefined, token: string): string => {
+  const at = new URL(url ?? '/', 'http://hop');
+  at.searchParams.set('tkn', token);
+  return `${at.pathname}${at.search}`;
+};
+
 /**
- * Accept on `from` and pipe to `to`, both on loopback.
+ * Accept on `from` and carry to `to`, both on loopback, setting `token` as each
+ * request's `tkn` where there is one.
  *
  * A connection that cannot reach the daemon is destroyed rather than left
  * open: the client is a tunnel relay that will reconnect, and a socket held
- * open against a daemon that is not answering is one nothing ever closes.
+ * open against a daemon that is not answering is one nothing ever closes. A
+ * request that cannot reach it is answered 503, as VS Code's CLI answers one.
  */
-export function forward(from: number, to: number, log: (line: string) => void): Promise<Forward> {
+export function forward(from: number, to: number, log: (line: string) => void, token?: string): Promise<Forward> {
   const open = new Set<Socket>();
 
-  const pair = (inbound: Socket): void => {
+  /** Two sockets copied into each other, both dropped when either goes. */
+  const joined = (inbound: Socket, outbound: Socket): void => {
     open.add(inbound);
-    const outbound = connect({ host: '127.0.0.1', port: to });
     open.add(outbound);
     const drop = (): void => {
       open.delete(inbound);
@@ -58,8 +76,29 @@ export function forward(from: number, to: number, log: (line: string) => void): 
     outbound.pipe(inbound);
   };
 
+  const server: Server = token === undefined
+    ? createServer((inbound) => { joined(inbound, connect({ host: '127.0.0.1', port: to })); })
+    : createHttpServer((asked, answer) => {
+      const upstream = httpRequest({ host: '127.0.0.1', port: to, method: asked.method, path: withToken(asked.url, token), headers: asked.headers }, (said) => {
+        answer.writeHead(said.statusCode ?? 502, said.headers);
+        said.pipe(answer);
+      });
+      upstream.on('error', (error) => {
+        log(`forward to 127.0.0.1:${to} failed: ${error.message}`);
+        answer.writeHead(503).end(`Error connecting to the daemon: ${error.message}`);
+      });
+      asked.pipe(upstream);
+    }).on('upgrade', (asked: IncomingMessage, inbound: Socket, head: Buffer) => {
+      const outbound = connect({ host: '127.0.0.1', port: to }, () => {
+        const headers: string[] = [];
+        for (let at = 0; at + 1 < asked.rawHeaders.length; at += 2) headers.push(`${asked.rawHeaders[at] ?? ''}: ${asked.rawHeaders[at + 1] ?? ''}`);
+        outbound.write(`${asked.method ?? 'GET'} ${withToken(asked.url, token)} HTTP/${asked.httpVersion}\r\n${headers.join('\r\n')}\r\n\r\n`);
+        if (head.length > 0) outbound.write(head);
+      });
+      joined(inbound, outbound);
+    });
+
   return new Promise<Forward>((resolve, reject) => {
-    const server: Server = createServer(pair);
     server.once('error', reject);
     server.listen(from, '127.0.0.1', () => {
       server.removeListener('error', reject);
@@ -72,6 +111,8 @@ export function forward(from: number, to: number, log: (line: string) => void): 
         close: () => new Promise<void>((done) => {
           for (const socket of open) socket.destroy();
           open.clear();
+          // A request in flight is a connection the HTTP server holds itself.
+          (server as Server & { closeAllConnections?: () => void }).closeAllConnections?.();
           server.close(() => done());
         }),
       });

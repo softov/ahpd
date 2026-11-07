@@ -2110,6 +2110,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       host: listener.host,
       port: listener.port,
       guarded: listener.guarded,
+      ...(token === undefined ? {} : { connectionToken: token }),
     };
     await raise(folded.events, listened, failed('listening'));
     /*

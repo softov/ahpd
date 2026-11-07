@@ -311,6 +311,15 @@ export interface ListeningEvent {
   port: number;
   /** Whether a connection token is required to open one. */
   guarded: boolean;
+  /**
+   * The connection token itself, when one is required: the daemon's endpoint
+   * record for the plugins in its own process, as VS Code's local endpoint
+   * record carries `connectionToken` to processes of the same user, so a
+   * plugin that carries a connection to the daemon - a tunnel's hop - can
+   * present it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/LOCAL_ENDPOINT.md
+   */
+  connectionToken?: string;
 }
 
 /**
