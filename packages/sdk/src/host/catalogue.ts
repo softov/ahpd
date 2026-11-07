@@ -1,6 +1,6 @@
 import { ROOT, chatUriFor, subagentChatUri } from './channels.js';
 import { accountKey } from './root.js';
-import { Status, idFor, idOf, normalizeTitle, uriFor } from '../sessions/catalog.js';
+import { SESSION_META_EXTERNAL_KEY, Status, idFor, idOf, normalizeTitle, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { isDeepStrictEqual } from 'node:util';
 import type { Summary, SummaryChat } from '../types/catalog.js';
@@ -32,6 +32,19 @@ export interface MoveRefusal {
   reason: string;
   message: string;
 }
+
+/**
+ * The root's `showExternalSessions` values, `ChatExternalSessionsMode`'s five,
+ * and the bounds each reads, VS Code's agent service's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L204-L206
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L241
+ */
+const EXTERNAL_SESSIONS_MODES = ['none', 'recent', 'last24Hours', 'last7Days', 'last30Days'] as const;
+type ExternalSessionsMode = typeof EXTERNAL_SESSIONS_MODES[number];
+const DAY_MS = 24 * 60 * 60 * 1000;
+const EXTERNAL_SESSION_MAX_AGE_MS = 30 * DAY_MS;
+const RECENT_EXTERNAL_SESSION_LIMIT = 2;
+const RECENT_LOCAL_SESSION_UPDATE_LIMIT = 2;
 
 /** The session list and each row of it. */
 export interface Catalogue {
@@ -135,6 +148,12 @@ export interface Catalogue {
   listSessions(): Promise<Summary[]>;
   /** Tell every client what a refresh changed among the listed sessions: announced, updated, or retracted. */
   publishSurfacedSessions(before: Summary[], after: Summary[]): void;
+  /** Whether a session is external: a backend's session made outside this host that no person's turn has adopted. */
+  isExternal(uri: string): boolean;
+  /** An external session made this host's own by a person's turn going out in it. */
+  adoptExternalSession(uri: string): void;
+  /** The external sessions the mode shows announced where no client holds them, and the ones it hides retracted. */
+  reconcileExternalSessions(): Promise<void>;
   /** The provider a stored session recorded, where this host does not serve it. */
   unavailableProvider(id: string): string | undefined;
   readStored(): Promise<void>;
@@ -146,6 +165,37 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     madeFrom, origins, leadOf, about, browsable, recordedChats, chatBackings, sessionHolding,
     restoredSessions, restoredSubagents,
   } = ctx;
+
+  /**
+   * The sessions external to this host, by URI: a backend's session made
+   * outside it, listed or opened here, that no person's turn has adopted, as
+   * VS Code's registry keeps a discovered session external.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostCatalogListReader.ts#L148
+   */
+  const externalSessions = new Set<string>();
+  /**
+   * The external sessions a client holds a row of, answered by a listing or
+   * announced and not retracted since, as VS Code keeps the external sessions
+   * it has broadcast: what a change of mode is measured against.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5825
+   */
+  const exposedExternalSessions = new Set<string>();
+  /**
+   * The `modifiedAt` each live external session was last reconciled at, so a
+   * row that moved for anything else reconciles nothing, as VS Code keeps it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1541-L1548
+   */
+  const externalReconciliationModifiedAt = new Map<string, string>();
+  /**
+   * When the two most recently updated sessions of this host's own were
+   * updated, newest first, as the first listing found them: what `recent` hides
+   * an older external session behind, as VS Code reads the local updates it
+   * kept when it starts.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1271-L1272
+   */
+  let recentLocalSessionUpdateSnapshot: number[] | undefined;
+  /** What the last listing that hid a session logged, so a listing that hides the same says nothing again. */
+  let lastHiddenSessionsLog: string | undefined;
 
   /**
    * How a chat came to exist: its `ChatOrigin`, as VS Code's host reads a
@@ -787,6 +837,22 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     provisionalSessionKeys.delete(uri);
     dirty.delete(uri);
     marked.delete(uri);
+    externalSessions.delete(uri);
+    exposedExternalSessions.delete(uri);
+    externalReconciliationModifiedAt.delete(uri);
+  };
+  /**
+   * A row the mode no longer shows, taken back from every client while its
+   * session stays, as VS Code retracts a surfaced session: what was sent for
+   * it is dropped, so it is announced whole if the mode shows it again.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1442-L1455
+   */
+  const retractSurfacedSession = (uri: string): void => {
+    lastNotified.delete(uri);
+    dirty.delete(uri);
+    marked.delete(uri);
+    exposedExternalSessions.delete(uri);
+    ctx.broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
   };
   /**
    * A session already in the catalogue changed: its summary marked dirty, as
@@ -821,7 +887,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     // Marked, and the flush put back, where the row changed since it was last
     // marked, as the reference host marks a session dirty where its summary's
     // fields changed.
-    const row = JSON.stringify(rowOf(uri));
+    const fields = rowOf(uri);
+    /*
+     * A live external session that moved under `recent` reconciles what the
+     * mode shows, since the two it shows are the two updated last, as VS Code
+     * reconciles on an external session's `modifiedAt`.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1541-L1548
+     */
+    const modifiedAt = typeof fields.modifiedAt === 'string' ? fields.modifiedAt : undefined;
+    if (externalSessions.has(uri) && modifiedAt !== undefined && getExternalSessionsMode() === 'recent'
+      && externalReconciliationModifiedAt.get(uri) !== modifiedAt) {
+      externalReconciliationModifiedAt.set(uri, modifiedAt);
+      void reconcileExternalSessions();
+    }
+    const row = JSON.stringify(fields);
     if (marked.get(uri) === row) return;
     marked.set(uri, row);
     dirty.add(uri);
@@ -896,6 +975,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    */
   const flushSessionSummary = (uri: string, row: Bag): void => {
     if (provisionalSessionKeys.has(uri)) return;
+    // An external session no client holds a row of has nothing to change, as
+    // VS Code emits nothing for a summary it has not published.
+    if (externalSessions.has(uri) && !exposedExternalSessions.has(uri)) return;
     const before = lastNotified.get(uri);
     const changes: Bag = {};
     for (const [key, value] of Object.entries(row)) {
@@ -1446,6 +1528,15 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     // backend that dropped its keys stops being answered with them.
     if (row._meta === undefined) listedMeta.delete(resource);
     else listedMeta.set(resource, row._meta);
+    /*
+     * External where this host never ran the session, which is a session with
+     * no provider recorded, since running one is what records it, and where the
+     * store says it opened one that nobody adopted, as VS Code registers a
+     * discovered session external and a session it made not.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10687
+     */
+    if (kept.external?.(row.id) ?? kept.provider(row.id) === undefined) externalSessions.add(resource);
+    else externalSessions.delete(resource);
     return {
       resource,
       provider,
@@ -1470,8 +1561,17 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * which is what a client opening a link from another machine finds. The row
    * every client now holds is the one the next change is measured from, as it
    * is for that one.
+   *
+   * An external row the mode does not show is announced to nobody, and one it
+   * shows is one a client now holds, as VS Code asks its mode before it
+   * announces a surfaced session and keeps the external ones it broadcast.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6053-L6086
    */
   const announceSurfacedSession = (summary: Summary): void => {
+    if (readSessionExternal(summary)) {
+      if (!shouldIncludeSession(summary, getExternalSessionsMode(), Date.now())) return;
+      exposedExternalSessions.add(summary.resource);
+    }
     const { resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary as unknown as Bag;
     lastNotified.set(String(resource), mutable);
     ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
@@ -1498,28 +1598,144 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     });
 
   /**
-   * Every session summary a client is handed, as one list: the running
-   * sessions' now, the held ones behind them, most recently modified first, as
-   * VS Code's host lists its sessions with the live ones overlaid.
+   * Every session summary, as one list: the running sessions' now and the held
+   * ones behind them, as VS Code's host computes its sessions with the live
+   * ones overlaid.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5137
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5487-L5538
    *
-   * One place for the two halves to be put together, because they are one
-   * answer: the `listSessions` command pages over this and so does the
-   * `list_sessions` tool. A session this host is running is dropped out of
-   * the held summaries by its id, since it is in the first half and a session
-   * listed twice is one a client has to reconcile, and so is one not yet
-   * announced.
+   * A session this host is running is dropped out of the held summaries by its
+   * id, since it is in the first half and a session listed twice is one a
+   * client has to reconcile, and so is one not yet announced.
    */
-  const listSessions = async (): Promise<Summary[]> => {
+  const computeSessions = async (): Promise<Summary[]> => {
     const running = getOverlaySessionSummaries();
     const claimed = new Set([...running.map((summary) => idFor(summary.resource)), ...[...provisionalSessionKeys].map(idFor)]);
     const listed = await ctx.listedSessions();
+    return [...running, ...listed.filter((summary) => !claimed.has(idFor(summary.resource))).map(getSurfacedSessionSummary)];
+  };
+  /**
+   * Every session summary a client is handed: the sessions the mode shows, most
+   * recently modified first, as VS Code's host lists its sessions, which are
+   * the rows the client then holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5539-L5555
+   *
+   * One answer for the `listSessions` command, which pages over it, and the
+   * `list_sessions` tool.
+   */
+  const listSessions = async (): Promise<Summary[]> => {
+    const combined = await computeSessions();
+    const mode = getExternalSessionsMode();
+    const now = Date.now();
+    const recentSessionKeys = mode === 'recent' ? getRecentSessionKeys(combined, now) : undefined;
+    const visible = combined.filter((row) => shouldIncludeSession(row, mode, now, recentSessionKeys));
+    logHiddenSessions(combined.length - visible.length, combined.length, mode);
+    for (const row of visible) if (readSessionExternal(row)) exposedExternalSessions.add(row.resource);
     // The protocol says a server SHOULD order them most-recently-modified
     // first, and a client that has to sort a list it was handed is a client
     // doing the server's job.
-    return [...running, ...listed.filter((summary) => !claimed.has(idFor(summary.resource))).map(getSurfacedSessionSummary)]
-      .sort((a_, b_) => b_.modifiedAt.localeCompare(a_.modifiedAt));
+    return visible.sort((a_, b_) => b_.modifiedAt.localeCompare(a_.modifiedAt));
+  };
+  /**
+   * Which external sessions a listing shows, by the root's
+   * `showExternalSessions`: one of its five values, and `none`, its default,
+   * for anything else, as VS Code's agent service reads it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5656-L5662
+   */
+  const getExternalSessionsMode = (): ExternalSessionsMode =>
+    EXTERNAL_SESSIONS_MODES.find((mode) => mode === ctx.rootConfig.showExternalSessions) ?? 'none';
+  /** Whether a row is an external session's, read off its `_meta`, as VS Code reads one. */
+  const readSessionExternal = (row: Summary): boolean =>
+    ((row as unknown as Bag)._meta as Bag | undefined)?.[SESSION_META_EXTERNAL_KEY] === true;
+  /**
+   * Whether a listing shows a row: every session this host made, and an
+   * external one by the mode and the time it was last updated, as VS Code's
+   * agent service decides.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5764-L5791
+   */
+  const shouldIncludeSession = (row: Summary, mode: ExternalSessionsMode, now: number, recentSessionKeys?: ReadonlySet<string>): boolean => {
+    if (!readSessionExternal(row)) return true;
+    const modifiedTime = Date.parse(row.modifiedAt);
+    switch (mode) {
+      case 'recent':
+        return modifiedTime >= now - 7 * DAY_MS && (recentSessionKeys === undefined || recentSessionKeys.has(row.resource));
+      case 'last24Hours':
+        return modifiedTime >= now - DAY_MS;
+      case 'last7Days':
+        return modifiedTime >= now - 7 * DAY_MS;
+      case 'last30Days':
+        return modifiedTime >= now - EXTERNAL_SESSION_MAX_AGE_MS;
+      case 'none':
+        return false;
+    }
+  };
+  /**
+   * The external sessions `recent` shows: the two updated most recently, in
+   * the last seven days and no earlier than the second most recent update of
+   * a session of this host's own, as VS Code's agent service picks them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5681-L5703
+   */
+  const getRecentSessionKeys = (rows: readonly Summary[], now: number): ReadonlySet<string> => {
+    const supersededBefore = recentLocalSessionUpdateSnapshot?.[RECENT_LOCAL_SESSION_UPDATE_LIMIT - 1] ?? now - 7 * DAY_MS;
+    return new Set(rows
+      .filter((row) => readSessionExternal(row)
+        && Date.parse(row.modifiedAt) >= now - 7 * DAY_MS
+        && Date.parse(row.modifiedAt) >= supersededBefore)
+      .sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt) || (a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : 0))
+      .slice(0, RECENT_EXTERNAL_SESSION_LIMIT)
+      .map((row) => row.resource));
+  };
+  /**
+   * A line in the log where a listing hid sessions, and once for each count
+   * and mode, as VS Code's agent service says it, so a session the mode keeps
+   * out reads differently from one nothing found.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5645-L5654
+   */
+  const logHiddenSessions = (hidden: number, total: number, mode: ExternalSessionsMode): void => {
+    const signature = `${hidden}/${total}/${mode}`;
+    if (signature === lastHiddenSessionsLog) return;
+    lastHiddenSessionsLog = signature;
+    if (hidden > 0) ctx.log(`listSessions hid ${hidden} of ${total} session(s) (showExternalSessions: '${mode}')`);
+  };
+  /**
+   * The external sessions the mode shows announced where no client holds them,
+   * and the ones it hides retracted where one does, as VS Code reconciles its
+   * listing after a change of mode or an adoption.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5946-L6019
+   */
+  const reconcileExternalSessions = async (): Promise<void> => {
+    const combined = await computeSessions();
+    const mode = getExternalSessionsMode();
+    const now = Date.now();
+    const recentSessionKeys = mode === 'recent' ? getRecentSessionKeys(combined, now) : undefined;
+    for (const row of combined) {
+      if (!readSessionExternal(row)) continue;
+      const shown = shouldIncludeSession(row, mode, now, recentSessionKeys);
+      const exposed = exposedExternalSessions.has(row.resource);
+      if (shown && !exposed) announceSurfacedSession(row);
+      else if (!shown && exposed) retractSurfacedSession(row.resource);
+    }
+  };
+  /**
+   * An external session made this host's own by a person's turn going out in
+   * it, as VS Code's host adopts one on its first outgoing user turn: no
+   * longer external, so every mode shows it, its state and its row said
+   * without the mark, the row announced where no client held it, and what the
+   * mode shows reconciled, since `recent` counts the external sessions left.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/externalSessionAdoption/externalSessionAdoptionContribution.ts#L25-L30
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1471-L1481
+   */
+  const adoptExternalSession = (uri: string): void => {
+    if (!externalSessions.delete(uri)) return;
+    kept.setExternal?.(idFor(uri), false);
+    externalReconciliationModifiedAt.delete(uri);
+    const exposed = exposedExternalSessions.delete(uri);
+    if (sessions.has(uri)) {
+      changesetsAndMetaChanged(uri);
+      if (exposed) markSummaryDirty(uri);
+      else sessionAdded(uri);
+    }
+    void reconcileExternalSessions();
   };
   /**
    * A held listed session's summary with what this host knows about it read
@@ -1563,8 +1779,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * A row this host is running is left out entirely. `markSummaryDirty` speaks for
    * it, every second or so, and a row listed here is built from a listing that
    * is already behind by the time it is answered.
+   *
+   * An external session is said only while the mode shows it: announced as it
+   * comes into view, retracted as it leaves, and nothing said of one no client
+   * was shown, as VS Code announces the external sessions its mode includes.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6053-L6086
    */
   const publishSurfacedSessions = (before: Summary[], after: Summary[]): void => {
+    // The updates `recent` cuts at, as the first listing finds them.
+    recentLocalSessionUpdateSnapshot ??= after
+      .filter((row) => !readSessionExternal(row))
+      .map((row) => Date.parse(row.modifiedAt))
+      .filter(Number.isFinite)
+      .sort((a, b) => b - a)
+      .slice(0, RECENT_LOCAL_SESSION_UPDATE_LIMIT);
     /*
      * Nothing is said on the first fill.
      *
@@ -1574,17 +1802,31 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * own `listSessions`.
      */
     if (before.length === 0) return;
+    const mode = getExternalSessionsMode();
+    const now = Date.now();
+    const recentSessionKeys = mode === 'recent' ? getRecentSessionKeys([...getOverlaySessionSummaries(), ...after], now) : undefined;
     const was = new Map(before.map((row) => [row.resource, row]));
     for (const row of after) {
       const had = was.get(row.resource);
       was.delete(row.resource);
       if (sessions.has(row.resource))
         continue;
-      if (had === undefined) {
+      if (readSessionExternal(row)) {
+        const exposed = exposedExternalSessions.has(row.resource);
+        if (!shouldIncludeSession(row, mode, now, recentSessionKeys)) {
+          if (exposed) retractSurfacedSession(row.resource);
+          continue;
+        }
+        if (!exposed) {
+          announceSurfacedSession(row);
+          continue;
+        }
+      }
+      else if (had === undefined) {
         announceSurfacedSession(row);
         continue;
       }
-      if (!surfacedSessionChanged(had, row)) continue;
+      if (had === undefined || !surfacedSessionChanged(had, row)) continue;
       // Measured against the row the clients hold: what this listing read
       // before, when nothing was said about it since.
       const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = row;
@@ -1595,7 +1837,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       flushSessionSummary(row.resource, mutable);
     }
     const claimed = registeredAndBackingIds();
-    for (const [resource] of was) {
+    for (const [resource, row] of was) {
       /*
        * A session this host is running is not one that went away.
        *
@@ -1608,8 +1850,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        */
       if (sessions.has(resource) || claimed.has(idFor(resource)))
         continue;
+      // An external session no client was shown goes without a word.
+      const told = !readSessionExternal(row) || exposedExternalSessions.has(resource);
       removeNotifiedSummary(resource);
-      ctx.broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: resource });
+      if (told) ctx.broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: resource });
     }
   };
   /**
@@ -1831,5 +2075,6 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     activityOf, markSessionProvisional, sessionAdded, provisional: (uri: string) => provisionalSessionKeys.has(uri), materialized, failSessionCreationIfStillCreating,
     markSummaryDirty, flushPendingSessionSummaries, refreshSessionChangesSummary, removeNotifiedSummary, activeSessionsChanged, setAgentModels, publishAgentInfos, publishAccountInfo,
     listing, registerListedSession, announceSurfacedSession, getOverlaySessionSummaries, listSessions, publishSurfacedSessions, unavailableProvider, readStored,
+    isExternal: (uri: string) => externalSessions.has(uri), adoptExternalSession, reconcileExternalSessions,
   };
 }

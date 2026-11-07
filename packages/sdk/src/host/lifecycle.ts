@@ -1958,6 +1958,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           said();
           if (who !== undefined) kept.setSender(idOf(session.uri), turnId, who);
         }
+        // A person's turn going out makes an external session this host's own,
+        // as VS Code's host adopts one on its outgoing user turn.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/externalSessionAdoption/externalSessionAdoptionContribution.ts#L25-L30
+        if ((from?.origin?.kind ?? 'user') === 'user') ctx.adoptExternalSession(session.uri);
         void sendTurn(session, turnId, text, model, from, attachments, stopped);
       }
       return undefined;

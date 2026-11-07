@@ -19,14 +19,29 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 beforeEach(resetSdk);
 
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+/** A moment this long before now, as a transcript's `lastModified` is stamped. */
+const ago = (ms: number): number => Date.now() - ms;
+/**
+ * The root's `showExternalSessions`, pushed as a window pushes it: which of the
+ * sessions a backend lists that this host never ran a listing shows. A case
+ * about a backend's own transcripts lists them by the mode it means.
+ */
+const showExternal = async (client: { handle(request: Request): Promise<unknown> }, mode = 'last30Days'): Promise<void> => {
+  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { showExternalSessions: mode } } } });
+};
+
 describe('the catalogue', () => {
   it('orders it most-recently-modified first, as the protocol asks', async () => {
     sdk.sessions.push(
-      { sessionId: 'old', summary: 'Older', lastModified: 1_700_000_000_000, cwd: '/home/softov' },
-      { sessionId: 'new', summary: 'Newer', lastModified: 1_800_000_000_000, cwd: '/home/softov' },
+      { sessionId: 'old', summary: 'Older', lastModified: ago(2 * DAY), cwd: '/home/softov' },
+      { sessionId: 'new', summary: 'Newer', lastModified: ago(HOUR), cwd: '/home/softov' },
     );
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { title: string; status: number; resource: string }[];
     };
@@ -96,9 +111,10 @@ describe('the catalogue', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionService.ts#L252
    */
   it('counts the sessions running a turn, as VS Code\'s host, the transcripts it lists and a session at rest counting none', async () => {
-    sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
-    sdk.sessions.push({ sessionId: 'b', lastModified: 2, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'a', lastModified: ago(2 * MINUTE), cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'b', lastModified: ago(MINUTE), cwd: '/home/softov' });
     const { client, peer: p, uri, chatUri } = await running();
+    await showExternal(client);
     const count = async (): Promise<number> => (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
       snapshot: { state: { activeSessions: number } };
     }).snapshot.state.activeSessions;
@@ -130,9 +146,10 @@ describe('the catalogue', () => {
 
   it('hands over the whole catalogue to a client that asked for no page size', async () => {
     for (let i = 0; i < 120; i++)
-      sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((120 - i) * 1000), cwd: '/home/softov' });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     // `limit` omitted is the protocol's "let the server choose", and neither
     // client that connects to this host reads `nextCursor` - so a default
     // page would be a catalogue silently cut down to it.
@@ -145,9 +162,10 @@ describe('the catalogue', () => {
 
   it('stops at a bound no real catalogue reaches, and offers the rest', async () => {
     for (let i = 0; i < 1_002; i++)
-      sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((1_002 - i) * 1000), cwd: '/home/softov' });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: unknown[]; nextCursor?: string;
     };
@@ -166,9 +184,10 @@ describe('the catalogue', () => {
 
   it('walks it in pages when one is asked for, with no gaps and no repeats', async () => {
     for (let i = 0; i < 120; i++)
-      sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((120 - i) * 1000), cwd: '/home/softov' });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const seen: string[] = [];
     let cursor: string | undefined;
     let pages = 0;
@@ -203,7 +222,7 @@ describe('the catalogue', () => {
 });
 
 describe('a session that already happened', () => {
-  const older = { sessionId: 'older', summary: 'A real title', lastModified: 1_700_000_000_000, cwd: '/home/softov' };
+  const older = { sessionId: 'older', summary: 'A real title', lastModified: ago(DAY), cwd: '/home/softov' };
 
   it('opens from its transcript without spawning anything', async () => {
     sdk.sessions.push(older);
@@ -264,6 +283,7 @@ describe('a session that already happened', () => {
     });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const listed = await client.handle({ method: 'listSessions', params: {} }) as { items: { title: string }[] };
     const opened = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/older' } }) as {
       snapshot: { state: { title: string } };
@@ -279,6 +299,7 @@ describe('a session that already happened', () => {
     sdk.sessions.push({ ...older, cwd: here });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const listed = await client.handle({ method: 'listSessions', params: {} }) as {
       items: { resource: string; workingDirectories: string[] }[];
     };
@@ -586,6 +607,8 @@ describe('a session\'s _meta', () => {
   it('says the whole map when an artifact of a session nothing runs goes', async () => {
     const stamp = new Date(0).toISOString();
     const store = memorySessions();
+    // A session this host ran, which is what kept its artifacts.
+    store.setProvider('kept', 'echo');
     store.setArtifacts?.('kept', [{ id: 'a1', type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com' }]);
     const host = createHost({
       path: '/tmp',
@@ -611,11 +634,12 @@ describe('a session\'s _meta', () => {
 
 describe('the flags a client sets', () => {
   it('keeps read and archived, and tells everyone watching', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/home/softov' });
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await showExternal(client);
     const uri = 'ahp-session:/old';
     await client.handle({ method: 'subscribe', params: { channel: uri } });
 
@@ -632,9 +656,10 @@ describe('the flags a client sets', () => {
   });
 
   it('needs no agent to record one', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/home/softov' });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     // Marking a row read is what somebody does from a catalogue. Starting an
     // agent to record a bit would start one per row scrolled past.
     client.handle({
@@ -1553,7 +1578,7 @@ describe('a summary that did not change', () => {
     // The host's own path, and every directory its backend claims, is browsed
     // before the stored rows are read - so the row has to live somewhere else
     // for there to be a second read of it to be suppressed.
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/github/elsewhere' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/github/elsewhere' });
     const counted_ = counted();
     const host = createHost({
       path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), changes: counted_.source,
@@ -1561,6 +1586,7 @@ describe('a summary that did not change', () => {
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await showExternal(client);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     // Reading the directory at boot is one read of it, and the summary that
     // comes out is the row's `status` and its counts and nothing else. Waited
@@ -1596,7 +1622,7 @@ describe('a summary that did not change', () => {
   });
 
   it('sends zero counts for a listed row once its folder has no changes', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/github/elsewhere' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/github/elsewhere' });
     const counted_ = counted();
     let files = 4;
     counted_.source.summary = () => ({ files });
@@ -1606,6 +1632,7 @@ describe('a summary that did not change', () => {
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await showExternal(client);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     await vi.waitFor(() => { expect(rowsMoved(p, 'ahp-session:/old').at(-1)).toMatchObject({ changes: { files: 4 } }); }, { timeout: 3000 });
 
@@ -1897,7 +1924,7 @@ describe("a listed row's _meta", () => {
    * finds them.
    */
   const PATH = '/home/softov';
-  const STAMP = '2026-10-25T00:00:00.000Z';
+  const STAMP = new Date(ago(DAY)).toISOString();
   const row = (id: string, meta?: Record<string, unknown>): Listed => ({
     id,
     title: id,
@@ -1926,9 +1953,11 @@ describe("a listed row's _meta", () => {
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: Row[] };
-    expect(listed.items.find((one) => one.resource === 'ahp-session:/one')?._meta).toEqual({ bot: 'motion', color: 'red' });
+    expect(listed.items.find((one) => one.resource === 'ahp-session:/one')?._meta)
+      .toEqual({ bot: 'motion', color: 'red', 'vscode.external': true });
   });
 
   it("sends a row's _meta when the row is found rather than listed", async () => {
@@ -1941,17 +1970,18 @@ describe("a listed row's _meta", () => {
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await showExternal(client);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
 
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/late' } }) as {
       snapshot: { state: { _meta?: Record<string, unknown> } };
     };
-    expect(opened.snapshot.state._meta).toEqual({ bot: 'motion' });
+    expect(opened.snapshot.state._meta).toEqual({ bot: 'motion', 'vscode.external': true });
     // And the row it announced, so a client that never opened it has the mark.
     const added = p.notes
       .filter((one) => one.method === 'root/sessionAdded')
       .map((one) => (one.params as { summary?: Row }).summary);
-    expect(added.find((one) => one?.resource === 'ahp-session:/late')?._meta).toEqual({ bot: 'motion' });
+    expect(added.find((one) => one?.resource === 'ahp-session:/late')?._meta).toEqual({ bot: 'motion', 'vscode.external': true });
   });
 
   it("lets the host's keys win a collision with a listed one", async () => {
@@ -1964,9 +1994,133 @@ describe("a listed row's _meta", () => {
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: Row[] };
     expect(listed.items.find((one) => one.resource === 'ahp-session:/one')?._meta)
-      .toEqual({ git: { branchName: 'main' }, bot: 'motion' });
+      .toEqual({ git: { branchName: 'main' }, bot: 'motion', 'vscode.external': true });
+  });
+});
+
+/*
+ * A session a backend lists that this host never ran is external, as VS Code's
+ * agent host calls a session its provider's CLI made outside the host: marked
+ * `vscode.external`, listed by the root's `showExternalSessions` (none by
+ * default), and made this host's own by a person's turn going out in it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5764-L5791
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/externalSessionAdoption/externalSessionAdoptionContribution.ts#L25-L30
+ */
+describe('a session made outside this host', () => {
+  const at = (before: number) => ({ lastModified: ago(before), cwd: '/home/softov' });
+  type Row = { resource: string; title: string; _meta?: Record<string, unknown> };
+
+  /** A client of a host over `store`, watching the root, and a way to set the mode and list. */
+  const watching = async (store = memorySessions()) => {
+    const p = peer();
+    const client = serving('/home/softov', [], { sessions: store }).accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    const mode = async (value: string): Promise<void> => {
+      await showExternal(client, value);
+      await settle();
+    };
+    const listed = async (): Promise<Row[]> =>
+      (await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: Row[] }).items;
+    const said = (method: string): unknown[] => p.notes.filter((one) => one.method === method).map((one) => one.params);
+    return { client, p, mode, listed, said };
+  };
+
+  it('lists none of them by default, and every session this host made', async () => {
+    sdk.sessions.push({ sessionId: 'theirs', summary: 'Theirs', ...at(HOUR) });
+    const { client, listed } = await watching();
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/mine', provider: 'claude' } });
+    await firstMessage(client, chatUriFor('ahp-session:/mine'));
+    expect((await listed()).map((one) => one.resource)).toEqual(['ahp-session:/mine']);
+  });
+
+  it('lists the ones the mode names, each marked external', async () => {
+    sdk.sessions.push(
+      { sessionId: 'hour', summary: 'An hour ago', ...at(HOUR) },
+      { sessionId: 'days', summary: 'Two days ago', ...at(2 * DAY) },
+      { sessionId: 'weeks', summary: 'Ten days ago', ...at(10 * DAY) },
+      { sessionId: 'months', summary: 'Forty days ago', ...at(40 * DAY) },
+    );
+    const { mode, listed } = await watching();
+    const titles = async (value: string): Promise<string[]> => {
+      await mode(value);
+      return (await listed()).map((one) => one.title);
+    };
+    expect(await titles('none')).toEqual([]);
+    expect(await titles('last24Hours')).toEqual(['An hour ago']);
+    expect(await titles('last7Days')).toEqual(['An hour ago', 'Two days ago']);
+    expect(await titles('last30Days')).toEqual(['An hour ago', 'Two days ago', 'Ten days ago']);
+    expect(await titles('recent')).toEqual(['An hour ago', 'Two days ago']);
+    expect((await listed())[0]?._meta).toEqual({ 'vscode.external': true });
+  });
+
+  it('keeps recent to the two updated last, none older than the second most recent of this host\'s own', async () => {
+    // Two sessions this host ran, an hour and three hours ago: the cutoff is three hours.
+    const store = memorySessions();
+    store.setProvider('mine1', 'claude');
+    store.setProvider('mine2', 'claude');
+    sdk.sessions.push(
+      { sessionId: 'mine1', summary: 'Mine, an hour ago', ...at(HOUR) },
+      { sessionId: 'mine2', summary: 'Mine, three hours ago', ...at(3 * HOUR) },
+      { sessionId: 'ten', summary: 'Theirs, ten minutes ago', ...at(HOUR / 6) },
+      { sessionId: 'half', summary: 'Theirs, half an hour ago', ...at(HOUR / 2) },
+      { sessionId: 'two', summary: 'Theirs, two hours ago', ...at(2 * HOUR) },
+      { sessionId: 'four', summary: 'Theirs, four hours ago', ...at(4 * HOUR) },
+    );
+    const { mode, listed } = await watching(store);
+    await mode('recent');
+    expect((await listed()).map((one) => one.title))
+      .toEqual(['Theirs, ten minutes ago', 'Theirs, half an hour ago', 'Mine, an hour ago', 'Mine, three hours ago']);
+  });
+
+  it('keeps one this host opened external across a restart until a turn adopts it', async () => {
+    // What a run that opened it and saw no person's turn in it wrote down.
+    const store = memorySessions();
+    store.setProvider('older', 'claude');
+    store.setExternal?.('older', true);
+    sdk.sessions.push({ sessionId: 'older', summary: 'Opened, not adopted', ...at(HOUR) });
+    const { mode, listed } = await watching(store);
+    expect(await listed()).toEqual([]);
+    await mode('last24Hours');
+    expect((await listed()).map((one) => one._meta)).toEqual([{ 'vscode.external': true }]);
+  });
+
+  it('adopts one when a person\'s turn goes out in it, announcing it and listing it under every mode', async () => {
+    sdk.sessions.push({ sessionId: 'older', summary: 'Theirs', ...at(HOUR) });
+    sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
+    wrote('older', '/home/softov');
+    const store = memorySessions();
+    const { client, listed, said } = await watching(store);
+    expect(await listed()).toEqual([]);
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/older' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    };
+    expect(opened.snapshot.state._meta).toEqual({ 'vscode.external': true });
+
+    await client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUriFor('ahp-session:/older'),
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'and now?' } },
+      },
+    });
+    await settle(6);
+    expect(store.external?.('older')).toBeUndefined();
+    expect((said('root/sessionAdded') as { summary: Row }[]).map((one) => one.summary.resource)).toContain('ahp-session:/older');
+    const row = (await listed()).find((one) => one.resource === 'ahp-session:/older');
+    expect(row?._meta?.['vscode.external']).toBeUndefined();
+  });
+
+  it('tells every client what a change of mode shows and what it hides', async () => {
+    sdk.sessions.push({ sessionId: 'hour', summary: 'An hour ago', ...at(HOUR) });
+    const { mode, listed, said } = await watching();
+    await listed();
+    await mode('last24Hours');
+    expect((said('root/sessionAdded') as { summary: Row }[]).map((one) => one.summary.resource)).toEqual(['ahp-session:/hour']);
+    await mode('none');
+    expect((said('root/sessionRemoved') as { session: string }[]).map((one) => one.session)).toEqual(['ahp-session:/hour']);
   });
 });

@@ -94,6 +94,14 @@ export const activityOf = (emit: Emit): Activity => {
 export const uriFor = (sessionId: string): string => `ahp-session:/${sessionId}`;
 
 /**
+ * The `_meta` key a session external to this host is marked under, VS Code's:
+ * a backend's session made outside the host that no person's turn here has
+ * adopted.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1115
+ */
+export const SESSION_META_EXTERNAL_KEY = 'vscode.external';
+
+/**
  * The id inside a channel URI, whatever its scheme.
  *
  * A client may name a channel under any scheme: an older VS Code window names

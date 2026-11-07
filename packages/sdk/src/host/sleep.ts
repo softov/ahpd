@@ -434,6 +434,14 @@ export function createSleep(ctx: HostContext): Sleep {
     // A host that closed while this resume read its record starts no agent.
     if (ctx.closed) throw new Error(CLOSING);
     /*
+     * A backend's session this host never ran stays external once opened, until
+     * a person's turn adopts it: written down before its provider is, since a
+     * provider recorded is what says this host ran a session, as VS Code's
+     * registry keeps a restored session's external flag.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14724
+     */
+    if (ctx.isExternal(named)) kept.setExternal?.(id, true);
+    /*
      * The session is the owner's, whatever chat it comes back as.
      *
      * A recorded default that is one of another backend - its own chat was

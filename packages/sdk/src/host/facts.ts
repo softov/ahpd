@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../tools/artifacts.js';
-import { idOf } from '../sessions/catalog.js';
+import { SESSION_META_EXTERNAL_KEY, idOf } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { CREATED_BY_META, MULTI_ROOT_META, REMOTE_ORIGIN_META, SPAWN_DEPTH_META, depthOf } from '../sessions/remotesession.js';
 import { reason } from '../utils/values.js';
@@ -359,6 +359,9 @@ export function createFacts(ctx: HostContext): Facts {
         : { [REMOTE_ORIGIN_META]: { session: origin.session, chat: origin.chat, depth: origin.depth }, [SPAWN_DEPTH_META]: depthOf(byAgent, origin) }),
       ...(made === undefined ? {} : { [CREATED_BY_META]: made }),
       ...(multiRoot === undefined ? {} : { [MULTI_ROOT_META]: multiRoot }),
+      // A backend's session made outside this host and adopted by nobody here,
+      // marked where the window reads it.
+      ...(ctx.isExternal(uri) ? { [SESSION_META_EXTERNAL_KEY]: true } : {}),
     };
     if (dir === undefined) {
       const meta = { ...byAgent, ...pluginMeta(uri), ...sent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };

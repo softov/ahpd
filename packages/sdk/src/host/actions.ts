@@ -393,10 +393,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
             else target[key] = value;
           }
         };
+        const showing = rootConfig.showExternalSessions;
         if (action.replace === true) {
           for (const key of Object.keys(rootConfig)) delete rootConfig[key];
         }
         into(rootConfig, ours);
+        // The external sessions mode moved: what it shows is said again, as
+        // VS Code reconciles its listing on a change of mode.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1560-L1571
+        if (rootConfig.showExternalSessions !== showing) void ctx.reconcileExternalSessions();
         // A merged sessions key moved: the pass runs now, with the new days.
         if (Object.prototype.hasOwnProperty.call(config, AUTO_ARCHIVE_KEY) || Object.prototype.hasOwnProperty.call(config, AUTO_DELETE_KEY)) ctx.scheduleSessionLifecycle();
         log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
