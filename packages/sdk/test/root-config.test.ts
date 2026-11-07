@@ -641,13 +641,13 @@ it('declares the two limits, each with its default', async () => {
   expect(schema.properties.clientQueueBytes).toEqual({
     type: 'number',
     title: 'Client Queue Bytes',
-    description: expect.stringContaining('At least 1048576.'),
+    description: expect.stringContaining('At least 1048576; 0 sets no limit'),
     default: 16777216,
   });
   expect(schema.properties.replayBytes).toEqual({
     type: 'number',
     title: 'Replay Bytes',
-    description: expect.stringContaining('At least 1048576.'),
+    description: expect.stringContaining('At least 1048576; 0 sets no limit'),
     default: 33554432,
   });
 });
@@ -686,6 +686,16 @@ it('reads a pushed limit at the time of use, and its default when it cannot', as
   expect(await held()).toMatchObject({ clientQueueBytes: 1024, replayBytes: 'plenty' });
   expect(clientQueueBytes(await held())).toBe(CLIENT_QUEUE_BYTES);
   expect(replayBytes(await held())).toBe(REPLAY_BYTES);
+
+  /*
+   * `0` sets no limit, VS Code's: its host writes to an open socket whatever
+   * the socket holds, and replays by the count alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/webSocketTransport.ts#L80-L85
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4247-L4250
+   */
+  await push({ clientQueueBytes: 0, replayBytes: 0 });
+  expect(clientQueueBytes(await held())).toBe(Number.POSITIVE_INFINITY);
+  expect(replayBytes(await held())).toBe(Number.POSITIVE_INFINITY);
 });
 
 it('refuses a limit pushed without config:write, as it does any other host key', async () => {

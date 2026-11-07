@@ -468,7 +468,8 @@ What these things are, rather than how they behave on the wire: a session is [SE
 A client that reads slower than the host writes leaves every frame it has not
 taken in its socket's queue, and nothing in the protocol bounds that queue: a
 socket sends while it is open, and what it holds until the client reads it is
-the socket's own business. `clientQueueBytes` bounds it, 16 MiB by default.
+the socket's own business. `clientQueueBytes` bounds it, 16 MiB by default;
+`0` sets no limit, as VS Code's host writes to an open socket whatever it holds.
 Before each send the peer reads what its wire still holds - `bufferedAmount` on
 Node's `ws` and on Deno's `WebSocket`, `getBufferedAmount` on Bun, the write
 buffer's length on stdio - and a client past the limit is named in the log and
@@ -481,7 +482,8 @@ or with snapshots. A wire that cannot say what it holds - the in-process pair -
 is never closed for being behind.
 
 The replay buffer is bounded twice: the last 1000 envelopes, or `replayBytes`
-of them, 32 MiB by default, whichever comes first. An envelope weighs the
+of them, 32 MiB by default, whichever comes first; a `replayBytes` of `0` sets no
+limit, the thousand envelopes alone, as VS Code's host replays. An envelope weighs the
 length of the text it goes out as, measured once when the host buffers it, and
 the oldest are dropped while either limit is passed. The newest is kept
 whatever it weighs on its own, because one action larger than the whole budget
@@ -490,7 +492,7 @@ is still the state this host holds.
 Both keys are this host's own in the root config schema, and both are read
 where they are used rather than held, so a value pushed while the host runs
 applies to the next send and to the next action buffered. Either may be pushed
-down to 1 MiB and no further, and pushing one needs `config:write`
+down to 1 MiB, or to `0` for no limit, and pushing one needs `config:write`
 ([AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders)).
 
 ### Turns

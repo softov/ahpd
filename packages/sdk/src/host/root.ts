@@ -514,7 +514,7 @@ export function createRoot(ctx: HostContext): Root {
       clientQueueBytes: {
         type: 'number',
         title: 'Client Queue Bytes',
-        description: `The most a client that is not reading may have queued for it, in bytes, before the host closes it. At least ${MINIMUM_LIMIT_BYTES}.`,
+        description: `The most a client that is not reading may have queued for it, in bytes, before the host closes it. At least ${MINIMUM_LIMIT_BYTES}; 0 sets no limit, as VS Code's host writes to an open socket whatever it holds.`,
         default: CLIENT_QUEUE_BYTES,
       },
       /*
@@ -536,7 +536,7 @@ export function createRoot(ctx: HostContext): Root {
       replayBytes: {
         type: 'number',
         title: 'Replay Bytes',
-        description: `The most the replay buffer holds, in bytes, before it drops its oldest envelopes. At least ${MINIMUM_LIMIT_BYTES}.`,
+        description: `The most the replay buffer holds, in bytes, before it drops its oldest envelopes. At least ${MINIMUM_LIMIT_BYTES}; 0 sets no limit, the thousand envelopes alone, as VS Code's host replays.`,
         default: REPLAY_BYTES,
       },
     },
