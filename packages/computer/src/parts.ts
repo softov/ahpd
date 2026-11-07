@@ -41,6 +41,14 @@ export interface Part {
   archives?: Record<string, { url: string; sha256: string }>;
   /** The commands in its own `bin`, which is what a machine puts on its `PATH`. */
   bin: string[];
+  /**
+   * For an archive part, where each command is in its download, by the
+   * command's name: the publisher's own layout for this version, as VS Code
+   * knows each agent SDK's layout rather than searching it. A command it names
+   * no path for is the one the part's `packages` install.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L80
+   */
+  paths?: Record<string, string>;
   /** The parts that have to be there first; `node` is one of them for everything installed by npm. */
   requires?: string[];
   /** The environment that switches this CLI's own update off, set by its launcher. */
@@ -184,6 +192,26 @@ const entryOf = (value: unknown, where: string): Part => {
   if (kind === 'archive' && list('packages') !== undefined && !(list('requires') ?? []).includes('node')) {
     return said(`${where} installs npm packages and does not require node`);
   }
+  // Each a path in the download, of segments a shell line takes unquoted.
+  const paths = ((): Part['paths'] => {
+    if (held.paths === undefined) return undefined;
+    if (kind !== 'archive') return said(`${where} names paths, which only an archive part's download has`);
+    if (typeof held.paths !== 'object' || held.paths === null || Array.isArray(held.paths)) {
+      return said(`${where} has paths that are not one per command`);
+    }
+    const per: Record<string, string> = {};
+    for (const [command, one] of Object.entries(held.paths as Record<string, unknown>)) {
+      if (!bin.includes(command)) return said(`${where} has a path for ${command}, which its bin does not name`);
+      const path = typeof one === 'string' ? one : said(`${where} has the path of ${command}, which is not text`);
+      if (path.split('/').some((segment) => segment === '.' || segment === '..' || !SHELL_TOKEN.test(segment))) {
+        return said(`${where} has the path ${path} for ${command}, which is not a path in its download`);
+      }
+      per[command] = path;
+    }
+    return per;
+  })();
+  const pathless = kind === 'archive' && list('packages') === undefined ? bin.find((command) => paths?.[command] === undefined) : undefined;
+  if (pathless !== undefined) return said(`${where} names no path in its download for ${pathless}`);
   const updates = typeof held.updates === 'object' && held.updates !== null && !Array.isArray(held.updates)
     ? Object.fromEntries(Object.entries(held.updates as Record<string, unknown>).map(([key, one]) =>
       [token(key, 'update variable'), token(typeof one === 'string' ? one : said(`${where} has the update ${key}, which is not text`), 'update value')]))
@@ -196,6 +224,7 @@ const entryOf = (value: unknown, where: string): Part => {
     ...(list('packages') === undefined ? {} : { packages: list('packages') as string[] }),
     ...(archives === undefined ? {} : { archives }),
     bin,
+    ...(paths === undefined ? {} : { paths }),
     ...(list('requires') === undefined ? {} : { requires: list('requires') as string[] }),
     ...(updates === undefined ? {} : { updates }),
     ...(list('plugins') === undefined ? {} : { plugins: list('plugins') as string[] }),
@@ -585,12 +614,8 @@ const download = (part: Part, after: string[], strip = false): string => [
   ' curl --fail --silent --show-error --location --output part "${url}"; \\',
   ' echo "${sum}  part" | sha256sum --check --strict -; \\',
   ` mkdir -p /opt/ahpd/${part.id}; \\`,
-  // Unstripped, because an archive does not have to hold one wrapping
-  // directory and three of the five do not: goose lays out
-  // `goose-x86_64-unknown-linux-gnu/goose`, while opencode and amp ship the
-  // executable at the root, where stripping a component leaves nothing at all.
-  // Nothing here needs the depth, because the launcher below finds the
-  // executable rather than naming a path.
+  // Unstripped for an archive part, so a path its entry names is the
+  // publisher's own path in the download.
   ` tar "${'${how}'}" part -C /opt/ahpd/${part.id}${strip ? ' --strip-components=1' : ''}; \\`,
   // Each is a statement of its own, and the semicolon is added here rather than
   // left to the caller: docker joins a continued `RUN` into one line with
@@ -600,30 +625,29 @@ const download = (part: Part, after: string[], strip = false): string => [
 ].join('\n').replace(/; \\$/, ';');
 
 /**
- * The launcher of a part installed by download.
+ * The launcher of each command of a part installed by download.
  *
- * What is inside the archive is the publisher's own layout - a binary at the
- * root, one under `bin`, one under `dist-package` - so the build finds the
- * executable of the name the entry gives and writes its path into the launcher,
- * rather than this file having to know three layouts.
- *
- * A bin the part's npm packages installed, in `node_modules/.bin`, is written
- * as an npm part's is, ahead of looking in the archive.
+ * Each runs the path the entry names for it in the download, the publisher's
+ * own layout for this version, as VS Code knows each agent SDK's layout rather
+ * than searching it; a build whose download holds nothing executable there
+ * fails, naming the path. A command the publisher put at `bin/<command>` is
+ * its own launcher, since one written over it would exec itself. A command
+ * with no path is the one the part's npm packages installed, in
+ * `node_modules/.bin`, and is written as an npm part's is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L80
  */
 const launchersIn = (part: Part): string[] => [`mkdir -p /opt/ahpd/${part.id}/bin`, ...part.bin.map((bin) => {
-  // A symlink counts: `npm` and `npx` are symlinks in a Node tarball, and some
-  // of these CLIs ship their binary behind one.
-  const found = `found=$(find /opt/ahpd/${part.id} -name ${bin} \\( -type f -o -type l \\) -perm -u+x | head -n 1);`;
-  // One line, because the shell has no `else` without a command after it and the
-  // launcher is four statements. A publisher that already put the command where
-  // a launcher goes has written the launcher itself - devin ships `bin/devin` -
-  // and one written over it would exec itself, so it is left alone.
+  const launcher = `/opt/ahpd/${part.id}/bin/${bin}`;
+  const path = part.paths?.[bin];
+  const missing = (said: string): string => `{ echo "the ${part.id} download holds no ${said} to run" >&2; exit 1; }`;
+  if (path === `bin/${bin}`) return `test -x ${launcher} || ${missing(path)}`;
+  if (path !== undefined) {
+    return `test -x /opt/ahpd/${part.id}/${path} || ${missing(path)}; `
+      + `${writes(launcher, part, `/opt/ahpd/${part.id}/${path}`)}; chmod +x ${launcher}`;
+  }
   const npm = `/opt/ahpd/${part.id}/node_modules/.bin/${bin}`;
-  const fromNpm = part.packages === undefined ? '' : `elif test -e ${npm}; then ${scriptOrNative(npm)}; `
-    + `${writes(`/opt/ahpd/${part.id}/bin/${bin}`, part, '$run')}; chmod +x /opt/ahpd/${part.id}/bin/${bin}; `;
-  return `if test -x /opt/ahpd/${part.id}/bin/${bin}; then :; ${fromNpm}else ${found} `
-    + `test -n "$found" || { echo "the ${part.id} archive holds no ${bin} to run" >&2; exit 1; }; `
-    + `${writes(`/opt/ahpd/${part.id}/bin/${bin}`, part, '$found')}; chmod +x /opt/ahpd/${part.id}/bin/${bin}; fi`;
+  return `test -e ${npm} || ${missing(`node_modules/.bin/${bin}`)}; ${scriptOrNative(npm)}; `
+    + `${writes(launcher, part, '$run')}; chmod +x ${launcher}`;
 })];
 
 /** The `npm install` a part installed by npm runs, and the launcher it leaves. */

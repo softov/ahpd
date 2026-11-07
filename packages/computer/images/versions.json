@@ -81,7 +81,8 @@
       }
     },
     "updates": { "OPENCODE_DISABLE_AUTOUPDATE": "1" },
-    "bin": ["opencode"]
+    "bin": ["opencode"],
+    "paths": { "opencode": "opencode" }
   },
   {
     "id": "kilo",
@@ -108,7 +109,8 @@
         "sha256": "17c6b090db6acc5605da904bbe19cc2765bc7a6786019d85a6d0a361de06dbf7"
       }
     },
-    "bin": ["goose"]
+    "bin": ["goose"],
+    "paths": { "goose": "goose" }
   },
   {
     "id": "pi",
@@ -143,7 +145,8 @@
         "sha256": "438ca7f8280b3ef0747afc406e827d9e182156000277a1660358ac4fbd04156e"
       }
     },
-    "bin": ["devin"]
+    "bin": ["devin"],
+    "paths": { "devin": "bin/devin" }
   },
   {
     "id": "cursor",
@@ -160,7 +163,8 @@
         "sha256": "22a36df9720830668ccd4d707e5190204ab9c8a0efb2f068cc914895f804d3ec"
       }
     },
-    "bin": ["cursor-agent"]
+    "bin": ["cursor-agent"],
+    "paths": { "cursor-agent": "dist-package/cursor-agent" }
   },
   {
     "id": "amp",
@@ -179,7 +183,8 @@
         "sha256": "b9e365221838b1a6e177c2fcd8f25a30086c3630e0330f1f6f74b25d2d4126c2"
       }
     },
-    "bin": ["amp-acp", "amp"]
+    "bin": ["amp-acp", "amp"],
+    "paths": { "amp-acp": "amp-acp" }
   },
   {
     "id": "qwen",

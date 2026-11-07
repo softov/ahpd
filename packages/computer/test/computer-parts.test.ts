@@ -52,6 +52,7 @@ const archive = (over: Record<string, unknown> = {}): Record<string, unknown> =>
   version: '1.53.0',
   archives: { 'linux-x64': { url: 'https://example.test/goose.tar.gz', sha256: 'ab'.repeat(32) } },
   bin: ['goose'],
+  paths: { goose: 'goose' },
   ...over,
 });
 
@@ -329,14 +330,17 @@ it('installs an archive part\'s npm packages beside its download, each at its ow
       'linux-arm64': { url: 'https://example.test/amp-acp-arm64.tar.gz', sha256: 'cd'.repeat(32) },
     },
     bin: ['amp-acp', 'amp'],
+    paths: { 'amp-acp': 'amp-acp' },
   })])[1] as Part;
   const file = dockerfileOf(part);
 
   expect(file).toContain(`COPY --from=${nodeTag()} /opt/ahpd/node /opt/ahpd/node`);
   expect(file).toContain('RUN npm install --prefix /opt/ahpd/amp --no-audit --no-fund --loglevel=error @ampcode/cli@0.0.1791273659-g33d612');
-  // A bin npm installed is written from `node_modules/.bin`, and the rest found in the archive.
-  expect(file).toContain('elif test -e /opt/ahpd/amp/node_modules/.bin/amp; then run=/opt/ahpd/amp/node_modules/.bin/amp;');
-  expect(file).toContain('found=$(find /opt/ahpd/amp -name amp-acp');
+  // A command with no path is the one npm installed, written from
+  // `node_modules/.bin`, and the other runs from its path in the download.
+  expect(file).toContain('test -e /opt/ahpd/amp/node_modules/.bin/amp || { echo "the amp download holds no node_modules/.bin/amp to run" >&2; exit 1; }; run=/opt/ahpd/amp/node_modules/.bin/amp;');
+  expect(file).toContain('test -x /opt/ahpd/amp/amp-acp || { echo "the amp download holds no amp-acp to run" >&2; exit 1; }');
+  expect(file).toContain('"/opt/ahpd/amp/amp-acp" >> /opt/ahpd/amp/bin/amp-acp');
   expect(tagOf(part)).toBe('ahpd-part/amp:0.9.0-0.0.1791273659-g33d612');
   expect(tagOf(part, undefined, file)).toMatch(/^ahpd-part\/amp:0\.9\.0-0\.0\.1791273659-g33d612-[0-9a-f]{12}$/u);
 
@@ -367,12 +371,19 @@ it('turns a CLI own update off in the launcher, not in the machine', () => {
   expect(dockerfileOf(one)).not.toContain('ENV COPILOT_AUTO_UPDATE');
 });
 
-it('builds an archive part by downloading it, and finds its binary wherever it sits', () => {
+/*
+ * An archive part runs each command from the path its entry names in the
+ * download, the publisher's layout for that version, as VS Code knows each
+ * agent SDK's layout rather than searching it (build/agent-sdk/README.md L80
+ * at 6b68d3fe).
+ */
+it('builds an archive part by downloading it, and runs each command from the path its entry names', () => {
   const one = read([archive({
     archives: {
       'linux-x64': { url: 'https://example.test/goose.tar.gz', sha256: 'ab'.repeat(32) },
       'linux-arm64': { url: 'https://example.test/goose-arm64.tar.bz2', sha256: 'cd'.repeat(32) },
     },
+    paths: { goose: 'goose-x86_64/goose' },
   })])[0] as Part;
   const file = dockerfileOf(one);
 
@@ -382,13 +393,33 @@ it('builds an archive part by downloading it, and finds its binary wherever it s
   expect(file).toContain('how=-xjf;;');
   expect(file).toContain('how=-xzf;;');
   expect(file).toContain('tar "${how}" part -C /opt/ahpd/goose');
-  // The publisher's own layout is the build's problem, not this file's: the
-  // launcher holds the path the find found.
-  expect(file).toContain("found=$(find /opt/ahpd/goose -name goose \\( -type f -o -type l \\) -perm -u+x");
-  expect(file).toContain(`echo "the goose archive holds no goose to run" >&2`);
-  // devin ships `bin/devin`, which is where its launcher goes, so an executable
-  // already at that path is left alone rather than exec'd into itself.
-  expect(file).toContain('if test -x /opt/ahpd/goose/bin/goose; then :; else found=$(find');
+  // The launcher runs the named path, and a download without it fails the build.
+  expect(file).toContain('test -x /opt/ahpd/goose/goose-x86_64/goose || { echo "the goose download holds no goose-x86_64/goose to run" >&2; exit 1; }');
+  expect(file).toContain('"/opt/ahpd/goose/goose-x86_64/goose" >> /opt/ahpd/goose/bin/goose');
+  expect(file).not.toContain('find ');
+
+  // A command the publisher put at `bin/<command>` is its own launcher, so
+  // nothing is written over it.
+  const devin = dockerfileOf(read([archive({
+    id: 'devin',
+    name: 'Devin',
+    archives: {
+      'linux-x64': { url: 'https://example.test/devin.tar.gz', sha256: 'ab'.repeat(32) },
+      'linux-arm64': { url: 'https://example.test/devin-arm64.tar.gz', sha256: 'cd'.repeat(32) },
+    },
+    bin: ['devin'],
+    paths: { devin: 'bin/devin' },
+  })])[0] as Part);
+  expect(devin).toContain('test -x /opt/ahpd/devin/bin/devin || { echo "the devin download holds no bin/devin to run" >&2; exit 1; }');
+  expect(devin).not.toContain('> /opt/ahpd/devin/bin/devin');
+});
+
+it('refuses an archive part that names no path for a command, or a path outside its download', () => {
+  expect(() => read([archive({ paths: undefined })])).toThrow(/names no path in its download for goose/);
+  expect(() => read([archive({ paths: { goose: '../goose' } })])).toThrow(/has the path \.\.\/goose for goose, which is not a path in its download/);
+  expect(() => read([archive({ paths: { goose: '/usr/bin/goose' } })])).toThrow(/which is not a path in its download/);
+  expect(() => read([archive({ paths: { goose: 'goose', other: 'other' } })])).toThrow(/has a path for other, which its bin does not name/);
+  expect(() => read([node(), npm({ paths: { 'codex-acp': 'codex-acp' } })])).toThrow(/names paths, which only an archive part's download has/);
 });
 
 it('refuses an archive part whose file gives no download for a platform', () => {
@@ -451,8 +482,9 @@ it('writes every Dockerfile as instructions docker would accept', () => {
   };
   const cases = [
     [node()], [node(), npm()], [archive({ archives: both })],
-    // Two launchers, because a part may name more than one.
-    [archive({ archives: both, bin: ['goose', 'goose-helper'] })],
+    // Two launchers, because a part may name more than one, and one of them the
+    // publisher's own at `bin/<command>`.
+    [archive({ archives: both, bin: ['goose', 'goose-helper'], paths: { goose: 'goose', 'goose-helper': 'bin/goose-helper' } })],
   ] as const;
   const ahpdPart = read([node(), ahpd()])[1] as Part;
 

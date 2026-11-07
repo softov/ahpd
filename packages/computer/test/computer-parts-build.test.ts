@@ -217,6 +217,7 @@ const goose: Part = {
     'linux-arm64': { url: 'https://example.test/goose-arm64.tar.gz', sha256: 'cd'.repeat(32) },
   },
   bin: ['goose'],
+  paths: { goose: 'goose' },
 };
 
 it('copies every part into the joined image once, from its own tag, and puts their bins on the PATH', () => {

@@ -34,6 +34,7 @@ const partOf = (id: string, version: string): Record<string, unknown> => ({
     'linux-arm64': { url: `https://example.test/${id}-arm64.tar.gz`, sha256: 'cd'.repeat(32) },
   },
   bin: [id],
+  paths: { [id]: id },
 });
 
 /** The goose part, the one part these cases bump or refuse. */
@@ -127,4 +128,6 @@ it('writes the moves a registry entry that is one version does make', () => {
   const parts = readParts(at.file);
   expect(parts[0]?.version).toBe('1.54.0');
   expect(parts[0]?.archives?.['linux-arm64']?.sha256).toBe('ab'.repeat(32));
+  // The path of each command in the download is the entry's own, and stays.
+  expect(parts[0]?.paths).toEqual({ goose: 'goose' });
 });
