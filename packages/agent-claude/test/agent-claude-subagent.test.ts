@@ -29,6 +29,8 @@ const sdk = vi.hoisted(() => {
   const fresh = (): Feed => ({ held: [], wake: undefined });
   const state = {
     canUseTool: undefined as undefined | ((name: string, input: Bag, about?: Bag) => Promise<unknown>),
+    /** The input stream the query built last was handed, which a case reads where its CLI reads its prompts. */
+    prompt: undefined as AsyncIterable<unknown> | undefined,
     /** The feed the next query reads, and the one `push` writes to. */
     feed: fresh(),
     /** The task ids `stopTask` was called with, in order. */
@@ -55,8 +57,9 @@ const sdk = vi.hoisted(() => {
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: ({ options }: { options: Record<string, unknown> }) => {
+  query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
     sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
+    sdk.prompt = prompt;
     const feed = sdk.feed;
     return {
       async *[Symbol.asyncIterator]() {
@@ -659,9 +662,18 @@ it('stops nothing for a worker the CLI named no task for, and leaves the lead tu
   expect(main.some((one) => one.action.type === 'chat/turnCancelled')).toBe(false);
 });
 
-/** A session with a lead turn open, and the asks and frames a test drives it with. */
+/**
+ * A session with a lead turn open, and the asks and frames a test drives it with.
+ *
+ * Its CLI reads its prompts as the SDK reads its input, so a result answers the
+ * turn's prompt: a turn ends once a result has settled every prompt of it, as
+ * VS Code's pipeline completes a turn only when its queue has drained.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L678-L695
+ */
 async function leadTurn() {
   const { main, workers, session } = await replay('none', []);
+  const prompt = sdk.prompt;
+  if (prompt !== undefined) void (async () => { for await (const _ of prompt) { /* read, as the SDK reads its input */ } })();
   session.sendMessage('t1', 'hi');
   await settle();
   return { main, workers, session };
