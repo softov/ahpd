@@ -258,7 +258,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
     }
     if (update.sessionUpdate === 'config_option_update') {
       ctx.configOptionsChanged(update.configOptions);
-      ctx.learnConfigOptions(update.configOptions);
       return;
     }
     if (update.sessionUpdate === 'available_commands_update') {

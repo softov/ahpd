@@ -29,6 +29,7 @@ import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
 import { createClientCalls } from './session/clientcalls.js';
 import { createConfig } from './session/config.js';
+import type { Choice } from './session/config.js';
 import type { SessionContext } from './session/context.js';
 import { createHandlers } from './session/handlers.js';
 import { createOpening } from './session/opening.js';
@@ -52,12 +53,15 @@ const CLOSE_GRACE_MS = 1000;
  * opened, so what the server offers is in the first state a client is served.
  *
  * `heardModes` is how this session tells its agent the modes its server named,
- * which the agent's schema lists until a later session hears others.
+ * which the agent's schema lists until a later session hears others, and
+ * `levels` is the agent's record of the thinking levels each model offers,
+ * which this session adds to and lists its models with.
  */
 export function acpSession(
   options: AcpOptions,
   start: Start,
   heardModes?: (modes: { id: string; name: string }[]) => void,
+  levels: Map<string, Choice[]> = new Map(),
 ): Promise<Session> {
   const provider = options.provider ?? 'acp';
   const emit = start.emit;
@@ -111,6 +115,7 @@ export function acpSession(
     options,
     start,
     heardModes,
+    levels,
     provider,
     emit,
     cwd,

@@ -3,7 +3,7 @@ import type { Bag, BoundTool, Chosen, Emit, MessageAttachment, MessageFrom, Open
 import type { TypedAnswer } from '../mapping.js';
 import type { AcpConnection, AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, WatchedSession, WatchedTurn } from '../types.js';
 import type { ClientCalls } from './clientcalls.js';
-import type { Config } from './config.js';
+import type { Choice, Config } from './config.js';
 import type { Handlers } from './handlers.js';
 import type { Opening } from './opening.js';
 import type { Turn } from './turn.js';
@@ -67,6 +67,15 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
    * same agent reads the list the server last gave.
    */
   heardModes: ((modes: { id: string; name: string }[]) => void) | undefined;
+  /**
+   * The thinking levels each model offers, by model id, as the sessions of
+   * this agent heard them from their servers.
+   *
+   * The agent's, shared by its sessions: a server names the levels of the model
+   * in force, so the levels of a model are known once a session has run on it,
+   * and every session lists them on that model from then on.
+   */
+  levels: Map<string, Choice[]>;
   /** The provider id this session reports, the backend's own or `acp`. */
   provider: string;
   /**

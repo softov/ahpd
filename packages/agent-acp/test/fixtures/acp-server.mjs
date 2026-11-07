@@ -81,6 +81,8 @@
  * - text containing `name` sends a `session_info_update` naming the session;
  * - text containing `shift` moves the mode and the model by itself, saying so
  *   with a `current_mode_update` and a `config_option_update`;
+ * - text containing `widen` offers a third model, `careful`, from then on,
+ *   saying so with a `config_option_update`;
  * - text containing `reauth` answers the prompt with the protocol's
  *   `auth_required`, which is what a server whose sign-in went stale says;
  * - text containing `spend` sends two `usage_update`s carrying a session cost
@@ -142,6 +144,11 @@
  * `--model-thinks` moves the thinking option to `deep` whenever the model is
  * set to `thorough`, which is a server whose options hang together: the
  * answer to one value set names another that moved with it.
+ *
+ * `--model-levels` gives the thinking option the levels of the model in force:
+ * `off` and `deep` on `fast`, and `max` beside them on `thorough`, named in the
+ * server's own words and described not at all, which is a server whose
+ * reasoning levels move with its model.
  *
  * Three flags take one capability away: `--no-load` makes the handshake stop
  * advertising `loadSession`, which is a server that cannot reopen a
@@ -283,6 +290,9 @@ const modes = () => ({
 /** The model this server currently serves. */
 let model = 'fast';
 
+/** Whether this server offers `careful` beside its two models, which `widen` turns on. */
+let widened = false;
+
 /** How hard this server thinks, and whether it reports what it did. */
 let thinking = 'off';
 let telemetry = false;
@@ -305,6 +315,7 @@ const configOptions = () => [
     options: [
       { value: 'fast', name: 'Fast' },
       { value: 'thorough', name: 'Thorough' },
+      ...(widened ? [{ value: 'careful', name: 'Careful' }] : []),
     ],
   },
   ...(process.argv.includes('--modes')
@@ -329,6 +340,7 @@ const configOptions = () => [
     options: [
       { value: 'off', name: 'Off', ...about('Answers at once') },
       { value: 'deep', name: 'Deep', ...about('Thinks before it answers') },
+      ...(process.argv.includes('--model-levels') && model === 'thorough' ? [{ value: 'max', name: 'All out' }] : []),
     ],
   },
   { type: 'boolean', id: 'telemetry', name: 'Telemetry', currentValue: telemetry },
@@ -825,6 +837,14 @@ const promptScript = async (id, params) => {
     notify({ sessionUpdate: 'current_mode_update', currentModeId: mode });
     notify({ sessionUpdate: 'config_option_update', configOptions: configOptions() });
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'shifted' } });
+  }
+
+  if (text.includes('widen')) {
+    // A model the server offers from now on, said as the options list that
+    // now names it.
+    widened = true;
+    notify({ sessionUpdate: 'config_option_update', configOptions: configOptions() });
+    notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'widened' } });
   }
 
   if (text.includes('name')) {

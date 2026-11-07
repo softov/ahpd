@@ -15,6 +15,7 @@
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session } from '@ahpd/sdk';
 import { catalogueOf, deletes, findListed, forgetSession, forks, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
+import type { Choice } from './session/config.js';
 import { turnsOf } from './transcript.js';
 import type { AcpMachine, AcpOptions } from './types.js';
 
@@ -72,6 +73,17 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
    * declare.
    */
   let lastModes = (options.modes ?? []).map((one) => ({ ...one }));
+
+  /**
+   * The thinking levels each model offers, as this agent's sessions heard them.
+   *
+   * A server names the levels of the model it runs on, so a model's are known
+   * once a session has run on it, and kept here, so every session after it
+   * lists that model with them, as the modes this agent lists are refreshed
+   * from the last session's server. Kept in memory: a session's server names
+   * them again as it opens.
+   */
+  const levels = new Map<string, Choice[]>();
 
   /**
    * What a session may be told.
@@ -226,7 +238,7 @@ export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
       if (told.length > 0) {
         options.log?.(`${provider}: ${String(told.length)} instruction(s) for the model open the first prompt, because an ACP server keeps its own system prompt`);
       }
-      return acpSession(options, start, options.modesFrom === 'preset' ? undefined : (heard) => { lastModes = heard; });
+      return acpSession(options, start, options.modesFrom === 'preset' ? undefined : (heard) => { lastModes = heard; }, levels);
     },
   };
 }

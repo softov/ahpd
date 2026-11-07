@@ -265,6 +265,21 @@ THEN it says it can read files, write files or open terminals only when it has a
 AND the file and terminal handlers use `Start.resources` and `Start.terminals`.
 The reason: a capability without a handler is a request that nobody answers.
 
+### An ACP server's options
+
+WHEN an ACP server names its session config options
+THEN the values of its model option are the agent's models, said again where they move
+AND the values of its mode option are the session's `availableApprovalModes`
+AND each other option is a session control under `<provider>.<id>`, with the values the server gave as the session opened
+AND a value that the server moves is said with `session/configChanged`.
+WHEN the server names a `thought_level` option for the model that it runs on
+THEN that model's row has a `configSchema` with those levels as its `thinkingLevel`, in VS Code's property
+AND the agent keeps those levels for its later sessions
+AND a turn whose model selection names one of those levels runs at it
+AND any other turn runs at the session's value of the control.
+The reason: no action changes a schema that a client was served.
+VS Code's Codex agent takes the effort of a turn from its model selection, and then from the setting of its session.
+
 ### Start carries the host's files, shells and tools
 
 WHEN the host starts a session on a backend

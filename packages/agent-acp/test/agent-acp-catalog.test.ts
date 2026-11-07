@@ -166,6 +166,30 @@ const changed = (watch: Watcher): Record<string, unknown>[] =>
   watch.actions.filter((one) => one.action.type === 'session/configChanged')
     .map((one) => (one.action.config ?? {}) as Record<string, unknown>);
 
+/**
+ * A model's thinking levels as a client is offered them: VS Code's Codex
+ * property for a model's effort, its labels from VS Code's shared helpers and
+ * a description per level, and the default VS Code's resolver picks.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1924-L1951
+ */
+const levelsSchema = (enumLabels: string[], enumDescriptions: string[], efforts = ['off', 'deep']): Bag => ({
+  type: 'object',
+  properties: {
+    thinkingLevel: {
+      type: 'string',
+      title: 'Effort Level',
+      description: 'Controls how much reasoning effort ACP uses.',
+      default: 'off',
+      enum: efforts,
+      enumLabels,
+      enumDescriptions,
+    },
+  },
+});
+
+/** The fixture's two levels, which it describes only under `--described`. */
+const FAST_LEVELS = levelsSchema(['Off', 'Deep'], ['', '']);
+
 it('offers no models before a session, because ACP has no pre-session catalogue', async () => {
   const { agent } = backend();
   const offered = await agent.probe?.();
@@ -204,8 +228,9 @@ it('answers the session with the server\'s models, modes and options in its stat
   const { agent } = backend();
   const { session } = await start(agent, 'models');
 
+  // The model the server runs on carries the levels it gave it.
   expect(session.models()).toEqual([
-    { id: 'fast', name: 'Fast' },
+    { id: 'fast', name: 'Fast', configSchema: FAST_LEVELS },
     { id: 'thorough', name: 'Thorough' },
   ]);
   const properties = propertiesOf(session);
@@ -235,9 +260,10 @@ it('sets the model a turn chose on the server before prompting', async () => {
 
   expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
     .toMatchObject({ configId: 'model', value: 'thorough' });
+  // The answer to the set named the levels of the model it moved to.
   expect(session.models()).toEqual([
-    { id: 'fast', name: 'Fast' },
-    { id: 'thorough', name: 'Thorough' },
+    { id: 'fast', name: 'Fast', configSchema: FAST_LEVELS },
+    { id: 'thorough', name: 'Thorough', configSchema: FAST_LEVELS },
   ]);
 });
 
@@ -648,6 +674,88 @@ it('says the model a turn chose and an option the server moved with it', async (
   session.changeModel({ id: 'thorough' });
   await runTurn(session, watch, 't2', 'hi');
   expect(changed(watch)).toEqual([{ model: 'thorough' }, { 'acp.thinking': 'deep' }]);
+});
+
+/*
+ * A server's `thought_level` option holds the reasoning level of the model it
+ * runs on, so each model is listed with the levels its server gave it, as VS
+ * Code's Codex agent lists a model with its efforts, and the agent keeps them
+ * for every later session. The session's own control is the one it was served
+ * as it opened, whatever the server offers afterwards.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1924-L1951
+ */
+it('lists each model with the levels its server gives it, said again as they move and kept for the agent\'s later sessions', async () => {
+  const { agent } = backend(['--model-levels', '--described']);
+  let told = 0;
+  const { session } = await start(agent, 'levels', { onHandshake: () => { told++; } });
+  expect(session.models()).toEqual([
+    { id: 'fast', name: 'Fast', configSchema: levelsSchema(['Off', 'Deep'], ['Answers at once', 'Thinks before it answers']) },
+    { id: 'thorough', name: 'Thorough' },
+  ]);
+  expect(told).toBe(1);
+
+  expect(await session.setConfig?.('model', 'thorough')).toBe(true);
+  // A level the server named in its own words carries VS Code's label for it,
+  // and one it described not at all VS Code's description.
+  expect(session.models()[1]).toEqual({
+    id: 'thorough',
+    name: 'Thorough',
+    configSchema: levelsSchema(
+      ['Off', 'Deep', 'Max'],
+      ['Answers at once', 'Thinks before it answers', 'Absolute maximum capability with no constraints'],
+      ['off', 'deep', 'max'],
+    ),
+  });
+  expect(told).toBe(2);
+  // The control the session was served keeps the choices of its opening.
+  expect(propertiesOf(session)['acp.thinking']?.enum).toEqual(['off', 'deep']);
+
+  // A session that opens later lists both models' levels before its server
+  // has run on the second.
+  const { session: later } = await start(agent, 'levels-later');
+  expect(later.models().map((one) => [one.id, (one.configSchema?.properties as Bag | undefined)?.thinkingLevel !== undefined]))
+    .toEqual([['fast', true], ['thorough', true]]);
+});
+
+it('says the agent\'s models again when its server offers another mid-session', async () => {
+  const { agent } = backend();
+  let told = 0;
+  const { session, watch } = await start(agent, 'widened', { onHandshake: () => { told++; } });
+  await runTurn(session, watch, 't1', 'widen');
+
+  expect(session.models().map((one) => one.id)).toEqual(['fast', 'thorough', 'careful']);
+  expect(told).toBe(2);
+});
+
+/*
+ * The level a turn runs at is its model selection's where the server gives
+ * it, and the session's own value otherwise, as VS Code's Codex agent takes a
+ * turn's effort; the session's control keeps its value through both.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1953-L1960
+ */
+it('runs a turn at the level its model selection names, and one that names none at the session\'s', async () => {
+  const log = join(scratch(), 'requests.jsonl');
+  const lines: string[] = [];
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: log }, log: (line) => { lines.push(line); } });
+  const { session, watch } = await start(agent, 'turn-level');
+
+  session.changeModel({ id: 'fast', config: { thinkingLevel: 'deep' } });
+  await runTurn(session, watch, 't1', 'hi');
+  session.changeModel({ id: 'fast' });
+  await runTurn(session, watch, 't2', 'hi');
+  session.changeModel({ id: 'fast', config: { thinkingLevel: 'max' } });
+  await runTurn(session, watch, 't3', 'hi');
+
+  expect(requests(log).filter((one) => one.method === 'session/set_config_option').map((one) => [one.params?.configId, one.params?.value]))
+    .toEqual([['thinking', 'deep'], ['thinking', 'off']]);
+  // A level the server does not give the model is a line in the log, and the
+  // turn runs at the session's.
+  expect(lines).toContain('acp: the turn runs at the session\'s thinking level: the server does not offer max');
+  // What was said is the open's, once: a turn's level is the turn's.
+  expect(changed(watch)).toEqual([{
+    permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false,
+  }]);
+  expect(session.settings()['acp.thinking']).toBe('off');
 });
 
 it('sends the mode again when the server is opened after a death', async () => {
@@ -1213,6 +1321,24 @@ it('draws every option of its own as a control, and sets each through the server
 });
 
 /*
+ * The server's own option ids under the agent's provider id, as VS Code keeps
+ * its Codex runtime's own settings under `codex.`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/codexSessionConfigKeys.ts#L15-L25
+ */
+it('keeps the server\'s own options under the agent\'s provider id', async () => {
+  const { agent, log } = backend([], 'prefixed');
+  const { session } = await start(agent, 'prefixed');
+
+  expect(Object.keys(propertiesOf(session)).sort()).toEqual(['permissionMode', 'prefixed.telemetry', 'prefixed.thinking']);
+  expect(configOf(session).values).toMatchObject({ 'prefixed.thinking': 'off', 'prefixed.telemetry': false });
+  expect(await session.setConfig?.('prefixed.thinking', 'deep')).toBe(true);
+  expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
+    .toMatchObject({ configId: 'thinking', value: 'deep' });
+  // Another agent's prefix is no key of this one's.
+  expect(typeof await session.setConfig?.('acp.thinking', 'deep')).toBe('string');
+});
+
+/*
  * What the server says of each value, carried as the picker's descriptions:
  * the spec's schema holds one per value beside the labels, and a value the
  * server said nothing of has an empty one.
@@ -1310,7 +1436,7 @@ it('loads a resumed session when the host holds none of its turns', async () => 
 
   expect(session.agentId()).toBe('acp-session-resumed');
   expect(session.models()).toEqual([
-    { id: 'fast', name: 'Fast' },
+    { id: 'fast', name: 'Fast', configSchema: FAST_LEVELS },
     { id: 'thorough', name: 'Thorough' },
   ]);
   // With no seed there is nothing on this side of the wire, so the replay is
