@@ -6,7 +6,7 @@ import { uriOf } from '../resources/fileuri.js';
 import { idOf, uriFor, Status } from '../sessions/catalog.js';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { worktreeFor, worktreesOf } from '../repo/worktrees.js';
 import { ROOT, chatIdFor, chatUriFor, named } from './channels.js';
 import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
@@ -238,15 +238,22 @@ export const ARCHIVE_COMMIT_MESSAGE = 'Saving uncommitted changes before archivi
 /**
  * A session's scratch folder, `<home>/.copilot/chats/<session id>`, as VS Code
  * names a workspace-less session's, or nothing for a session id that names no
- * folder under the chats folder, so what is made, made again or removed for a
- * session is a folder under it.
+ * folder of its own under the chats folder, so what is made, made again or
+ * removed for a session is a folder under it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/workspacelessScratchDir.ts#L14-L20
+ *
+ * Both paths normalized, and the folder a strict descendant of the chats
+ * folder, as VS Code keeps a worktree inside its repository's `.worktrees`, so
+ * an equivalent spelling of the chats folder cannot slip past. VS Code joins
+ * the ids it mints itself, which never meet the case; a folder made outside
+ * the chats folder for a session is a fault, so it is refused.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/worktreePaths.ts#L35-L42
  */
 export const workspacelessScratchDir = (uri: string): string | undefined => {
-  const chats = join(homedir(), '.copilot', 'chats');
-  const folder = join(chats, idOf(uri));
+  const chats = resolve(homedir(), '.copilot', 'chats');
+  const folder = resolve(join(chats, idOf(uri)));
   const inside = relative(chats, folder);
-  return inside === '' || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside) ? undefined : folder;
+  return inside !== '' && inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside) ? folder : undefined;
 };
 
 /**

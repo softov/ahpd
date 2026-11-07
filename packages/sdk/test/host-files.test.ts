@@ -202,6 +202,11 @@ describe('where the agent works', () => {
     const client = await opened([], { workspacelessFolder: 'scratch' });
     await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/..', provider: 'claude' } }))
       .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('names no folder of its own') });
+    // Nor one that spells the chats folder itself, as VS Code requires a
+    // strict descendant of the root it keeps a folder in.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/worktreePaths.ts#L35-L42
+    await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/a/..', provider: 'claude' } }))
+      .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('names no folder of its own') });
     expect(sessionQueries()).toHaveLength(0);
     expect(existsSync(join(home, '.copilot', 'chats'))).toBe(false);
   });
