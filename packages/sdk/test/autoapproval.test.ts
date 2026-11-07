@@ -3,10 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
+import { memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
+import type { SessionStore } from '../src/types/sessions.js';
 import type { Users } from '../src/types/users.js';
 
 /*
@@ -68,14 +71,29 @@ const settle = async (): Promise<void> => {
   for (let i = 0; i < 20; i++) await new Promise((done) => { setTimeout(done, 0); });
 };
 
-/** The example backend, keeping the last start it was asked to make. */
-function backend() {
+/**
+ * The example backend, keeping the last start it was asked to make.
+ *
+ * `listed` has it know the one session a daemon before this one made, so a
+ * turn opens it again.
+ */
+function backend(listed = false) {
   const base = echo({ path: DIR, pace: 0 });
   let start: Start | undefined;
   const agent: Agent = {
     ...base,
     provider: 'echo',
     displayName: 'Echo backend',
+    ...(listed ? {
+      list: async () => [{
+        id: 'bo-one',
+        title: 'Bo one',
+        createdAt: '2026-10-06T00:00:00.000Z',
+        modifiedAt: '2026-10-06T09:00:00.000Z',
+        workingDirectories: [uriOf(DIR)],
+      }],
+      transcript: async () => [],
+    } : {}),
     create: (given: Start) => {
       start = given;
       return base.create(given);
@@ -92,10 +110,13 @@ const approval = (start: Start | undefined, line: string, tool?: string): string
 const toolApproval = (start: Start | undefined, name: string): string | undefined =>
   start?.getAutoApproval?.('tool', name);
 
-/** A host with a people directory, and one connection per token. */
-function serving(terminalAutoApproveDefaults: 'vscode' | 'none' = 'vscode') {
-  const { agent, start } = backend();
-  const host = createHost({ path: DIR, agents: [agent], users: directory(), terminalAutoApproveDefaults });
+/** A host with a people directory, and one connection per token, on `store` where a case gives one. */
+function serving(terminalAutoApproveDefaults: 'vscode' | 'none' = 'vscode', store?: SessionStore, listed = false) {
+  const { agent, start } = backend(listed);
+  const host = createHost({
+    path: DIR, agents: [agent], users: directory(), terminalAutoApproveDefaults,
+    ...(store === undefined ? {} : { sessions: store }),
+  });
   const join = async (token: string, clientId: string): Promise<Client> => {
     const client = host.accept(peer());
     await client.handle({
@@ -163,6 +184,36 @@ it('reads the last push of any window when two windows push rules', async () => 
   expect(approval(start(), 'ls -la')).toBeUndefined();
 });
 
+/*
+ * The rules answer a session's lines whoever sent the turn that started it, as
+ * VS Code's host reads its one value of each for every question.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380
+ */
+it('answers a command by the host\'s rules in a session somebody other than its owner started again', async () => {
+  const store = memorySessions();
+  const first = serving('vscode', store);
+  const bo = await first.signedIn('admin-two', 'bo');
+  await first.opening(bo, 'bo-one');
+  // One turn, so the session is one the next daemon reads back.
+  await bo.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't0', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
+  await settle();
+
+  // The daemon again on the same store, where Ana's turn starts Bo's session.
+  const second = serving('vscode', store, true);
+  const ana = await second.signedIn('admin', 'ana');
+  await second.pushing(ana, { terminalAutoApproveRules: { 'make test': true } });
+  await ana.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await settle();
+
+  expect(approval(second.start(), 'make test')).toBe('not-needed');
+});
+
 it('approves VS Code\'s table when the window pushed no rules', async () => {
   const { signedIn, opening, start } = serving();
   const ana = await signedIn('admin', 'ana');
@@ -213,8 +264,7 @@ it('asks for a tool the rule names, in every session', async () => {
   expect(toolApproval(start(), 'mail/send')).toBeUndefined();
   expect(toolApproval(start(), 'tracker/close')).toBeUndefined();
 
-  // The rule is the host's, not the window's: a session another window starts
-  // is asked too, unlike the terminal rules above.
+  // The rule is the host's: a session another window starts is asked too.
   await opening(bo, 'bo-one');
   expect(toolApproval(start(), 'tracker/create')).toBe('ask');
 });

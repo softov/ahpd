@@ -254,7 +254,12 @@ it('tells a backend the folders the last trust push names, whichever window push
   expect(about(told(), B)).toBe(false);
 });
 
-it('tells a session nothing is trusted when somebody else sends its turn', async () => {
+/*
+ * A start reads the host's one trust value whoever sent the turn behind it, as
+ * VS Code's host reads its trust for every session it starts.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L166-L169
+ */
+it('tells a session the folders the host trusts when somebody other than its owner sends its turn', async () => {
   const store = memorySessions();
   const first = serving({ store });
   const bo = await first.signedIn('bo');
@@ -283,12 +288,16 @@ it('tells a session nothing is trusted when somebody else sends its turn', async
   });
   await settle(60);
 
-  // A's window trusts this folder, and the session is B's: a turn into
-  // somebody else's session is not theirs to widen.
-  expect(about(second.told(), A)).toBe(false);
+  // A's push is the host's trust, and B's session reads it with every other.
+  expect(about(second.told(), A)).toBe(true);
 });
 
-it('tells an automation nothing is trusted, since no window sent it', async () => {
+/*
+ * A start nobody sent reads the host's trust too, as VS Code's host reads its
+ * one value for every session it starts.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L166-L169
+ */
+it('tells an automation the folders the host trusts, though no window sent it', async () => {
   const { signedIn, told } = serving({ automations: true });
   const ana = await signedIn('ana');
   await trusting(ana, [A]);
@@ -316,20 +325,14 @@ it('tells an automation nothing is trusted, since no window sent it', async () =
   });
   await settle(60);
 
-  // The automation is ana's - she wrote it and it runs as her - and no window
-  // sent it, so on a host with people it reads no trust: only a turn the
-  // session's owner sends does.
-  expect(about(told(), A)).toBe(false);
+  // The automation's session reads the trust ana pushed, as every start does.
+  expect(about(told(), A)).toBe(true);
 });
 
 /*
- * A host started without `--users` has no people directory and so no owner:
- * `ownerFor` answers `undefined` for every connection there, deliberately, and
- * a session on such a host has no owner either. Comparing the two would refuse
- * every folder, which would make the value a window pushes dead on exactly the
- * deployment - one person, one machine - most likely to have anything to
- * trust. So every start reads the host's value, an automation's among them, as
- * the reference host reads it for every session it starts.
+ * A host started without `--users` reads the same one value: every start reads
+ * the host's trust, an automation's among them, as the reference host reads it
+ * for every session it starts.
  */
 it('reads a window\'s push on a host with no people directory', async () => {
   const { connect, told } = serving({ people: false });

@@ -100,17 +100,13 @@ The host does not send `trustedParent`, which VS Code sends for a folder that do
 When a move names a repository other than the move folder, the host asks about the repository too.
 See [`code://packages/sdk/src/host/spawn.ts`](../../packages/sdk/src/host/spawn.ts).
 
-### The host's trust decides on a host with no people
+### The host's trust decides for every turn
 
-WHEN the host has no people
-THEN the host's trust decides for every turn, a turn no window sent among them.
+WHEN a backend asks whether a folder is trusted
+THEN the host's trust decides, whoever sent the turn, and for a turn no window sent.
 
-WHEN the host has people
-AND the sender is not the session's owner
-THEN the folder is untrusted for that session.
-
-The reason: a host with no people has no owner to compare, so a check would refuse every folder.
-On a host with people, a turn with no sender sees every folder as untrusted.
+VS Code's host reads its one trust value for every session it starts.
+See [`code://packages/sdk/src/host/spawn.ts`](../../packages/sdk/src/host/spawn.ts).
 
 ### ahpd paths lists the served folders
 

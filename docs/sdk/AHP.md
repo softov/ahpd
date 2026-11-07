@@ -225,7 +225,7 @@ A call to a matched host tool through `/mcp` is refused, because that door has n
 An ACP agent decides itself whether to ask about its own tools, so the rule reaches only the MCP tools this host serves it.
 A session inside a machine does not read the rule yet, so a matched call runs there with no question; [deferred.md](../../.project/plans/host/101-a-rule-makes-a-tool-call-ask-every-time/deferred.md) says why.
 The three terminal keys are the host's one value each, which the last push from any window set, and every session runs under them.
-On a host with people, they answer only the turns the session's owner sends, as `workspaceTrust` does.
+They answer every turn whoever sent it, as `workspaceTrust` does, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380) reads them for every question.
 A shell command runs without a question when the rules allow every sub-command and deny none.
 A deny rule makes the call ask rather than refusing it.
 A rule is `true` to approve, `false` to deny, `null` for no rule, or `{ approve, matchCommandLine }`.
@@ -628,7 +628,7 @@ written to a file of its own for the session's life and rewritten on each
 change, its stderr is dropped and a nonzero status is printed, the way the
 reference runtime treats it. A PowerShell entry is kept and not sourced, since
 the CLI's shell tool is bash everywhere; an empty list clears the file. What is
-put in front is the host's: the owner's rules read the command the model wrote,
+put in front is the host's: the host's rules read the command the model wrote,
 a confirmation shows it, and the command runs with the prefix, as
 [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L174)
 asks about the command the model wrote.

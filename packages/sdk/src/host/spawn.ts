@@ -442,10 +442,11 @@ export function createSpawn(ctx: HostContext): Spawn {
     const subCommands = commandLine === undefined ? [] : splitForRules(commandLine, signal.shellLanguage ?? 'bash')?.subCommands ?? [];
     /*
      * The terminal rules and the edit patterns are the host's one value each,
-     * which on a host with people answer the owner's turns alone, as the
-     * host's shell answers read them.
+     * read for every question whoever sent its turn, as VS Code's host reads
+     * them from its root config for every question.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L875
      */
-    const owners = options.users === undefined || senderOf(String(action.turnId ?? '')) === kept.owner(idOf(session));
     const pushed = ctx.rootConfig['terminalAutoApproveRules'];
     const terminalRules = pushed !== null && typeof pushed === 'object'
       ? pushed as TerminalAutoApproveRules
@@ -480,8 +481,8 @@ export function createSpawn(ctx: HostContext): Spawn {
       globalAutoApprove: ctx.rootConfig.globalAutoApproveEnabled === true,
       sessionAutoApprove: ctx.rootConfig.autoApprovePolicyRestricted !== true && owning?.config.autoApprove === 'autoApprove',
       bypassLocked: managedSettings?.disableBypassPermissionsMode === 'disable',
-      terminalAutoApprove: ctx.rootConfig.terminalAutoApproveEnabled !== false && owners,
-      ...(owners ? { editPatterns } : {}),
+      terminalAutoApprove: ctx.rootConfig.terminalAutoApproveEnabled !== false,
+      editPatterns,
       sensitive,
       ...(commandLine === undefined ? {} : {
         evaluateShell: (classifiers) => approver.evaluation(commandLine, {
@@ -1107,13 +1108,11 @@ export function createSpawn(ctx: HostContext): Spawn {
      * time.
      * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162
      *
-     * On a host with people, only a turn the session's owner sends reads it. A
-     * turn somebody else sends into this session is not theirs to widen, which
-     * is why the two are compared; and an automation, a host tool and a daemon
-     * coming back up send nothing, so what they start there is untrusted.
-     * Where the host has no people directory there is nobody to compare:
-     * `ownerFor` answers `undefined` for every connection, and every start
-     * reads the host's value.
+     * Every start reads it, whoever sent the turn and when nobody did, as VS
+     * Code's host reads its one trust value for every session it starts and
+     * every hook it runs.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L166-L169
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8621
      *
      * A worktree this host made is read as the repository it was cut from: it
      * is a folder the window has never opened and so cannot have pushed, and
@@ -1129,10 +1128,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     const trustedBy = (folder: string): boolean => {
       const asked = kept.trustedFolder?.(idOf(uri));
       if (asked !== undefined && sameFolder(asked, folder)) return true;
-      if (options.users !== undefined) {
-        const who = sender === undefined ? undefined : ctx.ownerFor(sender);
-        if (who === undefined || who !== kept.owner(idOf(uri))) return false;
-      }
       const made = ctx.worktreeOf(uri);
       const vouched = made !== undefined && sameFolder(made.path, folder) ? made.repository : folder;
       return trusted(vouched, ctx.rootConfig.workspaceTrust, sender?.trustedFolders);
@@ -1148,14 +1143,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      * "always" option - before any terminal rule could approve it.
      *
      * The terminal rules and the edit patterns are the host's one value each,
-     * which the last push from any window set, as the reference host reads
-     * them for every session it runs; on a host with people they answer the
-     * owner's turns alone, as `trustedBy` reads trust. Where no window pushed
-     * rules the daemon's setting applies - VS Code's table or none - and a
-     * pushed empty table is no rules: an empty object is a table with nothing
-     * in it, not a window that never spoke.
-     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L361
-     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L884
+     * which the last push from any window set, read for every line whoever
+     * sent its turn, as the reference host reads them for every question.
+     * Where no window pushed rules the daemon's setting applies - VS Code's
+     * table or none - and a pushed empty table is a table with no rules in it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L875
      *
      * Only `approved` is an approval. A command a deny rule named, and a line no
      * rule could read, are both `undefined`, which leaves the backend to ask.
@@ -1166,10 +1159,6 @@ export function createSpawn(ctx: HostContext): Spawn {
       if (named !== undefined && asksForTool(ctx.rootConfig, named)) return 'ask';
       if (kind === 'tool') return undefined;
       if (shell === undefined) return undefined;
-      if (options.users !== undefined) {
-        const who = sender === undefined ? undefined : ctx.ownerFor(sender);
-        if (who === undefined || who !== kept.owner(idOf(uri))) return undefined;
-      }
       if (ctx.rootConfig['terminalAutoApproveEnabled'] === false) return undefined;
       const pushed = ctx.rootConfig['terminalAutoApproveRules'];
       const rules = pushed !== null && typeof pushed === 'object'

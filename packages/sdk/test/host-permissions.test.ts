@@ -22,6 +22,7 @@ import type { Bag } from '../src/types/common.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Session } from '../src/types/session.js';
+import type { Users } from '../src/types/users.js';
 
 const SESSION = 'ahp-session:/one';
 const CHAT = chatUriFor(SESSION);
@@ -254,6 +255,63 @@ it('takes a question\'s host-only fields off before any client is sent it', asyn
  * its permission rules.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L397-L425
  */
+/** A people directory of two admins, each signed in by the token that names them. */
+const people = (): Users => ({
+  resource: { resource: 'ahpd://users', resource_name: 'ahpd users', authorization_servers: ['ahpd://users'], required: false },
+  verify: async (token) => (token === 'ana' || token === 'bo' ? { id: token, roles: ['admin'], can: () => true } : undefined),
+  list: async () => [],
+  grantsOfRoles: async () => [],
+  grantsOfPerson: async () => undefined,
+  add: async () => {},
+  roles: async () => [],
+  addRole: async () => {},
+  removeRole: async () => false,
+  teams: async () => [],
+  projects: async () => [],
+  addTeam: async () => {},
+  addProject: async () => {},
+  removeTeam: async () => false,
+  removeProject: async () => false,
+  remove: async () => false,
+  mint: async () => 'ana',
+});
+
+/*
+ * The terminal rules answer a command whoever sent its turn, the session's
+ * owner or anybody else, as VS Code's host reads its one value of each for
+ * every question.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380
+ */
+it('answers a command by the host\'s terminal rules in a turn somebody other than the session\'s owner sent', async () => {
+  const answers: Answer[] = [];
+  const host = createHost({
+    path: dir, resources: fileResources(), users: people(),
+    agents: [asking(answers, 'bash', undefined, { permissionKind: 'shell', shellCommand: 'ls', shellLanguage: 'bash' })],
+  });
+  const signedIn = async (token: string) => {
+    const p = listening();
+    const client = host.accept(p);
+    await client.handle({ method: 'initialize', params: { clientId: token, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
+    await client.handle({ method: 'authenticate', params: { channel: ROOT, resource: 'ahpd://users', token } });
+    return { p, client };
+  };
+  const ana = await signedIn('ana');
+  const bo = await signedIn('bo');
+  await ana.client.handle({ method: 'createSession', params: { channel: SESSION, provider: 'echo' } });
+  await bo.client.handle({ method: 'subscribe', params: { channel: SESSION } });
+  await bo.client.handle({ method: 'subscribe', params: { channel: CHAT } });
+  await bo.client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } } },
+  });
+  const ready = (): Bag | undefined => bo.p.heard.find((one) => one.action.type === 'chat/toolCallReady' && one.action.turnId === 't1')?.action;
+  await until(() => ready() !== undefined, 'the question');
+  expect(ready()?.confirmed).toBe('not-needed');
+  await until(() => answers.length > 0, 'the approval');
+  expect(answers).toEqual([['call-t1', true, undefined]]);
+  await host.close();
+});
+
 it('refuses a command a session\'s Shell rule denies before any client is asked', async () => {
   const answers: Answer[] = [];
   const { host, p, dispatch } = await serving(asking(answers, 'bash', undefined, { permissionKind: 'shell', shellCommand: 'git status && rm -rf build', shellLanguage: 'bash' }));
