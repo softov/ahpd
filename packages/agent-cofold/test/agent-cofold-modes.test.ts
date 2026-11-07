@@ -204,8 +204,8 @@ afterEach(() => {
 
 /** What the endpoint was sent for a session with these settings. */
 const sent = async (settings: Record<string, unknown>): Promise<Record<string, unknown>> => {
-  mkdirSync(join(home, 'cofold'), { recursive: true });
-  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify({
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({
     providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }],
     model: 'open_router/deepseek/deepseek-chat',
   }));
@@ -229,8 +229,8 @@ it('puts the chosen thinking level in the request and nothing for off', async ()
 
 /** What the provider was asked to build for a session with these settings. */
 const builtFor = (settings: Record<string, unknown>): Record<string, unknown> => {
-  mkdirSync(join(home, 'cofold'), { recursive: true });
-  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify({
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({
     providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }],
     model: 'open_router/deepseek/deepseek-chat',
   }));

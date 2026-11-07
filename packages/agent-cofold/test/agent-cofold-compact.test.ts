@@ -45,8 +45,8 @@ const CONFIG = {
 };
 
 const put = (value: unknown): void => {
-  mkdirSync(join(home, 'cofold'), { recursive: true });
-  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify(value));
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify(value));
 };
 
 /** The window the catalogue listed for the configured model. */

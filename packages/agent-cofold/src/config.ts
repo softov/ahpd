@@ -1,22 +1,20 @@
 /**
  * The harness configuration this backend runs on.
  *
- * cofold already has a configuration a person writes once, at
- * `$COFOLD_CONFIG` or `$XDG_CONFIG_HOME/cofold/config.json` or
- * `~/.config/cofold/config.json`, where the providers and their keys live and
- * the model is named as `<provider>/<model>`. Reading it here is what makes the
- * plugin usable without repeating a key: a daemon whose bridge names no model
- * and is given no token still runs, because the person already said where and
- * how.
+ * cofold's own app, papo, has the configuration a person writes once, where
+ * the providers and their keys live and the model is named as
+ * `<provider>/<model>`. Reading it here is what makes the plugin usable without
+ * repeating a key: a daemon whose bridge names no model and is given no token
+ * still runs, because the person already said where and how.
  *
  * Only the parts a backend needs are read. The rest of that file - the theme,
  * the shell, the permissions - belongs to the harness and is not this
  * package's to interpret.
  */
 
-import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { resolveConfig } from '@cofold/config';
 import type { ProviderConfig } from '@cofold/model-openai-compat';
 
 /** What this backend reads out of the harness configuration. */
@@ -34,54 +32,54 @@ export interface HarnessConfig {
   model?: string;
   /** The harness's own instructions, a default under the session's. */
   instructions?: string;
-  /** The file it was read from, so a message can say where a value came from. */
+  /** The person's own file, where a message says a value belongs. */
   path: string;
 }
 
 /**
- * The file the harness configuration lives in.
- *
- * `COFOLD_CONFIG` names that file outright, and is what a machine sets: the
- * configuration is mounted at a fixed target under `computerConfigDir` and the
- * variable points at it, because `XDG_CONFIG_HOME` cannot be moved for this
- * one program. It is the nested host's own folder too, and a machine's mount
- * point is root-owned, so pointing it there stops any image that does not run
- * as root from starting at all.
- *
- * Without the variable it is where the harness itself would look, which is
- * `$XDG_CONFIG_HOME/cofold/config.json` or `~/.config/cofold/config.json`.
+ * The person's own harness file: the one `$PAPO_CONFIG` names, else
+ * `$XDG_CONFIG_HOME/papo/config.json`, else `~/.config/papo/config.json`, the
+ * user layer papo's resolver reads. It is what a machine is seeded with, and
+ * `PAPO_CONFIG` is what a machine sets, pointing at the copy it mounts.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/config.ts#L126-L129
  */
-export const harnessConfigPath = (env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string =>
-  env['COFOLD_CONFIG']
-  ?? join(env['XDG_CONFIG_HOME'] ?? join(home, '.config'), 'cofold', 'config.json');
+export const harnessConfigPath = (env: NodeJS.ProcessEnv = process.env, home: string = homedir(), cwd: string = process.cwd()): string => {
+  const named = env['PAPO_CONFIG'];
+  return named !== undefined && named !== ''
+    ? resolve(cwd, named)
+    : join(env['XDG_CONFIG_HOME'] ?? join(home, '.config'), 'papo', 'config.json');
+};
 
 /** A non-empty string, or nothing for a blank or missing one. */
 const word = (value: unknown): string | undefined =>
   (typeof value === 'string' && value.trim() !== '' ? value : undefined);
 
 /**
- * Read the harness configuration, or answer that there was none.
+ * Read the harness configuration as papo reads it, or answer that there was
+ * none.
  *
- * A missing or unreadable file is not an error: most machines that run a
+ * cofold's own resolver walks the layers under papo's name: the person's
+ * `~/.config/papo/config.json`, the nearest `.papo.json` at or above `cwd`,
+ * and the file `$PAPO_CONFIG` names, each merging over the one before. On top
+ * of them `PAPO_BASE_URL`, `PAPO_API_KEY` and `PAPO_MODEL`, or the family's
+ * `COFOLD_*` where papo's own are unset, add or replace a provider called
+ * `default`, and a model with no slash is a model of `default`; they are how a
+ * machine is given a key with no file holding it.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/config.ts#L83-L124
+ *
+ * A layer that cannot be read is no layer's values: most machines that run a
  * plugin have never run the harness, and the plugin's own options and the
  * session config are then the only sources. A file that is there and wrong
  * about one provider drops that provider rather than the whole file, so one
  * bad entry does not take the others down with it.
- *
- * `COFOLD_BASE_URL`, `COFOLD_API_KEY` and `COFOLD_MODEL` are read on top of the
- * file, as the harness itself reads them: the URL adds or replaces a provider
- * called `default`, and a model with no slash is a model of `default`. They
- * are how a machine is given a key with no file holding it.
  */
-export const harnessConfig = (env: NodeJS.ProcessEnv = process.env, home: string = homedir()): HarnessConfig => {
-  const path = harnessConfigPath(env, home);
-  let found: Record<string, unknown> = {};
+export const harnessConfig = (env: NodeJS.ProcessEnv = process.env, home: string = homedir(), cwd: string = process.cwd()): HarnessConfig => {
+  let found: Readonly<Record<string, unknown>> = {};
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) found = parsed as Record<string, unknown>;
+    found = resolveConfig({ name: 'papo', project: '.papo.json', cwd, env, home }).values;
   }
   catch {
-    // No file is no file's values; the variables below may still name a provider.
+    // A layer that would not read; the variables below may still name a provider.
   }
 
   const providers: ProviderConfig[] = [];
@@ -103,18 +101,20 @@ export const harnessConfig = (env: NodeJS.ProcessEnv = process.env, home: string
     });
   }
 
-  const baseUrl = word(env['COFOLD_BASE_URL']);
+  // `PAPO_*` over `COFOLD_*`, as papo reads the family's variables.
+  const variable = (name: string): string | undefined => word(env[`PAPO_${name}`]) ?? word(env[`COFOLD_${name}`]);
+  const baseUrl = variable('BASE_URL');
   if (baseUrl !== undefined) {
-    const apiKey = word(env['COFOLD_API_KEY']);
+    const apiKey = variable('API_KEY');
     const fromEnv: ProviderConfig = { id: 'default', baseUrl, ...(apiKey === undefined ? {} : { apiKey }) };
     providers.splice(0, providers.length, fromEnv, ...providers.filter((provider) => provider.id !== 'default'));
   }
-  const named = word(env['COFOLD_MODEL']);
+  const named = variable('MODEL');
   const model = named === undefined ? word(found.model) : named.includes('/') ? named : `default/${named}`;
   const instructions = word(found.instructions);
   return {
     providers,
-    path,
+    path: harnessConfigPath(env, home, cwd),
     ...(model === undefined ? {} : { model }),
     ...(instructions === undefined ? {} : { instructions }),
   };

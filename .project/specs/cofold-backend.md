@@ -31,7 +31,8 @@ refs:
 ---
 
 The cofold backend `@ahpd/agent-cofold` runs the cofold harness inside the daemon, as the agent `cofold` with the title "Cofold".
-It reads the harness file at `$COFOLD_CONFIG`, else `$XDG_CONFIG_HOME/cofold/config.json`, else `~/.config/cofold/config.json`.
+It reads the harness configuration as cofold's app papo reads it, with cofold's resolver under papo's name.
+The layers are `~/.config/papo/config.json`, the nearest `.papo.json` above a session's folder, and the file `$PAPO_CONFIG` names.
 It keeps sessions in cofold's own file store at cofold's home, `$COFOLD_HOME` or `~/.cofold`, unless the plugin options or a record name another store.
 The harness tools from `@cofold/tools` run in the cofold loop in the daemon process, as the Claude tools run in the Claude CLI.
 ahpd reports each call, asks for permission through the cofold policy, and reports edits through `onFileEdit`.

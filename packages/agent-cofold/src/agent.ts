@@ -11,6 +11,7 @@
  * runs a turn is `session.ts`, and the plugin entry is `plugin.ts`.
  */
 
+import { homedir } from 'node:os';
 import { EFFORT_LEVELS, PERMISSION_MODES, PERMISSION_MODE_DESCRIPTIONS, createMemoryStore, effortOf, textOf } from '@cofold/agents';
 import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Store } from '@cofold/agents';
 import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
@@ -60,7 +61,7 @@ export interface CofoldOptions {
   /**
    * The configuration directory the harness reads *inside a machine*.
    *
-   * The configuration is mounted there and `COFOLD_CONFIG` is pointed at the
+   * The configuration is mounted there and `PAPO_CONFIG` is pointed at the
    * file, so a cofold host in the machine finds the providers whatever user the
    * image runs as, and `XDG_CONFIG_HOME` is left as the image has it.
    * `false` says nothing at all and leaves the image's own.
@@ -559,11 +560,13 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    */
   const readEnds = new Map<string, ReadonlyMap<string, string>>();
   /*
-   * The harness configuration, read once for this backend.
+   * The harness configuration as the backend reads it, outside any session's
+   * folder.
    *
-   * It is the same file the harness reads, so a person who has already chosen
-   * a provider and a model does not say it again in the plugin's options, and
-   * the backend's own defaults and advertised resource follow from it.
+   * It is what the harness reads, so a person who has already chosen a
+   * provider and a model does not say it again in the plugin's options, and
+   * the backend's own defaults, its catalogue and its advertised resource
+   * follow from it. A session with a folder reads its own (`create`).
    */
   const harness = harnessConfig();
   /** The protected resource this backend advertises, where its endpoint names one. */
@@ -801,19 +804,28 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   function create(start: Start & { forkAt?: undefined; rewindAt?: undefined }): Session;
   function create(start: Start): Session | Promise<Session>;
   function create(start: Start): Session | Promise<Session> {
-    const opened = (resumed: Start): Session => cofoldSession(
-      options,
-      resumed,
-      store,
-      harness,
-      (settings, credentials) => connectionsOf(options, settings, credentials, harness)
-        .flatMap((connection) => knownCatalogue(connection)),
-      held,
-      // Where the turns it opens with ended, for a session that carries a
-      // conversation on, a fork's copy included: a fork keeps the message ids
-      // it copies.
-      start.resume === undefined ? undefined : readEnds.get(start.resume),
-    );
+    const opened = (resumed: Start): Session => {
+      /*
+       * The harness configuration as papo reads it in the session's own
+       * workspace, that workspace's `.papo.json` among its layers; a session
+       * given no folder has no project of its own and reads the backend's.
+       * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/config.ts#L92-L94
+       */
+      const read = resumed.workingDirectory === undefined ? harness : harnessConfig(process.env, homedir(), resumed.workingDirectory);
+      return cofoldSession(
+        options,
+        resumed,
+        store,
+        read,
+        (settings, credentials) => connectionsOf(options, settings, credentials, read)
+          .flatMap((connection) => knownCatalogue(connection)),
+        held,
+        // Where the turns it opens with ended, for a session that carries a
+        // conversation on, a fork's copy included: a fork keeps the message ids
+        // it copies.
+        start.resume === undefined ? undefined : readEnds.get(start.resume),
+      );
+    };
     const { forkAt, rewindAt, ...resumed } = start;
     if (forkAt === undefined && rewindAt === undefined) return opened(start);
     return (async (): Promise<Session> => {
@@ -861,16 +873,16 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
      * What a machine needs for this harness to find its providers.
      *
      * The harness configuration holds the provider keys, and it is mounted
-     * read-only at a fixed target under `computerConfigDir`, with `COFOLD_CONFIG`
-     * naming that file. The variable is this package's own, and it is a path to
-     * one file rather than a directory, because `XDG_CONFIG_HOME` cannot be
-     * moved for one program: it is the nested host's own folder as well, and a
-     * machine's mount point is root-owned, so a cofold machine whose image runs
-     * as anybody else would exit with EACCES creating its usage folder. Nothing
-     * here touches `XDG_CONFIG_HOME`, so every other program in the machine
-     * keeps its own.
+     * read-only at a fixed target under `computerConfigDir`, with `PAPO_CONFIG`
+     * naming that file, the layer papo's resolver reads from the variable. It
+     * is a path to one file rather than a directory, because `XDG_CONFIG_HOME`
+     * cannot be moved for one program: it is the nested host's own folder as
+     * well, and a machine's mount point is root-owned, so a cofold machine whose
+     * image runs as anybody else would exit with EACCES creating its usage
+     * folder. Nothing here touches `XDG_CONFIG_HOME`, so every other program in
+     * the machine keeps its own.
      *
-     * The target keeps the `cofold/config.json` shape the file has on a host, so
+     * The target keeps the `papo/config.json` shape the file has on a host, so
      * a person reading a mounted machine sees the same relative path they see
      * at `~/.config`.
      *
@@ -903,22 +915,22 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
       return {
         cofoldState: {
           state: configDir,
-          seed: [{ source: read, target: 'cofold/config.json' }],
+          seed: [{ source: read, target: 'papo/config.json' }],
           credential: true,
-          description: 'The cofold configuration, which holds the provider endpoints and their keys, kept in a volume.',
+          description: 'The harness configuration, which holds the provider endpoints and their keys, kept in a volume.',
         },
         cofoldConfig: {
           file: read,
-          target: `${configDir}/cofold/config.json`,
+          target: `${configDir}/papo/config.json`,
           readOnly: true,
           required: true,
           when: 'host',
           credential: true,
-          description: 'The cofold configuration, which holds the provider endpoints and their keys.',
+          description: 'The harness configuration, which holds the provider endpoints and their keys.',
         },
         cofoldConfigPath: {
-          name: 'COFOLD_CONFIG',
-          default: `${configDir}/cofold/config.json`,
+          name: 'PAPO_CONFIG',
+          default: `${configDir}/papo/config.json`,
           description: 'Where the harness looks for its configuration inside the machine.',
         },
         cofoldBaseUrl: {

@@ -148,13 +148,13 @@ it('registers the cofold engine, its form, its template and its host-only fields
   expect((engine?.schema.properties as Bag | undefined)?.['apiKey']).toMatchObject({ type: 'string', secret: true });
 
   // One template, and it sets nothing: a record made from it runs on the
-  // harness configuration at ~/.config/cofold/config.json, which the harness
-  // itself reads.
+  // harness configuration papo reads, ~/.config/papo/config.json and a
+  // project's .papo.json.
   const templates = engine?.templates ?? [];
   expect(templates).toHaveLength(1);
   expect(templates[0]?.name).toBe('Cofold');
   expect(templates[0]?.config).toEqual({});
-  expect(templates[0]?.description).toContain('~/.config/cofold/config.json');
+  expect(templates[0]?.description).toContain('~/.config/papo/config.json');
 
   // The plugin registers the engine and no agent: every agent is a record.
   expect(served.agents).toHaveLength(1);

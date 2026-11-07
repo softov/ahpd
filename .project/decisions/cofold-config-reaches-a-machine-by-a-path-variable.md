@@ -11,13 +11,16 @@ refs:
 ## Context
 
 The configuration was mounted read-only under `/ahpd/cofold` and an env need pointed `XDG_CONFIG_HOME` there.
-`XDG_CONFIG_HOME` is also where the nested `ahpd` keeps its own folder, and it creates `$XDG_CONFIG_HOME/ahpd/usage` at start; in a machine `/ahpd/cofold` is a folder Docker made for the mount and owns as root, so a nested host running as any other user exits.
+`XDG_CONFIG_HOME` is also where the nested `ahpd` keeps its own folder, and it creates `$XDG_CONFIG_HOME/ahpd/usage` at start.
+In a machine `/ahpd/cofold` is a folder Docker made for the mount and owns as root.
+So a nested host running as any other user exits.
 Reproduced on 2026-10-03 with a nested `ahpd --stdio` over a read-only `XDG_CONFIG_HOME`: `EACCES: permission denied, mkdir '<dir>/ahpd/usage'`.
 
 ## Decision
 
 cofold still follows Claude's pattern: its configuration is mounted read-only at a fixed target under `computerConfigDir` (default `/ahpd/cofold`, `false` for the image's own).
-An env need sets `COFOLD_CONFIG` to that file, and `harnessConfigPath()` reads `COFOLD_CONFIG` before `XDG_CONFIG_HOME`; `XDG_CONFIG_HOME` is left as the image has it.
+An env need sets `PAPO_CONFIG` to that file, the variable cofold's resolver reads under papo's name.
+`harnessConfigPath()` reads it before `XDG_CONFIG_HOME`, which is left as the image has it.
 Source: Softov, 2026-10-03, asked how cofold should find its config once `XDG_CONFIG_HOME` broke the nested host: "A cofold config path var".
 
 ## Consequences

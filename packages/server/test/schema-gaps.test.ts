@@ -186,11 +186,11 @@ const folders: string[] = [];
 beforeAll(async () => {
   /*
    * cofold reads the harness's own configuration when a backend opens, and a
-   * developer's file would make this walk depend on the machine. An empty path
-   * answers no providers, which is what a machine that never ran the harness
-   * has.
+   * developer's file would make this walk depend on the machine. A file named
+   * and not there answers no providers, which is what a machine that never ran
+   * the harness has.
    */
-  vi.stubEnv('COFOLD_CONFIG', join(tmpdir(), 'ahpd-schema-gaps-no-cofold.json'));
+  vi.stubEnv('PAPO_CONFIG', join(tmpdir(), 'ahpd-schema-gaps-no-papo.json'));
 
   for (const sample of SAMPLES) {
     const configDir = sample.configDir
