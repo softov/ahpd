@@ -384,10 +384,11 @@ const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsCha
 const AGENTS = 'types/channels-root/actions.ts, root/agentsChanged: "Fired when available agent backends or their models change."';
 const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
 const RERUN = 'types/channels-chat/actions.ts, chat/turnResume: "The host then resumes the provider\'s execution for that turn."; the backend here holds no such turn, and the host ends it again in an error that can be resumed, as VS Code\'s host ends a resume its agent rejects';
+const ARCHIVED_READ = 'VS Code chatArchiveContribution.ts L50-L52 at 6b68d3fe: "if (dispatched.action.isArchived && !isSessionStatusRead(status)) { this._stateManager.dispatchServerAction(dispatched.channel, { type: ActionType.ChatIsReadChanged, isRead: true }); }"; the host marks an unread chat it archives read, in a read action of its own';
 
 /**
- * Where a case's answer differs because the host did what the protocol has it
- * do on its own: each with the sentence that says so.
+ * Where a case's answer differs because the host did what the protocol or VS
+ * Code's host has it do on its own: each with the sentence that says so.
  */
 const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '005-session-turnstarted': [{ reduced: ['activity'], because: THINKING }],
@@ -416,6 +417,7 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': [{ start: ['turnsNextCursor'], because: RETAINED }],
   '263-chat-turn-resume-reopens-turn': [{ reduced: ['activeTurn', 'status', 'turns'], because: RERUN }],
   '269-chat-turn-resume-completes-one-turn': [{ reduced: ['activeTurn', 'status', 'turns'], because: RERUN }],
+  '272-chat-isarchivedchanged-archives-chat': [{ reduced: ['status'], because: ARCHIVED_READ }],
 };
 
 /**
