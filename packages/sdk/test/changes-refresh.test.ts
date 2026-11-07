@@ -955,21 +955,31 @@ it('offers no pull request on the first subscribe when there is no GitHub to ask
   expect(ids).not.toContain('prepare-pull-request');
 });
 
-it('announces the session\'s counts on the first subscribe in a directory outside the path', async () => {
+/*
+ * A session made in a directory outside the path is announced at its first
+ * message with none of its folder's counts, as VS Code's host sets a row's
+ * changes from the session's own changesets: the uncommitted file that was
+ * there before the session began is nobody's in particular.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L480-L493
+ */
+it('announces a session made in a directory outside the path with none of its folder\'s counts', async () => {
   const dir = onGitHub();
   const { client, peer: p } = await firstOperations(dir);
-  // Announced at its first message, its row holding the counts the first
-  // subscribe read, under its provider's name.
   await client.handle({
     method: 'dispatchAction',
     params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
   await vi.waitFor(() => { expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(true); }, { timeout: WAIT_MS });
+  await settle(20);
+  await new Promise((r) => { setTimeout(r, 200); });
   const added = p.notes.filter((n) => n.method === 'root/sessionAdded')
     .map((n) => (n.params as { summary: Record<string, unknown> }).summary)
-    .find((one) => one.resource === 'ahp-session:/s');
-  const held = rowsMoved(p, 'ahp-session:/s').reduce((row, changes) => ({ ...row, ...changes }), added ?? {});
-  expect((held.changes as { files?: number } | undefined)?.files).toBe(1);
+    .find((one) => one.resource === URI);
+  // Every count the row said, at its announcement and since: the session's
+  // own, which are none.
+  const said = [added?.changes, ...rowsMoved(p, URI).map((one) => one.changes)]
+    .filter((one): one is { files?: number } => one !== undefined);
+  expect(said.filter((one) => (one.files ?? 0) !== 0)).toEqual([]);
 });
 
 /*
