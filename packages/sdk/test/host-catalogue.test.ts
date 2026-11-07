@@ -1952,26 +1952,30 @@ describe("a listed row's _meta", () => {
 
   it("sends a row's _meta when the row is found rather than listed", async () => {
     const found = row('late', { bot: 'motion' });
+    // A session this host ran, which its record names the backend to ask about.
+    const kept = memorySessions();
+    kept.setProvider('late', 'slow');
+    kept.setUri?.('late', 'ahp-session:/late');
     const host = createHost({
       path: PATH,
       agents: [backend([], (id) => (id === 'late' ? found : undefined))],
       ...machine(),
+      sessions: kept,
     });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
-    await showExternal(client);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
 
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/late' } }) as {
       snapshot: { state: { _meta?: Record<string, unknown> } };
     };
-    expect(opened.snapshot.state._meta).toEqual({ bot: 'motion', 'vscode.external': true });
-    // And the row it announced, so a client that never opened it has the mark.
+    expect(opened.snapshot.state._meta).toEqual({ bot: 'motion' });
+    // And the row it announced, so a client that never opened it has the keys.
     const added = p.notes
       .filter((one) => one.method === 'root/sessionAdded')
       .map((one) => (one.params as { summary?: Row }).summary);
-    expect(added.find((one) => one?.resource === 'ahp-session:/late')?._meta).toEqual({ bot: 'motion', 'vscode.external': true });
+    expect(added.find((one) => one?.resource === 'ahp-session:/late')?._meta).toEqual({ bot: 'motion' });
   });
 
   it("lets the host's keys win a collision with a listed one", async () => {

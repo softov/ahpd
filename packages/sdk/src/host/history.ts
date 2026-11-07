@@ -272,42 +272,31 @@ export function createHistory(ctx: HostContext): History {
     return await refresh();
   };
   /**
-   * One backend's row for an id, from the backends that can answer by id.
+   * A recorded session's row, asked by id of the backend its record names,
+   * as VS Code's host routes a session by its registry's association alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostProviderService.ts#L141-L152
    *
-   * The recorded provider first, then the rest in load order. A transcript does
-   * not say which harness wrote it, so the record is what the host wrote when
-   * the session ran - but a row is opened on this host and not on the machine
-   * that wrote it, so a backend that did not record anything is asked too.
-   *
-   * A backend that refuses is a backend with nothing to say, the same as one
-   * that answers nothing: the others are still asked.
-   *
-   * Each is told the folder the record names, so a session that ran outside
-   * the paths a backend serves is looked for where it ran.
+   * Told the folder the record names, so a session that ran outside the paths
+   * the backend serves is looked for where it ran. A backend that refuses has
+   * nothing to say about it.
    */
   const findOf = async (id: string): Promise<{ agent: Agent; row: Listed } | undefined> => {
-    const asked = [...ctx.agents.values()].filter((agent) => agent.find !== undefined);
     const recorded = ctx.kept.provider(id);
-    const order = recorded === undefined
-      ? asked
-      : [...asked.filter((agent) => agent.provider === recorded), ...asked.filter((agent) => agent.provider !== recorded)];
-    const at = launchWorkingDirectory(id);
-    for (const agent of order) {
-      const row = await agent.find?.(id, at).catch(() => undefined);
-      if (row !== undefined) return { agent, row };
-    }
-    return undefined;
+    const agent = recorded === undefined ? undefined : ctx.agents.get(recorded);
+    if (agent?.find === undefined) return undefined;
+    const row = await agent.find(id, launchWorkingDirectory(id)).catch(() => undefined);
+    return row === undefined ? undefined : { agent, row };
   };
   /**
-   * Whether any backend here lists without being able to answer about one session.
-   *
-   * What decides whether a missing id costs a listing. A backend with `find` is
-   * asked about the id itself, and one with neither `list` nor `find` keeps
-   * its sessions where the host has no way to find them: a listing would turn
-   * up nothing, having nothing to list with.
+   * Whether a missing id costs a listing: a session with no record is found
+   * through a backend's own listing alone, as VS Code's host discovers one
+   * through its registry's listing, and so is a recorded one whose backend
+   * can be asked by id about none.
    */
-  const someCannotSay = (): boolean =>
-    [...ctx.agents.values()].some((agent) => agent.list !== undefined && agent.find === undefined);
+  const listedOnly = (id: string): boolean => {
+    const recorded = ctx.kept.provider(id);
+    return recorded === undefined || ctx.agents.get(recorded)?.find === undefined;
+  };
   /**
    * A stored session restored, as VS Code restores a session and its turns:
    * its row from the held summaries, else asked of the backends by id and
@@ -381,15 +370,16 @@ export function createHistory(ctx: HostContext): History {
           row = found;
         }
       }
-      if (!row && someCannotSay()) {
+      if (!row && listedOnly(id)) {
         /*
          * One more listing for an id the held rows do not have.
          *
-         * For a backend that cannot be asked about one session: a listing is
-         * all it has. One per missing id, shared with whoever else is asking
-         * while it runs (`relist` decides which pass answers), and nothing else
-         * bounds how often that is, because a client opening sessions nobody
-         * has is asking the one question such a backend can be asked.
+         * For a session no record names a backend for, or whose backend cannot
+         * be asked about one session: a listing is all there is. One per
+         * missing id, shared with whoever else is asking while it runs
+         * (`relist` decides which pass answers), and nothing else bounds how
+         * often that is, because a client opening sessions nobody has is asking
+         * the one question a listing answers.
          */
         row = (await relist(askedEpoch)).find((item) => idFor(item.resource) === id);
       }

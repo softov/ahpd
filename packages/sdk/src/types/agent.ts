@@ -905,10 +905,12 @@ export interface Agent {
    * This backend's row for one session, read without listing the rest.
    *
    * What a client opening a row the host does not hold costs without it: a
-   * link from another machine, a session written to disk after the last
-   * listing. `list` answers that by reading every transcript on the machine,
-   * for one id - and on a machine with a few thousand of them that is the
-   * difference between a window opening and a window waiting.
+   * session written to disk after the last listing. `list` answers that by
+   * reading every transcript on the machine, for one id - and on a machine
+   * with a few thousand of them that is the difference between a window
+   * opening and a window waiting. The host asks it about a session its record
+   * names this backend for, alone; a session no record names is found through
+   * a listing.
    *
    * `id` is the one the host holds a session under, which is the id in the row
    * `list` would have answered, and `undefined` is a real answer: this backend
