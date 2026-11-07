@@ -172,7 +172,12 @@ offer `prepare-pull-request` and `create-pr`. The host puts the answer beside th
 `_meta.github`: `owner`, `repo`, `pullRequestUrls`, `pullRequestBranchName`,
 and `pullRequestState` (`open`, `closed`, `merged`) with the
 `pullRequestStateUrl` it is the state of. Asked at startup, when a token
-arrives, and when a turn ends. `githubPullRequests()` asks the REST API with a
+arrives, and when a turn ends, as VS Code's host asks: with the root's
+`autoAttachPullRequests` on, for a branch other than the git facts'
+`baseBranchName`, and until a pull request is known for the branch, the one
+found going first and the known ones kept behind it; a known one's state is
+read again each time. With `autoAttachPullRequests` off nothing is looked up,
+and the list keeps the pull requests a session recorded or associated. `githubPullRequests()` asks the REST API with a
 lent token and `gh pr list` without one; a machine with neither answers no
 pull request rather than failing, and an answer that fails keeps what was held.
 
