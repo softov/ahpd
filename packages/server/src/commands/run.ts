@@ -1402,6 +1402,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // The operator's managed permissions and per-tool eligibility, handed on as the file says them.
     ...(options.managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions: options.managedSettingsPermissions }),
     ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
+    managedRules: options.managedRules,
     /*
      * The reader a configured module exports, which takes the sdk's own
      * splitter's place.

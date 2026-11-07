@@ -896,10 +896,11 @@ export interface HostOptions {
    * in VS Code's shape: managed `ask` and `deny` rules, the Allow All lock,
    * and the domains a fetch stays within.
    *
-   * The host checks the rules of `deny` and `ask`, and `limitTo`, on every
-   * tool question of their kind, beside the session's permissions, and the
-   * lock takes the host's Allow All away from every session. Handed to every
-   * backend on `Start.managedSettings` as well, as VS Code hands its runtime
+   * Under `managedRules: 'checked'` the host checks the rules of `deny` and
+   * `ask`, and `limitTo`, on every tool question of their kind, beside the
+   * session's permissions. The lock takes the host's Allow All away from every
+   * session under either value. Handed to every backend on
+   * `Start.managedSettings` as well, as VS Code hands its runtime
    * `managedSettings: { permissions }`, for a runtime that enforces them on
    * the calls it never asks the host about.
    */
@@ -911,10 +912,29 @@ export interface HostOptions {
    * to `false` asks every time, the managed layer's per-tool ask.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L42
    *
-   * The host reads it on every tool question, beside the managed rules, and
-   * hands it to every backend on `Start.managedSettings` with them.
+   * Under `managedRules: 'checked'` the host reads it on every tool question,
+   * beside the managed rules, and it hands it to every backend on
+   * `Start.managedSettings` with them under either value.
    */
   eligibleForAutoApproval?: Record<string, boolean>;
+  /**
+   * Who checks the managed rules, `managedSettingsPermissions` and
+   * `eligibleForAutoApproval`, on a tool question.
+   *
+   * `checked`, the default, is this host's own check: each managed family on
+   * every question of its kind from every backend, a `deny` refusing the call
+   * and an `ask`, or a tool its eligibility sets `false`, putting the question
+   * with Allow Once and Skip alone. `handed` is VS Code's: the host checks no
+   * managed rule and marks nothing, hands the rules to the backends on
+   * `Start.managedSettings` for the runtimes that take them, and puts a
+   * question a backend marked `managedApprovalRequired` with Allow Once and
+   * Skip, as VS Code's host keeps the merged permissions for its runtimes and
+   * checks none. The start's check of the managed document and the Allow All
+   * lock hold under both.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostManagedSettingsService.ts
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
+   */
+  managedRules?: 'checked' | 'handed';
   /**
    * How a session's shell commands are read before their rules are matched.
    *

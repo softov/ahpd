@@ -494,18 +494,21 @@ export function createSpawn(ctx: HostContext): Spawn {
       }),
       exists: existsSync,
     };
-    // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
-    // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
-    const eligible = toolName === undefined || !alwaysAsks(options.eligibleForAutoApproval, toolName,
-      ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
-      mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
     /*
      * The operator's managed rules, read on every question beside the
-     * session's permissions; a question a managed rule asks, its backend's
-     * mark or this host's, answers to nobody but a person, as one the
-     * operator's `eligibleForAutoApproval` names.
+     * session's permissions where the daemon's `managedRules` is `checked`;
+     * under `handed` the backends are handed them and the host checks none, as
+     * VS Code's host. A question a managed rule asks, its backend's mark or
+     * this host's, answers to nobody but a person, as one the operator's
+     * `eligibleForAutoApproval` names.
      */
-    const managedSays = managedDecision(managedSettings, approval, subCommands);
+    const checked = options.managedRules !== 'handed';
+    // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
+    // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
+    const eligible = !checked || toolName === undefined || !alwaysAsks(options.eligibleForAutoApproval, toolName,
+      ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
+      mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
+    const managedSays = checked ? managedDecision(managedSettings, approval, subCommands) : undefined;
     const managed = signal.managedApprovalRequired === true || managedSays === 'ask' || !eligible;
     if (managedSays === 'deny' || isForbiddenSnapshotWrite(approval) || isDeniedByPermissions(approval, subCommands)) {
       queueMicrotask(() => { backend()?.confirm(toolCallId, false); });

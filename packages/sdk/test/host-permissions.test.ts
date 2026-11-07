@@ -580,3 +580,38 @@ it('hands a backend the operator\'s eligibility beside the managed rules on its 
   expect(starts[0]?.managedSettings).toEqual({ eligibleForAutoApproval: eligible });
   await host.close();
 });
+
+/*
+ * Under `managedRules: handed` the host checks no managed rule and marks
+ * nothing, hands the rules to its backends, and puts a question a backend
+ * marked managed with Allow Once and Skip, as VS Code's host keeps the merged
+ * permissions for its runtimes and checks none; the Allow All lock holds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostManagedSettingsService.ts
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
+ */
+it('checks no managed rule under managedRules handed, hands them on, and honours a backend\'s own mark and the lock', async () => {
+  const managed = { deny: ['Shell(curl)'], ask: ['Write(**/*.txt)'], disableBypassPermissionsMode: 'disable' as const };
+  const handed = { managedRules: 'handed' as const, managedSettingsPermissions: managed, eligibleForAutoApproval: { bash: false } };
+
+  // A command a managed deny rule names, of a tool the eligibility sets false: put, with a command's own grants.
+  const starts: Start[] = [];
+  const shell = await serving(asking([], 'bash', undefined, { permissionKind: 'shell', shellCommand: 'curl https://example.com', shellLanguage: 'bash' }, starts), handed);
+  expect(((await shell.turn('t1')).options as { id: string }[]).map((one) => one.id)).toEqual([
+    'allow-once', 'allow-session-rules:["Shell(curl https://example.com)"]', 'allow-always-rules:["Shell(curl https://example.com)"]', 'skip',
+  ]);
+  expect(starts[0]?.managedSettings).toEqual({ permissions: managed, eligibleForAutoApproval: { bash: false } });
+  await shell.host.close();
+
+  // A write a managed ask rule names, in the session's folder: answered by the session's own edit rules.
+  const write = await serving(asking([], 'Write', undefined, { permissionKind: 'write', permissionPath: join(dir, 'notes.txt') }), handed);
+  expect((await write.turn('t1')).confirmed).toBe('not-needed');
+  await write.host.close();
+
+  // The backend's own mark: Allow Once and Skip, whatever Allow All says, which the lock takes away besides.
+  const answers: Answer[] = [];
+  const marked = await serving(asking(answers, 'Read', undefined, { permissionKind: 'read', permissionPath: join(dir, 'notes.txt'), managedApprovalRequired: true }), handed);
+  await marked.dispatch(ROOT, { type: 'root/configChanged', config: { globalAutoApproveEnabled: true } });
+  expect((await marked.turn('t1')).options).toEqual(ONCE);
+  expect(answers).toEqual([]);
+  await marked.host.close();
+});

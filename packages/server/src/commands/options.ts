@@ -124,6 +124,8 @@ export interface Options {
   managedSettingsPermissions?: ManagedSettingsPermissions;
   /** The tools whose calls ask every time, by `false`, absent when the deployment named none. */
   eligibleForAutoApproval?: Record<string, boolean>;
+  /** Who checks the managed rules on a tool question: the host, or the backends it hands them to. */
+  managedRules: 'checked' | 'handed';
   /**
    * A module whose default export reads a session's shell commands, as the
    * file's `commandParser` names it.
@@ -729,6 +731,11 @@ export const serverFields = {
     description: 'The managed permissions every session on the host is held to, in VS Code\'s shape: deny and ask rules in the managed rule grammar (Shell, Read, Write, Domain), disableBypassPermissionsMode "disable" to take Allow All away, and limitTo, the Domain rules a fetch stays within, each Domain or Domain(<host>) with the host as VS Code\'s network filter normalizes it. A Domain rule names a host whatever the scheme, port or path of a URL. A rule the managed grammar refuses stops the start. The host checks each rule on the tool questions of its kind beside the session\'s permissions, and hands the whole to every backend. Set in the configuration file only.',
   },
   eligibleForAutoApproval: asJsonSchema(eligibleForAutoApprovalField),
+  managedRules: {
+    type: 'string',
+    enum: ['checked', 'handed'],
+    description: 'Who checks managedSettingsPermissions and eligibleForAutoApproval on a tool question: checked has the host check each on every question of its kind; handed hands them to the backends and checks none, putting a question a backend marked managed with Allow Once and Skip, as VS Code does.',
+  },
   commandParser: {
     type: 'string',
     title: 'Command parser',
@@ -1380,6 +1387,7 @@ const noCwd = input['noCwd'] === true;
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',
     ...(managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions }),
     ...(eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval }),
+    managedRules: given('managedRules') ?? 'checked',
     ...(commandParser === undefined ? {} : { commandParser }),
     ...(deltaWindowMs === undefined ? {} : { deltaWindowMs }),
     ...(sleepAfterMinutes === undefined ? {} : { sleepAfterMinutes }),

@@ -400,20 +400,29 @@ export interface Config {
    * take Allow All away, and `limitTo`, the `Domain` rules a fetch stays
    * within.
    *
-   * The host checks each rule on the tool questions of its kind beside the
-   * session's permissions, the lock takes the host's
-   * Allow All away, and the whole is handed to every backend, as VS Code
-   * hands its runtime managed settings. Absent is no managed permissions at
-   * all.
+   * Under `managedRules: checked` the host checks each rule on the tool
+   * questions of its kind beside the session's permissions; the lock takes
+   * the host's Allow All away, and the whole is handed to every backend, as
+   * VS Code hands its runtime managed settings, under either value. Absent is
+   * no managed permissions at all.
    */
   managedSettingsPermissions?: ManagedSettingsPermissions;
   /**
    * The operator's per-tool approval eligibility, VS Code's
-   * `chat.tools.eligibleForAutoApproval` map of tool name to boolean: a tool
-   * set to `false` asks every time, with no "always" option, beside the
-   * managed permissions. Absent names no tool.
+   * `chat.tools.eligibleForAutoApproval` map of tool name to boolean: under
+   * `managedRules: checked` a tool set to `false` asks every time, with no
+   * "always" option, beside the managed permissions. Absent names no tool.
    */
   eligibleForAutoApproval?: Record<string, boolean>;
+  /**
+   * Who checks the managed rules on a tool question.
+   *
+   * `checked`, the default, is this host's own check of each rule on every
+   * question of its kind. `handed` is VS Code's: the host hands the rules to
+   * the backends and checks none, and a question a backend marked managed is
+   * put with Allow Once and Skip alone.
+   */
+  managedRules?: 'checked' | 'handed';
   /**
    * How long a streamed delta waits for the next one before it is sent.
    *
