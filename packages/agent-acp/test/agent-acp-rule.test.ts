@@ -286,17 +286,28 @@ it('runs a host tool the rule does not name without asking', async () => {
   expect(results(p, chatUri)).toEqual([{ isError: false, content: [{ type: 'text', text: 'the sessions' }] }]);
 });
 
+/*
+ * A question about a tool the operator's rule names offers VS Code's Allow Once
+ * and Skip, whatever the agent offered, as VS Code's host puts a question a
+ * managed policy asks; the agent is answered with its own once option of the
+ * kind picked.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L610
+ */
 it('offers only the once options for a matched tool the agent asks about itself', async () => {
   const { client, peer: p, uri, chatUri } = await talking({ rules: { remove_file: false } });
   begin(client, chatUri, 'ask me first');
   await until(() => question(p, uri) !== undefined);
 
-  expect(call(question(p, uri)).options).toEqual([OFFERED[0], OFFERED[2]]);
+  const once = [
+    { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+    { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
+  ];
+  expect(call(question(p, uri)).options).toEqual(once);
   // The call's own ready carries the same choices, and no "always" among them.
   const ready = actions(p, chatUri)
     .filter((e) => e.action.type === 'chat/toolCallReady' && e.action.toolCallId === 'call-perm')
     .at(-1)?.action;
-  expect(ready?.options).toEqual([OFFERED[0], OFFERED[2]]);
+  expect(ready?.options).toEqual(once);
 });
 
 it('offers every option for a tool the rule does not name', async () => {
