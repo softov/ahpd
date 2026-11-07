@@ -12,7 +12,8 @@ import { scopeOf } from './reference.js';
 import { madeAgain, namedAgain, revealed, scopedTo, vaultNamed, withDefaults } from './secrets.js';
 import type { VaultRead } from './secrets.js';
 import { absoluteOnHost, manifestOf } from './manifest.js';
-import { ensureJoined, ensureParts, readParts, refusedWithout } from './parts.js';
+import { ensureJoined, ensureParts, PART_VOLUME_SWEEP_DELAY_MS, readParts, refusedWithout, requestedVolume } from './parts.js';
+import type { Part } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
 import { SequencerByKey, adoptedDevContainer, disposableOf, dockerRuntime, hostOf, isRunning, machineDirectory, madeUnderBind, profileOf, queue, sessionOf, stateVolumeOf, within } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, Machine, MachineSpec } from './runtime.js';
@@ -1103,6 +1104,25 @@ export const apply: Plugin['apply'] = (host, options) => {
   const reconciling = setInterval(() => { void catalogue.refresh(); }, CATALOGUE_PASS_MS);
   reconciling.unref?.();
   host.registerClose(() => { clearInterval(reconciling); });
+
+  /*
+   * The part volumes of versions the versions file does not name, removed
+   * from each Docker this plugin makes machines on once no machine has used
+   * them for a week, half a minute after the plugin starts, as VS Code cleans
+   * its SDK cache once startup's own work is out of the way. A file that
+   * cannot be read names nothing to keep, so nothing is removed.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L241-L242
+   */
+  const sweeping = setTimeout(() => {
+    let named: Part[];
+    try { named = readParts(); }
+    catch { return; }
+    for (const docker of [dockered, ...Object.values(farDockers)]) {
+      docker.removeUnusedPartVolumes?.((volume) => requestedVolume(volume, named)).catch(() => { /* the next start sweeps again */ });
+    }
+  }, PART_VOLUME_SWEEP_DELAY_MS);
+  sweeping.unref?.();
+  host.registerClose(() => { clearTimeout(sweeping); });
 
   /**
    * The runtime, with a stretch around every change of state, and the computer

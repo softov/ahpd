@@ -20,7 +20,7 @@ import type { CodeRoute } from './clone.js';
 import { bringBack, bundledInto, checkedOut, fetchedInto, followOfCopy, hostGit, keepUncommitted, movesOver } from './machinegit.js';
 import type { FarSeed, MachineGit, Ran } from './machinegit.js';
 import { absoluteOnHost, mountParts } from './manifest.js';
-import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, once, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
+import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, markerText, markerUsed, once, PART_VOLUME_KEPT_MS, PART_VOLUME_USE_REFRESH_MS, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
 import type { ArchiveEntry, MadePart, Tarball } from './parts.js';
 import type { Cli, CliOptions, DevContainerConfiguration, Reach } from './devcontainer.js';
 import type { ServerReport } from './servercheck.js';
@@ -119,6 +119,9 @@ export interface MadeState extends AskedState {
 
 /** The label a machine with state volumes carries, valued `volume`. */
 export const MACHINE_STATE = 'ahpd.state';
+
+/** The label a part volume carries, valued with the image it is filled from. */
+export const PART_VOLUME_LABEL = 'ahpd.part';
 
 /** A name as one piece of a volume name: lowercased, every character outside `[a-z0-9-]` a dash. */
 const volumePiece = (said: string): string => said.toLowerCase().replace(/[^a-z0-9-]/g, '-');
@@ -718,6 +721,14 @@ export interface ComputerRuntime {
   buildImage(tag: string, context: Uint8Array): Promise<void>;
   /** Pull one image from its registry and give it `tag` here. */
   pullImage(from: string, tag: string): Promise<void>;
+  /**
+   * Remove each part volume `requested` does not keep that no machine has used
+   * for `PART_VOLUME_KEPT_MS`, as VS Code removes a cached SDK version the
+   * product does not ask for. Best effort: a volume Docker will not remove,
+   * one a machine still mounts among them, is left for the next time.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L30-L78
+   */
+  removeUnusedPartVolumes?(requested: (volume: string) => boolean): Promise<void>;
 }
 
 /**
@@ -1983,23 +1994,34 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   /**
    * One part's volume, filled from its image the first time it is asked for.
    *
-   * `docker create` with an empty named volume at the part's path fills the
-   * volume from the image, and nothing is started. The marker is written last,
-   * through the same container, so a fill that stopped half way leaves a volume
-   * without it, and such a volume is removed and filled again. One fill per
-   * volume at a time, shared as a build is.
+   * The volume is made with the `ahpd.part` label naming the image it is
+   * filled from, which is how an unused one is found again. `docker create`
+   * with the empty volume at the part's path fills it from the image, and
+   * nothing is started. The marker is written last, through the same
+   * container, so a fill that stopped half way leaves a volume without it, and
+   * such a volume is removed and filled again. Each use writes the time into
+   * the marker again once `PART_VOLUME_USE_REFRESH_MS` has passed, as VS Code
+   * records a cached SDK's use. One fill per volume at a time, shared as a
+   * build is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L430-L440
    */
   const ensurePartVolume = (part: MadePart): Promise<string> => {
     const volume = volumeOf(part);
     const at = partTarget(part.id);
     const helper = (): string => `ahpd-part-fill-${randomUUID().slice(0, 8)}`;
+    const marker = (): Buffer => archiveOf([{ name: FILLED_MARKER, bytes: Buffer.from(markerText(part.tag, Date.now()), 'utf8') }]);
     return once(`volume:${volume}`, async () => {
       if ((await ran(options, ['volume', 'inspect', volume])).code === 0) {
         const looking = helper();
         let filled = false;
         try {
           await must(['create', '--name', looking, '-v', `${volume}:${at}`, part.tag, 'x']);
-          filled = (await ran(options, ['cp', `${looking}:${at}/${FILLED_MARKER}`, '-'])).code === 0;
+          const read = await ran(options, ['cp', `${looking}:${at}/${FILLED_MARKER}`, '-']);
+          filled = read.code === 0;
+          const used = filled ? markerUsed(firstFileOf(Buffer.from(read.stdout, 'utf8'))?.toString('utf8') ?? '') : undefined;
+          if (filled && (used === undefined || Date.now() - used >= PART_VOLUME_USE_REFRESH_MS)) {
+            await must(['cp', '-', `${looking}:${at}`], undefined, marker());
+          }
         }
         finally {
           await ran(options, ['rm', '-f', looking]);
@@ -2007,11 +2029,11 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         if (filled) return volume;
         await must(['volume', 'rm', volume]);
       }
+      await must(['volume', 'create', '--label', `${PART_VOLUME_LABEL}=${part.tag}`, volume]);
       const filling = helper();
       try {
         await must(['create', '--name', filling, '-v', `${volume}:${at}`, part.tag, 'x']);
-        await must(['cp', '-', `${filling}:${at}`], undefined,
-          archiveOf([{ name: FILLED_MARKER, bytes: Buffer.from(`${part.tag}\n`, 'utf8') }]));
+        await must(['cp', '-', `${filling}:${at}`], undefined, marker());
       }
       finally {
         await ran(options, ['rm', '-f', filling]);
@@ -3472,6 +3494,46 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           // it asks for, a network that is not there.
           const said = held.stderr.trim() || held.stdout.trim() || 'no output';
           throw new Error(`${options.command} ${argv.join(' ')} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
+        }
+      }
+    },
+
+    /*
+     * Each part volume here that `requested` does not keep, removed once its
+     * last use - the marker's time, read through a container of the image its
+     * label names, or else the volume's own - is older than
+     * `PART_VOLUME_KEPT_MS`. One that cannot be read or removed is left, as VS
+     * Code leaves a version it cannot clean up now for the next call.
+     */
+    removeUnusedPartVolumes: async (requested) => {
+      const listed = await ran(options, ['volume', 'ls', '--format', '{{.Name}}']);
+      if (listed.code !== 0) return;
+      const now = Date.now();
+      for (const volume of listed.stdout.split('\n').map((one) => one.trim()).filter((one) => one.startsWith('ahpd-part-') && !requested(one))) {
+        try {
+          const found = rows((await ran(options, ['volume', 'inspect', '--format', '{{json .}}', volume])).stdout)[0] ?? {};
+          const labels = (typeof found.Labels === 'object' && found.Labels !== null ? found.Labels : {}) as Record<string, unknown>;
+          const image = labels[PART_VOLUME_LABEL];
+          let used = Date.parse(text(found.CreatedAt));
+          if (typeof image === 'string' && (await ran(options, ['image', 'inspect', image])).code === 0) {
+            const looking = `ahpd-part-fill-${randomUUID().slice(0, 8)}`;
+            try {
+              await must(['create', '--name', looking, '-v', `${volume}:/opt/ahpd/part`, image, 'x']);
+              const read = await ran(options, ['cp', `${looking}:/opt/ahpd/part/${FILLED_MARKER}`, '-']);
+              const marked = read.code === 0 ? markerUsed(firstFileOf(Buffer.from(read.stdout, 'utf8'))?.toString('utf8') ?? '') : undefined;
+              if (marked !== undefined) used = Number.isNaN(used) ? marked : Math.max(used, marked);
+            }
+            finally {
+              await ran(options, ['rm', '-f', looking]);
+            }
+          }
+          if (Number.isNaN(used) || now - used <= PART_VOLUME_KEPT_MS) continue;
+          if ((await ran(options, ['volume', 'rm', volume])).code === 0) {
+            options.log?.(`removed ${volume}, which no machine has used for over a week`);
+          }
+        }
+        catch {
+          // Left for the next time, as a volume Docker would not remove is.
         }
       }
     },

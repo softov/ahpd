@@ -1544,6 +1544,29 @@ it('leaves out a profile part the versions file does not name, and keeps the res
   expect(held.machines.find((one) => one.name === 'box')?.labels?.['ahpd.parts']).toBe(label(['codex', 'node']));
 });
 
+/*
+ * Half a minute after it starts, the plugin sweeps its Docker's part volumes
+ * of versions the versions file does not name, as VS Code cleans its SDK cache
+ * once startup's work is done (agentSdkDownloader.ts L241-L242 at 6b68d3fe).
+ */
+it('sweeps the part volumes of versions the file does not name half a minute after it starts', async () => {
+  const state = join(temp(), 'docker.json');
+  const aged = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+  const current = `ahpd-part-codex-${PARTS.get('codex') ?? ''}`;
+  const volumes = (): string[] => Object.keys((JSON.parse(readFileSync(state, 'utf8')) as { volumes?: Record<string, unknown> }).volumes ?? {});
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  try {
+    await loadParts(state, { parts: ['codex'] }, [CODEXER], {
+      volumes: { 'ahpd-part-codex-0.0.1-aaaaaaaaaaaa': { files: [], created: aged }, [current]: { files: [], created: aged } },
+    });
+    vi.advanceTimersByTime(30_000);
+  }
+  finally {
+    vi.useRealTimers();
+  }
+  await vi.waitFor(() => { expect(volumes()).toEqual([current]); }, { timeout: 60_000, interval: 50 });
+});
+
 it('refuses a mount at a part\'s target as any other shared target', async () => {
   const dir = temp();
   const state = join(dir, 'docker.json');

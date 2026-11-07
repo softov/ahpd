@@ -977,22 +977,67 @@ export const IMAGE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
  * The volume a part is copied into where an image mount is refused,
  * `ahpd-part-<id>-<version>`.
  *
- * The version is in the name, so a bump makes a new volume and the old one is
- * left for `docker volume prune`. So is the Dockerfile's own hash, since a
- * rebuild under a new tag fills a volume of its own rather than the one the
- * older image filled. A character Docker refuses in a volume name - the `+` of
- * a build suffix - is written `_`.
+ * The version is in the name, so a bump makes a new volume, and the old one is
+ * removed once no machine has used it for a week (`PART_VOLUME_KEPT_MS`). So
+ * is the Dockerfile's own hash, since a rebuild under a new tag fills a volume
+ * of its own rather than the one the older image filled. A character Docker
+ * refuses in a volume name - the `+` of a build suffix - is written `_`.
  */
 export const volumeOf = (part: MadePart): string =>
   `ahpd-part-${part.id}-${part.version.replace(/[^A-Za-z0-9_.-]/g, '_')}`;
 
 /**
- * The file written into a part volume once it is filled, and last.
+ * The file written into a part volume once it is filled, and last, holding
+ * the image it was filled from and when a machine last used it.
  *
  * A volume without it is a fill that stopped half way, which is removed and
- * filled again rather than mounted.
+ * filled again rather than mounted. Its time is the volume's last use, as VS
+ * Code's sentinel in a cached SDK records the SDK's last use.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L11-L15
  */
 export const FILLED_MARKER = '.ahpd-filled';
+
+/** The marker's text: the image's tag, then the time of the last use. */
+export const markerText = (tag: string, used: number): string => `${tag}\n${new Date(used).toISOString()}\n`;
+
+/** The last use a marker's text records, or nothing for one that records none. */
+export const markerUsed = (text: string): number | undefined => {
+  const used = Date.parse(text.split('\n')[1] ?? '');
+  return Number.isNaN(used) ? undefined : used;
+};
+
+/**
+ * How long a part volume of a version the versions file does not name is kept
+ * after a machine last used it, as VS Code keeps a cached SDK version the
+ * product does not ask for: another daemon on the same Docker may still run
+ * that version.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L17-L22
+ */
+export const PART_VOLUME_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The least time between two writes of a volume's last use while machines keep
+ * using it, as VS Code refreshes a cached SDK's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L244-L245
+ */
+export const PART_VOLUME_USE_REFRESH_MS = 60 * 60 * 1000;
+
+/**
+ * Whether a part volume is of a version the versions file names, kept however
+ * long ago a machine used it: the volume of each of that version's Dockerfiles,
+ * as VS Code keeps every target of a version the product asks for.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L30-L36
+ */
+export const requestedVolume = (volume: string, parts: readonly Part[]): boolean =>
+  parts.some((part) => volume.startsWith(`${volumeOf({ id: part.id, tag: '', version: pinnedOf(part) })}-`));
+
+/**
+ * How long after the plugin starts its part volumes are swept, as VS Code
+ * waits before it cleans its SDK cache, so the sweep stays out of the way of
+ * startup's own work.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L241-L242
+ */
+export const PART_VOLUME_SWEEP_DELAY_MS = 30_000;
 
 /** A `PATH` with each part's `bin` in front of `base`, in the order the parts are named. */
 export const pathWith = (ids: readonly string[], base: string): string =>

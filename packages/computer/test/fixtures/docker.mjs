@@ -271,12 +271,42 @@ if (verb === 'tag') {
 if (verb === 'volume') {
   const name = args[args.length - 1];
   held.volumes ??= {};
+  // `volume ls --format {{.Name}}`: every volume's name, one a line.
+  if (args[1] === 'ls') {
+    keep();
+    process.stdout.write(Object.keys(held.volumes).map((one) => `${one}\n`).join(''));
+    process.exit(0);
+  }
+  // `volume create --label <key>=<value> <name>`: an empty volume with its
+  // labels and the time it was made.
+  if (args[1] === 'create') {
+    const labels = Object.fromEntries(args.flatMap((one, at) => (args[at - 1] === '--label' ? [[one.slice(0, one.indexOf('=')), one.slice(one.indexOf('=') + 1)]] : [])));
+    held.volumes[name] ??= { files: [], created: new Date().toISOString() };
+    held.volumes[name].labels = labels;
+    keep();
+    process.stdout.write(`${name}\n`);
+    process.exit(0);
+  }
   if (held.volumes[name] === undefined) {
     keep();
     process.stderr.write(`Error response from daemon: get ${name}: no such volume\n`);
     process.exit(1);
   }
-  if (args[1] === 'rm') delete held.volumes[name];
+  if (args[1] === 'rm') {
+    // A volume a container mounts is in use, and Docker will not remove it.
+    const user = (held.machines ?? []).find((one) => (one.mounts ?? []).some((mount) => String(mount).split(':')[0] === name));
+    if (user !== undefined) {
+      keep();
+      process.stderr.write(`Error response from daemon: remove ${name}: volume is in use - [${user.name}]\n`);
+      process.exit(1);
+    }
+    delete held.volumes[name];
+  }
+  else if (args.includes('--format')) {
+    // `{{json .}}`: the record, with when the volume was made and its labels.
+    const one = held.volumes[name];
+    process.stdout.write(`${JSON.stringify({ Name: name, Driver: 'local', CreatedAt: one.created ?? new Date().toISOString(), Labels: one.labels ?? null })}\n`);
+  }
   else process.stdout.write(`${JSON.stringify([{ Name: name, Driver: 'local' }])}\n`);
   keep();
   process.exit(0);
@@ -654,7 +684,7 @@ if (verb === 'run' || verb === 'create') {
       process.stderr.write(`Error response from daemon: failed to populate volume ${source}: no space left on device\n`);
       process.exit(1);
     }
-    const volume = (held.volumes[source] ??= { files: [] });
+    const volume = (held.volumes[source] ??= { files: [], created: new Date().toISOString() });
     if (volume.files.length === 0 && (held.images ?? []).includes(image)) {
       volume.files.push(`from ${image} at ${target}`);
       (held.fills ??= []).push(source);

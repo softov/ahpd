@@ -2,7 +2,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { markerText, readParts, requestedVolume } from '../src/parts.js';
 import { dockerRuntime } from '../src/runtime.js';
 import type { DockerOptions } from '../src/runtime.js';
 import type { MadePart } from '../src/parts.js';
@@ -25,7 +26,7 @@ const NODE: MadePart = { id: 'node', tag: 'ahpd-part/node:24.21.0', version: '24
 interface Held {
   machines: { name: string; mounts?: string[]; typed?: string[]; labels?: Record<string, string>; env?: Record<string, string> }[];
   calls: string[][];
-  volumes?: Record<string, { files: string[] }>;
+  volumes?: Record<string, { files: string[]; contents?: Record<string, string>; labels?: Record<string, string>; created?: string }>;
   fills?: string[];
 }
 
@@ -172,4 +173,97 @@ it('takes the volumes without asking where the option switches image mounts off'
   await make(runtime(path, { imageMounts: false }), 'one');
   expect(probes(path)).toEqual([]);
   expect(held(path).calls.find((one) => one[0] === 'run')).toContain('ahpd-part-codex-2.1.1:/opt/ahpd/codex:ro');
+});
+
+/*
+ * A part volume's last use is in its marker, written again by a machine made
+ * with it once an hour has passed, as VS Code's sentinel records a cached
+ * SDK's last use (agentSdkCache.ts L11-L15, agentSdkDownloader.ts L244-L245
+ * at 6b68d3fe); and the volume is made with the label naming its image.
+ */
+it('writes the time a machine used a part volume into its marker, and again once an hour has passed', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const path = state({ imageMounts: false });
+    const docker = runtime(path);
+    const marker = (): string | undefined => held(path).volumes?.['ahpd-part-codex-2.1.1']?.contents?.['.ahpd-filled'];
+    await make(docker, 'one');
+    const first = marker();
+    expect(first).toBe(markerText(CODEX.tag, Date.now()));
+    expect(held(path).volumes?.['ahpd-part-codex-2.1.1']?.labels).toEqual({ 'ahpd.part': CODEX.tag });
+
+    // Within the hour a machine made with it writes nothing.
+    vi.setSystemTime(Date.now() + 59 * 60 * 1000);
+    await make(docker, 'two');
+    expect(marker()).toBe(first);
+
+    // After it, the use is written again.
+    vi.setSystemTime(Date.now() + 2 * 60 * 1000);
+    await make(docker, 'three');
+    expect(marker()).toBe(markerText(CODEX.tag, Date.now()));
+  }
+  finally {
+    vi.useRealTimers();
+  }
+});
+
+/*
+ * A part volume of a version the versions file does not name goes once no
+ * machine has used it for a week, as VS Code removes a cached SDK version the
+ * product does not ask for (agentSdkCache.ts L17-L78 at 6b68d3fe); every
+ * volume of a version the file names stays, and one a machine mounts is left.
+ */
+it('removes a part volume of a version not asked for once no machine has used it for a week, and keeps the rest', async () => {
+  const now = Date.now();
+  const days = (count: number): number => now - count * 24 * 60 * 60 * 1000;
+  const old = 'ahpd-part/codex:1.0.0';
+  const volume = (used: number | undefined, extra: Record<string, unknown> = {}) => ({
+    files: used === undefined ? [] : ['.ahpd-filled'],
+    ...(used === undefined ? {} : { contents: { '.ahpd-filled': markerText(old, used) }, labels: { 'ahpd.part': old } }),
+    created: new Date(days(30)).toISOString(),
+    ...extra,
+  });
+  const path = state({
+    images: [CODEX.tag, NODE.tag, old],
+    machines: [{ name: 'busy', mounts: ['ahpd-part-node-1.0.0-cccccccccccc:/opt/ahpd/node:ro'] }],
+    volumes: {
+      // Another version, last used eight days ago.
+      'ahpd-part-codex-1.0.0-aaaaaaaaaaaa': volume(days(8)),
+      // Another version made a month ago and used two days ago.
+      'ahpd-part-codex-1.1.0-aaaaaaaaaaaa': volume(days(2)),
+      // The version the file names, at a Dockerfile of its own, used a month ago.
+      'ahpd-part-codex-2.1.1-bbbbbbbbbbbb': volume(days(30)),
+      // Another version a machine still mounts.
+      'ahpd-part-node-1.0.0-cccccccccccc': volume(days(30)),
+      // One an older daemon made, with no label and no time: its making is its last use.
+      'ahpd-part-goose-0.1.0': volume(undefined, { created: new Date(days(10)).toISOString() }),
+      // And a volume that is not a part's.
+      'ahpd-git-box': { files: [], created: new Date(days(30)).toISOString() },
+    },
+  });
+  const lines: string[] = [];
+  const named = [{ id: 'codex', name: 'Codex', kind: 'npm' as const, version: '2.1.1', bin: ['codex-acp'] }];
+  await runtime(path, { log: (line) => { lines.push(line); } }).removeUnusedPartVolumes?.((one) => requestedVolume(one, named));
+
+  expect(Object.keys(held(path).volumes ?? {}).sort()).toEqual([
+    'ahpd-git-box',
+    'ahpd-part-codex-1.1.0-aaaaaaaaaaaa',
+    'ahpd-part-codex-2.1.1-bbbbbbbbbbbb',
+    'ahpd-part-node-1.0.0-cccccccccccc',
+  ]);
+  expect(lines.sort()).toEqual([
+    'removed ahpd-part-codex-1.0.0-aaaaaaaaaaaa, which no machine has used for over a week',
+    'removed ahpd-part-goose-0.1.0, which no machine has used for over a week',
+  ]);
+  // Every container read through is gone again.
+  expect(held(path).machines.map((one) => one.name)).toEqual(['busy']);
+});
+
+it('asks for every Dockerfile\'s volume of each version the versions file names', () => {
+  const parts = readParts();
+  const codex = parts.find((one) => one.id === 'codex');
+  expect(requestedVolume(`ahpd-part-codex-${codex?.version ?? ''}-0123456789ab`, parts)).toBe(true);
+  expect(requestedVolume(`ahpd-part-codex-${codex?.version ?? ''}-fedcba987654`, parts)).toBe(true);
+  expect(requestedVolume('ahpd-part-codex-0.0.1-0123456789ab', parts)).toBe(false);
+  expect(requestedVolume('ahpd-part-nonesuch-1.0.0-0123456789ab', parts)).toBe(false);
 });
