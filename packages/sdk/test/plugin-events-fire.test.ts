@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { memoryAutomations } from '../src/automations/automations.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
 import { shellTerminals } from '../src/machines/terminals.js';
@@ -85,6 +84,10 @@ const hello = (client: ReturnType<ReturnType<typeof createHost>['accept']>) => c
   method: 'initialize',
   params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
 });
+
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: ReturnType<ReturnType<typeof createHost>['accept']>, session: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
 const of = (seen: HostEvent[], type: EventName): HostEvent[] => seen.filter((event) => event.type === type);
 
@@ -330,10 +333,11 @@ it('fires message, turn_start and turn_end once each, and nothing per delta', as
   const { seen, client } = watched({ agents: [echo({ path: DIR, pace: 60 })] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/turn', provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/turn') } });
+  const chat = await mintedChat(client, 'ahp-session:/turn');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/turn'), action: { type: 'chat/turnStarted', turnId: 'turn-1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 'turn-1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } } },
   });
   await wait(500);
 
@@ -359,10 +363,11 @@ it('names the queued message a turn took up on its turn_start', async () => {
   const { seen, client } = watched({ agents: [echo({ path: DIR, pace: 0 })] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/queued', provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/queued') } });
+  const chat = await mintedChat(client, 'ahp-session:/queued');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/queued'), action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q-1', message: { text: 'later', origin: { kind: 'user' } } } },
+    params: { channel: chat, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q-1', message: { text: 'later', origin: { kind: 'user' } } } },
   });
   await wait(200);
 
@@ -375,15 +380,16 @@ it('fires turn_end cancelled when a running turn is stopped', async () => {
   const { seen, client } = watched({ agents: [echo({ path: DIR, pace: 60 })] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/cancel', provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/cancel') } });
+  const chat = await mintedChat(client, 'ahp-session:/cancel');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/cancel'), action: { type: 'chat/turnStarted', turnId: 'turn-c', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 'turn-c', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five' } } },
   });
   await settle(1);
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/cancel'), action: { type: 'chat/turnCancelled', turnId: 'turn-c', duration: 0 } },
+    params: { channel: chat, action: { type: 'chat/turnCancelled', turnId: 'turn-c', duration: 0 } },
   });
   await wait(200);
 
@@ -396,10 +402,11 @@ it('fires turn_end error, with the message and its type, when a turn ends in cha
   const { seen, client } = watched({ agents: [failer()] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/fail', provider: 'failer' } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/fail') } });
+  const chat = await mintedChat(client, 'ahp-session:/fail');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/fail'), action: { type: 'chat/turnStarted', turnId: 'turn-f', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 'turn-f', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await wait(100);
 
@@ -426,21 +433,22 @@ it('fires turn_end rejected, with the refusal, for a start the host refuses befo
   const { seen, client } = watched();
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/filed', provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/filed') } });
+  const chat = await mintedChat(client, 'ahp-session:/filed');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   await client.handle({
     method: 'dispatchAction',
     params: { channel: 'ahp-session:/filed', clientSeq: 1, action: { type: 'session/isArchivedChanged', isArchived: true } },
   });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/filed'), clientSeq: 2, action: { type: 'chat/turnStarted', turnId: 'turn-r', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    params: { channel: chat, clientSeq: 2, action: { type: 'chat/turnStarted', turnId: 'turn-r', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await wait(100);
 
   expect(of(seen, 'turn_start')).toEqual([]);
   expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
     session: 'ahp-session:/filed',
-    channel: chatUriFor('ahp-session:/filed'),
+    channel: chat,
     turnId: 'turn-r',
     reason: {
       kind: 'rejected',
@@ -454,9 +462,10 @@ it('fires turn_end rejected for a queued message the host will not run, naming t
   const { seen, client, host } = watched();
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/stopping', provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/stopping') } });
+  const chat = await mintedChat(client, 'ahp-session:/stopping');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   host.refuseTurns('This host is stopping');
-  await send(client, chatUriFor('ahp-session:/stopping'), 'q-1', 'later', 'chat/pendingMessageSet');
+  await send(client, chat, 'q-1', 'later', 'chat/pendingMessageSet');
   await wait(100);
 
   expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
@@ -495,8 +504,9 @@ it('fires turn_end error, with the failure, for a turn whose send fails before i
   const { seen, client } = watched({ agents: [thrower()] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/gone', provider: 'thrower' } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/gone') } });
-  await send(client, chatUriFor('ahp-session:/gone'), 'turn-s', 'hello');
+  const chat = await mintedChat(client, 'ahp-session:/gone');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  await send(client, chat, 'turn-s', 'hello');
   await wait(100);
 
   expect(of(seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-s' }]);
@@ -509,8 +519,9 @@ it('fires turn_end localCommand for a ! command the host ran as the turn', async
   const { seen, client } = watched({ terminals: shellTerminals() });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/bang', provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/bang') } });
-  await send(client, chatUriFor('ahp-session:/bang'), 'turn-b', '!echo here');
+  const chat = await mintedChat(client, 'ahp-session:/bang');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  await send(client, chat, 'turn-b', '!echo here');
   for (let i = 0; i < 200 && of(seen, 'turn_end').length === 0; i++) await wait(25);
 
   expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({ turnId: 'turn-b', reason: { kind: 'localCommand' } })]);
@@ -519,10 +530,10 @@ it('fires turn_end localCommand for a ! command the host ran as the turn', async
 
 it('names who sent each turn, and a queued message keeps its sender when it runs', async () => {
   const { seen, host } = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory() });
-  const chat = chatUriFor('ahp-session:/shared');
   const ana = host.accept(peer(), PEOPLE.ana);
   await hello(ana);
   await ana.handle({ method: 'createSession', params: { channel: 'ahp-session:/shared', provider: 'echo' } });
+  const chat = await mintedChat(ana, 'ahp-session:/shared');
   const bo = host.accept(peer(), PEOPLE.bo);
   await hello(bo);
 
@@ -567,11 +578,11 @@ it('says a client\'s start on the wire with its sender, on a host with somebody 
     .find((action) => action.type === 'chat/turnStarted');
 
   const named = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory() });
-  const chat = chatUriFor('ahp-session:/who');
   const on = peer();
   const ana = named.host.accept(on, PEOPLE.ana);
   await hello(ana);
   await ana.handle({ method: 'createSession', params: { channel: 'ahp-session:/who', provider: 'echo' } });
+  const chat = await mintedChat(ana, 'ahp-session:/who');
   // Watching the chat first, because an action goes to whoever is listening.
   await ana.handle({ method: 'subscribe', params: { channel: chat } });
   const action = said('turn-who', 'hello there', 'chat/turnStarted');
@@ -590,11 +601,11 @@ it('says a client\'s start on the wire with its sender, on a host with somebody 
  */
 it('keeps a turn\'s sender off the wire and in its events, where the daemon keeps senders', async () => {
   const named = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory(), turnSenders: 'kept' });
-  const chat = chatUriFor('ahp-session:/kept');
   const on = peer();
   const ana = named.host.accept(on, PEOPLE.ana);
   await hello(ana);
   await ana.handle({ method: 'createSession', params: { channel: 'ahp-session:/kept', provider: 'echo' } });
+  const chat = await mintedChat(ana, 'ahp-session:/kept');
   await ana.handle({ method: 'subscribe', params: { channel: chat } });
   const action = said('turn-kept', 'hello there', 'chat/turnStarted');
   await ana.handle({ method: 'dispatchAction', params: { channel: chat, action } });

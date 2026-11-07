@@ -349,7 +349,7 @@ it('hands the agent of the first message of a session that was not running to th
   await second.client.handle({
     method: 'dispatchAction',
     params: {
-      channel: chatUriFor(SESSION),
+      channel: await chatOf(second.client),
       action: {
         type: 'chat/turnStarted',
         turnId: 't2',
@@ -1566,10 +1566,11 @@ async function twoOwners() {
   for (const [client, uri] of made) {
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
     // Its first message, which lists it: a session made fresh is provisional
-    // until then, as VS Code's host keeps one.
+    // until then, as VS Code's host keeps one. On the chat the host minted.
+    const minted = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+      params: { channel: minted, action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
   }
   await new Promise((tick) => { setTimeout(tick, 100); });

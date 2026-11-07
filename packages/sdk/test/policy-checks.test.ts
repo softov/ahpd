@@ -25,7 +25,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { memoryAutomations } from '../src/automations/automations.js';
 import { computersFor } from '../src/machines/computers.js';
 import { createHost, ROOT } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { checkKeyLimits, memoryPolicies } from '../src/access/policies.js';
 import { fileUsers } from '../src/access/users.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -254,6 +253,10 @@ const makeSession = async (
   });
 };
 
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: Caller, session: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+
 /** Open a session and start a turn on it, which is the whole of the turn's path. */
 const turnOn = async (
   client: Caller,
@@ -264,7 +267,7 @@ const turnOn = async (
   model: string | undefined,
 ): Promise<void> => {
   await makeSession(client, name, provider, computer);
-  const chat = chatUriFor(`ahp-session:/${name}`);
+  const chat = await mintedChat(client, `ahp-session:/${name}`);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   void client.handle({
     method: 'dispatchAction',
@@ -379,7 +382,7 @@ describe('a turn, with the switch on', () => {
   it('gives a turn its origin when the check that allowed it answers after the dispatch', async () => {
     const { client, said } = await signedIn(await host(true), 'alice');
     await makeSession(client, 'sonnet', 'claude', 'sandbox-alice');
-    const chat = chatUriFor('ahp-session:/sonnet');
+    const chat = await mintedChat(client, 'ahp-session:/sonnet');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     void client.handle({
       method: 'dispatchAction',
@@ -400,7 +403,7 @@ describe('a turn, with the switch on', () => {
   it('gives a queued message its origin when the check that allowed it answers after the dispatch', async () => {
     const { client, said } = await signedIn(await host(true), 'alice');
     await makeSession(client, 'queued', 'claude', 'sandbox-alice');
-    const chat = chatUriFor('ahp-session:/queued');
+    const chat = await mintedChat(client, 'ahp-session:/queued');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     void client.handle({
       method: 'dispatchAction',

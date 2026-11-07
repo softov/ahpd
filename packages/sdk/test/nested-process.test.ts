@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { uriOf } from '../src/resources/fileuri.js';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { nestedAgent } from '../src/sessions/nested.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import type { NestedHost } from '../src/sessions/nested.js';
@@ -181,7 +180,6 @@ const outer = async (
   const client = host.accept(peer);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   const uri = 'ahp-session:/nested-outer';
-  const chatUri = chatUriFor(uri);
   if (options.create !== false) {
     await client.handle({
       method: 'createSession',
@@ -191,7 +189,8 @@ const outer = async (
       },
     });
   }
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   let seq = 0;
   return {

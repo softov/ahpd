@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { loadPlugins } from '../src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
@@ -64,9 +63,9 @@ it('serves a backend that arrived as a plugin, through a whole turn', async () =
   expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'echo']);
 
   const uri = 'ahp-session:/plugin';
-  const chat = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   client.handle({
     method: 'dispatchAction',

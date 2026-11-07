@@ -10,7 +10,6 @@ import { gitWorktrees, worktreesOf } from '../src/repo/worktrees.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { fileResources } from '../src/resources/resources.js';
 import { localPath, uriOf } from '../src/resources/fileuri.js';
-import { chatUriFor } from '../src/host/channels.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
@@ -768,6 +767,8 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'folder' },
       },
     });
+    // The chat the host minted for the session, read off its state.
+    const chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     /*
      * The phase this exists for.
      *
@@ -785,7 +786,7 @@ describe('a session with a working tree of its own', () => {
     // tree there, as VS Code relaunches a runtime at its next turn boundary.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } } },
     });
     // On the directory rather than the value: the answer is recorded as it
     // arrives and the tree is made after it, so a test that waited on the

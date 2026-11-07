@@ -84,7 +84,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const { createHost } = await import('../src/host.js');
 const { fileSessions } = await import('../src/sessions/sessions.js');
-const { chatUriFor, nonPtyShellTerminalOf } = await import('../src/host/channels.js');
+const { nonPtyShellTerminalOf } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 const { shellTerminals } = await import('../src/machines/terminals.js');
 const { uriOf } = await import('../src/resources/fileuri.js');
@@ -120,10 +120,11 @@ async function running(over: Partial<HostOptions> = {}) {
     params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/live';
-  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
   const root = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as { snapshot: { state: unknown } };
-  const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: unknown } };
+  const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat?: unknown } } };
+  // The chat the host minted for the session, read off its state.
+  const chatUri = String(session.snapshot.state.defaultChat);
   const chat = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: unknown } };
   return {
     client, peer: p, uri, chatUri,
@@ -449,7 +450,7 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
   ]);
   // Named after the call's chat, as the host holds it, and the call.
   const resource = String(call?.content?.[1]?.resource);
-  expect(nonPtyShellTerminalOf(resource)).toEqual({ chat: chatUriFor(uri), toolCallId: 'toolu_big' });
+  expect(nonPtyShellTerminalOf(resource)).toEqual({ chat: chatUri, toolCallId: 'toolu_big' });
 
   /*
    * The channel the call names, subscribed after the command is over: exited,
@@ -608,6 +609,8 @@ it('reduces a changeset, through an operation and a turn', async () => {
   });
   const uri = 'ahp-session:/one';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+  // The chat the host minted for the session, read off its state.
+  const lead = String(((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat?: unknown } } }).snapshot.state.defaultChat);
   const changeset = `${uri}/changeset/uncommitted`;
   const opened = await client.handle({ method: 'subscribe', params: { channel: changeset } }) as {
     snapshot: { state: unknown };
@@ -616,7 +619,7 @@ it('reduces a changeset, through an operation and a turn', async () => {
   // A turn disables every operation while it runs, and an operation moves
   // through `running` and back. Both are `changeset/operationStatusChanged`
   // and `changeset/operationsChanged`, and both go through the reducer here.
-  dispatch(client, chatUriFor(uri), started('t1', 'hello'));
+  dispatch(client, lead, started('t1', 'hello'));
   await settle(12);
   await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' } });
   await settle(12);

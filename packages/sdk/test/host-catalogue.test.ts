@@ -10,7 +10,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { Request } from '../src/types/rpc.js';
 import type { HostOptions } from '../src/types/host.js';
 import {
-  claude, createHost, echo, firstMessage, flushed, machine, resetSdk, actions, emit, hello, open, peer,
+  claude, createHost, defaultChatOf, echo, firstMessage, flushed, machine, resetSdk, actions, emit, hello, open, peer,
   sdk, serving, sessionQueries, settle, showExternal, running, wrote,
 } from './support/host.js';
 import type { Agent, Listed } from '../src/types/agent.js';
@@ -1278,7 +1278,8 @@ describe("a row lists the session's chats", () => {
     // subscribing to each session, so the list has to be on the row - and the
     // default chat is the first of them and named as well.
     expect(row?.chats?.map((one) => one.resource)).toEqual([row?.defaultChat, second]);
-    expect(row?.defaultChat).toMatch(/^ahp-chat:\/\/default\//);
+    // The chat the host minted for the session.
+    expect(row?.defaultChat).toBe(chatUri);
     expect(row?.chats?.every((one) => typeof one.status === 'number')).toBe(true);
   });
 
@@ -1640,7 +1641,8 @@ describe('a summary that did not change', () => {
       await settle();
       const added = p.notes.filter((n) => n.method === 'root/sessionAdded').length;
       await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-      await firstMessage(client, chatUri);
+      // On the chat the host minted for the session made again.
+      await firstMessage(client, await defaultChatOf(client, uri));
       // The same conversation, under the same name, added whole: what a client
       // that watched it go now holds, and what the next move is a change from.
       expect(p.notes.filter((n) => n.method === 'root/sessionAdded')).toHaveLength(added + 1);
@@ -2027,7 +2029,7 @@ describe('a session made outside this host', () => {
     sdk.sessions.push({ sessionId: 'theirs', summary: 'Theirs', ...at(HOUR) });
     const { client, listed } = await watching();
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/mine', provider: 'claude' } });
-    await firstMessage(client, chatUriFor('ahp-session:/mine'));
+    await firstMessage(client, await defaultChatOf(client, 'ahp-session:/mine'));
     expect((await listed()).map((one) => one.resource)).toEqual(['ahp-session:/mine']);
   });
 

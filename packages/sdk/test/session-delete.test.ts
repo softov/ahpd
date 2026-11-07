@@ -14,7 +14,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Listed } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -225,10 +224,12 @@ it('answers a delete that failed, and the session is gone all the same', async (
   };
   const { client, peer: p } = await serving(agent, (line) => said.push(line));
   await open(client, 'ahp-session:/held');
-  // Its first message, which announces it, so its removal is said.
+  // Its first message, which announces it, so its removal is said, on the chat
+  // the host minted for it.
+  const held = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/held' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/held'), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    params: { channel: held, action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
 

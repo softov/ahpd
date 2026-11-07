@@ -2,7 +2,6 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { Status } from '../src/sessions/catalog.js';
 import { ROOT, createHost } from '../src/host.js';
@@ -37,6 +36,10 @@ beforeEach(resetSdk);
  * in `host.test.ts`, where the backend is faked.
  */
 
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: { handle(request: { method: string; params: Record<string, unknown> }): Promise<unknown> }, uri: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+
 /**
  * A session's first turn, answered by the CLI it was made with, so it is
  * announced and at rest: a session made fresh is provisional until its first
@@ -49,7 +52,7 @@ const answeredFirst = async (client: { handle(request: { method: string; params:
   const cli = sessionQueries().at(-1);
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+    params: { channel: await mintedChat(client, uri), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
   await settle(8);
   cli?.frames.push({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
@@ -674,7 +677,7 @@ describe("VS Code's limits on spawning and messaging", () => {
       .filter((note) => note.method === 'root/sessionAdded')
       .map((note) => (note.params as { summary: { resource: string; _meta?: Record<string, unknown> } }).summary)
       .find((summary) => summary.resource !== first.held);
-    expect(added?._meta?.['agentHost/createdBySession']).toEqual({ session: first.held, chat: chatUriFor(first.held) });
+    expect(added?._meta?.['agentHost/createdBySession']).toEqual({ session: first.held, chat: await mintedChat(client, first.held) });
   });
 
   /*
@@ -686,7 +689,7 @@ describe("VS Code's limits on spawning and messaging", () => {
   it('runs a session it makes on the model the calling chat holds, when the call names none', async () => {
     const client = await top();
     const first = await started(client, 'first');
-    const chat = chatUriFor(first.held);
+    const chat = await mintedChat(client, first.held);
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     await client.handle({
       method: 'dispatchAction',

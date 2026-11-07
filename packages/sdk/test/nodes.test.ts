@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { echo } from '../../../examples/echo/agent.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { createHost } from '../src/host.js';
 import { listen } from '../src/listen.js';
 import { fileNodes, JOIN_PATH, liveNodes } from '../src/nodes.js';
@@ -63,6 +62,10 @@ const until = async (check: () => boolean, times = 600): Promise<void> => {
   }
   throw new Error(`still waiting after ${times} tries`);
 };
+
+/** The chat the hub minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: { handle(request: unknown): Promise<unknown> }, session: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
 /** A client of the hub's session, which keeps what the host told it. */
 const watching = (): { seen: { method: string; params: Bag }[]; send: () => void; request: () => Promise<object>; answered: () => void; notify: (method: string, params: unknown) => void; close: () => void } => {
@@ -234,7 +237,6 @@ const inNode = async (hub: Hub) => {
   const peer = watching();
   const client = hub.host.accept(peer);
   const uri = 'ahp-session:/on-the-node';
-  const chat = chatUriFor(uri);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   await client.handle({
     method: 'createSession',
@@ -245,7 +247,7 @@ const inNode = async (hub: Hub) => {
       workingDirectories: [uriOf(hub.folders.hub)],
     },
   });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  const chat = await mintedChat(client, uri);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   const said = (type: string): Bag[] => peer.seen
     .filter(({ params }) => params?.action?.type === type)
@@ -308,7 +310,6 @@ it('a session in a joined node runs in the host the node serves, at the node\'s 
   const peer = watching();
   const client = hub.host.accept(peer);
   const uri = 'ahp-session:/in-the-node';
-  const chat = chatUriFor(uri);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   await client.handle({
     method: 'createSession',
@@ -319,7 +320,7 @@ it('a session in a joined node runs in the host the node serves, at the node\'s 
       workingDirectories: [uriOf(hub.folders.hub)],
     },
   });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  const chat = await mintedChat(client, uri);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   await client.handle({
     method: 'dispatchAction',
@@ -413,7 +414,8 @@ it('a hub started again resumes the session against the node store that kept it'
   const rows = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: Bag[] };
   expect(rows.items.map((row) => row.resource)).toEqual([one.uri]);
 
-  const chat = chatUriFor(one.uri);
+  // The chat the session keeps from the hub that made it.
+  const chat = await mintedChat(client, one.uri);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   await client.handle({
     method: 'dispatchAction',

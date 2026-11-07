@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -126,6 +125,10 @@ const traces = (p: ReturnType<typeof peer>) => p.notes
   .filter((n) => n.method === 'otlp/exportTraces')
   .map((n) => (n.params as { payload: Record<string, never> }).payload);
 
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: { handle(request: unknown): Promise<unknown> }, session: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+
 it('advertises the traces and metrics channels as literals, having no variable to offer', async () => {
   const { hello } = await connected() as unknown as {
     hello: { telemetry?: { logs?: string; traces?: string; metrics?: string } };
@@ -141,7 +144,7 @@ it('sends a span for the turn, once the turn has ended', async () => {
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://traces' } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/t', provider: 'echo' } });
-  const chat = chatUriFor('ahp-session:/t');
+  const chat = await mintedChat(client, 'ahp-session:/t');
   client.handle({
     method: 'dispatchAction',
     params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
@@ -171,7 +174,7 @@ it('measures each turn as the GenAI conventions\' agent invocation, cumulatively
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://metrics' } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/m', provider: 'echo' } });
-  const chat = chatUriFor('ahp-session:/m');
+  const chat = await mintedChat(client, 'ahp-session:/m');
   client.handle({
     method: 'dispatchAction',
     params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
@@ -209,7 +212,7 @@ it('marks a turn\'s span with the spec\'s correlation attributes, and leaves a c
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://traces' } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/c', provider: 'echo' } });
-  const chat = chatUriFor('ahp-session:/c');
+  const chat = await mintedChat(client, 'ahp-session:/c');
   client.handle({
     method: 'dispatchAction',
     params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },

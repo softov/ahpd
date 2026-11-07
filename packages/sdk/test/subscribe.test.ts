@@ -1,7 +1,6 @@
 import { expect, it } from 'vitest';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -73,7 +72,9 @@ async function ready(uri: string) {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'] },
   });
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-  return { client, peer: p, chatUri: chatUriFor(uri) };
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  return { client, peer: p, chatUri };
 }
 
 it('misses nothing dispatched while its snapshot was being taken', async () => {

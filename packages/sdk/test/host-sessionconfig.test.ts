@@ -279,7 +279,7 @@ describe('choosing a model', () => {
     await settle();
     expect(sdk.modelsSet).toEqual(['haiku']);
 
-    const chat = (await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/live') } }) as {
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { activeTurn: { message: { model?: { id: string } } } } };
     }).snapshot.state;
     // Credited on the turn, because the transcript has to say what actually
@@ -446,9 +446,11 @@ describe('a session\'s config across a restart', () => {
     await written();
     sdk.sessions.push({ sessionId: id, summary: 'Kept', lastModified: 1, cwd: '/home/softov' });
     const client = await hostOnFile();
+    // Its default chat as the file kept it, the one minted when it was made.
+    const kept = ((await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(`ahp-session:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
+      params: { channel: kept, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     return sessionQueries().at(-1)?.options;
@@ -545,9 +547,11 @@ describe('a session\'s config across a restart', () => {
   it('keeps a key the schema scopes to one chat when it was set on the lead chat', async () => {
     const client = await hostOnFile();
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/lead', provider: 'claude' } });
+    // The chat the host minted for the session, read off its state.
+    const lead = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/lead' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/lead'), action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
+      params: { channel: lead, action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
     });
     await settle();
     await written();

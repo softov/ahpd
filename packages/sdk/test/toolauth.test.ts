@@ -81,7 +81,6 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
-const { chatUriFor } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 
 const settle = async (times = 10): Promise<void> => {
@@ -111,7 +110,8 @@ async function said(...frames: Record<string, unknown>[]): Promise<void> {
 }
 
 const uri = 'ahp-session:/auth';
-const chatUri = chatUriFor(uri);
+/** The session's chat, which the host mints: read off the session's state by `running`. */
+let chatUri = '';
 
 async function running(plugins: Record<string, unknown>[] = []) {
   sdk.queries.length = 0;
@@ -124,7 +124,7 @@ async function running(plugins: Record<string, unknown>[] = []) {
     method: 'initialize', params: { clientId: 'a', protocolVersions: ['0.9.0'] },
   });
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   await settle();
   return { client, peer: p };

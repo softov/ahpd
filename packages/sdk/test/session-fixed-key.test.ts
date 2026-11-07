@@ -1,6 +1,5 @@
 import { expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
@@ -129,11 +128,11 @@ async function opened(initial: Record<string, unknown> = { fixed: 'one', mutable
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/fixed';
-  const chatUri = chatUriFor(uri);
   // The values the New view's picker held when the session was created, which
   // is what the client sends with `createSession`.
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'fixed', config: initial } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { client, p, uri, chatUri, spawns, set, began };
 }
@@ -142,6 +141,10 @@ const change = (client: Awaited<ReturnType<typeof opened>>['client'], uri: strin
   method: 'dispatchAction',
   params: { channel: uri, action: { type: 'session/configChanged', config } },
 });
+
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: Awaited<ReturnType<typeof opened>>['client'], uri: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
 const turn = (client: Awaited<ReturnType<typeof opened>>['client'], chatUri: string, text = 'go') => client.handle({
   method: 'dispatchAction',
@@ -398,11 +401,11 @@ it('treats a key a plugin contributed the same way', async () => {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/contributed';
-  const chatUri = chatUriFor(uri);
   await client.handle({
     method: 'createSession',
     params: { channel: uri, provider: 'fixed', config: { fixed: 'one', computer: 'computer://a' } },
   });
+  const chatUri = await mintedChat(client, uri);
 
   // It reaches the session's schema as the plugin declared it, though no
   // backend ever declared it.
@@ -504,7 +507,7 @@ it('hands a change to the running backend, and a turn after it to the backend it
   // the backend still running, and the turn is the session's next turn
   // boundary, where its relaunch into the machine runs.
   void change(client, 'ahp-session:/boxed', { mutable: 'b' });
-  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
+  void turn(client, await mintedChat(client, 'ahp-session:/boxed'), 'go');
   // And one on another channel, which this connection sent after them.
   void client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
   await settle();
@@ -576,7 +579,7 @@ const intoMachine = async (throws = false) => {
  */
 it('says a turn sent while its session is started again at once, and begins it once the session is up', async () => {
   const { p, client, said, machine } = await intoMachine();
-  const chat = chatUriFor('ahp-session:/boxed');
+  const chat = await mintedChat(client, 'ahp-session:/boxed');
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
   await settle();
@@ -596,7 +599,7 @@ it('says a turn sent while its session is started again at once, and begins it o
  */
 it('sends nothing for a turn stopped while its session is started again', async () => {
   const { p, client, said, machine } = await intoMachine();
-  const chat = chatUriFor('ahp-session:/boxed');
+  const chat = await mintedChat(client, 'ahp-session:/boxed');
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
   await settle();
@@ -664,9 +667,9 @@ it('holds a dispatch behind its client\'s waiting one, sent on another connectio
   const { host, client, machine } = await intoMachine();
   // The turn is the session's next turn boundary, where its relaunch into the
   // machine runs, and what the client sends after it waits for the relaunch.
-  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
+  void turn(client, await mintedChat(client, 'ahp-session:/boxed'), 'go');
   await settle();
-  void client.handle({ method: 'dispatchAction', params: { channel: chatUriFor('ahp-session:/boxed'), action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });
+  void client.handle({ method: 'dispatchAction', params: { channel: await mintedChat(client, 'ahp-session:/boxed'), action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });
   await settle();
   const q = peer();
   const again = host.accept(q);
@@ -688,7 +691,7 @@ it('holds a dispatch behind its client\'s waiting one, sent on another connectio
  */
 it('begins a turn that waited on a restart after its connection left', async () => {
   const { client, said, machine } = await intoMachine();
-  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
+  void turn(client, await mintedChat(client, 'ahp-session:/boxed'), 'go');
   await settle();
   client.close();
   machine.made('m1');
@@ -704,7 +707,7 @@ it('begins a turn that waited on a restart after its connection left', async () 
  */
 it('applies a dispatch that waited on a restart after its connection left', async () => {
   const { host, client, machine } = await intoMachine();
-  const chat = chatUriFor('ahp-session:/boxed');
+  const chat = await mintedChat(client, 'ahp-session:/boxed');
   const q = peer();
   const other = host.accept(q);
   await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
@@ -725,7 +728,7 @@ it('applies a dispatch that waited on a restart after its connection left', asyn
  */
 it('ends a waiting turn the backend throws on in an error', async () => {
   const { p, client, said, machine } = await intoMachine(true);
-  const chat = chatUriFor('ahp-session:/boxed');
+  const chat = await mintedChat(client, 'ahp-session:/boxed');
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   void turn(client, chat, 'first');
   await settle();
@@ -748,7 +751,7 @@ it('ends a waiting turn the backend throws on in an error', async () => {
  */
 it('applies a dispatch that waited on a restart however long it took, and the next behind it', async () => {
   const { p, client, machine } = await intoMachine();
-  const chat = chatUriFor('ahp-session:/boxed');
+  const chat = await mintedChat(client, 'ahp-session:/boxed');
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   // The turn is the session's next turn boundary, where its relaunch into the
   // machine runs, and what the client sends after it waits for the relaunch.

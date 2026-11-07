@@ -656,11 +656,13 @@ it('holds the machine while a session resumed from the list runs in it', async (
   // Named by the provider, which is what a later host calls it once the
   // catalogue has said whose session it is.
   const session = 'echo:/one';
-  const chat = `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
 
   const { options: first } = await load(options(state, { profiles }), [agent], () => {}, { sessions: store });
   const before = await room(first);
   await before.open(session, { computer: 'computer://left-behind' });
+  // The chat the host minted for the session, read off its state; the store
+  // keeps it as the session's default for the host after the restart.
+  const chat = ((await before.client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   // A turn, so the backend's own catalogue holds the session with something in
   // it - which is what lets a later host resume it rather than refuse it.
   await before.client.handle({ method: 'subscribe', params: { channel: chat } });

@@ -24,7 +24,7 @@ import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, firstMessage, hello, hostTools,
+  resetSdk, actions, claude, createHost, defaultChatOf, echo, emit, firstMessage, hello, hostTools,
   machine, peer, sdk, serving, sessionQueries, settle, running,
 } from './support/host.js';
 
@@ -47,7 +47,7 @@ describe('tools the host contributes', () => {
    * provisional until its first message.
    */
   const atRest = async (client: ReturnType<ReturnType<typeof createHost>['accept']>, uri: string): Promise<void> => {
-    await firstMessage(client, chatUriFor(uri));
+    await firstMessage(client, await defaultChatOf(client, uri));
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   };
   const withTools = async (tools = hostTools()) => {
@@ -291,6 +291,8 @@ describe('tools the host contributes', () => {
     it('renames the calling chat, which is the session when it is the default one', async () => {
       const { client, peer: p, uri, held } = await withTools();
       await client.handle({ method: 'subscribe', params: { channel: uri } });
+      // What the rename says, apart from the title the first message gave.
+      p.notes.length = 0;
       expect(await call('rename_chat', { title: '  Kqueue   port ' })).toBe('Renamed chat to "Kqueue port".');
       expect(actions(p, uri).find((one) => one.action.type === 'session/titleChanged')?.action.title).toBe('Kqueue port');
       const rows = JSON.parse(await call('list_sessions', { session: held })) as { sessions: { title: string }[] };
@@ -337,7 +339,7 @@ describe('tools the host contributes', () => {
       const { client, peer: p, held } = await withTools();
       await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/doomed', provider: 'claude' } });
-      await firstMessage(client, chatUriFor('ahp-session:/doomed'));
+      await firstMessage(client, await defaultChatOf(client, 'ahp-session:/doomed'));
       expect(await call('delete_session', { session: held }, 0)).toContain('refusing to delete the current session');
       expect(await call('delete_session', { session: 'ahp-session:/doomed' }, 0))
         .toBe('Deleted session ahp-session:/doomed. Reply with one short sentence confirming the session was deleted.');
@@ -650,7 +652,8 @@ describe('tools the host contributes', () => {
       const client = host.accept(peer(), people ? ana : undefined);
       await client.handle(hello(['0.9.0']));
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/who', provider: 'claude' } });
-      await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/who') } });
+      const chat = await defaultChatOf(client, 'ahp-session:/who');
+      await client.handle({ method: 'subscribe', params: { channel: chat } });
       const person = async (): Promise<string | undefined> => {
         const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
           tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
@@ -658,7 +661,7 @@ describe('tools the host contributes', () => {
         const tool = servers?.ahp?.tools.find((one) => one.name === 'who');
         return (await tool?.handler({}))?.content[0]?.text;
       };
-      return { client, person };
+      return { client, person, chat };
     };
 
     // No turn runs yet, so the session's owner answers.
@@ -667,7 +670,7 @@ describe('tools the host contributes', () => {
 
     // A turn sent by her gives the person the host knows behind that owner.
     await plenty.client.handle({ method: 'dispatchAction', params: {
-      channel: chatUriFor('ahp-session:/who'),
+      channel: plenty.chat,
       action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'who am I' } },
     } });
     await settle();
@@ -696,7 +699,8 @@ describe('tools the host contributes', () => {
     const client = host.accept(peer(), ana);
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/teams', provider: 'claude' } });
-    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/teams') } });
+    const chat = await defaultChatOf(client, 'ahp-session:/teams');
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
     const inSession = async (): Promise<string | undefined> => {
       const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
         tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
@@ -710,7 +714,7 @@ describe('tools the host contributes', () => {
 
     // A turn she sent puts her teams on the call, each once.
     await client.handle({ method: 'dispatchAction', params: {
-      channel: chatUriFor('ahp-session:/teams'),
+      channel: chat,
       action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'which teams' } },
     } });
     await settle();
@@ -3364,7 +3368,7 @@ describe('a task list a plugin serves', () => {
     await client.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/todo';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-    const chat = chatUriFor(uri);
+    const chat = await defaultChatOf(client, uri);
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     void client.handle({
       method: 'dispatchAction',
@@ -3446,7 +3450,7 @@ describe('a harness list handed to the host', () => {
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/list', provider: 'echo' } });
     // The chat a client addresses, the session's default chat.
-    const chat = chatUriFor('ahp-session:/list');
+    const chat = await defaultChatOf(client, 'ahp-session:/list');
     await client.handle({
       method: 'dispatchAction',
       params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'plan it' } } },
@@ -3467,7 +3471,7 @@ describe('a harness list handed to the host', () => {
     const client = host.accept(p, ana);
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/list', provider: 'echo' } });
-    const chat = chatUriFor('ahp-session:/list');
+    const chat = await defaultChatOf(client, 'ahp-session:/list');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     await client.handle({
       method: 'dispatchAction',

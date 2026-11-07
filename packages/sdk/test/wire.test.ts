@@ -93,7 +93,6 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
-const { chatUriFor } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 const { echo } = await import('../../../examples/echo/agent.js');
 const { shellTerminals } = await import('../src/machines/terminals.js');
@@ -337,7 +336,6 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   await ask('listSessions', { channel: 'ahp-root://' });
 
   const uri = 'ahp-session:/wire';
-  const chatUri = chatUriFor(uri);
   await ask('createSession', { channel: uri, provider: 'claude' });
 
   /*
@@ -383,7 +381,8 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   // The 43 are held, and the four beside them, with the daemon's own keys.
   expect(declared.filter((key) => !(key in held.values))).toEqual([]);
   expect(OLD.filter((key) => !(key in held.values))).toEqual([]);
-  await ask('subscribe', { channel: uri });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await ask('subscribe', { channel: uri })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await ask('subscribe', { channel: chatUri });
 
   // A second session, on the other backend: the two are separately asked for

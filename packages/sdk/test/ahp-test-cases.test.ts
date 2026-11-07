@@ -70,7 +70,6 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
-const { chatUriFor } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 
 function peer(): Peer & { notes: { method: string; params: unknown }[]; closed: boolean } {
@@ -103,13 +102,26 @@ const quiet = async (p: { notes: unknown[] }): Promise<void> => {
 beforeEach(() => { sdk.queries.length = 0; });
 
 /** A host, with nothing asked of it yet, and the one channel that opens with a state given it. */
-const aHost = (seeded?: { channel: string; initial: Record<string, unknown> }) => createHost({
-  path: '/home/softov',
-  agents: [claude({ paths: ['/home/softov'] })],
-  ...(seeded === undefined ? {} : {
-    opening: (opened: string) => (opened === seeded.channel ? structuredClone(seeded.initial) : undefined),
-  }),
-});
+/**
+ * A host that opens one channel with a case's `initial`: the one named, or
+ * the first chat it opens, which is the default chat it mints for the case's
+ * session.
+ */
+const aHost = (seeded?: { channel?: string; initial: Record<string, unknown> }) => {
+  let taken = false;
+  return createHost({
+    path: '/home/softov',
+    agents: [claude({ paths: ['/home/softov'] })],
+    ...(seeded === undefined ? {} : {
+      opening: (opened: string, kind: 'root' | 'session' | 'chat') => {
+        const wanted = seeded.channel === undefined ? kind === 'chat' && !taken : opened === seeded.channel;
+        if (!wanted) return undefined;
+        taken = true;
+        return structuredClone(seeded.initial);
+      },
+    }),
+  });
+};
 
 const CASES = join(import.meta.dirname, 'fixtures/ahp-test-cases');
 const filesIn = (where: string): string[] => readdirSync(join(CASES, where)).filter((one) => one.endsWith('.json')).sort();
@@ -607,8 +619,10 @@ async function driven(one: HostCase): Promise<Driven & { channel: string; sessio
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     const uri = `ahp-session:/${one.name}`;
     const peerChat = PEER_CHATS.has(one.name) ? String(one.initial.resource) : undefined;
-    const channel = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : peerChat ?? chatUriFor(uri);
-    const host = aHost({ channel, initial: one.initial });
+    // The channel the case drives, named where the case names it: a chat case's
+    // default chat is the one the host mints for the session, read off its state.
+    const named = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : peerChat;
+    const host = aHost({ ...(named === undefined ? {} : { channel: named }), initial: one.initial });
     const asked = peer();
     const client = host.accept(asked);
     await client.handle({
@@ -616,6 +630,7 @@ async function driven(one: HostCase): Promise<Driven & { channel: string; sessio
       params: { channel: 'ahp-root://', clientId: `cases-${one.name}`, protocolVersions: ['0.9.0'] },
     });
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    const channel = named ?? String((await stateOf(client, uri)).state.defaultChat);
     if (peerChat !== undefined) await client.handle({ method: 'createChat', params: { channel: uri, chat: peerChat } });
     await stateOf(client, channel);
     await quiet(asked);

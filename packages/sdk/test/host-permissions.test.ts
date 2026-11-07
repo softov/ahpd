@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor, ROOT } from '../src/host/channels.js';
+import { ROOT } from '../src/host/channels.js';
 import { fileResources } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
@@ -25,7 +25,8 @@ import type { Session } from '../src/types/session.js';
 import type { Users } from '../src/types/users.js';
 
 const SESSION = 'ahp-session:/one';
-const CHAT = chatUriFor(SESSION);
+/** The session's chat, which the host mints: read off the session's state by `serving`. */
+let CHAT = '';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ahpd-permissions-')); });
@@ -113,7 +114,7 @@ const serving = async (agent: Agent, over: Partial<HostOptions> = {}) => {
   const client = host.accept(p);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
   await client.handle({ method: 'createSession', params: { channel: SESSION, provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: SESSION } });
+  CHAT = ((await client.handle({ method: 'subscribe', params: { channel: SESSION } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: CHAT } });
   const dispatch = async (channel: string, action: Bag): Promise<void> => {
     await client.handle({ method: 'dispatchAction', params: { channel, action } });
@@ -299,11 +300,12 @@ it('answers a command by the host\'s terminal rules in a turn somebody other tha
   const ana = await signedIn('ana');
   const bo = await signedIn('bo');
   await ana.client.handle({ method: 'createSession', params: { channel: SESSION, provider: 'echo' } });
-  await bo.client.handle({ method: 'subscribe', params: { channel: SESSION } });
-  await bo.client.handle({ method: 'subscribe', params: { channel: CHAT } });
+  // The chat the host minted for Ana's session, read off its state.
+  const chat = ((await bo.client.handle({ method: 'subscribe', params: { channel: SESSION } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  await bo.client.handle({ method: 'subscribe', params: { channel: chat } });
   await bo.client.handle({
     method: 'dispatchAction',
-    params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } } },
   });
   const ready = (): Bag | undefined => bo.p.heard.find((one) => one.action.type === 'chat/toolCallReady' && one.action.turnId === 't1')?.action;
   await until(() => ready() !== undefined, 'the question');

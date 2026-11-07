@@ -12,7 +12,7 @@ import { uriOf } from '../src/resources/resources.js';
 import { localPath } from '../src/resources/fileuri.js';
 import { chatUriFor } from '../src/host/channels.js';
 import {
-  resetSdk, actions, claude, createHost, emit, hello, machine,
+  resetSdk, actions, claude, createHost, defaultChatOf, emit, hello, machine,
   peer, sdk, settle, shellTerminals,
 } from './support/host.js';
 import { fakePty } from './support/pty.js';
@@ -1291,16 +1291,17 @@ describe('a terminal a backend opens', () => {
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     const uri = 'ahp-session:/claimed';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    const chat = await defaultChatOf(client, uri);
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
     });
     await settle(8);
     const listed = actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').at(-1)
       ?.action.terminals as { resource: string; claim?: unknown }[] | undefined;
     expect(held).toHaveLength(1);
     expect(listed?.find((one) => one.resource === held[0]?.uri)?.claim)
-      .toEqual({ kind: 'session', session: uri, chat: chatUriFor(uri), turnId: 't1', toolCallId: 'tc-1' });
+      .toEqual({ kind: 'session', session: uri, chat, turnId: 't1', toolCallId: 'tc-1' });
     held[0]?.release();
   });
 

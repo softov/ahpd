@@ -9,7 +9,6 @@ import {
 } from './support/host.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { uriOf } from '../src/resources/resources.js';
-import { chatUriFor } from '../src/host/channels.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import type { WireTurn } from '../src/types/wire.js';
 import type { Agent, Bag, Listed, Session, Start } from '@ahpd/sdk';
@@ -635,8 +634,9 @@ describe('a Claude chat', () => {
     sdk.sessions.push({ sessionId: session, summary, lastModified: 1, cwd: DIR });
     sdk.transcript.push(...transcript);
     const after = await shelled(dir);
-    await stateOf(after.client, `claude:/${session}`);
-    const read = shown((await stateOf(after.client, chatUriFor(`claude:/${session}`))).turns as Bag[]);
+    // Its default chat as the store kept it, the one minted when it was made.
+    const opened = await stateOf(after.client, `claude:/${session}`);
+    const read = shown((await stateOf(after.client, String(opened.defaultChat))).turns as Bag[]);
     await after.host.close();
     return read;
   };
@@ -647,7 +647,6 @@ describe('a Claude chat', () => {
     const uri = 'claude:/banged';
     await before.client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(DIR)] } });
     const chat = String((await stateOf(before.client, uri)).defaultChat);
-    expect(chat).toBe(chatUriFor(uri));
     await stateOf(before.client, chat);
     say(before.client, chat, 't1', 'first');
     await settle();

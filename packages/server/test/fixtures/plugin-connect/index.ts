@@ -26,11 +26,6 @@ export const name = 'plugin-connect';
 
 /** The session this plugin opens, as a client names one. */
 const SESSION = 'ahp-session:/connect';
-/**
- * The chat its turn is sent in, which is the session's own: its default chat,
- * named after the session as the reference host names one.
- */
-const CHAT = `ahp-chat://default/${Buffer.from(SESSION, 'utf8').toString('base64url')}`;
 /** What this connection calls itself, which is how it knows its own frames. */
 const CLIENT = 'plugin-connect';
 /** The host's automation channel, which is the one `runAutomation` is sent on. */
@@ -39,6 +34,11 @@ const AUTOMATIONS = 'ahp-automations://';
 export const apply: Plugin['apply'] = (host, options) => {
   /** The connection, once there is one. The session case below waits for it. */
   let conn: PluginPeer | undefined;
+  /**
+   * The chat its turn is sent in, which is the session's own: the default chat
+   * the host minted for it, read off the session's state once it is open.
+   */
+  let chat: string | undefined;
   /** What this run asks for beyond opening the session. */
   const act = typeof options.act === 'string' ? options.act : 'session';
 
@@ -63,10 +63,10 @@ export const apply: Plugin['apply'] = (host, options) => {
    * when `apply` returns.
    */
   host.on('session_opened', (event) => {
-    if (conn === undefined) return;
+    if (conn === undefined || chat === undefined) return;
     if (event.client === CLIENT || idOf(event.session) !== idOf(SESSION)) return;
     conn.notify('dispatchAction', {
-      channel: CHAT,
+      channel: chat,
       action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello there' } },
     });
   });
@@ -87,7 +87,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * here that waited for its own answers would hold up the announcement of a
    * socket that is already bound.
    */
-  host.on('listening', () => { void open(host, act, (one) => { conn = one; }); });
+  host.on('listening', () => { void open(host, act, (one) => { conn = one; }, (named) => { chat = named; }); });
 };
 
 /** What an error was, as the client that sent the request reads it. */
@@ -113,7 +113,12 @@ const ask = async (host: PluginHost, conn: PluginPeer, method: string, params: u
 };
 
 /** Connect, start a session, and watch what the host says. */
-const open = async (host: PluginHost, act: string, keep: (conn: PluginPeer) => void): Promise<void> => {
+const open = async (
+  host: PluginHost,
+  act: string,
+  keep: (conn: PluginPeer) => void,
+  named: (chat: string) => void,
+): Promise<void> => {
   let conn: PluginPeer;
   try {
     conn = host.connect();
@@ -155,8 +160,17 @@ const open = async (host: PluginHost, act: string, keep: (conn: PluginPeer) => v
     return;
   }
 
-  await ask(host, conn, 'subscribe', { channel: SESSION });
-  await ask(host, conn, 'subscribe', { channel: CHAT });
+  let opened: unknown;
+  try {
+    opened = await conn.request('subscribe', { channel: SESSION });
+  }
+  catch (error) {
+    host.log(`plugin-connect refused subscribe: ${fault(error)}`);
+    return;
+  }
+  const minted = (opened as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  named(minted);
+  await ask(host, conn, 'subscribe', { channel: minted });
   /*
    * Said once the subscribes have settled, because the line is what a test
    * waits for before it puts a client of its own in the room: a connection that

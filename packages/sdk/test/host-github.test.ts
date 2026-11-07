@@ -11,7 +11,6 @@ import {
  peer, sdk, sessionQueries, settle,
 } from './support/host.js';
 import { uriOf } from '../src/resources/fileuri.js';
-import { chatUriFor } from '../src/host/channels.js';
 
 /** The folder the hosts here serve, as its URI on this system: `file:///C:/home/softov` on Windows. */
 const HOME = uriOf('/home/softov');
@@ -401,7 +400,8 @@ describe('what GitHub knows about the branch', () => {
     await settle();
     // A turn's end is when the worktree's own folder is asked about.
     const asks = asked.length;
-    const chat = chatUriFor('ahp-session:/tree');
+    // The chat the host minted for the session, read off its state.
+    const chat = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/tree' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     client.handle({
       method: 'dispatchAction',
@@ -545,8 +545,8 @@ describe('what a session recorded', () => {
 
   it('publishes them on the session and its row, and says the change as the whole map', async () => {
     const { client, peer: p, uri } = await withTools();
-    // A session has a row from its first message.
-    await firstMessage(client, chatUriFor(uri));
+    // A session has a row from its first message, on the chat the host minted for it.
+    await firstMessage(client, ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat);
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
     await client.handle({ method: 'subscribe', params: { channel: uri } });
     expect(String((await add(-1, 'Docs', 'https://example.com/docs'))?.content[0]?.text)).toMatch(/^Added reference: [0-9a-f-]+$/);

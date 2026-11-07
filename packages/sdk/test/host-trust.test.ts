@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { trusted } from '../src/host/trust.js';
 import { memorySessions } from '../src/sessions/sessions.js';
@@ -219,10 +218,12 @@ const opening = async (client: Client, name: string, folder: string): Promise<vo
 
 /** One turn in a session's default chat, which the echo backend answers and ends. */
 const saying = async (client: Client, name: string, turnId: string): Promise<void> => {
+  // The chat the host minted for the session, read off its state.
+  const chat = ((await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${name}` } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({
     method: 'dispatchAction',
     params: {
-      channel: chatUriFor(`ahp-session:/${name}`),
+      channel: chat,
       action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } },
     },
   });
@@ -267,11 +268,14 @@ it('tells a session the folders the host trusts when somebody other than its own
   const bo = await first.signedIn('bo');
   await trusting(bo, []);
   await opening(bo, 'bo-one', A);
+  // The chat the host minted for the session, which its record keeps for the
+  // next daemon too.
+  const chat = ((await bo.handle({ method: 'subscribe', params: { channel: 'ahp-session:/bo-one' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   // One turn, so the session is a transcript the next daemon can read rather
   // than a session it has never heard of.
   await bo.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't0', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't0', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle(60);
 
@@ -286,7 +290,7 @@ it('tells a session the folders the host trusts when somebody other than its own
   await settle();
   await ana.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
   });
   await settle(60);
 
@@ -423,10 +427,12 @@ const inWorktree = async (vouching: string[], worktreesRoot?: string) => {
       workingDirectories: [uriOf(A)],
     },
   });
-  // Its first message, at which a worktree session's tree is made.
+  // Its first message, at which a worktree session's tree is made, on the chat
+  // the host minted for it.
+  const tree = ((await ana.handle({ method: 'subscribe', params: { channel: 'ahp-session:/tree' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await ana.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/tree'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+    params: { channel: tree, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
   await settle(60);
   return { tree: made[0] as string, told };

@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -43,9 +42,9 @@ async function talking() {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { host, client, peer: p, uri, chatUri };
 }
@@ -124,12 +123,13 @@ it('says it back in the voice the session was created with', async () => {
     method: 'createSession',
     params: { channel: 'ahp-session:/two', provider: 'echo', config: { voice: 'shouty' } },
   });
+  const two = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/two' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/two'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    params: { channel: two, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle(12);
-  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/two') } }) as {
+  const opened = await client.handle({ method: 'subscribe', params: { channel: two } }) as {
     snapshot: { state: { turns: { responseParts: { content: string }[] }[] } };
   };
   expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('HELLO');

@@ -20,7 +20,6 @@ import { undeclaredIn } from './support/wire.js';
  */
 
 const { createHost } = await import('../src/host.js');
-const { chatUriFor } = await import('../src/host/channels.js');
 
 /** Every frame the host put on the wire, in order. */
 const wire: { method: string; params: Record<string, unknown> }[] = [];
@@ -246,9 +245,9 @@ async function running(late = false, hold = false) {
     channel: 'ahp-root://', clientId: 'sub', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'],
   });
   const uri = 'ahp-session:/sub';
-  const chatUri = chatUriFor(uri);
   await ask('createSession', { channel: uri, provider: 'fake' });
-  await ask('subscribe', { channel: uri });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await ask('subscribe', { channel: uri })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await ask('subscribe', { channel: chatUri });
   await settle();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_task')}`;
@@ -275,7 +274,7 @@ it('announces a worker chat, opens its turn and links it from the call', async (
   const workerRow = added.find((one) => (one.summary as Bag).resource === worker);
   expect(workerRow).toBeDefined();
   const summary = workerRow?.summary as Bag;
-  const lead = `ahp-chat://default/${Buffer.from(uri, 'utf8').toString('base64url')}`;
+  const lead = chatUri;
   expect(summary).toMatchObject({
     title: 'Explore',
     interactivity: 'read-only',
@@ -536,8 +535,8 @@ async function waiting(as = 'ahp-session:/ask', stoppable = false) {
     channel: 'ahp-root://', clientId: 'ask', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'],
   });
   await ask('createSession', { channel: 'ahp-session:/ask', provider: 'fake' });
-  await ask('subscribe', { channel: as });
-  const lead = `ahp-chat://default/${Buffer.from(as, 'utf8').toString('base64url')}`;
+  // The chat the host minted for the session, read off its state.
+  const lead = ((await ask('subscribe', { channel: as })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await ask('subscribe', { channel: lead });
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run a subagent' } } });
   await settle();
@@ -633,7 +632,7 @@ it('refuses a second confirmation of a call the first one answered, without aski
  * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
  */
 it('answers the session and its worker chat spelt from another scheme of its id', async () => {
-  const { ask, worker, send, refusals } = await waiting();
+  const { ask, lead, worker, send, refusals } = await waiting();
   const elsewhere = `ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
   const session = await ask('subscribe', { channel: 'fake:/ask' }) as { snapshot: { resource: string; state: Bag } };
   expect(session.snapshot.resource).toBe('fake:/ask');
@@ -643,7 +642,7 @@ it('answers the session and its worker chat spelt from another scheme of its id'
   // by, beside the lead's own two calls waiting to be allowed.
   const answer = await ask('subscribe', { channel: 'ahp-session:/ask' }) as { snapshot: { state: Bag } };
   const needed = (answer.snapshot.state.inputNeeded ?? []) as Bag[];
-  expect(needed.map((one) => one.chat)).toEqual([worker, worker, chatUriFor('ahp-session:/ask'), chatUriFor('ahp-session:/ask')]);
+  expect(needed.map((one) => one.chat)).toEqual([worker, worker, lead, lead]);
   // And an answer sent on that spelling reaches the worker's call.
   await send(elsewhere, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: false, reason: 'denied' });
   expect(refusals()).toEqual([]);
@@ -673,15 +672,16 @@ it('says the session\'s URIs inside an action as the host holds them, to every c
   await creator('initialize', { ...hello, clientId: 'creator' });
   await other('initialize', { ...hello, clientId: 'other' });
   await creator('createSession', { channel: 'ahp-session:/ask', provider: 'fake' });
-  const chatOf = (session: string): string => `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+  // The chat the host minted for the session, read off its state.
+  const minted = ((await creator('subscribe', { channel: 'ahp-session:/ask' })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   const workerOf = (session: string): string =>
     `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
   for (const client of [creator, other]) {
     await client('subscribe', { channel: 'ahp-session:/ask' });
-    await client('subscribe', { channel: chatOf('ahp-session:/ask') });
+    await client('subscribe', { channel: minted });
   }
   await creator('dispatchAction', {
-    channel: chatOf('ahp-session:/ask'),
+    channel: minted,
     action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run a subagent' } },
   });
   await settle();
@@ -693,11 +693,11 @@ it('says the session\'s URIs inside an action as the host holds them, to every c
       .map((one) => one.action as Bag);
     const added = on_(session, 'session/chatAdded')[0]?.summary as Bag | undefined;
     expect(added?.resource).toBe(workerOf(session));
-    expect((added?.origin as Bag | undefined)?.chat).toBe(chatOf(session));
+    expect((added?.origin as Bag | undefined)?.chat).toBe(minted);
     // The worker's two, and the lead's own two calls waiting to be allowed.
     const asks = on_(session, 'session/inputNeededSet').map((one) => (one.request as Bag).chat);
-    expect(asks).toEqual([workerOf(session), workerOf(session), chatOf(session), chatOf(session)]);
-    const start = on_(chatOf(session), 'chat/toolCallStart').find((one) => one.toolCallId === 'toolu_agent');
+    expect(asks).toEqual([workerOf(session), workerOf(session), minted, minted]);
+    const start = on_(minted, 'chat/toolCallStart').find((one) => one.toolCallId === 'toolu_agent');
     expect((start?._meta as Bag | undefined)?.subagentChatUri).toBe(workerOf(session));
   }
 });
@@ -941,8 +941,8 @@ async function busyHost(stoppable = false) {
   });
   const uri = 'ahp-session:/busy';
   await ask('createSession', { channel: uri, provider: 'fake' });
-  await ask('subscribe', { channel: uri });
-  const lead = `ahp-chat://default/${Buffer.from(uri, 'utf8').toString('base64url')}`;
+  // The chat the host minted for the session, read off its state.
+  const lead = ((await ask('subscribe', { channel: uri })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await ask('subscribe', { channel: lead });
   await settle();
   /** The session's catalogue row as the root has announced it so far: the row it was added with, then each change. */
