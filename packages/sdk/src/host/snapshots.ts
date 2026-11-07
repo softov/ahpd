@@ -679,7 +679,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         state: {
           resource: channel,
           title: String(one.title ?? 'Subagent'),
-          status: Status.Idle | kept.chatFlags(id, channel),
+          // Read where nothing was kept, as the session's list says it.
+          status: Status.Idle | (kept.chatFlags(id, channel) || Status.IsRead),
           modifiedAt: stamp,
           origin: { kind: 'tool', chat: parentChat, toolCallId: wanted },
           interactivity: 'read-only',

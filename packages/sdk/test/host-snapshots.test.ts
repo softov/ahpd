@@ -1006,7 +1006,12 @@ describe('the fields a client reads by name', () => {
     expect((after[0]?.params as { origin?: { clientSeq?: number } }).origin?.clientSeq).toBe(2);
   });
 
-  it('marks a worker chat read, which its session lists like any other chat and no row lists', async () => {
+  /*
+   * A worker read back opens read where nothing marked it, as VS Code's host
+   * restores one, and takes a client's bit as any chat does.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1824-L1828
+   */
+  it('reads back a worker read and marks it unread, which its session lists like any other chat and no row lists', async () => {
     sdk.sessions.push({ sessionId: 'restored', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
     const host = serving('/home/softov', [], {
       agents: [{
@@ -1033,17 +1038,17 @@ describe('the fields a client reads by name', () => {
 
     const worker = (await listed()).find((one) => one.interactivity === 'read-only');
     expect(worker?.resource).toContain('toolu_task');
+    expect(worker?.status).toBe(Status.Idle | Status.IsRead);
     p.notes.length = 0;
 
+    // Read is the client's own bit and outlives every reason the turns are
+    // read-only, so a worker takes it as any chat of its session does.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: worker?.resource as string, action: { type: 'chat/isReadChanged', isRead: true } },
+      params: { channel: worker?.resource as string, action: { type: 'chat/isReadChanged', isRead: false } },
     });
     await flushed();
-    // Read is the client's own bit and outlives every reason the turns are
-    // read-only: somebody who has read what a subagent did does not want it
-    // back as unread when they open the session again.
-    expect((await listed()).find((one) => one.resource === worker?.resource)?.status).toBe(Status.Idle | Status.IsRead);
+    expect((await listed()).find((one) => one.resource === worker?.resource)?.status).toBe(Status.Idle);
     // And no row lists it: a client draws a worker under the call that spawned it.
     expect(chatsOf(p, 'ahp-session:/restored').some((one) => one.resource === worker?.resource)).toBe(false);
   });

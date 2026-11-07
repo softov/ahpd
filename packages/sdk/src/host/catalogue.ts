@@ -367,7 +367,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
 
   /**
    * The same, for a worker read back from a backend's own record, as of
-   * `modifiedAt`: the moment the record says its session last moved.
+   * `modifiedAt`: the moment the record says its session last moved. Read
+   * unless this host kept its bits, as VS Code's host restores a worker read
+   * where nothing says otherwise.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1824-L1828
    */
   const restoredSubagentSummary = (
     session: string,
@@ -378,7 +381,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   ): Bag => ({
     resource: uri,
     title: ref.title,
-    status: Status.Idle | kept.chatFlags(idOf(session), uri),
+    status: Status.Idle | (kept.chatFlags(idOf(session), uri) || Status.IsRead),
     modifiedAt,
     origin: { kind: 'tool', chat: parentChat, toolCallId: ref.toolCallId },
     interactivity: 'read-only',

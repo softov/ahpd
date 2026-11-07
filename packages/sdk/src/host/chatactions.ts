@@ -74,6 +74,21 @@ export function sessionFlag(
 }
 
 /**
+ * The read and archived bits a chat has now, as its clients hold them: its
+ * held state's, else its entry in its session's held state, else what this
+ * host kept. A worker read back from a record with nothing kept is read, as
+ * VS Code's host restores a worker read where nothing says otherwise.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1824-L1828
+ */
+export function chatBits(ctx: HostContext, session: string, chat: string): number {
+  const held = ctx.stateOf(chat)?.status
+    ?? (Array.isArray(ctx.stateOf(session)?.chats) ? ctx.stateOf(session)?.chats as Bag[] : []).find((one) => one.resource === chat)?.status;
+  if (held !== undefined) return Number(held) & ~(Status.IsRead - 1);
+  const bits = ctx.kept.chatFlags(idOf(session), chat);
+  return bits === 0 && toolCallOfSubagentChat(chat) !== undefined && !ctx.subagents.has(chat) ? Status.IsRead : bits;
+}
+
+/**
  * Set or clear one of a chat's own two bits, and say so.
  *
  * Said on the chat, and on the session's list of chats, which is where a
@@ -96,7 +111,7 @@ export function chatFlag(
   action?: Record<string, unknown>,
   origin?: Origin,
 ): boolean {
-  const before = ctx.kept.chatFlags(idOf(session), chat);
+  const before = chatBits(ctx, session, chat);
   const after = on ? before | bit : before & ~bit;
   if (after === before) return false;
   ctx.kept.setChatFlags(idOf(session), chat, after);
@@ -327,7 +342,7 @@ export function chatAction(
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
        * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2968-L2970
        */
-      const wasRead = (kept.chatFlags(id, channel) & Status.IsRead) !== 0;
+      const wasRead = (chatBits(ctx, flagSession, channel) & Status.IsRead) !== 0;
       const moved = chatFlag(ctx, flagSession, channel, bitOf, on, action, origin);
       if (!moved) dispatch(channel, action, origin);
       // A chat whose backend runs it on another host has its bits there too.
