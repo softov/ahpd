@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
+import { Status } from '../../sdk/src/sessions/catalog.js';
 import { botAsk } from '../src/ask.js';
 import { botChatAgent } from '../src/chat.js';
 import { botStore } from '../src/store.js';
+import type { AskIn } from '../src/ask.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { Start } from '../../sdk/src/types/agent.js';
 import type { RecordStore } from '../../sdk/src/types/records.js';
@@ -105,14 +107,14 @@ async function sitting(): Promise<Sitting> {
 }
 
 /** The asking over one main turn, with the back session's chat recording what it is sent. */
-function asking(handle: TurnHandle, entries: Map<string, Bag>, toBack: Bag[]): ReturnType<typeof botAsk> {
+function asking(handle: TurnHandle, entries: Map<string, Bag>, toBack: Bag[], askIn: AskIn = 'main'): ReturnType<typeof botAsk> {
   const held: Answering = { session: MAIN, turnId: 't1', handle, bot: 'Backer', waiting: new Map() };
   return botAsk({
     main: (back) => (back === 'bot:/backer/ana/work' ? held : undefined),
     request: async (back, id) => (back === 'bot:/backer/ana/work' ? entries.get(id) : undefined),
     send: async (chat, action) => { toBack.push({ chat, action }); return undefined; },
     problem: () => {},
-  });
+  }, askIn);
 }
 
 /** The entry a back session raises for a tool call waiting on an approval. */
@@ -241,5 +243,35 @@ it('takes the copy out of the main chat when the back session withdraws its ques
   ]);
   // An answer after the withdrawal is no longer this turn's to take.
   expect(session.answer('ask-1', true, {}, 'accept')).toBe(false);
+  expect(toBack).toEqual([]);
+});
+
+/*
+ * With `askIn` at `own`, the request stays in the back session's chat and is
+ * listed on the main chat's session as it stands, naming the chat a client
+ * answers it in, as VS Code's host aggregates a subagent's requests on its
+ * session (sessionInputNeededContribution.ts L19-L25 at 6b68d3fe); the main
+ * turn shows no copy, and the listing comes off when the back session lets the
+ * request go.
+ */
+it('lists a back session\'s request on the main chat\'s session where askIn is own, and copies nothing', async () => {
+  const { session, sent, handle } = await sitting();
+  const toBack: Bag[] = [];
+  const ask = asking(handle, new Map([['toolu_run', approval()]]), toBack, 'own');
+  await ask.asked('bot:/backer/ana/work', 'toolu_run');
+
+  expect((session.chatState().activeTurn as Bag)['responseParts']).toEqual([]);
+  expect(sent.filter((one) => String(one['type']).startsWith('session/inputNeeded'))).toEqual([
+    { type: 'session/inputNeededSet', request: approval() },
+  ]);
+  expect(session.sessionState()['inputNeeded']).toEqual([approval()]);
+  expect(session.status()).toBe(Status.InputNeeded);
+
+  ask.withdrawn('bot:/backer/ana/work', 'toolu_run');
+  expect(sent.filter((one) => one['type'] === 'session/inputNeededRemoved')).toEqual([
+    { type: 'session/inputNeededRemoved', id: 'toolu_run' },
+  ]);
+  expect(session.sessionState()['inputNeeded']).toBeUndefined();
+  expect(session.status()).toBe(Status.InProgress);
   expect(toBack).toEqual([]);
 });

@@ -33,6 +33,7 @@ In the configuration file, with every option set:
 | `mainTurnPostMessageAbsent` | `post` | What a main turn does when the back session's turn ends without `post_message`: `post`, `notice`, `silence` or `postNotice` |
 | `instructionsIn` | `section` | Where a bot's instructions are in its `AGENTS.md`: its `## Instructions` section, or `body`, the whole body after the frontmatter, as VS Code reads an agent file |
 | `contextIn` | `text` | Where a woken message's context goes: `text`, a block in front of the person's words, or `meta`, the words as said with the main chat in the message's delegation `_meta` alone, as VS Code delegates a prompt |
+| `askIn` | `main` | Where a back session's question or approval is shown: `main`, copied into the main turn and answered there, or `own`, left in the back session's chat and listed on the main chat's `inputNeeded`, as VS Code lists a subagent's requests on its session |
 
 The plugin's own entry needs `session:read` and `session:write`: a message is sent to a back session as a client's chat action, and the session's state is read the same way. The write group also holds `session:trust`, which the trusted start of a back session asks for.
 

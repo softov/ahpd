@@ -432,8 +432,8 @@ it('gives mainTurnPostMessageAbsent a default of post, and declares it', () => {
 it('declares the options something reads, and those alone', async () => {
   // A chat runs no model, so nothing opens a chat with a template: the count of
   // chats a first turn listed is an option nothing reads, gone with the builder.
-  expect(Object.keys(optionsSchema.properties)).toEqual(['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn']);
-  expect(Object.keys(defaults)).toEqual(['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn']);
+  expect(Object.keys(optionsSchema.properties)).toEqual(['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn']);
+  expect(Object.keys(defaults)).toEqual(['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn']);
   const exported = await import('../src/index.js');
   expect(exported).not.toHaveProperty('firstTurn');
   expect(exported).not.toHaveProperty('chatLines');

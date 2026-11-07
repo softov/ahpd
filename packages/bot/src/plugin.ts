@@ -14,6 +14,7 @@ import { botStore } from './store.js';
 import { agentsTextOf } from './template.js';
 import { botWake, isMainTurnAbsence } from './wake.js';
 import type { InstructionsIn, Yaml } from './agents.js';
+import type { AskIn } from './ask.js';
 import type { BotRecord } from './record.js';
 import type { ContextIn, MainTurnAbsence } from './wake.js';
 import type { Bag, Owner, Plugin, PluginPeer, RecordCollection, TurnEndEvent } from '@ahpd/sdk';
@@ -68,6 +69,7 @@ export const defaults = {
   mainTurnPostMessageAbsent: 'post',
   instructionsIn: 'section',
   contextIn: 'text',
+  askIn: 'main',
 } as const;
 
 /** What the plugin's connection to the host calls itself, which is how it knows its own frames. */
@@ -457,6 +459,12 @@ export const apply: Plugin['apply'] = (host, options) => {
    * names the two.
    */
   const contextIn: ContextIn = options.contextIn === 'meta' ? 'meta' : defaults.contextIn;
+  /*
+   * Where a back session's request is shown: copied into the main turn, or
+   * left in the back chat and listed on the main chat's blockers, as VS Code
+   * lists a subagent's. The schema names the two.
+   */
+  const askIn: AskIn = options.askIn === 'own' ? 'own' : defaults.askIn;
   const kept = host.records('templates', { body: 'text' });
   const templates = {
     // A bot file is edited by hand too, so a name is checked again here.
@@ -674,7 +682,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     },
     send,
     problem: (line) => { host.problem(`${name}: ${line}`); },
-  });
+  }, askIn);
   host.on('input_needed_set', (event) => {
     void ask.asked(event.session, event.id).catch((error: unknown) => {
       host.problem(`${name}: the request ${event.id} in ${event.session} was not shown: ${reason(error)}`);

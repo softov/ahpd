@@ -100,6 +100,11 @@
           "type": "string",
           "enum": ["text", "meta"],
           "description": "Where a woken message's context goes: a block in front of the person's words naming the main chat, the person and the time (text, the default), or the words as said with the main chat in the message's delegation _meta alone, as VS Code delegates a prompt (meta)."
+        },
+        "askIn": {
+          "type": "string",
+          "enum": ["main", "own"],
+          "description": "Where a back session's question or approval is shown: copied into the main turn and answered there (main, the default), or left in the back session's chat and listed on the main chat's inputNeeded, as VS Code lists a subagent's requests on its session (own)."
         }
       }
     }

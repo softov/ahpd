@@ -188,6 +188,18 @@ export interface TurnHandle {
   /** Take a request's copy out of the open turn, because the back session no longer waits on it. */
   withdrawn?(id: string): void;
   /**
+   * List a request another session is waiting on among this chat's blockers,
+   * the session's `inputNeeded`, as it stands: the entry names the chat it was
+   * asked in, which is where a client answers it. VS Code's host aggregates
+   * every chat's blockers on its session, a subagent's among them, so a client
+   * reads them there; the turn shows no copy.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L229-L247
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L19-L25
+   */
+  listed?(entry: Bag): void;
+  /** Take a listed request off this chat's blockers, because its session no longer waits on it. */
+  unlisted?(id: string): void;
+  /**
    * Say a steering message is being sent on to the work behind its turn, and
    * answer whether it may be.
    *
@@ -530,8 +542,22 @@ export function botChatAgent(
      * keeps it, and the answer to its hand-off until `steeringSent` gives it.
      */
     const steers = new Map<string, { turn: string; message: ChatTurn['message']; answer?: (sent: boolean) => void }>();
+    /** Another session's requests this chat lists among its blockers, by the entry's id. */
+    const listed = new Map<string, Bag>();
 
     const touch = (): void => { modified = new Date().toISOString(); };
+
+    /**
+     * `SessionStatus`: an open turn is `InProgress`, because the chat is
+     * waiting on the bot's session, which is where the answer is being worked
+     * out; and `InputNeeded` while a request of that session listed here waits
+     * on a person, as a listed entry other than a client's execution implies.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L229-L247
+     */
+    const statusNow = (): number => {
+      if (open === undefined) return Status.Idle;
+      return [...listed.values()].some((one) => one['kind'] !== 'toolClientExecution') ? Status.InputNeeded : Status.InProgress;
+    };
 
     /**
      * Say the open turn is waiting on another session's chat, as a subagent is drawn.
@@ -887,6 +913,16 @@ export function botChatAgent(
         if (held === undefined) return;
         withdrawAsked(held, id);
       },
+      listed: (entry) => {
+        const entryId = entry['id'];
+        if (typeof entryId !== 'string') return;
+        listed.set(entryId, entry);
+        start.emit('session', { type: 'session/inputNeededSet', request: entry });
+      },
+      unlisted: (id) => {
+        if (!listed.delete(id)) return;
+        start.emit('session', { type: 'session/inputNeededRemoved', id });
+      },
       steeringSent: (steering) => {
         const one = steers.get(steering);
         const answer = one?.answer;
@@ -1007,13 +1043,7 @@ export function botChatAgent(
       // The turns that are over. One still open is not here: it is what
       // `chatState().activeTurn` is for, as it is for every other backend.
       allTurns: () => turns,
-      /*
-       * `SessionStatus`: an open turn is `InProgress`, because the chat is
-       * waiting - on the bot's session, which is where the answer is being
-       * worked out. Nothing is being waited *for* from the person, so it is not
-       * `InputNeeded`.
-       */
-      status: () => (open === undefined ? Status.Idle : Status.InProgress),
+      status: () => statusNow(),
       activity: () => undefined,
       title: () => bot.name,
       modifiedAt: () => modified,
@@ -1024,7 +1054,8 @@ export function botChatAgent(
         // `SessionState`, and a client subscribed to this channel named it.
         provider: CHAT_PROVIDER,
         title: bot.name,
-        status: open === undefined ? Status.Idle : Status.InProgress,
+        status: statusNow(),
+        ...(listed.size === 0 ? {} : { inputNeeded: [...listed.values()] }),
         lifecycle: 'ready',
         defaultChat: start.chatUri,
         chats: [{ resource: start.chatUri, title: bot.name }],
