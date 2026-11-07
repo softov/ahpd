@@ -1043,7 +1043,14 @@ const perDirectory = (): { reads: Map<string, number>; source: ChangesetSource }
   };
 };
 
-it('lists a stored session outside the path with its counts, with no turn and no subscribe', async () => {
+/*
+ * A stored session's row carries the session's own counts and none of its
+ * folder's, as VS Code's host sets a row's changes from the session's own
+ * changesets and its recorded summary alone: a folder's uncommitted work is
+ * nobody's in particular.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L480-L493
+ */
+it('lists a stored session outside the path with no counts of its folder\'s, its folder read once', async () => {
   const dir = onGitHub();
   const home = elsewhere();
   const { reads, source } = perDirectory();
@@ -1057,23 +1064,25 @@ it('lists a stored session outside the path with its counts, with no turn and no
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: { resource: string; changes?: { files?: number } }[];
   };
-  expect(listed.items.find((one) => one.resource === 'ahp-session:/stored')?.changes?.files).toBe(1);
+  expect(listed.items.find((one) => one.resource === 'ahp-session:/stored')).not.toHaveProperty('changes');
   expect(reads.get(dir)).toBe(1);
 });
 
-it('tells a client already connected that a stored session\'s counts arrived', async () => {
+it('says nothing of a stored session\'s folder counts to a client already connected', async () => {
   const dir = onGitHub();
   const home = elsewhere();
+  const { source } = perDirectory();
   const host = createHost({
     path: home, agents: [storing(home, dir)], resources: fileResources(), terminals: shellTerminals(),
-    changes: gitChanges(), directories: gitBranches(),
+    changes: source, directories: gitBranches(),
   });
   const p = peer();
   const client = host.accept(p);
   await client.handle(hello);
-  await waitFor(() => rowsMoved(p, 'ahp-session:/stored').length > 0);
-  const moved = rowsMoved(p, 'ahp-session:/stored').at(-1);
-  expect((moved?.changes as { files?: number } | undefined)?.files).toBe(1);
+  await waitFor(() => source.summary(dir) !== undefined);
+  await settle(20);
+  await new Promise((r) => { setTimeout(r, 200); });
+  expect(rowsMoved(p, 'ahp-session:/stored')).toEqual([]);
 });
 
 it('does not read a second time a stored session\'s directory that is already served', async () => {

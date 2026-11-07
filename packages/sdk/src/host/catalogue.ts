@@ -561,26 +561,19 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const summaryKindOf = (uri: string): 'branch' | 'session' =>
     (ctx.worktreeOf(uri) === undefined ? 'session' : 'branch');
   /**
-   * The diff stat a catalogue row carries, which a session's own state does not.
+   * The diff stat a catalogue row carries, which a session's own state does
+   * not: the session's own counts, as this host last read and kept them, and
+   * none for a session it has read none for, as VS Code's host sets a row's
+   * changes from the session's own changesets and its recorded summary alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L480-L493
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1269-L1272
    *
-   * The session's own counts where the host has read them, and the directory's
-   * where it has not: a row is built synchronously and reading the session's
-   * own takes git, so what goes in a row is what was read the last time the
-   * counts moved.
-   *
-   * A session nothing has been read for is a session this host is not running
-   * - one listed from a backend's own record - and the directory's counts are
-   * the whole of what is known about it. Those two answers are not the same
-   * thing said twice: a session whose tree was committed in has counts of
-   * nothing, and the directory it committed in has counts of nothing for
-   * nobody in particular.
+   * A row is built synchronously and reading the session's own takes git, so
+   * what goes in a row is what was read the last time the counts moved.
    */
   const changesOf = (uri: string): Bag => {
     const read = kept.changes(idOf(uri));
-    if (read !== undefined) return read.files ? { changes: read } : {};
-    const dir = ctx.dirOf(uri);
-    const summary = dir === undefined ? undefined : options.changes?.summary(dir);
-    return summary?.files ? { changes: summary } : {};
+    return read?.files ? { changes: read } : {};
   };
   /**
    * A running session's catalogue row: the summary fields of the state the
@@ -747,9 +740,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * this host's bits and belong to the row, whatever process runs it - so its
    * row is that one field and its counts. Marking a row read is something
    * somebody does from the catalogue, to a session nobody has opened. Its diff
-   * stat goes with it, which costs no process to read: it is the session's own
-   * where `refreshSessionChangesSummary` has read one, and the directory's
-   * otherwise.
+   * stat goes with it, which costs no process to read: the session's own, as
+   * `refreshSessionChangesSummary` last read it.
    */
   const markSummaryDirty = (uri: string): void => {
     changesetsAndMetaChanged(uri);
@@ -1536,15 +1528,13 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     return recorded !== undefined && !agents.has(recorded) ? recorded : undefined;
   };
   /**
-   * Every stored session's directory that `browsable()` leaves out, read once.
-   *
-   * The catalogue draws a row's counts from what was last read of its
-   * directory, and only `browsable()` is read at startup, so a session kept
-   * in any other directory would list with none until a turn of it ended.
-   * One directory at a time, since a host with many stored sessions would
-   * otherwise start by running every one's `git` at once; a directory that
-   * fails to read is skipped. A row whose counts moved is announced: a live
-   * session by `readFacts` itself, a listed one here.
+   * Every stored session's directory that `browsable()` leaves out, read once,
+   * so a listed row's `_meta` carries its folder's git and GitHub facts as a
+   * row in a served folder does: only `browsable()` is read at startup, and a
+   * session kept in any other directory would list with none until a turn of
+   * it ended. One directory at a time, since a host with many stored sessions
+   * would otherwise start by running every one's `git` at once; a directory
+   * that fails to read is skipped.
    */
   const readStored = async (): Promise<void> => {
     const served = new Set(browsable());
@@ -1561,12 +1551,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       const dir_ = ctx.dirOf(row.resource);
       if (dir_ !== undefined && !served.has(dir_)) dirs.add(dir_);
     }
-    for (const dir_ of dirs) {
-      if (!await ctx.readFacts(dir_)) continue;
-      for (const row of rows) {
-        if (!sessions.has(row.resource) && ctx.dirOf(row.resource) === dir_) markSummaryDirty(row.resource);
-      }
-    }
+    for (const dir_ of dirs) await ctx.readFacts(dir_);
   };
 
   /**
