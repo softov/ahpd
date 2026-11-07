@@ -9,6 +9,7 @@ import { configOf } from '../sessions/remotesession.js';
 import { CLOSING, noProvider } from './common.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
+import { getAgentHostChatId } from '../vscode/chatid.js';
 import { preambleOf, withPreamble } from './preamble.js';
 import { readAggregate, sessionFlag, settledMessage, startsRead } from './chatactions.js';
 import { needsAsyncRewrite } from './attachments.js';
@@ -1260,6 +1261,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       if (!chatUri.startsWith('ahp-chat:'))
         throw new RpcError(INVALID_PARAMS, `Chat URI must use the ahp-chat scheme: ${chatUri}`);
+      // Nor one whose chat id another chat of the session has, as VS Code reads
+      // a chat's id off its URI.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L64-L69
+      const chatId = getAgentHostChatId(chatUri);
+      const collision = [held.defaultChat, ...held.chats.keys()]
+        .find((existing) => existing !== chatUri && getAgentHostChatId(existing) === chatId);
+      if (collision !== undefined)
+        throw new RpcError(INVALID_PARAMS, `Chat URI ${chatUri} has the same chat id as the existing chat ${collision}`);
       claimable(chatUri, 'chat');
       /*
        * Made out of another chat, when a client asks for that.

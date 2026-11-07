@@ -417,6 +417,14 @@ it('keeps a name in a provider\'s scheme for a session, before anything has list
   expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'claude:/side' }))
     .toMatchObject({ code: -32602, message: 'Chat URI must use the ahp-chat scheme: claude:/side' });
   expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: 'ahp-chat:/side' })).toHaveProperty('result');
+  // Nor one whose chat id another chat of the session has, in VS Code's words.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L64-L69
+  const shaped = (session: string) => `ahp-chat://peer/${Buffer.from(session, 'utf8').toString('base64url')}`;
+  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: shaped('ahp-session:/one') })).toHaveProperty('result');
+  expect(await call(admin.client, 'createChat', { channel: 'ahp-session:/one', chat: shaped('ahp-session:/two') })).toMatchObject({
+    code: -32602,
+    message: `Chat URI ${shaped('ahp-session:/two')} has the same chat id as the existing chat ${shaped('ahp-session:/one')}`,
+  });
 });
 
 it('keeps a terminal named like a session\'s marks what it is once the session is listed', async () => {
