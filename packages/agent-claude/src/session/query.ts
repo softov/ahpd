@@ -6,6 +6,7 @@ import { clearFor } from '../catalog.js';
 import { bag, list, str, UUID } from './common.js';
 import type { PendingSdkMessage, SessionContext } from './context.js';
 import { BEFORE_TOKEN } from '../logins.js';
+import { claudeManagedSettingsOf } from '../managed.js';
 import { hostHoldsTasks, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
 import { resolveClaudeAgentName } from './customizations.js';
 
@@ -184,6 +185,13 @@ export function createQuery(ctx: SessionContext): Query {
    * again, so what is here is what this CLI was told when it began.
    */
   const denied = ctx.options.deniedMcpServers ?? [];
+
+  /**
+   * The operator's managed settings in Claude Code's grammar, which every CLI
+   * of this session holds as its policy tier, the calls it answers without
+   * asking included. Read once: the host hands them at the start.
+   */
+  const managed = claudeManagedSettingsOf(ctx.options.managedSettings, ctx.options.cwd);
 
   /**
    * The CLI's own settings a query starts with, where this session adds to
@@ -512,6 +520,7 @@ export function createQuery(ctx: SessionContext): Query {
        */
       ...fromPreset(),
       ...settingsOption(),
+      ...(managed === undefined ? {} : { managedSettings: managed }),
       ...(ctx.login !== undefined || ctx.options.env ? { env: signedIn(fromPreset().env as Bag | undefined ?? process.env) } : {}),
       // In a machine, the env above is replaced by the variant's own alone.
       ...(ctx.options.spawn === undefined ? {} : { env: inMachine() }),

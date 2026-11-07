@@ -744,6 +744,8 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // And whether the query may load the person's own settings, which is the
       // other half of the same switch: absent is yes.
       ...(start.userSettings === undefined ? {} : { userSettings: start.userSettings }),
+      // The operator's managed settings, which the CLI holds as its own policy tier.
+      ...(start.managedSettings === undefined ? {} : { managedSettings: start.managedSettings }),
       // Each one checked the way the first is: a directory this host does not
       // serve is not one an agent may be pointed at, however it arrived.
       ...(start.additional && start.additional.length > 0

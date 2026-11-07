@@ -52,6 +52,7 @@ export { shellTerminals } from './machines/terminals.js';
 export { isShellName, shellEnvOf } from './machines/shellenv.js';
 export type { ShellEnv } from './machines/shellenv.js';
 export { isManagedDomainBoundaryRule } from './vscode/managedrules.js';
+export { normalizeDomainPattern } from './vscode/domainmatcher.js';
 export {
   getReasoningEffortDescription, getReasoningEffortLabel, isReasoningEffortLevel, ReasoningEffortConfigKey, reasoningEffortLevels,
   resolveDefaultReasoningEffort,

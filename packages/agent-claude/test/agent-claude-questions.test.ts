@@ -67,8 +67,11 @@ interface Replay {
   subagent?: NonNullable<Parameters<typeof createSession>[0]['subagent']>;
 }
 
+/** What the host started the session with, beside its settings. */
+type Started = Pick<Parameters<typeof createSession>[0], 'managedSettings'>;
+
 /** A session in a running turn, and what it said on the wire. */
-async function sessionWith(settings: Bag = {}, replay: Replay = {}): Promise<{
+async function sessionWith(settings: Bag = {}, replay: Replay = {}, started: Started = {}): Promise<{
   session: ReturnType<typeof createSession>;
   canUseTool: NonNullable<typeof sdk.canUseTool>;
   options: Bag;
@@ -82,6 +85,7 @@ async function sessionWith(settings: Bag = {}, replay: Replay = {}): Promise<{
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-questions-')),
     emit: (_channel, action) => { sent.push(action as Bag); },
     settings,
+    ...started,
     ...(replay.subagent === undefined ? {} : { subagent: replay.subagent }),
   });
   await settle();
@@ -149,6 +153,31 @@ it('puts a command the deny list names to the host, and answers the CLI its refu
   expect(sent.filter((one) => one.type === 'chat/toolCallReady').map((one) => one.toolCallId)).toEqual(['toolu_denied_list']);
   expect(session.confirm('toolu_denied_list', false)).toBe(true);
   expect(await answered).toEqual({ behavior: 'deny', message: 'User declined' });
+});
+
+/*
+ * The operator's managed settings reach the CLI as its policy tier, in Claude
+ * Code's grammar, so a call a managed rule names asks or is refused wherever
+ * the CLI answers it, as VS Code hands its runtime `managedSettings`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1107
+ * https://code.claude.com/docs/en/managed-settings#let-an-embedding-host-add-policy
+ */
+it('hands the CLI the operator\'s managed settings as its policy tier, in Claude Code\'s grammar', async () => {
+  const { options } = await sessionWith({}, {}, {
+    managedSettings: {
+      permissions: { deny: ['Shell(rm *)'], ask: ['Domain(example.com)'], disableBypassPermissionsMode: 'disable' },
+      eligibleForAutoApproval: { WebFetch: false },
+    },
+  });
+  expect(options.managedSettings).toEqual({
+    permissions: {
+      deny: ['Bash(rm *)', 'PowerShell(rm *)'],
+      ask: ['WebFetch(domain:example.com)', 'WebFetch', 'mcp__client__WebFetch'],
+      disableBypassPermissionsMode: 'disable',
+    },
+  });
+  const plain = await sessionWith();
+  expect(plain.options).not.toHaveProperty('managedSettings');
 });
 
 /*

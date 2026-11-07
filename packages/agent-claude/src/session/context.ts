@@ -157,6 +157,12 @@ export interface ClaudeSessionOptions extends SessionOptions {
    */
   userSettings?: boolean;
   /**
+   * The operator's managed settings, carried from `Start`, which the query
+   * hands the CLI as its own policy tier in Claude Code's grammar. Absent where
+   * the operator set none.
+   */
+  managedSettings?: Start['managedSettings'];
+  /**
    * The host's seam for a chat of one tool call's own.
    *
    * A subagent is a conversation inside one call, and the host owns what a
