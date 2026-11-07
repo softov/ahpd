@@ -2,18 +2,16 @@ import { expect, it, vi } from 'vitest';
 import type { Bag, BoundTool } from '@ahpd/sdk';
 
 /*
- * A call to a client that left ends at once.
+ * A handler and the call its frame reports.
  *
  * A handler the CLI started waits, by the id the CLI handed it, for the call
- * the frame reports. The client that provides the tool may leave in the gap
- * between the two, or the frame may name a tool nothing offers any more - and
- * then the call never opens, so the handler would wait until the turn is
- * stopped. These cases are that gap: the handler is answered with the refusal
- * at once.
- *
- * The holder ends the calls already open; what this backend adds is the waits
- * the holder never sees, so the cases drive `ranByClient` through the handler
- * the SDK server was handed.
+ * the frame reports. The frame may name a tool nothing offers any more, its
+ * client gone, and then the call never opens, so the handler is answered with
+ * the refusal at once. A call a gone client owes is the host's to fail, as VS
+ * Code's host fails one, through `completeToolCall`; this backend ends none
+ * itself. The cases drive `ranByClient` through the handler the SDK server
+ * was handed.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
  */
 
 const seen = vi.hoisted(() => ({ server: undefined as Record<string, unknown> | undefined }));
@@ -66,15 +64,19 @@ const session = (owned = [toolOf('openFile')], others: BoundTool[] = []) => {
   return { tools, ctx };
 };
 
-it('refuses a handler waiting by id when the client leaves', async () => {
+it('ends no call of a client that left itself, the host failing the calls it owes', async () => {
   const { tools } = session();
+  expect(Object.keys(tools.methods).sort()).toEqual(['completeToolCall', 'setTools', 'toolCallOwner']);
+  await new Promise((r) => { setTimeout(r, 0); });
   const handler = handlerFor('probe__openFile');
   const answering = handler({ path: '/a.txt' }, { _meta: { 'claudecode/toolUseId': 'call-1' } });
-  // The client goes before the frame that would open the call arrives.
-  tools.methods.clientGone('probe');
+  tools.openCall('mcp__client__probe__openFile', 't1', 'call-1', 'Open it', '{"path":"/a.txt"}');
+  // The host's failure for a client that went, in VS Code's words.
+  const words = 'Client probe disconnected before completing openFile';
+  tools.calls.complete('call-1', 'probe', { ok: false, text: words, content: [{ type: 'text', text: words }] });
   const answer = await answering as { content: { text: string }[]; isError?: boolean };
   expect(answer.isError).toBe(true);
-  expect(answer.content[0]?.text).toContain('no longer here');
+  expect(answer.content[0]?.text).toBe(words);
 });
 
 /*
@@ -103,33 +105,13 @@ it('refuses a handler whose tool is no longer on offer when the frame arrives', 
   const { tools, ctx } = session();
   const handler = handlerFor('probe__openFile');
   const answering = handler({ path: '/a.txt' }, { _meta: { 'claudecode/toolUseId': 'call-1' } });
-  // The tool is taken away - its client left - without `clientGone` being told,
-  // and then the frame for the call is reported for a tool nothing offers.
+  // The tool is taken away, its client gone, and then the frame for the call
+  // is reported for a tool nothing offers.
   ctx.offering = [];
   tools.openCall('mcp__client__probe__openFile', 't1', 'call-1', 'Open it', '{"path":"/a.txt"}');
   const answer = await answering as { content: { text: string }[]; isError?: boolean };
   expect(answer.isError).toBe(true);
   expect(answer.content[0]?.text).toContain('Nothing here offers');
-});
-
-it('leaves another client\'s waits alone when this one leaves', async () => {
-  const other = toolOf('openFile', 'other');
-  const { tools } = session([toolOf('openFile')], [other]);
-  const handler = handlerFor('other__openFile');
-  let done = false;
-  const answering = handler({ path: '/a.txt' }, { _meta: { 'claudecode/toolUseId': 'call-2' } })
-    .then((answer) => { done = true; return answer; });
-  tools.methods.clientGone('probe');
-  await new Promise((r) => { setTimeout(r, 0); });
-  // Not the one that left, so it is still waiting for its call.
-  expect(done).toBe(false);
-
-  // And it ends the way it should: the frame opens the call, and the holder's
-  // own `clientGone` never touched it.
-  tools.openCall('mcp__client__other__openFile', 't1', 'call-2', 'Open it', '{"path":"/a.txt"}');
-  tools.calls.complete('call-2', 'other', { ok: true, text: 'opened', content: [{ type: 'text', text: 'opened' }] });
-  const answer = await answering as { content: { text: string }[] };
-  expect(answer.content[0]?.text).toBe('opened');
 });
 
 it('keeps as many framed calls for a late handler as the record\'s keepFramed names', async () => {
@@ -150,5 +132,5 @@ it('keeps as many framed calls for a late handler as the record\'s keepFramed na
   await new Promise((r) => { setTimeout(r, 0); });
   // The first handler's call went past the kept one, so it waits for a frame.
   expect(first).toBe(false);
-  tools.methods.clientGone('probe');
+  tools.releaseCalls('done');
 });

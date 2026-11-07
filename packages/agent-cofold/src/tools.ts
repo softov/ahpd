@@ -79,10 +79,10 @@ const inputOf = (bound: BoundTool): CofoldInput => {
  * A call a client announced it can run, on its way out to that client.
  *
  * The session holds one of these from the moment cofold tries to execute an
- * owner-bound tool until the owning client answers or goes away. The fields
- * are what `completeToolCall` and `clientGone` need: the contributor tells one
- * client's call from another's, and the name is what a call failed by a lost
- * client can say it was.
+ * owner-bound tool until the owning client answers it, or the host fails it
+ * for a client that went. The fields are what `completeToolCall` needs: the
+ * contributor tells one client's call from another's, and the name is what a
+ * call can say it was.
  */
 export interface ClientToolCall {
   /** The model's own id for the call, which every chat action names. */

@@ -1617,12 +1617,6 @@ export function piSession(
     completeToolCall: (toolCallId, clientId, result) =>
       calls.complete(toolCallId, clientId, result),
 
-    clientGone: (clientId) => {
-      // A call whose client has gone is a turn waiting on a promise nothing
-      // will settle. The agent is told it failed, which is true.
-      calls.gone(clientId);
-    },
-
     /**
      * The tools on offer, replaced whole.
      *

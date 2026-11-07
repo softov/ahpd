@@ -245,7 +245,6 @@ export interface ClientTools {
     setTools: (tools: BoundTool[]) => Promise<boolean>;
     toolCallOwner: (toolCallId: string) => string | undefined;
     completeToolCall: (toolCallId: string, clientId: string, result: ClientCallAnswer) => boolean;
-    clientGone: (clientId: string) => void;
   };
 }
 
@@ -552,44 +551,19 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     },
 
     /*
-     * The three the holder answers, spread on unchanged.
+     * The two the holder answers, as it answers them.
      *
-     * Who owns a call, which client may settle it, and what happens to the
-     * calls of a client that goes: all of it is the holder's, and none of it
+     * Who owns a call and which client may settle it, the host's failure of a
+     * gone client's call among the settlements, as VS Code's host fails the
+     * calls a departed client owes: all of it is the holder's, and none of it
      * is about this harness. Nothing is emitted from `completeToolCall`: the
      * answer goes back to the CLI, the CLI writes the tool result, and the
      * session reports the completion to everybody from that - which is the
      * same path every other tool call takes.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
      */
-    ...calls.methods,
-
-    /**
-     * A client left the session, with the tools it was offering.
-     *
-     * The holder's own `clientGone` ends the calls already open, which is what
-     * a call the model made and the client was running gets. What it does not
-     * reach is the half a handler is stuck on: a call the CLI has not reported
-     * yet, so a handler is still waiting on its id for a client that is no
-     * longer there to answer. Those are ended here, with the sentence the
-     * holder uses for the same news, so both halves of one call read the same.
-     *
-     * Every tool whose name is this client's, by the prefix the model is
-     * offered under. The tools may already be gone from `offering` - the host
-     * takes them out in the same breath - so the waits are asked, not the list:
-     * each carries the tool it is for.
-     */
-    clientGone: (clientId) => {
-      const why = `The client ${clientId} that was running the tool is no longer here`;
-      for (const [id, waiting] of asked) {
-        const here = waiting.filter((one) => one.tool.startsWith(`mcp__${CLAUDE_CLIENT_MCP_SERVER_NAME}__${clientId}__`));
-        if (here.length === 0) continue;
-        for (const one of here) one.go({ refused: why });
-        const rest = waiting.filter((one) => !here.includes(one));
-        if (rest.length === 0) asked.delete(id);
-        else asked.set(id, rest);
-      }
-      calls.methods.clientGone(clientId);
-    },
+    toolCallOwner: calls.methods.toolCallOwner,
+    completeToolCall: calls.methods.completeToolCall,
   };
 
   return {

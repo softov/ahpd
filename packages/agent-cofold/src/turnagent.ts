@@ -193,7 +193,7 @@ export interface TurnAgent {
 
 export const createTurnAgent = (
   ctx: SessionContext,
-): TurnAgent & { methods: Pick<Session, 'toolCallOwner' | 'completeToolCall' | 'clientGone'> } => {
+): TurnAgent & { methods: Pick<Session, 'toolCallOwner' | 'completeToolCall'> } => {
   const { options, start, harness, where, store } = ctx;
 
   /** A writing call is about to run: report the file as it is now. */
@@ -221,8 +221,9 @@ export const createTurnAgent = (
    *
    * Nothing on this host executes an owner-bound tool, so this is the whole of
    * its execution: a call is held here from the moment cofold reports it
-   * running until the owning client settles it through `completeToolCall`, or
-   * goes away and `clientGone` fails it. Every path that ends a call settles
+   * running until it is settled through `completeToolCall`, by the owning
+   * client or by the host failing a call a gone client owes, as VS Code's host
+   * does. Every path that ends a call settles
    * its promise, because a run waiting on one nothing can settle is a turn
    * that hangs for ever. It also raises the session entry a client reads and
    * times a call out, which is what the map this replaces did neither of - see
@@ -454,17 +455,6 @@ export const createTurnAgent = (
        * finished twice.
        */
       completeToolCall: (toolCallId, clientId, result) => calls.complete(toolCallId, clientId, result),
-
-      /**
-       * A client that was running tool calls here has gone.
-       *
-       * Its outstanding calls are failed rather than left open: the run is
-       * awaiting a promise that nothing can settle any more, and a turn that
-       * hangs for ever is worse than a tool that says the client went. The
-       * message is the tool result the model reads, which is why it names the
-       * tool as well as the client.
-       */
-      clientGone: (clientId) => { calls.gone(clientId); },
     },
   };
 };
