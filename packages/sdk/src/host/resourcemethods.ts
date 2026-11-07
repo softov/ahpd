@@ -251,9 +251,10 @@ const CONFLICT = -32011;
      * May I read this, may I write it.
      *
      * The negotiated form of the question, and a client that asks is told
-     * yes for any `file:` URI, the way the reference host answers it:
-     * there is no person at a daemon to prompt, and the connection token
-     * has already decided who may be here.
+     * yes for any URI, the way the reference host answers it, a connected
+     * client's own resource asked of that client: there is no person at a
+     * daemon to prompt, and the connection token has already decided who may
+     * be here.
      *
      * It grants nothing, because there is nothing left to grant: the write
      * half is served to any connection, and the read half always was. The
