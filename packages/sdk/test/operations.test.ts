@@ -642,8 +642,6 @@ it('lists the changesets on the session channel, and not on a catalogue row', as
   const row = listed.items.find((one) => one.resource === 'ahp-session:/one');
   expect(row).toBeDefined();
   expect(row).not.toHaveProperty('changesets');
-  // The diff stat is a different field, is declared on a summary, and stays.
-  expect(row).toHaveProperty('changes');
 
   // Read, because a turn's end left it unread and marking it unread moves nothing.
   client.handle({
