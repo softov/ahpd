@@ -19,6 +19,7 @@ import type { Agent, Listed, Start } from '../src/types/agent.js';
 import { BASELINE_TURN } from '../src/types/changes.js';
 import type { ChangesetSource } from '../src/types/changes.js';
 import type { Peer } from '../src/types/rpc.js';
+import type { Session } from '../src/types/session.js';
 
 /*
  * The source opens a real `fs.watch` handle, and one case below asks what it
@@ -136,6 +137,32 @@ const open = async (dir: string, changes: ChangesetSource, agent: Agent = echo({
   await client.handle({ method: 'subscribe', params: { channel: URI } });
   await settle(8);
   return { client, peer: p, dir };
+};
+
+/**
+ * The echo agent serving `path`, each turn of which writes a file named after
+ * the turn into `dir` before it answers, saying the edit as a backend does.
+ */
+const writingTurns = (path: string, dir: string): Agent => {
+  const base = echo({ path, pace: 5 });
+  return {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return {
+        ...session,
+        sendMessage: (turnId, ...rest) => {
+          const file = join(dir, `${turnId}.txt`);
+          void (async () => {
+            await start.onFileEdit?.(turnId, file, 'before');
+            writeFileSync(file, 'made\n');
+            await start.onFileEdit?.(turnId, file, 'after');
+            await session.sendMessage(turnId, ...rest);
+          })();
+        },
+      };
+    },
+  };
 };
 
 /** A source that wraps the real one and counts what the host asks of it. */
@@ -980,6 +1007,40 @@ it('announces a session made in a directory outside the path with none of its fo
   const said = [added?.changes, ...rowsMoved(p, URI).map((one) => one.changes)]
     .filter((one): one is { files?: number } => one !== undefined);
   expect(said.filter((one) => (one.files ?? 0) !== 0)).toEqual([]);
+});
+
+/*
+ * Each listed chat carries its own counts on its entry, as VS Code's changeset
+ * service sets a chat's aggregate: the default chat the session's own work, any
+ * other chat the edits tracked in its own turns.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1724-L1828
+ */
+it('puts each chat\'s own counts on its entry: the session\'s on its default chat, its own turns\' edits on another', async () => {
+  const dir = repository();
+  const { client, peer: p } = await open(dir, gitChanges(), writingTurns(dir, dir), dir);
+  const PEER = 'ahp-chat:/peer';
+  await client.handle({ method: 'createChat', params: { channel: URI, chat: PEER } });
+  const countsOf = (chat: string): unknown => channelActions(p, URI)
+    .filter((one) => one.type === 'session/chatUpdated' && one.chat === chat && (one.changes as Record<string, unknown>).changes !== undefined)
+    .map((one) => (one.changes as Record<string, unknown>).changes).at(-1);
+  const turn = async (chat: string, turnId: string): Promise<void> => {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+    });
+  };
+
+  await turn(chatUriFor(URI), 't1');
+  await waitFor(() => JSON.stringify(countsOf(chatUriFor(URI))) === JSON.stringify({ files: 1, additions: 1, deletions: 0 }));
+  await turn(PEER, 't2');
+  await waitFor(() => JSON.stringify(countsOf(PEER)) === JSON.stringify({ files: 1, additions: 1, deletions: 0 }));
+  await waitFor(() => JSON.stringify(countsOf(chatUriFor(URI))) === JSON.stringify({ files: 2, additions: 2, deletions: 0 }));
+
+  const opened = await client.handle({ method: 'subscribe', params: { channel: URI } }) as { snapshot: { state: { chats: Record<string, unknown>[] } } };
+  expect(Object.fromEntries(opened.snapshot.state.chats.map((one) => [one.resource, one.changes]))).toEqual({
+    [chatUriFor(URI)]: { files: 2, additions: 2, deletions: 0 },
+    [PEER]: { files: 1, additions: 1, deletions: 0 },
+  });
 });
 
 /*

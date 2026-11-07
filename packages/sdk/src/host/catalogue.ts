@@ -162,10 +162,15 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3265
    */
   const chatSummary = (session: string, uri: string, chat: Session): Bag => {
+    // The counts kept for the chat's own work, which its entry carries
+    // whether or not its state is held, as VS Code's host keeps them on it.
+    const changes = kept.chatChanges?.(idOf(session), uri);
+    const counted = changes === undefined ? {} : { changes };
     const state = ctx.stateOf(uri);
-    if (state !== undefined) return summaryIn(state, uri);
+    if (state !== undefined) return { ...summaryIn(state, uri), ...counted };
     const foreign = sessions.get(session)?.backends.get(uri);
     return {
+      ...counted,
       resource: uri,
       ...startedBy(uri),
       // Its agent, where it is not its session's, as its state says it.
@@ -842,6 +847,26 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     ctx.broadcast(ROOT, 'root/sessionSummaryChanged', { channel: ROOT, session: uri, changes });
   };
   /**
+   * A chat's counts, kept and said, as VS Code's changeset service sets a
+   * listed chat's aggregate: a chat with none yet whose work changed nothing
+   * is told nothing, and the same counts are not said twice. Said by
+   * `session/chatUpdated` where the session's state is held, and on the
+   * session's summary, whose chats carry them, for the list.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1810-L1828
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2564-L2578
+   */
+  const setChatChangesSummary = (session: string, chat: string, changes: ChangesSummary): void => {
+    // A store that keeps no chat's counts leaves every chat's entry with none.
+    if (kept.setChatChanges === undefined) return;
+    const id = idOf(session);
+    const current = kept.chatChanges?.(id, chat);
+    if (current === undefined && (changes.files ?? 0) === 0) return;
+    if (isDeepStrictEqual(current, changes)) return;
+    kept.setChatChanges(id, chat, changes);
+    if (ctx.stateOf(session) !== undefined) ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes: { changes } });
+    markSummaryDirty(session);
+  };
+  /**
    * A session's changes summary, the counts `changesOf` reads, computed again
    * and kept where it can have changed, as VS Code refreshes a chat's changes
    * summary.
@@ -869,6 +894,14 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * session disposed while it ran has had its row forgotten: a count written
    * after would make a row, and a file, of counts alone, which the next daemon
    * lists as a session nobody can open.
+   *
+   * Each of its chats' counts are read in the same pass, as VS Code's changeset
+   * service sets each listed chat's aggregate where the session's moves: the
+   * default chat's the session's own work, read again here where the row
+   * carries its branch's, and any other chat's the edits tracked in its own
+   * turns. A worker carries none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1724-L1808
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2194-L2200
    */
   const computingChangesSummaries = new Set<string>();
   const queuedChangesSummaries = new Map<string, boolean>();
@@ -885,10 +918,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       for (;;) {
         queuedChangesSummaries.delete(uri);
         const source = options.changes;
+        const branch = summaryKindOf(uri) === 'branch';
         let read: ChangesSummary | undefined;
         try {
           const tree = ctx.worktreeOf(uri);
-          read = summaryKindOf(uri) === 'branch'
+          read = branch
             ? await source?.branchSummary?.(dir, tree?.commit ?? tree?.base)
             : await source?.sessionSummary?.(dir, idOf(uri), whileRunning);
         }
@@ -896,6 +930,25 @@ export function createCatalogue(ctx: HostContext): Catalogue {
         if (read !== undefined && (sessions.has(uri) || ctx.respawning.has(uri))) {
           kept.setChanges(idOf(uri), read);
           markSummaryDirty(uri);
+        }
+        const held = sessions.get(uri);
+        for (const chat of held?.chats.keys() ?? []) {
+          let own: ChangesSummary | undefined;
+          if (chat === held?.defaultChat) {
+            own = branch ? undefined : read;
+            if (branch) {
+              try { own = await source?.sessionSummary?.(dir, idOf(uri), whileRunning); }
+              catch { /* a count that could not be read is the count that was there */ }
+            }
+          }
+          else {
+            // The chat's turns as its state holds them, the one running last.
+            const state = ctx.stateOf(chat);
+            const active = state?.activeTurn;
+            const turns = [...(Array.isArray(state?.turns) ? state.turns as Bag[] : []), ...(typeof active === 'object' && active !== null ? [active as Bag] : [])];
+            own = source?.chatSummary?.(uri, turns.map((turn) => String(turn.id ?? '')));
+          }
+          if (own !== undefined && sessions.has(uri)) setChatChangesSummary(uri, chat, own);
         }
         if (!queuedChangesSummaries.has(uri)) return;
         whileRunning = queuedChangesSummaries.get(uri) ?? false;

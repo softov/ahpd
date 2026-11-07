@@ -549,6 +549,18 @@ export interface SessionStore {
   /** Replace them. The whole bitset, because that is what the protocol sends. */
   setChatFlags(id: string, chatUri: string, value: number): void;
   /**
+   * What one chat's own work added and removed, or nothing where none was
+   * read for it: the counts its entry in the session's catalogue carries, as
+   * VS Code's host keeps each listed chat's aggregate in its session's record.
+   * Kept by chat URI for the reason a chat's title is, and kept at all because
+   * a session this host is not running lists its chats with them. Optional: a
+   * store without it keeps no chat's counts, and its chats carry none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1810-L1828
+   */
+  chatChanges?(id: string, chatUri: string): ChangesSummary | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setChatChanges?(id: string, chatUri: string, value: ChangesSummary | undefined): void;
+  /**
    * The draft typed into one chat, the `Message` its client last sent, or
    * nothing. Kept by chat URI for the reason a chat's title is, so a draft
    * outlives the process and comes back when the chat opens, as VS Code's

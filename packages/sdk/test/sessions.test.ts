@@ -1255,6 +1255,30 @@ it("keeps the flags a chat was given, and forgets them with the session", async 
   expect(fileSessions({ dir }).chatFlags('a', 'ahp-chat:/one')).toBe(0);
 });
 
+/*
+ * A chat's counts are kept in its session's record, as VS Code's host keeps
+ * each listed chat's aggregate, so a session nothing runs lists its chats with
+ * them after a restart.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1810-L1828
+ */
+it('keeps the counts a chat carries across a restart, and forgets one cleared', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  store.setChatChanges?.('a', 'ahp-chat:/one', { files: 2, additions: 5, deletions: 1 });
+  store.setChatChanges?.('a', 'ahp-chat:/two', { files: 1, additions: 1, deletions: 0 });
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({
+    version: 1, id: 'a',
+    chatChanges: { 'ahp-chat:/one': { files: 2, additions: 5, deletions: 1 }, 'ahp-chat:/two': { files: 1, additions: 1, deletions: 0 } },
+  });
+  const second = fileSessions({ dir });
+  expect(second.chatChanges?.('a', 'ahp-chat:/one')).toEqual({ files: 2, additions: 5, deletions: 1 });
+  second.setChatChanges?.('a', 'ahp-chat:/two', undefined);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(fileSessions({ dir }).chatChanges?.('a', 'ahp-chat:/two')).toBeUndefined();
+  expect(fileSessions({ dir }).chatChanges?.('a', 'ahp-chat:/one')).toEqual({ files: 2, additions: 5, deletions: 1 });
+});
+
 it('writes no flags for a chat whose bits are all cleared', async () => {
   const dir = join(root, 'sessions');
   const store = fileSessions({ dir });

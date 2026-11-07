@@ -430,6 +430,18 @@ export interface ChangesetSource {
    */
   branchSummary?(dir: string, base?: string): Promise<ChangesSummary | undefined>;
   /**
+   * And the roll-up of some of a session's turns, from the edits the tracker
+   * saw in them: each file's first `before` and last `after` across those
+   * turns, counted as a row's counts are. Nothing where the tracker saw none
+   * of them.
+   *
+   * What a chat of the session other than its default chat carries, as VS
+   * Code's host computes such a chat's aggregate from the edits tracked in
+   * that chat; the turns are the chat's own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1777-L1808
+   */
+  chatSummary?(session: string, turns: readonly string[]): ChangesSummary | undefined;
+  /**
    * Content behind a ref this source minted.
    *
    * The `before` side of an edit is not a file on disk - it is what the file

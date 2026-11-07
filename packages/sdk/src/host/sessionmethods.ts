@@ -1633,11 +1633,12 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // channel nobody can reach any more.
       ctx.canvases.forgetChat(chatUri);
       held?.chats.delete(chatUri);
-      // And the name this chat was given, and its draft: the store keeps a
-      // chat's own title and draft, and a chat that has gone takes both with
-      // it, so a chat opened under that name later starts with neither.
+      // And the name this chat was given, its draft and its counts: the store
+      // keeps a chat's own of each, and a chat that has gone takes them with
+      // it, so a chat opened under that name later starts with none of them.
       kept.setChatTitle(idOf(found.uri), chatUri, '');
       kept.setChatDraft?.(idOf(found.uri), chatUri, undefined);
+      kept.setChatChanges?.(idOf(found.uri), chatUri, undefined);
       /*
        * The name the backend keeps this chat's conversation under, read before
        * the record goes: a fork and a chat whose URI names no id the backend

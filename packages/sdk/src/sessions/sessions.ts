@@ -182,6 +182,13 @@ export function memorySessions(): SessionStore & Held {
       else held.set(chatUri, value);
       patch(id, { chatFlags: held.size === 0 ? undefined : held });
     },
+    chatChanges: (id, chatUri) => rows.get(id)?.chatChanges?.get(chatUri),
+    setChatChanges: (id, chatUri, value) => {
+      const held = new Map(rows.get(id)?.chatChanges);
+      if (value === undefined) held.delete(chatUri);
+      else held.set(chatUri, value);
+      patch(id, { chatChanges: held.size === 0 ? undefined : held });
+    },
     chatDraft: (id, chatUri) => rows.get(id)?.chatDrafts?.get(chatUri),
     setChatDraft: (id, chatUri, draft) => {
       const held = new Map(rows.get(id)?.chatDrafts);
@@ -198,9 +205,9 @@ export function memorySessions(): SessionStore & Held {
     moveChat: (from, to, uri, turns) => {
       /*
        * The moving chat's own record, read before either row is written: its
-       * entry on the source's list, the title it was given, its draft and the
-       * senders of the turns it owns. A row is replaced whole, so both rows are
-       * built from what is read here.
+       * entry on the source's list, the title it was given, its draft, its
+       * counts and the senders of the turns it owns. A row is replaced whole,
+       * so both rows are built from what is read here.
        */
       const source = rows.get(from);
       const chat = (source?.chats ?? []).find((one) => one.uri === uri);
@@ -210,6 +217,9 @@ export function memorySessions(): SessionStore & Held {
       const drafts = new Map(source?.chatDrafts);
       const draft = drafts.get(uri);
       drafts.delete(uri);
+      const counted = new Map(source?.chatChanges);
+      const counts = counted.get(uri);
+      counted.delete(uri);
       const senders = new Map(source?.senders);
       const ours = new Map<string, Owner>();
       for (const turn of turns) {
@@ -223,13 +233,14 @@ export function memorySessions(): SessionStore & Held {
         chats: left.length === 0 ? undefined : left,
         chatTitles: titles.size === 0 ? undefined : titles,
         chatDrafts: drafts.size === 0 ? undefined : drafts,
+        chatChanges: counted.size === 0 ? undefined : counted,
         senders: senders.size === 0 ? undefined : senders,
       });
       /*
        * And onto the destination, as one write: the entry appended to its list,
-       * the senders its turns name, the title and the draft. Only the fields
-       * this move changes are handed over, so a `chatTitles` map the
-       * destination already has is not replaced by a copy of itself.
+       * the senders its turns name, the title, the draft and the counts. Only
+       * the fields this move changes are handed over, so a `chatTitles` map
+       * the destination already has is not replaced by a copy of itself.
        *
        * The entry is copied, because a read answers with the store's own
        * objects and this one is about to be written into another row.
@@ -243,11 +254,14 @@ export function memorySessions(): SessionStore & Held {
       if (title !== undefined) named.set(uri, title);
       const typed = new Map(target?.chatDrafts);
       if (draft !== undefined) typed.set(uri, draft);
+      const totals = new Map(target?.chatChanges);
+      if (counts !== undefined) totals.set(uri, counts);
       patch(to, {
         chats: list.length === 0 ? undefined : list,
         ...(ours.size === 0 ? {} : { senders: theirs }),
         ...(title === undefined ? {} : { chatTitles: named }),
         ...(draft === undefined ? {} : { chatDrafts: typed }),
+        ...(counts === undefined ? {} : { chatChanges: totals }),
       });
     },
     // A row is held only while it says something, so this is the sessions
@@ -282,6 +296,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.customTitle === undefined ? {} : { customTitle: held.customTitle }),
         ...(held.chatTitles === undefined ? {} : { chatTitles: held.chatTitles }),
         ...(held.chatFlags === undefined ? {} : { chatFlags: held.chatFlags }),
+        ...(held.chatChanges === undefined ? {} : { chatChanges: held.chatChanges }),
         ...(held.chatDrafts === undefined ? {} : { chatDrafts: held.chatDrafts }),
         ...(held.annotations === undefined ? {} : { annotations: held.annotations }),
         ...(held.parent === undefined ? {} : { parent: held.parent }),
@@ -473,6 +488,7 @@ interface Row {
   customTitle?: string | undefined;
   chatTitles?: Map<string, string> | undefined;
   chatFlags?: Map<string, number> | undefined;
+  chatChanges?: Map<string, ChangesSummary> | undefined;
   chatDrafts?: Map<string, Record<string, unknown>> | undefined;
   annotations?: Record<string, unknown> | undefined;
   parent?: string | undefined;
@@ -502,7 +518,7 @@ const empty = (row: Row): boolean =>
   && row.owner === undefined && row.senders === undefined && row.provider === undefined
   && row.tools === undefined && row.trustedFolder === undefined && row.userSettings === undefined
   && row.artifacts === undefined && row.pullRequests === undefined && row.customTitle === undefined && row.chatTitles === undefined
-  && row.chatFlags === undefined && row.chatDrafts === undefined && row.annotations === undefined
+  && row.chatFlags === undefined && row.chatChanges === undefined && row.chatDrafts === undefined && row.annotations === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
   && row.remoteOrigin === undefined && row.createdBy === undefined && row.multiRoot === undefined && row.worktree === undefined
   && row.additionalWorktrees === undefined && row.autoArchivedAt === undefined && row.changes === undefined;
@@ -539,6 +555,8 @@ interface Saved {
   chatTitles?: Record<string, string>;
   /** The read and archived bits of each chat, by the chat's URI. */
   chatFlags?: Record<string, number>;
+  /** The counts of each chat's own work, by the chat's URI. */
+  chatChanges?: Record<string, ChangesSummary>;
   /** The draft typed into each chat, by the chat's URI. */
   chatDrafts?: Record<string, Record<string, unknown>>;
   /** What clients marked on the session, as the annotations channel holds it. */
@@ -698,6 +716,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.customTitle === undefined ? {} : { customTitle: held.customTitle }),
       ...(held.chatTitles === undefined ? {} : { chatTitles: Object.fromEntries(held.chatTitles) }),
       ...(held.chatFlags === undefined ? {} : { chatFlags: Object.fromEntries(held.chatFlags) }),
+      ...(held.chatChanges === undefined ? {} : { chatChanges: Object.fromEntries(held.chatChanges) }),
       ...(held.chatDrafts === undefined ? {} : { chatDrafts: Object.fromEntries(held.chatDrafts) }),
       ...(held.annotations === undefined ? {} : { annotations: held.annotations }),
       ...(held.parent === undefined ? {} : { parent: held.parent }),
@@ -858,6 +877,13 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           if (typeof value === 'number') inner.setChatFlags(row.id, chatUri, value);
         }
       }
+      // A record of counts, one per chat, each read as a session's counts are.
+      if (typeof row.chatChanges === 'object' && row.chatChanges !== null && !Array.isArray(row.chatChanges)) {
+        for (const [chatUri, value] of Object.entries(row.chatChanges)) {
+          const counts = countsOf(value);
+          if (counts !== undefined) inner.setChatChanges?.(row.id, chatUri, counts);
+        }
+      }
       // A record of messages, one per chat: an entry that is no object is ignored.
       if (typeof row.chatDrafts === 'object' && row.chatDrafts !== null && !Array.isArray(row.chatDrafts)) {
         for (const [chatUri, draft] of Object.entries(row.chatDrafts)) {
@@ -968,6 +994,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setChatTitle: (id, chatUri, title) => { touched(id, () => { inner.setChatTitle(id, chatUri, title); }); },
     chatFlags: (id, chatUri) => inner.chatFlags(id, chatUri),
     setChatFlags: (id, chatUri, value) => { touched(id, () => { inner.setChatFlags(id, chatUri, value); }); },
+    chatChanges: (id, chatUri) => inner.chatChanges?.(id, chatUri),
+    setChatChanges: (id, chatUri, value) => { touched(id, () => { inner.setChatChanges?.(id, chatUri, value); }); },
     chatDraft: (id, chatUri) => inner.chatDraft?.(id, chatUri),
     setChatDraft: (id, chatUri, draft) => { touched(id, () => { inner.setChatDraft?.(id, chatUri, draft); }); },
     annotations: (id) => inner.annotations?.(id),
