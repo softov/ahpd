@@ -18,8 +18,11 @@ import type { HostOptions, Users } from '../src/types/index.js';
  * A host with a real users file, four agents - one the daemon serves, one a
  * team's, and one for each of two people - and three callers: a person holding
  * `session:write`, a member of the team who holds it not, and another person.
- * The list a caller is sent holds only the agents it may use, and a start on
- * any other answers as one on a provider this host does not serve.
+ * The list a caller is sent holds every agent, one it may not use with no
+ * models, as VS Code's host lists a provider it does not advertise, and a
+ * start on such an agent answers as one on a provider this host does not
+ * serve.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3288-L3291
  */
 
 let root = '';
@@ -62,7 +65,11 @@ const backend = (id: string): Agent => {
   // list again: this host's agents say nothing, so one notification is one.
   const base = { ...echo({ path: root, pace: 0 }), provider: id, displayName: id === 'base' ? 'Base' : id };
   delete base.probe;
-  return base;
+  // `mine` and `crew` offer one model each, which a caller who may not use the
+  // agent is told it has none of.
+  return id === 'mine' || id === 'crew'
+    ? { ...base, probe: async () => ({ models: [{ id: `${id}-model`, name: id }], commands: [], customizations: [] }) }
+    : base;
 };
 
 /**
@@ -105,6 +112,13 @@ const as = async (host: ReturnType<typeof serving>, users: Users, id: string) =>
     const answer = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as Bag;
     return ((answer['snapshot'] as Bag).state.agents as { provider: string }[]).map((one) => one.provider);
   };
+  /** The ids of the models the root state lists for one agent now. */
+  const models = async (provider: string): Promise<string[]> => {
+    const answer = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as Bag;
+    const agent = ((answer['snapshot'] as Bag).state.agents as { provider: string; models?: { id: string }[] }[])
+      .find((one) => one.provider === provider);
+    return (agent?.models ?? []).map((one) => one.id);
+  };
   const call = async (method: string, params: Bag) => client.handle({ method, params }).then(
     (result) => ({ result: result as Bag }),
     (error: { code: number; message: string }) => ({ code: error.code, message: error.message }),
@@ -114,22 +128,28 @@ const as = async (host: ReturnType<typeof serving>, users: Users, id: string) =>
   const after = async (was: number): Promise<void> => {
     for (let i = 0; i < 400 && changed() === was; i++) await new Promise((done) => { setTimeout(done, 5); });
   };
-  return { client, agents, call, changed, after, seen };
+  return { client, agents, models, call, changed, after, seen };
 };
 
-it('tells each caller only the agents it may use', async () => {
+/** Every agent the host serves, by provider. */
+const ALL = ['base', 'crew', 'mine', 'theirs'];
+
+it('tells each caller every agent, and one it may not use with no models', async () => {
   const users = fileUsers({ path: usersFile });
   const host = serving(users);
   const ana = await as(host, users, 'ana');
   const bo = await as(host, users, 'bo');
   const cy = await as(host, users, 'cy');
 
-  // `session:write`: the daemon's own agent and the one this person owns.
-  expect((await ana.agents()).sort()).toEqual(['base', 'mine']);
-  // A membership of the team, and no `session:write`: the team's agent alone.
-  expect((await bo.agents()).sort()).toEqual(['crew']);
-  // `session:write` again, and another person's agent is somebody else's.
-  expect((await cy.agents()).sort()).toEqual(['base', 'theirs']);
+  // Every caller is told every agent, whichever it may use.
+  expect((await ana.agents()).sort()).toEqual(ALL);
+  expect((await bo.agents()).sort()).toEqual(ALL);
+  expect((await cy.agents()).sort()).toEqual(ALL);
+  // `mine` is ana's: she is told its model once it is offered, and cy, who
+  // may not use it, is told it has none.
+  for (let i = 0; i < 400 && (await ana.models('mine')).length === 0; i++) await new Promise((done) => { setTimeout(done, 5); });
+  expect(await ana.models('mine')).toEqual(['mine-model']);
+  expect(await cy.models('mine')).toEqual([]);
   await host.close();
 });
 
@@ -163,8 +183,10 @@ it('refuses an agent a record holds with no owner, to every caller', async () =>
   const host = serving(users, owners);
   const ana = await as(host, users, 'ana');
 
-  // `session:write` is what a host agent takes, and it is not enough here.
-  expect((await ana.agents()).sort()).toEqual(['base', 'mine']);
+  // `session:write` is what a host agent takes, and it is not enough here:
+  // the agent is listed, with no models, and a start on it is refused.
+  expect((await ana.agents()).sort()).toEqual([...ALL, 'nameless'].sort());
+  expect(await ana.models('nameless')).toEqual([]);
   expect(await ana.call('createSession', { channel: 'ahp-session:/nameless', provider: 'nameless' }))
     .toEqual({ code: -32002, message: 'No agent provider registered for: nameless' });
   // An id no record holds is still the host's, and `ana` starts on it.
@@ -193,12 +215,15 @@ it('sends the list again when a membership change alters what a caller may use',
   const users = fileUsers({ path: usersFile });
   const host = serving(users);
   const bo = await as(host, users, 'bo');
-  expect((await bo.agents()).sort()).toEqual(['crew']);
+  for (let i = 0; i < 400 && (await bo.models('crew')).length === 0; i++) await new Promise((done) => { setTimeout(done, 5); });
+  expect(await bo.models('crew')).toEqual(['crew-model']);
 
-  // Bo leaves the team: the same connection may use nothing s/he could before.
+  // Bo leaves the team: the same connection may use nothing s/he could
+  // before, and is still told every agent, the team's with no models.
   const was = bo.changed();
   write([{ id: 'ana', roles: ['writer'] }, { id: 'bo', roles: ['team-member'] }, { id: 'cy', roles: ['writer'] }]);
   await bo.after(was);
-  expect(await bo.agents()).toEqual([]);
+  expect((await bo.agents()).sort()).toEqual(ALL);
+  expect(await bo.models('crew')).toEqual([]);
   await host.close();
 });

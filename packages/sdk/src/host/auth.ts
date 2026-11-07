@@ -55,10 +55,11 @@ export function createAuth(ctx: HostContext): Auth {
     ...(options.github ? [options.github.resource] : []),
   ];
   /**
-   * The agent list as one connection is told it: only the agents this caller
-   * may use, decided by `mayUseAgent` from the owner its record names. An
-   * agent left out is not one this connection is told exists, which is why
-   * this is a filter and not a field it cannot use.
+   * The agent list as one connection is told it: every agent, and one this
+   * caller may not use, decided by `mayUseAgent` from the owner its record
+   * names, listed with no models, as VS Code's host lists a provider it does
+   * not advertise to a client.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3288-L3291
    *
    * The host's own sign-in is on no agent: its requirement is said in the
    * `-32007` refusal's data, as VS Code's host says its host-level sign-in,
@@ -69,15 +70,17 @@ export function createAuth(ctx: HostContext): Auth {
     if (options.users === undefined) return list;
     if (!Array.isArray(list)) return list;
     const owners = options.agentOwners;
-    return list.filter((agent) => {
-      if (typeof agent !== 'object' || agent === null) return true;
+    return list.map((agent) => {
+      if (typeof agent !== 'object' || agent === null) return agent;
       /*
        * Whose the agent is, read from its record. An id the records do not
        * hold is the daemon's own or a plugin's, and takes the host rule.
        */
       const provider = (agent as Bag).provider;
       const owned = typeof provider === 'string' ? ownershipOf(owners?.(), provider) : hostAgent;
-      return mayUseAgent(connection.principal, owned, { root: connection.root === true, hasDirectory: true });
+      return mayUseAgent(connection.principal, owned, { root: connection.root === true, hasDirectory: true })
+        ? agent
+        : { ...agent as Bag, models: [] };
     });
   };
   /**

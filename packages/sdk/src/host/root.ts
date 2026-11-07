@@ -775,8 +775,8 @@ export function createRoot(ctx: HostContext): Root {
     const meta = metaFor(connection);
     return {
       ...held,
-      // The host's list, rewritten for the one connection asking when it is
-      // already somebody: the sign-in resource is the one field that differs.
+      // The host's list for the one connection asking: an agent it may not
+      // use is listed with no models.
       agents: connection === undefined ? held.agents : ctx.agentsFor(connection, held.agents),
       config: {
         schema: reads
