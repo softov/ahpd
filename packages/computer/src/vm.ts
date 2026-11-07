@@ -15,8 +15,8 @@
  * same reason.
  */
 
-import { readFileSync } from 'node:fs';
-import { posix } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join, posix } from 'node:path';
 import { hostPathOf, machinePathOf } from '@ahpd/sdk';
 import type { BroughtBack } from '@ahpd/sdk';
 import { codeRouteOf } from './clone.js';
@@ -46,7 +46,7 @@ import type { ComputerRuntime, ExecResult, Machine, MachineSpec, RuntimeCapabili
 import { sshReach } from './ssh.js';
 import type { SshMachine, SshProgram, SshReach } from './ssh.js';
 import { TEMPLATE_PACKAGES, templateMaker } from './template.js';
-import type { TemplateParts, TemplateSteps } from './template.js';
+import type { TemplateLedger, TemplateParts, TemplateSteps } from './template.js';
 
 /** Where a VM's tree is, which is the session's repository at its own path. */
 const MACHINE_TREE = 'ahpd.tree';
@@ -235,7 +235,19 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
   const ready = options.waits?.ready ?? READY_MS;
   const every = options.waits?.every ?? EVERY_MS;
   const shutdown = options.waits?.shutdown ?? SHUTDOWN_MS;
-  const makeTemplate = options.parts === undefined ? undefined : templateMaker(options.parts, options.log);
+  /*
+   * When each older template was first found with no VM on it, beside the
+   * configuration, so the week an unused template is kept outlives a restart.
+   */
+  const ledgerPath = join(options.configDir, 'computer-templates.json');
+  const ledger: TemplateLedger = {
+    read: () => {
+      try { return JSON.parse(readFileSync(ledgerPath, 'utf8')) as Record<string, number>; }
+      catch { return {}; }
+    },
+    write: (held) => { writeFileSync(ledgerPath, `${JSON.stringify(held, null, 2)}\n`); },
+  };
+  const makeTemplate = options.parts === undefined ? undefined : templateMaker(options.parts, options.log, ledger);
   const capabilities: RuntimeCapabilities = {
     runtime: maker.kind,
     actions: ['create', 'delete', 'exec', 'start', 'stop', 'restart', 'suspend', 'resume'],
@@ -471,6 +483,8 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
       await maker.drop(server, name);
       await forget(name, address);
     },
+    // The template each VM on the server was made from, by its own label.
+    backed: async () => (await maker.listOn(server)).flatMap((row) => row.labels?.[MACHINE_IMAGE] ?? []),
   });
 
   /** Why a spec cannot be made as a VM, or nothing when it can. */

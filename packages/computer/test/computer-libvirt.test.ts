@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { closeAll, keeping } from './support/closing.js';
@@ -310,15 +310,38 @@ it.skipIf(!posix)('builds a template from the cloud image once, for two VMs aske
   expect(parts.copied).toHaveLength(1);
 });
 
-it.skipIf(!posix)('builds a second template when the hash moves, and keeps the first', async () => {
-  const lines: string[] = [];
-  const parts = fakeParts(['ahpd-agents:aaaaaaaaaaaa', 'ahpd-agents:bbbbbbbbbbbb']);
-  const vms = imaged(parts, lines);
-  await vms.run(spec());
-  await vms.run(spec({ name: 'vm-2' }));
-  expect(parts.copied).toEqual(['ahpd-agents:aaaaaaaaaaaa', 'ahpd-agents:bbbbbbbbbbbb']);
-  expect(box().volumes).toEqual(expect.arrayContaining(['ahpd-template-aaaaaaaaaaaa', 'ahpd-template-bbbbbbbbbbbb']));
-  expect(lines).toContainEqual('kvm1 keeps the older templates ahpd-template-aaaaaaaaaaaa; remove one once no VM backs onto it');
+/*
+ * An older template is kept while a VM backs onto it, and removed a week after
+ * it was first found with none, as VS Code removes a cached version unused for
+ * a week (agentSdkCache.ts L17-L78 at 6b68d3fe).
+ */
+it.skipIf(!posix)('builds a second template when the hash moves, keeps the first while a VM backs onto it, and removes it a week after none does', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const lines: string[] = [];
+    const parts = fakeParts(['ahpd-agents:aaaaaaaaaaaa', 'ahpd-agents:bbbbbbbbbbbb', 'ahpd-agents:bbbbbbbbbbbb', 'ahpd-agents:bbbbbbbbbbbb']);
+    const vms = imaged(parts, lines);
+    await vms.run(spec());
+    await vms.run(spec({ name: 'vm-2' }));
+    expect(parts.copied).toEqual(['ahpd-agents:aaaaaaaaaaaa', 'ahpd-agents:bbbbbbbbbbbb']);
+    // vm-1 backs onto the first, so it stays.
+    expect(box().volumes).toEqual(expect.arrayContaining(['ahpd-template-aaaaaaaaaaaa', 'ahpd-template-bbbbbbbbbbbb']));
+
+    // With vm-1 gone the first is found unused, and kept for the week.
+    await vms.remove('vm-1');
+    await vms.run(spec({ name: 'vm-3' }));
+    expect(box().volumes).toContain('ahpd-template-aaaaaaaaaaaa');
+
+    // A week later the next VM made on the server sweeps it.
+    vi.setSystemTime(Date.now() + 8 * 24 * 60 * 60 * 1000);
+    await vms.run(spec({ name: 'vm-4' }));
+    expect(box().volumes).not.toContain('ahpd-template-aaaaaaaaaaaa');
+    expect(box().volumes).toContain('ahpd-template-bbbbbbbbbbbb');
+    expect(lines).toContainEqual('kvm1 removed the template ahpd-template-aaaaaaaaaaaa, which no VM has backed onto for over a week');
+  }
+  finally {
+    vi.useRealTimers();
+  }
 });
 
 it.skipIf(!posix)('removes the helper and its disk when the parts do not go in', async () => {

@@ -689,7 +689,7 @@ Either runtime refuses a VM when its option names neither `template` nor `image`
 3. The parts are copied into the helper at `/opt/ahpd`, and cloud-init forgets the helper's instance.
 4. The helper's disk is kept as the template, and the helper is gone.
 
-A change to `versions.json` or to the ahpd part is a new hash, so the next VM builds a new template and backs onto it. Two VMs asked for at once build the template once. An older template is named in the log and kept, because a VM may still back onto it: remove it by hand once none does.
+A change to `versions.json` or to the ahpd part is a new hash, so the next VM builds a new template and backs onto it. Two VMs asked for at once build the template once. An older template is kept while a VM backs onto it, and removed once none has for a week, as VS Code removes a [cached version](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L17-L78) unused for a week: each VM made on a server sweeps its older templates, the time one was first found with no VM is kept in `<configDir>/computer-templates.json` across restarts, and a removal is one line in the log.
 
 A VM is another host, so every backend of a session in one runs nested, and its login is reached with this host's own key, through the box. A box with an `identity` is left out, as it is for Docker: name the key for its destination in ssh's own configuration instead. A VM takes no bind mount, no copied file, no variable and no state volume, so a profile that needs one of them is refused at create, with what it needs named. Use `state: "host"`, or a Docker profile.
 
