@@ -789,13 +789,24 @@ describe('a Claude chat', () => {
     ]);
   });
 
-  it('reads a steering message answered after a failed turn back as the turn of its own it was live', async () => {
-    // The session of agent-claude's capture of a turn that failed at its turn
+  /*
+   * A turn the CLI stopped at its turn limit completes, as VS Code's Claude
+   * mapper fails a turn only on a `success` the CLI says failed or an
+   * `error_during_execution`, and a steering message the CLI answers after
+   * that result is answered in the turn, which completes once a result has
+   * answered every prompt handed in it. Read back, the steering message is a
+   * turn of its own, as VS Code's replay starts a turn at every prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L577
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L678-L695
+   */
+  it('answers a steering message the CLI ran after a turn stopped at its turn limit in that turn, and reads it back as a turn of its own', async () => {
+    // The session of agent-claude's capture of a turn that stopped at its turn
     // limit with a steering message queued, which the CLI then answered.
     const SESSION = '2b965eb7-14a6-40b2-a9fa-f65ed1c95121';
     const LIMITED = '0bbc4aff-8f2b-4536-a33a-8d0587e38461';
     const STEERED = 'efe5b13b-5b99-8a8e-88c6-aec14eb8e451';
     const SLEEP = 'Run the shell command `sleep 3` with the Bash tool, then reply with exactly the word DONE.';
+    const BETA = 'Reply with exactly the word BETA and nothing else.';
     const dir = join(temp(), 'sessions');
     const before = await sessionOf(dir, SESSION);
     const { chat } = before;
@@ -804,22 +815,15 @@ describe('a Claude chat', () => {
     say(before.client, chat, LIMITED, SLEEP);
     await settle();
     await emit(...first);
-    await steer(before.client, chat, STEERED, 'Reply with exactly the word BETA and nothing else.');
+    await steer(before.client, chat, STEERED, BETA);
     await emit(...rest);
-    await ended(before.p, chat, STEERED);
-    const live = shown((await stateOf(before.client, chat)).turns as Bag[]);
-    expect(live).toEqual([
-      [LIMITED, 'error', SLEEP, []],
-      [STEERED, 'complete', 'Reply with exactly the word BETA and nothing else.', ['BETA']],
-    ]);
+    await ended(before.p, chat, LIMITED);
+    expect(shown((await stateOf(before.client, chat)).turns as Bag[])).toEqual([[LIMITED, 'complete', SLEEP, ['BETA']]]);
     await before.host.close();
-
-    // It reads back as a turn of its own, as every prompt the transcript holds
-    // does. The transcript says nothing of the failure, so the failed turn
-    // reads back as the turn a read gives every finished one.
-    const read = await readAgain(dir, SESSION, SLEEP, capture('claude-failed-steer-transcript.jsonl'));
-    const asked = (turns: unknown[][]): unknown[] => turns.map(([id, , text, prose]) => [id, text, prose]);
-    expect(asked(read)).toEqual(asked(live));
+    expect(await readAgain(dir, SESSION, SLEEP, capture('claude-failed-steer-transcript.jsonl'))).toEqual([
+      [LIMITED, 'complete', SLEEP, []],
+      [STEERED, 'complete', BETA, ['BETA']],
+    ]);
   });
 
   it('forks a session asleep since a restart at a command\'s turn, where the Claude turn read back before it ended', async () => {
