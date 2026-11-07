@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createHost, hello, machine, peer, settle } from './support/host.js';
+import { createHost, hello, machine, peer, settle, showExternal } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,11 +24,16 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 const DIR = '/home/softov/project';
 
+const HOUR = 60 * 60 * 1000;
+/** When a row was made and last written, inside the window of the mode that shows it. */
+const CREATED = new Date(Date.now() - 10 * HOUR).toISOString();
+const MODIFIED = new Date(Date.now() - HOUR).toISOString();
+
 const row = (id: string, title: string): Listed => ({
   id,
   title,
-  createdAt: '2026-09-27T00:00:00.000Z',
-  modifiedAt: '2026-09-27T09:00:00.000Z',
+  createdAt: CREATED,
+  modifiedAt: MODIFIED,
   workingDirectories: [`file://${DIR}`],
 });
 
@@ -104,6 +109,9 @@ describe('opening a past session', () => {
     const counted = counting();
     const here: Store = { listed: [], known: (id) => (id === 'late' ? row('late', 'Late') : undefined) };
     const { client, notes } = await watching([backend('claude', here, counted)]);
+    // A session this host never ran, written after the last listing: a client
+    // is told of those by the root's `showExternalSessions`.
+    await showExternal(client);
     await list(client);
     await settle(4);
     const passes = counted.lists;
