@@ -47,8 +47,9 @@ export interface Profile {
    *
    * The boundary a machine is given rather than what makes it, which is why it
    * is an option of a profile and not a runtime value. Written as one `docker
-   * run` argument, `--runtime=<value>`, and passed as given: a Docker that has
-   * no such runtime refuses the create with its own message.
+   * run` argument, `--runtime=<value>`, a dev container's where its limits go,
+   * and passed as given: a Docker that has no such runtime refuses the create
+   * with its own message.
    */
   ociRuntime?: string;
   /**
@@ -967,15 +968,6 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
       : `This host takes the OCI runtime from its profiles, and that body names its own; its profiles are ${names.join(', ')}`);
   }
   const ociRuntime = profile.ociRuntime;
-  /*
-   * And a dev container machine takes none, whichever profile it came from:
-   * the Dev Container CLI makes that machine rather than `docker run`, so
-   * there is no flag here to add and a profile naming one would otherwise be
-   * ignored in silence.
-   */
-  if (ociRuntime !== undefined && devcontainer !== undefined) {
-    throw new RpcError(-32602, `profile ${picked ?? ''} names an OCI runtime, and a dev container machine is made by the Dev Container CLI rather than by docker run`);
-  }
 
   const cpus = said(held, 'cpus') ?? profile.cpus ?? defaults.cpus;
   if (cpus !== undefined && !CPUS.test(cpus)) {

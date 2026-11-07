@@ -427,11 +427,11 @@ it('refuses a body that is not a manifest, field by field', async () => {
  * machines under, `runsc` for gVisor.
  *
  * The profile's alone, because the boundary a machine is given is the
- * operator's to choose: a body that names one is refused rather than obeyed,
- * and so is a dev container machine from a profile that names one, which the
- * Dev Container CLI makes rather than `docker run`. What reaches the runtime
- * is the field itself; the `--runtime=<value>` argument it becomes is written
- * by the docker runtime and asserted where a command is spawned.
+ * operator's to choose: a body that names one is refused rather than obeyed.
+ * A dev container machine takes its profile's as any other machine does. What
+ * reaches the runtime is the field itself; the `--runtime=<value>` argument it
+ * becomes is written by the docker runtime and asserted where a command is
+ * spawned, and on the dev container route where its override config is read.
  */
 it('takes the OCI runtime from the profile alone', async () => {
   const { runtime, specs } = fake();
@@ -461,17 +461,14 @@ it('takes the OCI runtime from the profile alone', async () => {
   expect(refused).toMatchObject({ code: -32602 });
   expect((refused as Error).message).toMatch(/takes the OCI runtime from its profiles.*sandbox/);
 
-  // Nor may a dev container machine take one, whichever profile made it: the
-  // CLI makes that machine, so there is no flag here to add.
+  // And that refusal made no machine.
+  expect(specs).toHaveLength(2);
+
+  // A dev container machine takes its profile's too.
   const folder = temp('dev');
   writeFileSync(join(folder, '.devcontainer.json'), '{}\n');
-  const dev = await provider.write('computer://devbox', made({ profile: 'guarded', devcontainer: folder }))
-    .catch((error: unknown) => error);
-  expect(dev).toMatchObject({ code: -32602 });
-  expect((dev as Error).message).toMatch(/dev container machine is made by the Dev Container CLI/);
-
-  // And neither refusal made a machine.
-  expect(specs).toHaveLength(2);
+  await provider.write('computer://devbox', made({ profile: 'guarded', devcontainer: folder }));
+  expect(specs[2]).toMatchObject({ devcontainer: folder, ociRuntime: 'runsc' });
 });
 
 it('refuses a create onto a name already taken, and makes one past the tool\'s maximum', async () => {

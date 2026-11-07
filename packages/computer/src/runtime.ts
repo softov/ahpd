@@ -319,8 +319,9 @@ export interface MachineSpec {
    * What a profile's `ociRuntime` comes to, and the profile's alone: the
    * boundary a machine is given is the operator's to choose. Written as one argument,
    * `--runtime=<value>`, and passed as given, so a Docker that has no such
-   * runtime refuses the machine with its own message. Nothing reads it on the
-   * dev container route, which the CLI makes rather than `docker run`.
+   * runtime refuses the machine with its own message. A dev container takes it
+   * where its labels and limits go: the override config's `runArgs`, or the
+   * Compose override's `runtime` for a Compose definition.
    */
   ociRuntime?: string;
   /**
@@ -1428,6 +1429,8 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
       ...Object.entries(options.labels).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
       ...(options.cpus === undefined ? [] : ['--cpus', options.cpus]),
       ...(options.memory === undefined ? [] : ['--memory', options.memory]),
+      // One argument, as `docker run` is given it.
+      ...(options.runtime === undefined ? [] : [`--runtime=${options.runtime}`]),
       // A part from its own image, which only `runArgs` can spell: the CLI
       // passes the entry to its `docker run` as written.
       ...options.images.flatMap((part) => ['--mount', imageMountOf(part)]),
@@ -1438,8 +1441,8 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
 
 /**
  * The `docker run` options a container the CLI makes is given: the machine's
- * labels, its limits, and each part mounted from its own image where `route`
- * is `image`.
+ * labels, its limits, its profile's OCI runtime, and each part mounted from
+ * its own image where `route` is `image`.
  *
  * The labels are the name; the user and the guard a git directory is made
  * with; the agents; the profile, so a daemon that did not make the container
@@ -1452,6 +1455,7 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
   labels: Record<string, string>;
   cpus?: string;
   memory?: string;
+  runtime?: string;
   images: MadePart[];
 } => {
   const agents = spec.agents ?? [];
@@ -1467,6 +1471,7 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
     },
     ...(spec.cpus === undefined ? {} : { cpus: spec.cpus }),
     ...(spec.memory === undefined ? {} : { memory: spec.memory }),
+    ...(spec.ociRuntime === undefined ? {} : { runtime: spec.ociRuntime }),
     images: route === 'image' ? spec.parts ?? [] : [],
   };
 };
@@ -1487,8 +1492,9 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
  * `.env` reaching it.
  *
  * The labels are the service's `labels`, the limits its `cpus` and
- * `mem_limit`, and a part from its own image a `volumes` entry of Compose's
- * `image` type.
+ * `mem_limit`, the OCI runtime its `runtime`, and a part from its own image a
+ * `volumes` entry of Compose's `image` type.
+ * https://github.com/compose-spec/compose-spec/blob/3a4a6995e4a971f6173dff9130cb3e38e6738651/container_spec.md#L1225-L1237
  */
 const composeOverrideOf = (
   options: ReturnType<typeof runOptionsOf>,
@@ -1531,6 +1537,7 @@ const composeOverrideOf = (
         labels: options.labels,
         ...(options.cpus === undefined ? {} : { cpus: options.cpus }),
         ...(options.memory === undefined ? {} : { mem_limit: options.memory }),
+        ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
         ...(options.images.length === 0 ? {} : {
           volumes: options.images.map((part) => ({
             type: 'image',

@@ -1443,6 +1443,48 @@ it('gives a Compose definition its labels and limits in a Compose override of it
 });
 
 /*
+ * A profile's OCI runtime reaches a dev container where its labels and limits
+ * go: one `--runtime=<value>` argument in the override config's `runArgs`, as
+ * `docker run` is given it, and for a Compose definition its service's
+ * `runtime`, the Compose specification's word for the OCI runtime a service's
+ * containers run under (container_spec.md L1225-L1237 at 3a4a6995).
+ */
+it('gives a dev container its profile\'s OCI runtime in the override config\'s runArgs', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState, { profiles: { sandbox: { ociRuntime: 'runsc' } } }));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder }, profile: 'sandbox' }),
+    encoding: 'utf-8',
+  });
+
+  const runArgs = overrideOf(devState)?.config.runArgs as string[];
+  expect(runArgs.filter((one) => one.startsWith('--runtime'))).toEqual(['--runtime=runsc']);
+  expect(dockerHeld(dockerState).machines[0]?.labels).toMatchObject({ 'ahpd.name': 'box', 'ahpd.profile': 'sandbox' });
+  await answered(dockerState, 6);
+});
+
+it('gives a Compose definition its profile\'s OCI runtime as its service\'s runtime', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), JSON.stringify({ dockerComposeFile: 'compose.yml', service: 'app' }));
+  writeFileSync(join(folder, '.devcontainer', 'compose.yml'), 'services:\n  app:\n    image: base\n');
+  const { options: loaded } = await load(optionsOf(devState, dockerState, { profiles: { sandbox: { ociRuntime: 'runsc' } } }));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder }, profile: 'sandbox' }),
+    encoding: 'utf-8',
+  });
+
+  expect(overrideOf(devState)?.config.runArgs).toBeUndefined();
+  expect(devHeld(devState).composes?.[0]?.config).toMatchObject({ services: { app: { runtime: 'runsc' } } });
+  await answered(dockerState, 6);
+});
+
+/*
  * A Compose definition naming `[]` leaves its files to the CLI's discovery,
  * which is followed here, and the override goes after them in `COMPOSE_FILE`.
  */
