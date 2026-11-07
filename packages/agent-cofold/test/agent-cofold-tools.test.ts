@@ -821,6 +821,52 @@ it('says no times for a call the run refused before it ran', () => {
 });
 
 /*
+ * An image a reply carries is the spec's reference to content held outside the
+ * state tree: the one the host answered for the bytes it kept, else the
+ * image's own URL, in the reply's order, and nothing for bytes nobody kept.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
+ */
+it('says a reply\'s image by the reference the host kept its bytes under, or by its own URL', () => {
+  const parts: Bag[] = [];
+  const turn = mapTurn({
+    turnId: 't1',
+    chatUri: 'ahp-chat:/tools',
+    parts,
+    startedAt: Date.now(),
+    displayNameOf: (name) => name,
+    ownerOf: () => undefined,
+    cancelled: () => false,
+    keptOf: (key) => (key === 'm1:1' ? { uri: 'session-db-resource:/image?kept', contentType: 'image/png', sizeHint: 9 } : undefined),
+  });
+  turn.actions({
+    type: 'model.completed',
+    message: {
+      id: 'm1',
+      role: 'assistant',
+      source: 'model',
+      createdAt: new Date().toISOString(),
+      parts: [
+        { type: 'text', text: 'Here: ' },
+        { type: 'image', mimeType: 'image/png', data: 'cG5n' },
+        { type: 'image', mimeType: 'image/jpeg', url: 'https://example.com/a.jpg' },
+        { type: 'image', mimeType: 'image/gif', data: 'Z2lm' },
+      ],
+    },
+    usage: { inputTokens: 1, outputTokens: 1 },
+    finish: 'stop',
+  } as unknown as RunEvent);
+  // The reply is said at the next event, once it is known not to be a summary.
+  const said = turn.actions({ type: 'run.steered' } as unknown as RunEvent);
+
+  expect(said.actions.filter((one) => one.type === 'chat/responsePart').map((one) => one.part)).toEqual([
+    expect.objectContaining({ kind: 'markdown' }),
+    { kind: 'contentRef', uri: 'session-db-resource:/image?kept', contentType: 'image/png', sizeHint: 9 },
+    { kind: 'contentRef', uri: 'https://example.com/a.jpg', contentType: 'image/jpeg' },
+  ]);
+  expect(parts.map((one) => one.kind)).toEqual(['markdown', 'contentRef', 'contentRef']);
+});
+
+/*
  * An event a newer cofold sends that its types do not name is passed by, and
  * said in the log, as VS Code's Claude mapper maps a message type it does not
  * know to nothing.

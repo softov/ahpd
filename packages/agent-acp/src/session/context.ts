@@ -134,6 +134,17 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
   /** The running turn's mapping, so an update knows what it belongs to. */
   mapping: AcpTurn | undefined;
   /**
+   * The server's updates waiting behind content the host is keeping, in the
+   * order they came, and how many wait: a chunk that carries bytes is kept
+   * through the host's port before its part is said, and every update after
+   * it waits its turn. A turn ends, and a load's record is made, once it has
+   * settled.
+   */
+  keeping: Promise<void>;
+  waiting: number;
+  /** How many contents this session has had the host keep, which names each. */
+  keptCount: number;
+  /**
    * The session's cumulative cost as of the last `usage_update` read, which is
    * what the next turn counts from.
    *

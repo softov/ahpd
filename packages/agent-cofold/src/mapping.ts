@@ -116,6 +116,11 @@ export interface TurnMappingOptions {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1854-L1872
    */
   resumed?: boolean;
+  /**
+   * The reference the host answered for an image a reply carried, by the
+   * message's id and the image's place in it, once the host has kept it.
+   */
+  keptOf?(key: string): Bag | undefined;
 }
 
 /** One turn's event translation. */
@@ -168,6 +173,17 @@ export const compactionNotification = (tokens?: { before: number; after: number 
   tokens === undefined
     ? 'Context compacted: the conversation so far was folded into this summary; the model continues from it.'
     : `Context compacted: ${String(tokens.before)} tokens to ${String(tokens.after)}.`;
+
+/**
+ * The spec's reference for an image a reply carries: the one the host answered
+ * for the bytes it keeps, else the image's own URL where it names one. Nothing
+ * for bytes the host keeps nothing of, which no client is shown, as VS Code's
+ * host leaves out content it could not keep.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L148-L183
+ */
+export const imageRefOf = (image: { mimeType: string; url?: string }, kept: Bag | undefined): Bag | undefined =>
+  kept ?? (image.url !== undefined && image.url !== '' ? { uri: image.url, contentType: image.mimeType } : undefined);
 
 /**
  * The stages a turn's send fails at before the runtime runs it, by the error
@@ -347,16 +363,25 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    * text rather than its answer, and cofold says so one event later with
    * `context.compacted`. Holding the writes for one event is what lets the two
    * be told apart without guessing. Nothing is held for a step that streamed,
-   * because its deltas are already on the wire.
+   * because its deltas are already on the wire. An image the reply carries is
+   * held as the reference it is said by, which no step streams.
    */
-  let held: { kind: 'reasoning' | 'text'; text: string }[] = [];
+  let held: ({ kind: 'reasoning' | 'text'; text: string } | { kind: 'ref'; ref: Bag })[] = [];
   /** How many compactions this turn has reported, after which a command's own output says nothing new. */
   let compactions = 0;
 
   /** Write what the last step's reply was held for, if anything. */
   const flush = (): Bag[] => {
     const actions: Bag[] = [];
-    for (const piece of held) actions.push(...write(piece.kind, piece.text));
+    for (const piece of held) {
+      if (piece.kind !== 'ref') {
+        actions.push(...write(piece.kind, piece.text));
+        continue;
+      }
+      const part: Bag = { kind: 'contentRef', ...piece.ref };
+      parts.push(part);
+      actions.push({ type: 'chat/responsePart', turnId, part: { ...part } });
+    }
     held = [];
     return actions;
   };
@@ -473,13 +498,17 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * that streamed wrote its parts as deltas and holds nothing.
          */
         case 'model.completed': {
-          const pieces: { kind: 'reasoning' | 'text'; text: string }[] = [];
-          for (const piece of event.message.parts) {
+          const pieces: typeof held = [];
+          for (const [index, piece] of event.message.parts.entries()) {
             if (piece.type === 'reasoning' && !reasoningStreamed && piece.text !== '') {
               pieces.push({ kind: 'reasoning', text: piece.text });
             }
             else if (piece.type === 'text' && !textStreamed && piece.text !== '') {
               pieces.push({ kind: 'text', text: piece.text });
+            }
+            else if (piece.type === 'image') {
+              const ref = imageRefOf(piece, options.keptOf?.(`${event.message.id}:${String(index)}`));
+              if (ref !== undefined) pieces.push({ kind: 'ref', ref });
             }
           }
           held = pieces;

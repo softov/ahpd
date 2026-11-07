@@ -22,7 +22,7 @@ import { textOf } from '@cofold/agents';
 import type { Message, RunEvent, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
 import { bag, endedParts, str, withToolCallDuration } from '@ahpd/sdk';
-import { compactionNotification } from './mapping.js';
+import { compactionNotification, imageRefOf } from './mapping.js';
 import { describe, pastTenseOf, toolInputOf, toolMetaOf } from './tools.js';
 
 /**
@@ -205,8 +205,17 @@ const eventsOf = async (store: Store, sessionId: string, runId: string): Promise
  * `ends` is given where each turn ended, by its id: the last message read into
  * it, which a fork copies through and a rewind keeps, as a live turn's run
  * records its last message. A paused run's turn has not ended and names none.
+ *
+ * `keptOf` answers the reference the host keeps for an image a reply carried
+ * as bytes, by its message id and its place, where the reader has the host's
+ * kept content to ask.
  */
-export async function turnsOf(store: Store, sessionId: string, ends?: Map<string, string>): Promise<TranscriptTurn[]> {
+export async function turnsOf(
+  store: Store,
+  sessionId: string,
+  ends?: Map<string, string>,
+  keptOf?: (key: string) => Bag | undefined,
+): Promise<TranscriptTurn[]> {
   const messages = await store.sessions.listMessages({ sessionId });
   const runs = await store.runs.list({ sessionId });
 
@@ -432,11 +441,12 @@ export async function turnsOf(store: Store, sessionId: string, ends?: Map<string
           live.parts.push({ kind: 'toolCall', toolCall: held });
         } else if (part.type === 'image') {
           /*
-           * AHP has no inline image response part. A system notification is the
-           * closest honest shape: it says an image exists without pretending it
-           * is model prose or a tool call.
+           * The spec's reference, as the live turn said it: the image's own
+           * URL, or the reference the host answered for the bytes it keeps,
+           * which a read is handed where the host keeps the chat's content.
            */
-          live.parts.push({ kind: 'systemNotification', content: `[image: ${part.url ?? part.mimeType}]` });
+          const ref = imageRefOf(part, keptOf?.(id));
+          if (ref !== undefined) live.parts.push({ kind: 'contentRef', ...ref });
         }
       }
       continue;

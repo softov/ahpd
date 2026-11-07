@@ -1348,6 +1348,34 @@ it('reads a compacted session\'s summary as the notice the live turn sent', asyn
   expect(JSON.stringify(turns)).not.toContain('everything so far');
 });
 
+/*
+ * An image a reply carried reads back as the live turn said it: the spec's
+ * reference by its own URL, or by the reference the host kept its bytes under
+ * where the reader is handed it.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
+ */
+it('reads a reply\'s image back as the reference the live turn said it by', async () => {
+  const store = await stored([
+    wrote('u1', 'user', 'input', 'draw it'),
+    {
+      id: 'a1',
+      role: 'assistant',
+      source: 'model',
+      createdAt: AT,
+      parts: [
+        { type: 'image', mimeType: 'image/png', data: 'cG5n' },
+        { type: 'image', mimeType: 'image/jpeg', url: 'https://example.com/a.jpg' },
+      ],
+    },
+  ]);
+  const kept = (key: string): Bag | undefined =>
+    (key === 'a1:0' ? { uri: 'session-db-resource:/image?kept', contentType: 'image/png' } : undefined);
+  expect((await turnsOf(store, 'one', undefined, kept))[0]?.responseParts).toEqual([
+    { kind: 'contentRef', uri: 'session-db-resource:/image?kept', contentType: 'image/png' },
+    { kind: 'contentRef', uri: 'https://example.com/a.jpg', contentType: 'image/jpeg' },
+  ]);
+});
+
 it('says a compaction happened when the store kept no numbers for it', async () => {
   const store = await stored([
     wrote('u1', 'user', 'input', 'the first thing'),

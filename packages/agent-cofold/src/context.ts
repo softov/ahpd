@@ -48,6 +48,8 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   editing: Map<string, string>;
   pending: Map<string, OpenRequest>;
   points: Map<string, string>;
+  /** The references the host answered for the images replies carried, by message id and place. */
+  kept: Map<string, Bag>;
   /** The steering message the run was handed and has not read yet, by its id, whose removal is said once it reads it. */
   steering: { id: string } | undefined;
   /**

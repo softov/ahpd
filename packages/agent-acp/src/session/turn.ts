@@ -445,6 +445,8 @@ export function createTurn(ctx: SessionContext): Turn {
       }
       ctx.mapping.prompted = true;
       const response = await held.connection.prompt(held.sessionId, blocks);
+      // The parts the host was still keeping are the turn's, said before it ends.
+      await ctx.keeping;
       told = true;
       saidUsage(response.usage);
       stopReasonFor(turnId, response.stopReason);

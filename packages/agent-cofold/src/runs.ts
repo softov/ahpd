@@ -112,6 +112,28 @@ export const createRuns = (ctx: SessionContext): Runs => {
     if (event.type === 'run.finished' && event.outcome.status !== 'awaiting') {
       await rememberPoints(turnId, event.runId);
     }
+    /*
+     * The images a reply carries as bytes, kept through the host's port before
+     * the reply is said, so its part names the reference the host answered, as
+     * VS Code's host keeps a result's embedded content before it publishes a
+     * reference to it. Each is named by its message and its place in it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L148-L183
+     */
+    if (event.type === 'model.completed' && start.storeToolResultResource !== undefined) {
+      for (const [index, part] of event.message.parts.entries()) {
+        if (part.type !== 'image' || part.data === undefined) continue;
+        const key = `${event.message.id}:${String(index)}`;
+        const ref = await start.storeToolResultResource({
+          turnId,
+          toolCallId: key,
+          ordinal: 0,
+          name: 'image',
+          contentType: part.mimeType,
+          bytes: Buffer.from(part.data, 'base64'),
+        }).catch(() => undefined);
+        if (ref !== undefined) ctx.kept.set(key, { ...ref });
+      }
+    }
     const mapped = mapping.actions(event);
     /*
      * A request is held before it is announced, so a client that answers

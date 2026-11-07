@@ -2141,6 +2141,52 @@ it('answers a resource the agent linked or embedded as a content reference part'
   expect(turn.parts.map((one) => one.kind)).toEqual(['markdown', 'contentRef', 'contentRef', 'markdown']);
 });
 
+/*
+ * An answer's image, audio and embedded resource carry their bytes, which the
+ * host keeps through its port before the part is said, the part naming the
+ * reference the host answered, as VS Code's host keeps a result's embedded
+ * content before it publishes a reference to it; a link names its own URI;
+ * all in the order the server wrote them, before the turn ends.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L148-L183
+ */
+it('says an answer\'s image, audio and embedded resource by the reference the host kept their bytes under, and a link by its own', async () => {
+  const kept: { name: string; contentType: string; text: string }[] = [];
+  const { agent } = backend([], 'acp-media');
+  const { session, watch } = await start(agent, 'media', {
+    storeToolResultResource: async (resource) => {
+      kept.push({ name: resource.name, contentType: resource.contentType, text: Buffer.from(resource.bytes).toString('utf8') });
+      return { uri: `session-db-resource:/${resource.name}?${String(kept.length)}`, contentType: resource.contentType, sizeHint: resource.bytes.byteLength };
+    },
+  });
+  await runTurn(session, watch, 't1', 'media');
+
+  expect(kept).toEqual([
+    { name: 'image', contentType: 'image/png', text: 'png bytes' },
+    { name: 'audio', contentType: 'audio/wav', text: 'wav bytes' },
+    { name: 'notes.txt', contentType: 'text/plain', text: 'notes' },
+  ]);
+  const parts = (session.allTurns()[0]?.responseParts ?? []) as Bag[];
+  expect(parts.map((one) => (one.kind === 'contentRef' ? one.uri : one.kind))).toEqual([
+    'markdown',
+    'session-db-resource:/image?1',
+    'session-db-resource:/audio?2',
+    'session-db-resource:/notes.txt?3',
+    'file:///tmp/report.md',
+    'markdown',
+  ]);
+  expect(parts[1]).toEqual({ kind: 'contentRef', uri: 'session-db-resource:/image?1', contentType: 'image/png', sizeHint: 9 });
+});
+
+it('leaves out an image and audio the host keeps nothing of, and names an embedded resource by its own URI', async () => {
+  const { agent } = backend([], 'acp-media-unkept');
+  const { session, watch } = await start(agent, 'media-unkept');
+  await runTurn(session, watch, 't1', 'media');
+  const parts = (session.allTurns()[0]?.responseParts ?? []) as Bag[];
+  expect(parts.map((one) => (one.kind === 'contentRef' ? one.uri : one.kind))).toEqual([
+    'markdown', 'file:///tmp/notes.txt', 'file:///tmp/report.md', 'markdown',
+  ]);
+});
+
 it('answers an image that names its source as a content reference part', () => {
   const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
   const drawn = mapUpdate(turn, {

@@ -143,6 +143,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       return before === undefined || ctx.points.has(String(before.id));
     },
     resumed,
+    keptOf: (key) => ctx.kept.get(key),
     ...(reference !== undefined ? { model: reference } : {}),
   });
 

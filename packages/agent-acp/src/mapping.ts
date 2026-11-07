@@ -85,10 +85,11 @@ const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning', messageId: string 
  * part for whatever text their runtime sends.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
  *
- * A chunk that names content by its URI, a link to a resource, a resource the
- * agent embedded or an image that names its source, is a part of its own: the
- * spec's part for content held outside the state tree, carrying the URI with
- * the size and the type the agent gave it.
+ * A chunk that names content by its URI, a link to a resource (which a chunk
+ * whose bytes the host kept is made into, naming the host's reference), a
+ * resource the agent embedded or an image that names its source, is a part of
+ * its own: the spec's part for content held outside the state tree, carrying
+ * the URI with the size and the type it was given.
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
  */
 const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', content: ContentBlock, messageId: string | undefined): Bag[] => {

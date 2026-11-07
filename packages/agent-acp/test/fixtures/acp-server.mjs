@@ -651,6 +651,21 @@ const scriptFor = (text) => {
     return updates;
   }
 
+  // An answer with content in it that is not text: an image, audio, an
+  // embedded resource and a link, between two runs of prose.
+  if (text.includes('media')) {
+    const block = (content) => ({ sessionUpdate: 'agent_message_chunk', content });
+    updates.push(
+      message('Here: '),
+      block({ type: 'image', data: Buffer.from('png bytes').toString('base64'), mimeType: 'image/png' }),
+      block({ type: 'audio', data: Buffer.from('wav bytes').toString('base64'), mimeType: 'audio/wav' }),
+      block({ type: 'resource', resource: { uri: 'file:///tmp/notes.txt', text: 'notes', mimeType: 'text/plain' } }),
+      block({ type: 'resource_link', uri: 'file:///tmp/report.md', name: 'report.md', mimeType: 'text/markdown', size: 120 }),
+      message('and done.'),
+    );
+    return updates;
+  }
+
   if (text.includes('blank')) {
     updates.push(thought('first thought'), message(' '), ...listing, thought('second thought'));
     updates.push(message(' '), message('\n'), message('the answer'));

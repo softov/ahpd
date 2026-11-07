@@ -27,7 +27,7 @@ import type {
 import { hostPathOf, str, withSkillArgumentHintMeta } from '@ahpd/sdk';
 import type { Bag, BackgroundTask, BoundTool, OpenTerminal, Session } from '@ahpd/sdk';
 import { HOST_TOOLS, callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
-import type { PermissionAnswer } from '../types.js';
+import type { AcpTurn, PermissionAnswer } from '../types.js';
 import { TOOL_USE_ID } from './clientcalls.js';
 import { bag } from './common.js';
 import { machineIdOf } from './opening.js';
@@ -280,6 +280,95 @@ export function createHandlers(ctx: SessionContext): Handlers {
       return;
     }
     /*
+     * A chunk that carries bytes waits for the host to keep them, and every
+     * update after it waits behind it, so the parts keep the order the server
+     * wrote them in.
+     */
+    const held = bytesOf(update);
+    if (held === undefined && ctx.waiting === 0) {
+      heard(update, at, current);
+      return;
+    }
+    ctx.waiting += 1;
+    ctx.keeping = ctx.keeping.then(async () => {
+      const kept = held === undefined ? update : await keep(update, held, current?.turnId ?? 'load');
+      ctx.waiting -= 1;
+      if (kept !== undefined) heard(kept, at, current);
+    });
+  };
+
+  /**
+   * The bytes a message or thought chunk carries, with the name and the type
+   * the host keeps them under: the data of an image with no source and of
+   * audio, and an embedded resource's text or blob. Nothing for any other
+   * update, an image that names its source being said by it.
+   */
+  const bytesOf = (update: SessionUpdate): { name: string; contentType: string; bytes: Uint8Array } | undefined => {
+    if (update.sessionUpdate !== 'agent_message_chunk' && update.sessionUpdate !== 'agent_thought_chunk') return undefined;
+    const content = update.content;
+    if (content.type === 'image') {
+      if (typeof content.uri === 'string' && content.uri !== '') return undefined;
+      return { name: 'image', contentType: content.mimeType, bytes: Buffer.from(content.data, 'base64') };
+    }
+    if (content.type === 'audio') return { name: 'audio', contentType: content.mimeType, bytes: Buffer.from(content.data, 'base64') };
+    if (content.type !== 'resource') return undefined;
+    const resource = content.resource;
+    return 'text' in resource
+      ? { name: shownAs(resource.uri, 'resource'), contentType: resource.mimeType ?? 'text/plain', bytes: Buffer.from(resource.text, 'utf8') }
+      : { name: shownAs(resource.uri, 'resource'), contentType: resource.mimeType ?? 'application/octet-stream', bytes: Buffer.from(resource.blob, 'base64') };
+  };
+
+  /** The last segment of a URI, a name a person reads content by, or `fallback`. */
+  const shownAs = (uri: string | undefined, fallback: string): string => {
+    const last = uri?.split(/[/\\]/).filter((one) => one !== '').pop();
+    return last === undefined || last === '' ? fallback : last;
+  };
+
+  /**
+   * A chunk whose bytes the host kept, naming the reference the host answered
+   * as a link to it, as VS Code's host keeps an embedded resource before it
+   * publishes a reference to it. An embedded resource the host kept nothing of
+   * keeps its own URI, and an image or audio is left out.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L148-L183
+   */
+  const keep = async (
+    update: SessionUpdate,
+    held: { name: string; contentType: string; bytes: Uint8Array },
+    turnId: string,
+  ): Promise<SessionUpdate | undefined> => {
+    if (update.sessionUpdate !== 'agent_message_chunk' && update.sessionUpdate !== 'agent_thought_chunk') return update;
+    ctx.keptCount += 1;
+    const ref = await start.storeToolResultResource?.({
+      turnId,
+      toolCallId: `${turnId}:content-${String(ctx.keptCount)}`,
+      ordinal: 0,
+      name: held.name,
+      contentType: held.contentType,
+      bytes: held.bytes,
+    }).catch(() => undefined);
+    if (ref !== undefined) {
+      return {
+        ...update,
+        content: {
+          type: 'resource_link',
+          uri: ref.uri,
+          name: held.name,
+          ...(ref.contentType === undefined ? {} : { mimeType: ref.contentType }),
+          ...(ref.sizeHint === undefined ? {} : { size: ref.sizeHint }),
+        },
+      };
+    }
+    return update.content.type === 'resource' ? update : undefined;
+  };
+
+  /**
+   * One update that belongs to a turn or to a load's replay, as it came or as
+   * the host's keeping rewrote it: into the replay while a load runs, else
+   * into the turn that was running when it arrived, and nowhere once that
+   * turn has gone.
+   */
+  const heard = (update: SessionUpdate, at: number, current: AcpTurn | undefined): void => {
+    /*
      * While the session is opening, everything the server sends is the load's
      * replay.
      *
@@ -293,7 +382,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       replay.push(update);
       return;
     }
-    if (current === undefined) return;
+    if (current === undefined || ctx.mapping !== current) return;
     // Kept before it is mapped, so a transcript rebuilt later sees the same
     // notifications the live client did, in the same order.
     ctx.watchedTurn?.updates.push({ update, at });

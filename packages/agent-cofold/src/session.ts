@@ -209,6 +209,7 @@ export function cofoldSession(
     editing,
     pending,
     points,
+    kept: new Map(),
     values,
     setModifiedAt,
     refreshOptions,

@@ -606,8 +606,10 @@ export function createOpening(ctx: SessionContext): Opening {
        *
        * The host's own turns go with it for the same reason: a resume and a
        * fork both replay nothing, so without them the record would hold a
-       * conversation that starts at whatever the person says next.
+       * conversation that starts at whatever the person says next. The replay
+       * the host was still keeping content of goes in once it is kept.
        */
+      await ctx.keeping;
       ctx.record = watchSession({
         provider,
         id: ctx.acpSessionId,
