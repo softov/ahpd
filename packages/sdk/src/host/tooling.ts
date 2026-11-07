@@ -13,6 +13,7 @@ import { CREATED_BY_META, SEND_REMOTE_MESSAGE } from '../sessions/remotesession.
 import { SESSION_TOOL_NAMES } from '../tools/session.js';
 import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
 import { groupOf } from '../access/users.js';
+import { teamsOf } from '../usage/scopes.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
 import { chatIdFor, chatUriFor, schemeOf } from './channels.js';
 import { AGENT_CLIENT_SCHEME } from './clienturi.js';
@@ -1862,6 +1863,10 @@ export function createTooling(ctx: HostContext): Tooling {
     person: () => personOfCall(uri, chatUri),
     may: (grant) => mayDo(chatUri, grant),
     refusal: (grant) => refusalOf(chatUri, grant),
+    teams: () => {
+      const person = personOf(chatUri);
+      return person === undefined || person === 'nobody' ? [] : teamsOf(person);
+    },
     /*
      * The catalogue, cut down to what this call's person may read.
      *
@@ -2158,6 +2163,7 @@ export function createTooling(ctx: HostContext): Tooling {
       person: () => person,
       may: (grant) => callerMay(caller, grant),
       refusal: (grant) => refusalReason(person ?? 'host', grant),
+      teams: () => (caller.root === true || caller.principal === undefined ? [] : teamsOf(caller.principal)),
       sessions: async () => (callerMay(caller, 'session:read') ? await listSessions() : []),
       chats: chatsOf,
       models: modelsKnown,

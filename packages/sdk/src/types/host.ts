@@ -1402,6 +1402,16 @@ export interface ToolCall {
    */
   refusal(grant: Grant): string;
   /**
+   * The teams the person behind this call is on.
+   *
+   * The person is the one `may` answers for, and they are on each team one of
+   * their memberships names, so a tool that acts on something charged to a
+   * team, such as a machine, keeps it to that team's people. Empty for a call
+   * nobody is behind, for a turn this host's own root connection sent, and on
+   * a host with no users directory, where nobody is on a team.
+   */
+  teams(): string[];
+  /**
    * Every session this host knows, running or on disk, the calling one included.
    *
    * The catalogue's own rows, as `listSessions` answers them, so a tool says
@@ -1560,8 +1570,9 @@ export interface ToolCall {
  * than empty strings so a tool may ask whether there is one, and a tool that
  * needs one throws rather than letting the host guess on the caller's behalf.
  *
- * What is left is the person: `person()` names the caller, `may` and
- * `refusal` answer for them, and the tools that reach a chat or a session take
+ * What is left is the person: `person()` names the caller and `teams()` the
+ * teams they are on, `may` and `refusal` answer for them, and the tools that
+ * reach a chat or a session take
  * one as an argument instead of reading it from the call. `ask` is left out
  * with the two channel URIs: a call with no chat has nobody in it to ask.
  */

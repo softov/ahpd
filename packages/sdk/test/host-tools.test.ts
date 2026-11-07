@@ -677,6 +677,51 @@ describe('tools the host contributes', () => {
     const bare = await opened(false);
     expect(await bare.person()).toBe('host');
   });
+
+  it('names the teams of the person behind a call, in a session and with none, and none where nobody is behind it', async () => {
+    const teams: HostTool = {
+      definition: { name: 'teams', description: 'teams', inputSchema: { type: 'object' as const, properties: {} } },
+      sessionless: true,
+      run: (_input, at) => at.teams().join(','),
+    };
+    // On two teams: one by any of its projects and again by one of them, the other by its team work.
+    const ana: Principal = { id: 'ana', roles: [], memberships: ['crew:*', 'ops', 'crew:web'], can: () => true };
+    const users = {
+      resource: { resource: 'ahpd://users', resource_name: 'ahpd users', authorization_servers: [], required: false },
+      verify: async () => ana,
+    } as unknown as Users;
+    const host = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: [teams], users,
+    });
+    const client = host.accept(peer(), ana);
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/teams', provider: 'claude' } });
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/teams') } });
+    const inSession = async (): Promise<string | undefined> => {
+      const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
+        tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
+      }> | undefined;
+      const tool = servers?.ahp?.tools.find((one) => one.name === 'teams');
+      return (await tool?.handler({}))?.content[0]?.text;
+    };
+
+    // No turn runs yet, so nobody is behind the call.
+    expect(await inSession()).toBe('');
+
+    // A turn she sent puts her teams on the call, each once.
+    await client.handle({ method: 'dispatchAction', params: {
+      channel: chatUriFor('ahp-session:/teams'),
+      action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'which teams' } },
+    } });
+    await settle();
+    expect(await inSession()).toBe('crew,ops');
+
+    // With no session, the caller's own, and none for this host's own connection.
+    const sessionless = async (caller: { principal: Principal } | { root: true }): Promise<string | undefined> =>
+      await host.sessionlessTools(caller).find((one) => one.definition.name === 'teams')?.run?.({});
+    expect(await sessionless({ principal: ana })).toBe('crew,ops');
+    expect(await sessionless({ root: true })).toBe('');
+  });
 });
 
 /*
