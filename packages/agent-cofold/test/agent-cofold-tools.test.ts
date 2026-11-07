@@ -820,6 +820,30 @@ it('says no times for a call the run refused before it ran', () => {
   expect((parts[0]?.toolCall as Bag)._meta).toEqual({ toolKind: 'terminal' });
 });
 
+/*
+ * An event a newer cofold sends that its types do not name is passed by, and
+ * said in the log, as VS Code's Claude mapper maps a message type it does not
+ * know to nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L292-L298
+ */
+it('passes by an event cofold\'s types do not name, and says so in the log', () => {
+  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const turn = mapTurn({
+      turnId: 't1',
+      chatUri: 'ahp-chat:/tools',
+      parts: [],
+      startedAt: Date.now(),
+      displayNameOf: (name) => name,
+      ownerOf: () => undefined,
+      cancelled: () => false,
+    });
+    expect(turn.actions({ type: 'run.newer' } as unknown as RunEvent).actions).toEqual([]);
+    expect(warned).toHaveBeenCalledWith('@ahpd/agent-cofold: cofold event is not mapped: run.newer');
+  }
+  finally { warned.mockRestore(); }
+});
+
 it('asks before a shell command and sends its bare command on the request', async () => {
   const dir = place();
   const { session, v } = await open({
