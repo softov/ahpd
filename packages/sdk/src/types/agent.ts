@@ -189,8 +189,8 @@ export const PENDING_CONFIRMATION_FIELDS = [
 /**
  * What the host's approval check says about one tool call.
  *
- * `not-needed` is host/100's: the rules the owner's window pushed approved the
- * call, so it runs without asking. `ask` is this plan's: the operator's
+ * `not-needed` is host/100's: the host's terminal rules approved the call, so
+ * it runs without asking. `ask` is this plan's: the operator's
  * `eligibleForAutoApproval` rule names the tool, so the call asks every time
  * and the question offers no "always" option. `undefined` says the check has
  * no answer, which leaves the backend to ask as it would have.
@@ -251,14 +251,14 @@ export interface Start {
   /** Directories beside it the agent may also work in. */
   additional?: string[];
   /**
-   * Whether one folder is one the person who started this session trusts.
+   * Whether one folder is trusted, by the host's one trust value.
    *
    * The host answers it for any folder, the session's own included, because
    * that is the question a backend asks before it loads something a project
    * carries: a `CLAUDE.md`, a settings file, a `.mcp.json`, a plugin - the
    * things a folder can make an agent do without anybody having read them. The
    * host is the only thing that knows the answer, because trust arrives from a
-   * window on a connection and never from the folder.
+   * window's push and never from the folder.
    *
    * Absent is "the host said nothing", and a backend must read that as
    * untrusted: a folder whose trust nobody stated is a folder nobody vouched
@@ -268,11 +268,9 @@ export interface Start {
   /**
    * Whether a tool call of this session runs without asking its person.
    *
-   * The host answers it from the connection of the person whose session this
-   * is, the same one `trusted` reads: what a window allows is that window's,
-   * and a turn somebody else sends into the session is not theirs to allow. A
-   * start no connection asked for - an automation, a host tool, a daemon coming
-   * back up - has no terminal rules at all, which is a command that asks.
+   * The host answers it from its one value of each rule, which the last push
+   * from any window set, whoever sent the turn and for a start nobody sent, as
+   * `trusted` reads the host's trust.
    *
    * The operator's rule is read first and without a connection, because it is
    * the host's own setting rather than a window's: `eligibleForAutoApproval`
@@ -283,9 +281,9 @@ export interface Start {
    *
    * `shell` is a command line, and `shell` the shell that runs it. `tool` is
    * the backend's name for the tool that runs the line, where the backend has
-   * one to give: it is matched against the operator's rule before the terminal
-   * rules the owner's window pushed, so a rule that names the shell wins over
-   * a terminal rule that approves the line.
+   * one to give: it is matched against the operator's rule before the host's
+   * terminal rules, so a rule that names the shell wins over a terminal rule
+   * that approves the line.
    *
    * `tool` is a call that is not a command line, and `line` is its tool's name:
    * matched against the same rule, `ask` when it names the tool and nothing
