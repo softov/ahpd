@@ -398,6 +398,8 @@ export function piSession(
    */
   const pending = new Map<string, {
     id: string;
+    /** pi's name for the call's tool, which a refusal names. */
+    toolName: string;
     entry: Bag;
     settle: (answer: ToolCallEventResult | undefined) => void;
     /** Ask the client to run the call, for a call the person then allows. */
@@ -406,9 +408,6 @@ export function piSession(
 
   /** The requests a client can still answer: the person's, and the clients'. */
   const needed = (): Bag[] => [...pending.values()].map((one) => one.entry).concat(calls.entries());
-
-  /** What a declined call answers, which is the reason the model reads. */
-  const DECLINED = 'The person declined this action';
 
   /**
    * Cancel every question still waiting, so pi does not wait for ever.
@@ -646,6 +645,7 @@ export function piSession(
         const entry: Bag = { id, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall };
         pending.set(id, {
           id,
+          toolName: event.toolName,
           entry,
           settle,
           // A client's tool is asked for the same way as any other call that
@@ -1592,7 +1592,12 @@ export function piSession(
       }
       // An allowed call is one a client now has to run, so it is asked here.
       if (approved) held.open?.();
-      held.settle(approved ? undefined : { block: true, reason: DECLINED });
+      /*
+       * A call the person refused is blocked in pi's own words for a call its
+       * approval gate refused, the reason its model reads: npm://@earendil-works/pi-coding-agent@1.3.0
+       * docs/extensions.md L169-L178, `{ block: true, reason: \`${event.toolName} was not approved\` }`.
+       */
+      held.settle(approved ? undefined : { block: true, reason: `${held.toolName} was not approved` });
       return true;
     },
     answer: () => false,

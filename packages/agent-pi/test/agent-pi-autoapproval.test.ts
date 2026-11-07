@@ -109,7 +109,7 @@ it('asks for a shell command no rule matches', async () => {
   ]);
   expect(sent.filter((one) => one.action.type === 'session/inputNeededSet')).toHaveLength(1);
   session.confirm('c1', false);
-  expect(await waiting).toEqual({ block: true, reason: 'The person declined this action' });
+  expect(await waiting).toEqual({ block: true, reason: 'bash was not approved' });
 });
 
 it('asks when the host offers no check at all', async () => {

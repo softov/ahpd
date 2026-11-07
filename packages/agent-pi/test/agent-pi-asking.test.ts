@@ -72,7 +72,11 @@ it('answers what it is waiting on in its state, so a client that connects late s
   expect(session.sessionState().inputNeeded).toBeUndefined();
 });
 
-it('blocks a declined call with the reason the model reads', async () => {
+/*
+ * In pi's own words for a call its approval gate refused.
+ * npm://@earendil-works/pi-coding-agent@1.3.0 docs/extensions.md L169-L178
+ */
+it('blocks a declined call in pi\'s words for a call that was not approved', async () => {
   const { session, pi } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
   pi.hold();
   session.sendMessage('t1', 'hello');
@@ -80,7 +84,7 @@ it('blocks a declined call with the reason the model reads', async () => {
   const waiting = driveCall(pi, 'c1', 'bash', { command: 'rm -rf /' });
   await settled();
   session.confirm('c1', false);
-  expect(await waiting).toEqual({ block: true, reason: 'The person declined this action' });
+  expect(await waiting).toEqual({ block: true, reason: 'bash was not approved' });
 });
 
 it('answers two waiting calls independently, and a cancel answers both it leaves', async () => {

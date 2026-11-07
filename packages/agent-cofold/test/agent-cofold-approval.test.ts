@@ -388,9 +388,10 @@ it('denies a tool, carries the reason and does not run it', async () => {
   expect(ran).toEqual([]);
   const confirmed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
   // Said back as the client sent it, its reason with it, and the model is
-  // given cofold's own words for a declined call.
+  // given cofold's own words for a refused call, the deny carrying no reason
+  // of this host's, as cofold's own app denies one.
   expect(confirmed?.action.reason).toBe('denied');
-  expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('Denied by the user');
 
   const { chat, session } = reduced(p, uri, chatUri);
   expect(session.inputNeeded).toBeUndefined();
@@ -422,7 +423,7 @@ it('says a refusal once, as the client sent it, and gives the model its sentence
   // says a client's action as it came.
   const confirmed = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallConfirmed');
   expect(confirmed.map((e) => e.action)).toEqual([refusal]);
-  expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('Denied by the user');
 });
 
 it('keeps two open approvals independent, each answered by its own call id', async () => {
@@ -699,7 +700,9 @@ it('declines cofold\'s own ask tool as a denial the model reads', async () => {
 
   const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
   expect((done?.action.result as { success: boolean } | undefined)?.success).toBe(false);
-  expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
+  // cofold's own words for a question nobody answered, the deny carrying no
+  // reason of this host's.
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('The user declined to answer');
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
 });
 

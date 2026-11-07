@@ -4,9 +4,6 @@ import type { Bag, Session } from '@ahpd/sdk';
 import type { SessionContext } from './context.js';
 import { ruleName } from './tools.js';
 
-/** What a person is told the model was told when they turn a tool down. */
-const DECLINED = 'The person declined this action';
-
 /**
  * The answers a client sent, in the shape cofold's questions want.
  *
@@ -234,19 +231,25 @@ export const createPauses = (
           if (selectedOption !== undefined) call.selectedOption = selectedOption;
           part.toolCall = call;
         }
+        /*
+         * A refusal goes to cofold with no reason, as cofold's own app denies
+         * one the person gave none for, and cofold tells the model its own
+         * words, "Denied by the user".
+         * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/chat.ts#L544
+         * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/agents/src/run/turn.ts#L405
+         */
         route(approved
           ? { type: 'approve', requestId: held.requestId, ...(selectedOption?.id === 'allow-session' && !matched ? { alwaysApprove: true } : {}) }
-          : { type: 'deny', requestId: held.requestId, reason: DECLINED });
+          : { type: 'deny', requestId: held.requestId });
         return true;
       },
 
       /**
        * Answer a question the run is waiting on.
        *
-       * A declined question is a deny rather than an empty answer, because
-       * cofold's own validation refuses a form with nothing in it and the model
-       * is owed the reason either way. False when the run is not waiting on
-       * that request.
+       * A declined question is a deny, because cofold's own validation refuses
+       * a form with nothing in it, sent with no reason as a refused call is.
+       * False when the run is not waiting on that request.
        */
       answer: (requestId, accepted, answers) => {
         const held = pending.get(requestId);
@@ -257,7 +260,7 @@ export const createPauses = (
         ctx.activeMapping?.settle(requestId);
         route(accepted
           ? { type: 'answer', requestId, answers: answersOf(answers) }
-          : { type: 'deny', requestId, reason: DECLINED });
+          : { type: 'deny', requestId });
         return true;
       },
     },
