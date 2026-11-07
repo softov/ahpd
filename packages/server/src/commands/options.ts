@@ -20,7 +20,7 @@ import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type Op
 import { isRecord, secretRef } from '@ahpd/sdk';
 import type { IssuerVerify, ManagedSettingsPermissions, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
 import type { Config, HttpSetting, RoutesSetting } from '../config.js';
-import { asSpec, configDir, configPath, loadConfig, shellEnvProblems } from '../config.js';
+import { asSpec, configDir, configPath, loadConfig, managedPermissionsProblems, shellEnvProblems } from '../config.js';
 import { sourceOf, pluginIdOf, pluginIdsOf, runPlugins } from '../plugins.js';
 import { proxyConfiguration, proxyProblems, proxySchema, type ProxyConfiguration } from '../proxy/providers.js';
 
@@ -700,7 +700,8 @@ export const serverFields = {
       ask: { type: 'array', items: { type: 'string' } },
       limitTo: { type: 'array', items: { type: 'string' } },
     },
-    description: 'The managed permissions every session on the host is held to, in VS Code\'s shape: deny and ask rules in the managed rule grammar (Shell, Read, Write, Domain), disableBypassPermissionsMode "disable" to take Allow All away, and limitTo, the Domain rules a fetch stays within. The host checks each rule on the tool questions of its kind beside the session\'s permissions, and hands the whole to every backend. Set in the configuration file only.',
+    additionalProperties: false,
+    description: 'The managed permissions every session on the host is held to, in VS Code\'s shape: deny and ask rules in the managed rule grammar (Shell, Read, Write, Domain), disableBypassPermissionsMode "disable" to take Allow All away, and limitTo, the Domain rules a fetch stays within, each Domain or Domain(<host>) with the host as VS Code\'s network filter normalizes it. A Domain rule names a host whatever the scheme, port or path of a URL. The host checks each rule on the tool questions of its kind beside the session\'s permissions, and hands the whole to every backend. Set in the configuration file only.',
   },
   commandParser: {
     type: 'string',
@@ -1076,7 +1077,9 @@ export const servedPluginWriteFields = {
  * still writes `providers` is refused too. That is a bad value rather than an
  * unknown key, so it stops the start the same way one does. `shellEnv` is checked the same way for
  * the same reason: its names and values are held on their own, because the
- * schema cannot say that an object is a map.
+ * schema cannot say that an object is a map. `managedSettingsPermissions` is
+ * too, for its `limitTo`: a `Domain` boundary rule is a host written as VS
+ * Code's network filter normalizes one, which no schema pattern says.
  */
 export function checkConfig(file: object, source: (key: string) => string): string[] {
   const warnings: string[] = [];
@@ -1098,6 +1101,8 @@ export function checkConfig(file: object, source: (key: string) => string): stri
   if (pluginsNamed.length > 0) stop(pluginsNamed.map((one) => `${source('plugins')}: ${one}`).join('\n'));
   const shellEnvBad = shellEnvProblems((file as Config).shellEnv);
   if (shellEnvBad.length > 0) stop(shellEnvBad.map((one) => `${source('shellEnv')}: ${one}`).join('\n'));
+  const managedBad = managedPermissionsProblems((file as Config).managedSettingsPermissions);
+  if (managedBad.length > 0) stop(managedBad.map((one) => `${source('managedSettingsPermissions')}: ${one}`).join('\n'));
   return warnings;
 }
 

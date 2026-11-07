@@ -1,6 +1,9 @@
 import { posix } from 'node:path';
-import { escapeRegExpCharacters, globRegexOf } from './commandautoapprover.js';
 import type { PermissionKind } from '../types/permissions.js';
+import { match } from '../vscode/glob.js';
+import { escapeRegExpCharacters, regExpLeadsToEndlessLoop } from '../vscode/strings.js';
+import { URI } from '../vscode/uri.js';
+import { isUrlApproved } from '../vscode/urlapproval.js';
 
 /*
  * VS Code's permission rules, the grammar a session's and the host's
@@ -94,11 +97,12 @@ export const matchesShellCommandLine = (rule: string, commandLine: string, langu
 
 const matchesShellSpecifier = (specifier: string, command: string, language: 'bash' | 'powershell'): boolean => {
   if (specifier === '') return false;
-  const regex = SHELL_REGEX_SPECIFIER.exec(specifier);
-  if (regex?.groups !== undefined) {
+  const written = SHELL_REGEX_SPECIFIER.exec(specifier);
+  if (written?.groups !== undefined) {
     try {
-      const flags = regex.groups.flags ?? '';
-      return new RegExp(regex.groups.pattern ?? '', language === 'powershell' && !flags.includes('i') ? `${flags}i` : flags).test(command.trim());
+      const flags = written.groups.flags ?? '';
+      const regex = new RegExp(written.groups.pattern ?? '', language === 'powershell' && !flags.includes('i') ? `${flags}i` : flags);
+      return (regex.source === '.*' || !regExpLeadsToEndlessLoop(regex)) && regex.test(command.trim());
     }
     catch {
       return false;
@@ -171,95 +175,24 @@ const balanced = (value: string): boolean => {
   return depth === 0;
 };
 
-/*
- * A `WebFetch` pattern against a URL, as VS Code's URL approval reads one: an
- * http(s) URL's scheme, its host with a `*.` subdomain wildcard and `:*` any
- * port, and its path as a prefix with `*` wildcards; a pattern with no scheme
- * is an https one. Read through the WHATWG URL parser, which lowercases a host
- * and resolves a path the way a fetch would.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/url/common/urlGlob.ts
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/url/common/urlApprovalPatterns.ts#L161-L183
+/** A `WebFetch` pattern as the URL approval pattern it is, https where it names no scheme. */
+const normalizeWebFetchPattern = (pattern: string): string => (/^[^./:]*:\/\//.test(pattern) ? pattern : `https://${pattern}`);
+
+/**
+ * A `WebFetch` pattern against a URL, read by VS Code's URL approval: the
+ * URL's scheme, its host with a `*.` subdomain wildcard and `:*` any port,
+ * and its path as a prefix with `*` wildcards, both normalized as VS Code
+ * normalizes a URL for trust.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/permissionRules.ts#L242-L251
  */
 const matchesWebFetch = (specifier: string, url: string | undefined): boolean => {
-  if (url === undefined) return false;
-  let target: { scheme: string; authority: string; path: string } | undefined;
+  if (url === undefined || url === '') return false;
   try {
-    const parsed = new URL(url);
-    target = parsed.host === '' || parsed.username !== '' || parsed.password !== ''
-      ? undefined
-      : { scheme: parsed.protocol.slice(0, -1), authority: parsed.host, path: parsed.pathname.replace(/\/+$/, '') };
+    return isUrlApproved(URI.parse(url), { [normalizeWebFetchPattern(specifier)]: true }, true);
   }
   catch {
     return false;
   }
-  // The pattern's own parts, which a wildcard keeps out of the URL parser: its
-  // scheme before `://`, https where it names none, its host up to the first
-  // `/`, `?` or `#`, and its path to the first `?` or `#`.
-  const cut = specifier.indexOf('://');
-  const named = cut !== -1 && ['.', '/', ':'].every((one) => !specifier.slice(0, cut).includes(one));
-  const scheme = named ? specifier.slice(0, cut) : 'https';
-  const rest = named ? specifier.slice(cut + 3) : specifier;
-  const ends = ['/', '?', '#'].map((one) => rest.indexOf(one)).filter((one) => one !== -1);
-  const hostEnd = ends.length === 0 ? rest.length : Math.min(...ends);
-  const tail = rest.slice(hostEnd);
-  const pathEnd = ['?', '#'].map((one) => tail.indexOf(one)).filter((one) => one !== -1);
-  const glob = {
-    scheme: scheme.toLowerCase(),
-    authority: rest.slice(0, hostEnd).toLowerCase(),
-    path: (tail.startsWith('/') ? tail.slice(0, pathEnd.length === 0 ? tail.length : Math.min(...pathEnd)) : '').replace(/\/+$/, ''),
-  };
-  if (target === undefined || glob.authority === '') return false;
-  if (!urlPartMatches(target.scheme, glob.scheme) || !urlPartMatches(target.authority, glob.authority, true)) return false;
-  if (glob.path === '' || glob.path === '/') return true;
-  return urlPartMatches(target.path, glob.path);
-};
-
-/** One part of a URL against a pattern's: equal, a prefix up to a `/`, or `*` wildcards, `*.` for subdomains and `:*` for any port. */
-const urlPartMatches = (part: string, glob: string, portLogic = false): boolean => {
-  if (part === glob) return true;
-  if (!glob.includes('*')) return part.startsWith(`${glob}/`);
-  const pending = new Map<number, Set<number>>();
-  const add = (at: number, globAt: number): void => {
-    const held = pending.get(at) ?? new Set<number>();
-    held.add(globAt);
-    pending.set(at, held);
-  };
-  add(0, 0);
-  for (let at = 0; at <= part.length && pending.size > 0; at++) {
-    const offsets = pending.get(at);
-    if (offsets === undefined) continue;
-    for (const globAt of offsets) {
-      const anyPort = portLogic && glob[globAt] === ':' && glob[globAt + 1] === '*';
-      if (at === part.length) {
-        if (globAt === glob.length || (anyPort && globAt + 2 === glob.length)) return true;
-        continue;
-      }
-      if (globAt === glob.length) {
-        if (part[at] === '/') return true;
-        continue;
-      }
-      if (part[at] === glob[globAt]) add(at + 1, globAt + 1);
-      if (glob[globAt] === '*') {
-        if (globAt + 1 === glob.length) return true;
-        if (glob[globAt + 1] === '.') {
-          if (!['/', ':'].includes(part[at] ?? '')) add(at + 1, globAt);
-          if (at === 0 || part[at - 1] === '.') add(at, globAt + 2);
-        }
-        add(at + 1, at + 1 === part.length ? globAt + 1 : globAt);
-        add(at, globAt + 1);
-      }
-      if (anyPort) {
-        let end = at;
-        if (part[at] === ':') {
-          end += 1;
-          do { end += 1; } while (/[0-9]/.test(part[end] ?? ''));
-        }
-        add(end, globAt + 2);
-      }
-    }
-    pending.delete(at);
-  }
-  return false;
 };
 
 /** A path rule against a path: `//` absolute, `~/` the home's, anything else the working folder's; read without following links. */
@@ -284,7 +217,7 @@ const matchesPath = (specifier: string, path: string | undefined, context: Permi
   }
   const absolute = normalizePath(pattern);
   const glob = ['*', '?', '[', '{'].some((character) => absolute.includes(character));
-  if (glob) return globRegexOf(absolute, context.ignorePathCase === true).test(candidate);
+  if (glob) return match(absolute, candidate, { ignoreCase: context.ignorePathCase === true });
   return context.ignorePathCase === true ? absolute.toLowerCase() === candidate.toLowerCase() : absolute === candidate;
 };
 

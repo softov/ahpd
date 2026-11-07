@@ -6,6 +6,8 @@ supersedes: decisions/each-backend-offers-its-options-unless-a-rule-asks.md
 refs:
   - "[code://packages/sdk/src/host/permissions.ts](../../packages/sdk/src/host/permissions.ts) - the chain, the options, the grants, the operator's rule and the managed check"
   - "[code://packages/sdk/src/access/permissionrules.ts](../../packages/sdk/src/access/permissionrules.ts) - VS Code's permission rules"
+  - "[code://packages/sdk/src/vscode/](../../packages/sdk/src/vscode/) - VS Code's glob, URI, URL approval, managed rule grammar and domain matcher, vendored, which the rules are matched with"
+  - https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/networkFilter/common/domainMatcher.ts#L208-L241 - how VS Code's network filter matches a domain, which a managed `Domain` rule is matched by
   - "[code://packages/sdk/src/host/spawn.ts](../../packages/sdk/src/host/spawn.ts) - `toolReady`, a backend's question as the host decides and puts it"
   - "[code://packages/sdk/src/host/chatactions.ts](../../packages/sdk/src/host/chatactions.ts) - `chat/toolCallConfirmed`, where a grant is kept"
   - "[code://packages/sdk/src/types/agent.ts](../../packages/sdk/src/types/agent.ts) - `PendingConfirmation`, a question's host-only fields, and `Start.managedSettings`"
@@ -70,6 +72,9 @@ Each backend must ask with no options of its own, except a tool's own choices, a
 Claude reads the session's `permissions` itself; the host answers the questions of the others.
 A rule with a specifier, such as `Shell(npm run *)`, names a call by what the question says it runs or touches.
 A backend that leaves those fields out is answered by its tool's name alone.
+The rules are matched with VS Code's own code, vendored: its glob, its URI and its URL approval.
+A managed `Domain` rule names a URL's host alone, as VS Code's network filter matches a domain.
+So it names that host whatever the URL's scheme, port or path.
 The host's check of managed rules is ahpd's own.
 It carries the enforcement VS Code's policy inventory records as partial.
 The managed settings are handed to every backend as well.

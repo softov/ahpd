@@ -407,6 +407,27 @@ describe('the shellEnv key', () => {
   });
 });
 
+/*
+ * Managed permissions are held as VS Code's host holds a document before it
+ * takes one: its four keys alone, and a boundary of `Domain` rules with the
+ * host as VS Code's network filter normalizes it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L270-L283
+ */
+describe('the managedSettingsPermissions key', () => {
+  it('takes a boundary of Domain rules, and refuses one that is not, naming it', () => {
+    expect(folded({ managedSettingsPermissions: { limitTo: ['Domain', 'Domain(example.com)', 'Domain(*.example.com)'] } }).managedSettingsPermissions)
+      .toEqual({ limitTo: ['Domain', 'Domain(example.com)', 'Domain(*.example.com)'] });
+    for (const rule of ['Domain(*)', 'Domain(Example.com)', 'Domain(https://example.com)', 'Shell(curl)']) {
+      expect(refusal({ managedSettingsPermissions: { limitTo: [rule] } })).toBe(`${config}: managedSettingsPermissions.limitTo holds ${JSON.stringify(rule)}, `
+        + 'which is not a Domain boundary rule: Domain, or Domain(<host>) with the host written as VS Code\'s network filter normalizes it, such as Domain(example.com) or Domain(*.example.com)');
+    }
+  });
+
+  it('refuses a key VS Code\'s managed permissions do not have', () => {
+    expect(refusal({ managedSettingsPermissions: { allow: ['Shell'] } })).toBe(`${config}: managedSettingsPermissions.allow is not a field`);
+  });
+});
+
 describe('the modelProxy key', () => {
   it('is the model names and nothing else, with no providers of its own', () => {
     expect(folded({}).modelProxy).toEqual({ models: {}, sessionCalls: 'record' });

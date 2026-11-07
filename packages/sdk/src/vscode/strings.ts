@@ -1,12 +1,34 @@
 /**
- * The string comparisons VS Code's scorer and filters use.
+ * The string helpers VS Code's scorer, filters, glob and permission rules use.
  *
  * Vendored from VS Code's `strings.ts`, the functions the vendored modules
- * here reach, as VS Code has them.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/strings.ts#L351-L458
+ * here reach and the permission rules read, as VS Code has them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/strings.ts#L86-L91
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/strings.ts#L242-L253
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/strings.ts#L351-L464
  */
 
 import { CharCode } from './charcode.js';
+
+/**
+ * Escapes regular expression characters in a given string
+ */
+export function escapeRegExpCharacters(value: string): string {
+  return value.replace(/[\\\{\}\*\+\?\|\^\$\.\[\]\(\)]/g, '\\$&');
+}
+
+export function regExpLeadsToEndlessLoop(regexp: RegExp): boolean {
+  // Exit early if it's one of these special cases which are meant to match
+  // against an empty string
+  if (regexp.source === '^' || regexp.source === '^$' || regexp.source === '$' || regexp.source === '^\\s*$') {
+    return false;
+  }
+
+  // We check against an empty string. If the regular expression doesn't advance
+  // (e.g. ends in an endless loop) it will match an empty string.
+  const match = regexp.exec('');
+  return !!(match && regexp.lastIndex === 0);
+}
 
 export function compare(a: string, b: string): number {
   if (a < b) {
@@ -79,4 +101,10 @@ export function equalsIgnoreCase(a: string, b: string): boolean {
 export function startsWithIgnoreCase(str: string, candidate: string): boolean {
   const len = candidate.length;
   return len <= str.length && compareSubstringIgnoreCase(str, candidate, 0, len) === 0;
+}
+
+export function endsWithIgnoreCase(str: string, candidate: string): boolean {
+  const len = str.length;
+  const start = len - candidate.length;
+  return start >= 0 && compareSubstringIgnoreCase(str, candidate, start, len) === 0;
 }

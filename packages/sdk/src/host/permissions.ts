@@ -1,5 +1,5 @@
 import { basename, dirname, isAbsolute, join, normalize, relative, sep } from 'node:path';
-import { patternsAllow, realPathOf, suggestAutoApproveRuleKeys } from '../access/commandautoapprover.js';
+import { realPathOf, suggestAutoApproveRuleKeys } from '../access/commandautoapprover.js';
 import {
   isExactAbsolutePathRule, matchesPermissionRule, matchesShellCommandLine, matchesShellSubCommand, parsePermissionGrantOptionId,
   pathRule, permissionGrantOptionId, shellExactRule, shellPrefixRule, webFetchRule,
@@ -8,6 +8,11 @@ import type { CommandApprovalEvaluation, CommandApprovalOptions, SensitiveEditLo
 import type { PermissionGrantScope, PermissionRequest, PermissionRuleContext } from '../access/permissionrules.js';
 import type { Bag } from '../types/common.js';
 import type { ManagedSettingsPermissions } from '../types/permissions.js';
+import { extractDomainFromUri, matchesDomainPattern } from '../vscode/domainmatcher.js';
+import { match } from '../vscode/glob.js';
+import { buildManagedRule, ManagedRuleFamily } from '../vscode/managedrules.js';
+import { matchesScheme, Schemas } from '../vscode/network.js';
+import { URI } from '../vscode/uri.js';
 
 /*
  * The questions a backend puts to a person about a tool call, as this host puts
@@ -216,8 +221,12 @@ export interface ToolApproval {
   bypassLocked: boolean;
   /** `terminalAutoApproveEnabled` is not off. */
   terminalAutoApprove: boolean;
-  /** The edit patterns a write must match. */
-  editPatterns: Record<string, boolean>;
+  /**
+   * The edit patterns a write inside the working folders is read against;
+   * absent for a turn whose writes the patterns answer none of, which on a
+   * host with people is a turn its session's owner did not send.
+   */
+  editPatterns?: Record<string, boolean>;
   /** The session's `sensitiveEditLocations`. */
   sensitive: readonly SensitiveEditLocation[];
   /** The host's command rules over a line, a permission's decision on each command and on the line laid on. */
@@ -261,13 +270,13 @@ const shellClassifiers = (approval: ToolApproval): Pick<CommandApprovalOptions, 
 };
 
 /**
- * Whether a write is one the edit patterns and the always-checked ones leave
- * to ask, or lands in a sensitive location of the session.
+ * Whether a write is one an always-checked edit pattern names, or lands in a
+ * sensitive location of the session.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L788-L814
  */
 const requiresEditConfirmation = (paths: readonly string[], approval: ToolApproval): boolean => {
   const { ignorePathCase } = approval.context;
-  if (paths.some((path) => !patternsAllow(path, { '**/*': true, ...ALWAYS_CHECKED_EDIT_PATTERNS }))) return true;
+  if (paths.some((path) => Object.keys(ALWAYS_CHECKED_EDIT_PATTERNS).some((pattern) => match(pattern, path, { ignoreCase: ignorePathCase === true })))) return true;
   return approval.workingDirectories.some((folder) => approval.sensitive.some((location) => {
     const at = join(folder, location.path);
     const places = resolvedPaths(at) ?? [at];
@@ -297,6 +306,24 @@ const platformRestricted = (path: string, folder: string, approval: ToolApproval
 };
 
 /**
+ * Whether the edit patterns approve a write, as VS Code's host reads them:
+ * from an approved start, the configured patterns and then the always-checked
+ * ones, each that matches the path setting the answer to its own, so the last
+ * matching pattern decides.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L873-L886
+ */
+const matchesEditAutoApprovePatterns = (path: string, patterns: Readonly<Record<string, boolean>>, ignoreCase: boolean): boolean => {
+  let approved = true;
+  for (const patternSet of [patterns, ALWAYS_CHECKED_EDIT_PATTERNS]) {
+    for (const [pattern, configuredApproval] of Object.entries(patternSet)) {
+      const isApproved = configuredApproval === true;
+      if (isApproved !== approved && match(pattern, path, { ignoreCase })) approved = isApproved;
+    }
+  }
+  return approved;
+};
+
+/**
  * Whether the session's or the host's permissions refuse the call before
  * anybody is asked: a rule naming the whole request, a shell rule naming the
  * line or one command of it, a path rule naming the path or the path it
@@ -322,32 +349,44 @@ export const isDeniedByPermissions = (approval: ToolApproval, subCommands: reado
 };
 
 /**
- * A managed rule as the permission rule VS Code's checks read it by, for the
- * questions of its kind: `Shell` and `Read` as written, `Write` as `Edit`,
- * `Domain` as `WebFetch` of the host in any scheme, and `Shell(<command>)`
- * with no wildcard as the command with its arguments too, which is what the
- * managed grammar says it names.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L79-L125
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L190-L192
+ * A managed `Shell`, `Read` or `Write` rule as the permission rule VS Code's
+ * checks read it by, for the questions of its kind, or nothing for a rule the
+ * managed grammar does not express: the family alone as every request of its
+ * kind, an argument as the grammar writes it, `Write` and its alias `Edit` as
+ * `Edit`, and `Shell(<command>)` with no wildcard as the command with its
+ * arguments too, as VS Code reads the bare form.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L73-L177
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L190-L191
  */
 const asPermissionRule = (rule: string): string[] => {
   const opening = rule.indexOf('(');
-  const family = opening === -1 ? rule : rule.slice(0, opening);
-  const argument = opening === -1 || !rule.endsWith(')') ? undefined : rule.slice(opening + 1, -1);
-  if (opening !== -1 && argument === undefined) return [];
-  switch (family) {
-    case 'Shell':
-      return [argument === undefined || argument.includes('*') ? rule : `Shell(${argument} *)`];
-    case 'Read':
-      return [rule];
-    case 'Write':
-    case 'Edit':
-      return [argument === undefined ? 'Edit' : `Edit(${argument})`];
-    case 'Domain':
-      return [argument === undefined ? 'WebFetch' : `WebFetch(${argument.includes('://') ? argument : `*://${argument}`})`];
-    default:
-      return [];
-  }
+  const named = opening === -1 ? rule : rule.slice(0, opening);
+  const family = named === 'Edit' ? ManagedRuleFamily.Write : named;
+  if (family !== ManagedRuleFamily.Shell && family !== ManagedRuleFamily.Read && family !== ManagedRuleFamily.Write) return [];
+  const tool = family === ManagedRuleFamily.Write ? 'Edit' : family;
+  if (opening === -1) return [tool];
+  if (!rule.endsWith(')')) return [];
+  const built = buildManagedRule(family, rule.slice(opening + 1, -1));
+  if (built === undefined) return [];
+  const argument = built.slice(family.length + 1, -1);
+  return [`${tool}(${family === ManagedRuleFamily.Shell && !argument.includes('*') ? `${argument} *` : argument})`];
+};
+
+/**
+ * Whether a managed `Domain` rule names a URL request's domain: the family
+ * alone every one, and `Domain(<pattern>)`, an argument the managed grammar
+ * reads as a URL with an implicit `https://`, a domain the pattern matches as
+ * VS Code's network filter matches one. That is by the host alone, so a rule
+ * names its host whatever the URL's scheme, port or path.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L179-L203
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L141-L146
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/networkFilter/common/domainMatcher.ts#L208-L241
+ */
+const domainRuleNames = (rule: string, domain: string | undefined): boolean => {
+  if (rule === ManagedRuleFamily.Domain) return true;
+  if (!rule.startsWith('Domain(') || !rule.endsWith(')')) return false;
+  const argument = rule.slice(7, -1);
+  return domain !== undefined && buildManagedRule(ManagedRuleFamily.Domain, argument) === rule && matchesDomainPattern(domain, argument);
 };
 
 /**
@@ -355,25 +394,48 @@ const asPermissionRule = (rule: string): string[] => {
  * on every question from every backend beside the session's permissions:
  * `deny` before `ask`, each rule on the questions of its kind (`Shell` on a
  * command, `Read` and `Write` on a file's read and write, `Domain` on a URL
- * request) and matched by the checks the session's own rules are, so a
- * managed deny is refused before anybody is asked and a managed ask is put as
- * a question a managed rule raised. A URL request outside the `Domain` rules
- * of `limitTo` is refused as a deny is.
+ * request), so a managed deny is refused before anybody is asked and a
+ * managed ask is put as a question a managed rule raised. `Shell`, `Read` and
+ * `Write` are matched by the checks the session's own rules are, and `Domain`
+ * by the domain VS Code's network filter reads from the URL.
+ *
+ * `limitTo` is the boundary of VS Code's network filter: a URL request it
+ * applies to whose domain no rule of it names is refused as a deny is. It
+ * applies to a URL with an authority and to an http, https, ws or wss one,
+ * and a file URL passes it.
  *
  * This host's own check, carrying the enforcement VS Code's policy inventory
  * records as partial for its agents; a runtime that enforces managed settings
  * itself is handed them too, for the calls it never asks the host about.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostPolicySupport.ts#L46-L56
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/networkFilter/common/networkFilterService.ts#L20-L25
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/networkFilter/common/networkFilterService.ts#L104-L134
  */
 export const managedDecision = (managed: ManagedSettingsPermissions | undefined, approval: ToolApproval, subCommands: readonly string[]): 'deny' | 'ask' | undefined => {
   if (managed === undefined) return undefined;
+  const { request } = approval;
+  let uri: URI | undefined;
+  if (request.kind === 'url' && request.url !== undefined) {
+    try {
+      uri = URI.parse(request.url);
+    }
+    catch {
+      uri = undefined;
+    }
+  }
+  const domain = uri === undefined ? undefined : extractDomainFromUri(uri);
   const names = (rules: readonly string[] | undefined): boolean => {
+    if (request.kind === 'url' && (rules ?? []).some((rule) => domainRuleNames(rule, domain))) return true;
     const read = (rules ?? []).flatMap(asPermissionRule);
     return read.length > 0 && isDeniedByPermissions({ ...approval, rules: { allow: [], deny: read, ask: [] } }, subCommands);
   };
   if (names(managed.deny)) return 'deny';
-  if (approval.request.kind === 'url' && managed.limitTo !== undefined
-    && !managed.limitTo.flatMap(asPermissionRule).some((rule) => matchesPermissionRule(rule, approval.request, approval.context))) return 'deny';
+  if (request.kind === 'url' && managed.limitTo !== undefined) {
+    const filtered = uri !== undefined && [Schemas.http, Schemas.https, 'ws', 'wss'].some((scheme) => matchesScheme(uri, scheme));
+    const passes = uri !== undefined && (matchesScheme(uri, Schemas.file) || (!uri.authority && !filtered)
+      || (domain === undefined ? !filtered : managed.limitTo.some((rule) => domainRuleNames(rule, domain))));
+    if (!passes) return 'deny';
+  }
   return names(managed.ask) ? 'ask' : undefined;
 };
 
@@ -427,9 +489,10 @@ export const getAutoApproval = (approval: ToolApproval): 'setting' | 'not-needed
     return within(approval.workingDirectories) || within(approval.attached) ? 'not-needed' : undefined;
   }
   if (writes !== undefined) {
-    const allowed = approval.workingDirectories.some((folder) => writes.every((path) =>
+    const patterns = approval.editPatterns;
+    const allowed = patterns !== undefined && approval.workingDirectories.some((folder) => writes.every((path) =>
       inside(path, folder, context.ignorePathCase === true) && !platformRestricted(path, folder, approval)
-      && patternsAllow(path, { ...approval.editPatterns, ...ALWAYS_CHECKED_EDIT_PATTERNS })));
+      && matchesEditAutoApprovePatterns(path, patterns, context.ignorePathCase === true)));
     return allowed ? 'not-needed' : undefined;
   }
   if (request.kind === 'shell' && approval.commandLine !== undefined) {

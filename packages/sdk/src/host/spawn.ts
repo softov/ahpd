@@ -481,7 +481,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       sessionAutoApprove: ctx.rootConfig.autoApprovePolicyRestricted !== true && owning?.config.autoApprove === 'autoApprove',
       bypassLocked: managedSettings?.disableBypassPermissionsMode === 'disable',
       terminalAutoApprove: ctx.rootConfig.terminalAutoApproveEnabled !== false && owners,
-      editPatterns: owners ? editPatterns : {},
+      ...(owners ? { editPatterns } : {}),
       sensitive,
       ...(commandLine === undefined ? {} : {
         evaluateShell: (classifiers) => approver.evaluation(commandLine, {

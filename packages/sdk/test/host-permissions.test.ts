@@ -9,7 +9,7 @@
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1684-L1766
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -308,6 +308,62 @@ it('offers a fetch\'s host in the session and always, and keeps an Always Allow 
 });
 
 /*
+ * A `WebFetch` rule is read by VS Code's URL approval, which normalizes a URL
+ * for trust before it matches: a GitHub path is read without its case.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/permissionRules.ts#L242-L251
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/url/common/trustedDomains.ts#L66-L78
+ */
+it('answers a fetch a WebFetch rule names as VS Code\'s URL approval reads it, a GitHub path whatever its case', async () => {
+  const answers: Answer[] = [];
+  const { host, dispatch, turn } = await serving(asking(answers, 'WebFetch', undefined, { permissionKind: 'url', permissionUrl: 'https://github.com/Microsoft/VSCode/issues/1' }));
+  await dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: ['WebFetch(github.com/microsoft/vscode)'], deny: [] } } });
+  expect((await turn('t1')).confirmed).toBe('not-needed');
+  await host.close();
+});
+
+/*
+ * A `Read` rule's glob is matched by VS Code's glob, where a trailing `/**`
+ * names the folder itself as well as everything under it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/permissionRules.ts#L254-L287
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/glob.ts#L51-L62
+ */
+it('answers a read of a folder a Read grant names with VS Code\'s glob, the folder itself included', async () => {
+  const answers: Answer[] = [];
+  const other = `${realpathSync(dir)}-other`;
+  const { host, dispatch, turn } = await serving(asking(answers, 'Read', undefined, { permissionKind: 'read', permissionPath: other }));
+  await dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: [`Read(/${other}/**)`], deny: [] } } });
+  expect((await turn('t1')).confirmed).toBe('not-needed');
+  await host.close();
+});
+
+/*
+ * A `Shell` rule written as a regular expression that matches the empty
+ * string names no command, as VS Code's rules read one, unless it is `.*`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/permissionRules.ts#L141-L161
+ */
+it('names no command by a Shell regular expression that matches the empty string', async () => {
+  const answers: Answer[] = [];
+  const { host, dispatch, turn } = await serving(asking(answers, 'bash', undefined, { permissionKind: 'shell', shellCommand: 'frobnicate --all', shellLanguage: 'bash' }));
+  await dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: ['Shell(/x*/)'], deny: [] } } });
+  expect((await turn('t1')).confirmed).toBeUndefined();
+  expect(answers).toEqual([]);
+  await host.close();
+});
+
+/*
+ * The edit patterns are read as VS Code's host reads them: from an approved
+ * start, each matching pattern setting the answer, so the last one decides.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L873-L886
+ */
+it('answers a write inside the folder that the last matching edit pattern allows', async () => {
+  const answers: Answer[] = [];
+  const { host, dispatch, turn } = await serving(asking(answers, 'Write', undefined, { permissionKind: 'write', permissionPath: join(dir, 'secret', 'ok.txt') }));
+  await dispatch(ROOT, { type: 'root/configChanged', config: { editAutoApprovePatterns: { '**/*': true, '**/secret/**': false, '**/secret/ok.txt': true } } });
+  expect((await turn('t1')).confirmed).toBe('not-needed');
+  await host.close();
+});
+
+/*
  * A question that asks to leave the sandbox is put to a person whatever Allow
  * All says, with Allow and Skip, and marked so its answer keeps nothing, as
  * VS Code's host puts one.
@@ -393,8 +449,10 @@ it('refuses a call a managed deny rule names, and asks one a managed ask rule na
 /*
  * A managed `Domain` rule is checked on a URL request, and a fetch outside the
  * `Domain` rules of `limitTo` is refused as a deny is, as the managed rules
- * apply per permission kind.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L79-L125
+ * apply per permission kind. A rule names a URL by its host alone, as VS
+ * Code's network filter matches a domain, so whatever its scheme or port.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L141-L146
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/networkFilter/common/domainMatcher.ts#L208-L241
  */
 it('refuses a fetch a managed Domain rule denies, and one outside the managed boundary', async () => {
   for (const managed of [{ deny: ['Domain(*.example.com)'] }, { limitTo: ['Domain(github.com)'] }]) {
@@ -407,6 +465,37 @@ it('refuses a fetch a managed Domain rule denies, and one outside the managed bo
     expect(p.heard.some((one) => one.action.type === 'chat/toolCallReady')).toBe(false);
     await host.close();
   }
+});
+
+it('names a fetch by its host alone under a managed Domain rule, whatever its port', async () => {
+  const fetching = { permissionKind: 'url', permissionUrl: 'https://example.com:8443/releases' };
+  const refused: Answer[] = [];
+  const denied = await serving(asking(refused, 'WebFetch', undefined, fetching), { managedSettingsPermissions: { deny: ['Domain(example.com)'] } });
+  await begin(denied.dispatch, 't1');
+  await until(() => refused.length > 0, 'the refusal');
+  expect(refused).toEqual([['call-t1', false, undefined]]);
+  await denied.host.close();
+
+  const answers: Answer[] = [];
+  const bounded = await serving(asking(answers, 'WebFetch', undefined, fetching), { managedSettingsPermissions: { limitTo: ['Domain(example.com)'] } });
+  expect((await bounded.turn('t1')).options).toBeDefined();
+  expect(answers).toEqual([]);
+  await bounded.host.close();
+});
+
+/*
+ * A `Domain` argument the managed grammar reads as no URL with a host, such
+ * as a bare `*`, cannot be expressed, so the rule names nothing; the family
+ * alone is how every domain is said.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L179-L203
+ */
+it('reads a managed Domain rule the managed grammar cannot express as naming nothing', async () => {
+  const answers: Answer[] = [];
+  const { host, turn } = await serving(asking(answers, 'WebFetch', undefined, { permissionKind: 'url', permissionUrl: 'https://example.com/releases' }),
+    { managedSettingsPermissions: { deny: ['Domain(*)'] } });
+  expect((await turn('t1')).options).toBeDefined();
+  expect(answers).toEqual([]);
+  await host.close();
 });
 
 /*

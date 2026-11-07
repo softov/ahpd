@@ -6,7 +6,7 @@ import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveConfig, type ResolvedConfig } from '@cofold/config';
-import { isShellName, issuerKind, reason, type Icon, type IssuerVerify, type ManagedSettingsPermissions, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type ShellEnv } from '@ahpd/sdk';
+import { isManagedDomainBoundaryRule, isShellName, issuerKind, reason, type Icon, type IssuerVerify, type ManagedSettingsPermissions, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type ShellEnv } from '@ahpd/sdk';
 import type { ProxySetting } from './proxy/providers.js';
 
 /**
@@ -538,6 +538,23 @@ export const shellEnvProblems = (held: unknown): string[] => {
     }
   }
   return problems;
+};
+
+/**
+ * What is wrong with a `managedSettingsPermissions` value, one line each, or
+ * nothing: its `limitTo` holds `Domain` boundary rules alone, `Domain` or
+ * `Domain(<host>)` with the host written as VS Code's network filter
+ * normalizes it, which is what VS Code's host holds a boundary to before it
+ * takes managed permissions. The schema checks the keys and their types.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L270-L283
+ */
+export const managedPermissionsProblems = (held: unknown): string[] => {
+  const limitTo = typeof held === 'object' && held !== null ? (held as { limitTo?: unknown }).limitTo : undefined;
+  // Not a list of strings is the schema's to refuse, with the key's own name.
+  if (!Array.isArray(limitTo)) return [];
+  return limitTo.flatMap((rule) => (typeof rule !== 'string' || isManagedDomainBoundaryRule(rule) ? [] : [
+    `managedSettingsPermissions.limitTo holds ${JSON.stringify(rule)}, which is not a Domain boundary rule: Domain, or Domain(<host>) with the host written as VS Code's network filter normalizes it, such as Domain(example.com) or Domain(*.example.com)`,
+  ]));
 };
 
 /**
