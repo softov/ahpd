@@ -395,19 +395,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         };
         if (action.replace === true) {
           for (const key of Object.keys(rootConfig)) delete rootConfig[key];
-          delete connection.trustedFolders;
         }
         into(rootConfig, ours);
         // A merged sessions key moved: the pass runs now, with the new days.
         if (Object.prototype.hasOwnProperty.call(config, AUTO_ARCHIVE_KEY) || Object.prototype.hasOwnProperty.call(config, AUTO_DELETE_KEY)) ctx.scheduleSessionLifecycle();
-        /*
-         * A `workspaceTrust` push answers for every folder at once, so the
-         * folders this window said yes to one at a time are behind it: a window
-         * that has just said which folders it trusts is not still vouching for
-         * one it answered about earlier. A pushed `null` takes the key back,
-         * which is a new answer like any other and clears them too.
-         */
-        if (Object.prototype.hasOwnProperty.call(config, 'workspaceTrust')) delete connection.trustedFolders;
         log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
         /*
          * Said back whole, like every other action a client originates:

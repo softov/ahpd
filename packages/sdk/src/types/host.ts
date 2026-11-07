@@ -1680,20 +1680,6 @@ export interface Connection {
    */
   principalUntil?: number;
   /**
-   * The folders this window said yes to when the host asked it about one.
-   *
-   * A move into a folder the window never pushed asks it then and there, and
-   * the answer is the whole of what it said about that folder - so it is kept
-   * here rather than thrown away when the backend starts in it: the move
-   * starts the backend again, and the process that starts has never heard the
-   * question. It stands until the
-   * window pushes a `workspaceTrust` value, which answers for every folder at
-   * once and so puts the folder-by-folder answers behind it.
-   *
-   * Per connection: it is what one window said, and it dies with the socket.
-   */
-  trustedFolders?: string[];
-  /**
    * Tokens this client pushed, by protected resource identifier.
    *
    * A token the client aimed at one MCP server, with `authenticate`'s

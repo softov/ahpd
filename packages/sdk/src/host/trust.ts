@@ -6,9 +6,7 @@ import type { Bag } from '../types/common.js';
 
 /*
  * Whether a folder is trusted, read from the host's `workspaceTrust` value,
- * which the last push from any client set - and from the folders a window said
- * yes to one at a time, which are kept on its connection until it pushes a new
- * value.
+ * which the last push from any client set.
  *
  * VS Code's own reading of the same value, `codexAgent.ts:8074-8090`: nothing
  * pushed is untrusted, a falsy `enabled` trusts everything, and otherwise a
@@ -112,8 +110,7 @@ export const sameFolder = (one: string, two: string): boolean => {
 };
 
 /**
- * Whether one folder is trusted under the host's pushed `workspaceTrust` value,
- * or under the folders one connection said yes to one at a time.
+ * Whether one folder is trusted under the host's pushed `workspaceTrust` value.
  *
  * `value` is what a client put in root config, which is `unknown` because a
  * client can send anything: anything that is not an object trusts nothing, and
@@ -127,13 +124,8 @@ export const sameFolder = (one: string, two: string): boolean => {
  * and a push this host cannot read trusts nothing rather than everything. It is
  * said of the window rather than of the folder, so it is answered before the
  * folder is looked at, exactly as VS Code reads it.
- *
- * `said` is the folders that connection answered yes to when the host asked it,
- * settled when they were recorded. They are read beside the pushed value rather
- * than folded into it, because a push replaces the whole value and a question
- * answered folder by folder is not part of it.
  */
-export const trusted = (folder: string | undefined, value: unknown, said?: string[]): boolean => {
+export const trusted = (folder: string | undefined, value: unknown): boolean => {
   if (folder === undefined || folder === '') return false;
   const held = (typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {}) as {
     enabled?: unknown;
@@ -142,7 +134,6 @@ export const trusted = (folder: string | undefined, value: unknown, said?: strin
   if (held.enabled === false) return true;
   const asked = settled(folder);
   if (asked === undefined) return false;
-  if (said !== undefined && said.some((one) => under(asked, one))) return true;
   if (held.enabled !== true || !Array.isArray(held.trustedUris)) return false;
   return held.trustedUris.some((one) => {
     if (typeof one !== 'string') return false;
@@ -195,17 +186,21 @@ const granted = async (sender: Connection, folder: string): Promise<boolean> => 
  * The question, put to whoever asked for the move, or a refusal.
  *
  * A folder the host's `workspaceTrust` already trusts, which `trust` carries,
- * or one this window said yes to when it was asked about it, is not asked about
- * again: asking a window what has already been said is a round trip for
- * nothing. Any other folder no window asked about - an automation's session, a
- * host tool acting for nobody - is refused without a question, because there is
- * nobody to vouch for it and a folder nobody vouched for is untrusted.
+ * is not asked about again: asking a window what has already been said is a
+ * round trip for nothing. Any other folder no window asked about - an
+ * automation's session, a host tool acting for nobody - is refused without a
+ * question, because there is nobody to vouch for it and a folder nobody
+ * vouched for is untrusted.
  *
- * The yes that follows is kept on the connection, so every backend started
- * there while it stands is told the same thing - a move starts the backend
- * again, and the process that starts has never heard the question. It stands
- * until that window pushes a `workspaceTrust` value, which is it answering for
- * every folder at once and so puts the folder-by-folder answers behind it.
+ * The answer lets the action that asked go on, and the host records nothing of
+ * it, as VS Code's host uses a trust answer for the conversion that asked. A
+ * window that says yes puts the folder into its own trust settings and pushes
+ * them ahead of its answer, so a backend the move starts reads the folder in
+ * the host's `workspaceTrust`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L862-L873
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/browser/agentHostProtocolClient.ts#L720-L724
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/browser/agentHostProtocolClient.ts#L1659-L1676
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/browser/agentHostProtocolClient.ts#L3297-L3333
  */
 export const requireTrust = async (asked: {
   folder: string;
@@ -223,8 +218,6 @@ export const requireTrust = async (asked: {
    */
   const folder = settled(asked.folder) ?? asked.folder;
   const sender = asked.sender;
-  if (trusted(folder, asked.trust, sender?.trustedFolders)) return;
+  if (trusted(folder, asked.trust)) return;
   if (sender === undefined || !(await granted(sender, folder))) throw new Error(trustRefused(folder));
-  const vouched = settled(folder);
-  if (vouched !== undefined) sender.trustedFolders = [...(sender.trustedFolders ?? []), vouched];
 };

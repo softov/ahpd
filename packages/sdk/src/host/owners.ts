@@ -128,8 +128,7 @@ export function createOwners(ctx: HostContext): Owners {
    *
    * The owner beside it says whose the work is; this says which window asked,
    * and only a window can be asked something back - a folder to trust is asked
-   * of the window that sent the turn, and the folders it said yes to are kept
-   * on its connection.
+   * of the window that sent the turn.
    *
    * Kept and let go of exactly as `senders` is, because it answers the same
    * question about the same span: a turn nobody's window sent - an automation's,

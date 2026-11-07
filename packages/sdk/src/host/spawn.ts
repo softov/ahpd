@@ -1103,12 +1103,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * What this backend is told about the folders it is handed.
      *
      * Read from the host's one `workspaceTrust`, which the last push from any
-     * window set, as the reference host reads it for every session it starts,
-     * and from the folders the window that sent the turn said yes to one at a
-     * time.
-     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162
-     *
-     * Every start reads it, whoever sent the turn and when nobody did, as VS
+     * window set. Every start reads it, whoever sent the turn and when nobody did, as VS
      * Code's host reads its one trust value for every session it starts and
      * every hook it runs.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L166-L169
@@ -1130,7 +1125,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       if (asked !== undefined && sameFolder(asked, folder)) return true;
       const made = ctx.worktreeOf(uri);
       const vouched = made !== undefined && sameFolder(made.path, folder) ? made.repository : folder;
-      return trusted(vouched, ctx.rootConfig.workspaceTrust, sender?.trustedFolders);
+      return trusted(vouched, ctx.rootConfig.workspaceTrust);
     };
     /*
      * Whether a command or tool this session runs is answered by the host's

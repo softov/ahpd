@@ -18,7 +18,6 @@ refs:
   - "[code://packages/sdk/src/host/spawn.ts#L630-L657](../../packages/sdk/src/host/spawn.ts#L630-L657) - `trustedBy`, the answer a backend gets as `start.trusted`"
   - "[code://packages/sdk/src/host/lifecycle.ts#L834-L870](../../packages/sdk/src/host/lifecycle.ts#L834-L870) - `moveSession`, which asks before a move"
   - "[code://packages/sdk/src/host/chatactions.ts#L645-L670](../../packages/sdk/src/host/chatactions.ts#L645-L670) - a working directory added to a session"
-  - "[code://packages/sdk/src/host/actions.ts#L372-L378](../../packages/sdk/src/host/actions.ts#L372-L378) - a `workspaceTrust` push clears the pushing window's folder answers"
   - "[code://packages/sdk/src/host/gate.ts#L297-L308](../../packages/sdk/src/host/gate.ts#L297-L308) - `dispatchNeeds`, the `trust:push` scope"
   - "https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162 - VS Code's host reads one trust value for every session"
   - "[code://packages/server/src/commands/paths.ts#L100-L320](../../packages/server/src/commands/paths.ts#L100-L320) - `ahpd paths list`, `add` and `remove`"
@@ -43,7 +42,7 @@ WHEN the host's value has `enabled: false`
 THEN every folder is trusted.
 
 WHEN no window pushed a value, or the value has no `enabled`
-THEN the folder is untrusted, unless the window that sent the turn said yes to it when it was asked.
+THEN the folder is untrusted.
 
 The host resolves symlinks and `..` before it compares folders, also for a folder that does not exist yet.
 A `file://` URI with a host other than `localhost` names no folder here.
@@ -63,7 +62,7 @@ The pi backend trusts the project only when the folder is trusted and its own tr
 ### A move asks the window
 
 WHEN a client moves a session to a folder, or adds a working directory to it
-AND the host's trust does not cover the folder, and that window did not say yes to it
+AND the host's trust does not cover the folder
 THEN the host sends `vscode/requestWorkspaceTrust` with the folder as `workspace`
 AND only the answer `{trusted: true}` lets the move go on.
 
@@ -72,15 +71,15 @@ There is no timeout, as in VS Code, because a person may take time to answer.
 A refusal says "Workspace trust was not granted for '<folder>'".
 With `globalAutoApproveEnabled` or `autoApprove: 'autoApprove'`, the host does not ask.
 
-### A yes is kept on the connection
+### A yes lets the move go on
 
 WHEN a window says yes to a folder
-THEN the host keeps the folder on that connection
-AND each backend started from that connection sees the folder as trusted.
+THEN the move that asked goes on
+AND the host keeps nothing of the answer.
 
-WHEN the window pushes a new `workspaceTrust` value
-THEN the host forgets that window's folder answers, because the value answers for every folder.
-
+A VS Code window puts the folder into its own trust settings and pushes them before it answers.
+So the backend the move starts reads the folder in the host's trust.
+VS Code's host uses a trust answer for the move that asked, and records nothing.
 A push of `workspaceTrust` needs the `trust:push` scope.
 See [`code://packages/sdk/src/host/gate.ts`](../../packages/sdk/src/host/gate.ts).
 

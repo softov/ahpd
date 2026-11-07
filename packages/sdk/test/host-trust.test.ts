@@ -449,9 +449,22 @@ it('tells a session in a worktree nothing is trusted when the repository is not'
  * push of `workspaceTrust` is the window answering for every folder at once, so
  * it puts the folders it answered one at a time behind it.
  */
-it('tells the backend restarted in a folder the window said yes to that it is trusted', async () => {
-  const { signedIn, told, questions } = serving({ answer: () => ({ trusted: true }) });
+/*
+ * A window that says yes to a folder puts it into its own trust settings and
+ * pushes them ahead of its answer, so the backend a move starts reads the
+ * folder in the host's trust, as VS Code's window answers.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/browser/agentHostProtocolClient.ts#L3297-L3333
+ */
+it('tells the backend restarted in a folder the window pushed with its yes that it is trusted', async () => {
+  let push: (() => Promise<unknown>) | undefined;
+  const { signedIn, told, questions } = serving({
+    answer: async () => {
+      await push?.();
+      return { trusted: true };
+    },
+  });
   const ana = await signedIn('ana');
+  push = () => trusting(ana, [A, B]);
   await trusting(ana, [A]);
   await opening(ana, 'ana-one', A);
   await saying(ana, 'ana-one', 't1');
@@ -465,17 +478,34 @@ it('tells the backend restarted in a folder the window said yes to that it is tr
 
   // Asked, because B is not a folder this window pushed.
   expect(questions()).toEqual([{ method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(B) } }]);
-  // And the backend started again in B at the next turn is told B is trusted,
-  // on the window's own answer rather than on anything it pushed.
+  // And the backend started again in B at the next turn reads B in the trust
+  // the window pushed with its yes.
   await saying(ana, 'ana-one', 't2');
   expect(about(told(), B)).toBe(true);
+});
 
-  // A new push is the window answering for every folder at once, a push of
-  // what the root holds already being no push at all.
-  await trusting(ana, []);
-  await settle();
-  await opening(ana, 'ana-two', B);
-  await settle();
+/*
+ * The host keeps no trust answer: a yes lets the move that asked go on and is
+ * recorded nowhere, as VS Code's host uses a trust answer for the conversion
+ * that asked.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L862-L873
+ */
+it('tells the backend restarted in a folder the window said yes to and never pushed that it is not trusted', async () => {
+  const { signedIn, told, questions } = serving({ answer: () => ({ trusted: true }) });
+  const ana = await signedIn('ana');
+  await trusting(ana, [A]);
+  await opening(ana, 'ana-one', A);
+  await saying(ana, 'ana-one', 't1');
+
+  await ana.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-session:/ana-one', action: { type: 'session/workingDirectorySet', directory: uriOf(B) } },
+  });
+  await settle(60);
+
+  // The yes moved the session: its next turn starts the backend in B.
+  expect(questions()).toEqual([{ method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(B) } }]);
+  await saying(ana, 'ana-one', 't2');
   expect(about(told(), B)).toBe(false);
 });
 
