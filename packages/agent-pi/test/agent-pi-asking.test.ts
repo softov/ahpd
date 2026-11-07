@@ -11,9 +11,11 @@ import { posix } from '../../../tools/posix.ts';
 /**
  * The tool call statuses a client would show, folded from the actions.
  *
- * The transitions are the protocol reducer's: a call completes only from
- * `running` or `pending-confirmation`, so a result for one already
+ * The transitions are the protocol reducer's: a call is readied only from
+ * `streaming`, `running` or `pending-confirmation`, and completes only from
+ * `running` or `pending-confirmation`, so a ready or a result for one already
  * `cancelled` leaves it cancelled.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L559-L635
  */
 const callStatuses = (sent: { channel: string; action: Bag }[]): Map<string, string> => {
   const states = new Map<string, string>();
@@ -24,7 +26,9 @@ const callStatuses = (sent: { channel: string; action: Bag }[]): Map<string, str
     const current = states.get(id);
     if (action.type === 'chat/toolCallStart') states.set(id, 'streaming');
     else if (action.type === 'chat/toolCallReady') {
-      states.set(id, action.confirmed === 'not-needed' ? 'running' : 'pending-confirmation');
+      if (current === undefined || current === 'streaming' || current === 'running' || current === 'pending-confirmation') {
+        states.set(id, action.confirmed === 'not-needed' ? 'running' : 'pending-confirmation');
+      }
     }
     else if (action.type === 'chat/toolCallConfirmed') {
       states.set(id, action.approved === true ? 'running' : 'cancelled');
@@ -337,6 +341,63 @@ it('keeps a declined call cancelled in the snapshot and for a client', async () 
   expect(sent.some((one) => one.action.type === 'chat/toolCallConfirmed')).toBe(false);
   const refusal = { channel: 'chat', action: { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: false, reason: 'denied' } };
   expect(callStatuses([...sent.slice(0, answered), refusal, ...sent.slice(answered)]).get('c1')).toBe('cancelled');
+});
+
+/*
+ * A refusal the host makes itself is said to no client, and neither is the
+ * question it refused: the failure pi reports for the block is what ends the
+ * call for every client, as VS Code's agents report the failure their runtime
+ * gives a call their host refused.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1727-L1735
+ */
+it('ends a call the host refused before anybody was asked, as pi reports it failed', async () => {
+  const { session, pi, sent } = opened({ settings: { permissionMode: 'default' } } as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const waiting = driveCall(pi, 'c1', 'bash', { command: 'rm -rf /' });
+  await settled();
+  session.confirm('c1', false);
+  await waiting;
+  pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'blocked', isError: true });
+  await settled();
+  // What a client was said: everything but the question the host kept back.
+  const said = sent.filter((one) => one.action.type !== 'chat/toolCallReady' || one.action.confirmationTitle === undefined);
+  expect(callStatuses(said).get('c1')).toBe('completed');
+});
+
+/*
+ * A question says what the host decides it by, beside its ready, as VS Code's
+ * agents raise a pending confirmation: the kind by pi's tool, the path a read
+ * or a write names in the session's folder, a command in the shell its tool
+ * is named for, and the operator's rule as the managed approval it asks for.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+ */
+it('says what the host decides a question by on its ready', async () => {
+  const { session, pi, sent } = opened({
+    settings: { permissionMode: 'default' },
+    getAutoApproval: (kind: string, line: string) => (kind === 'tool' && line === 'write' ? 'ask' : undefined),
+  } as unknown as Partial<Start>);
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  const readyOf = (id: string): Bag | undefined => sent.map((one) => one.action)
+    .find((action) => action.type === 'chat/toolCallReady' && action.toolCallId === id);
+  const shell = driveCall(pi, 'c1', 'bash', { command: 'make test' });
+  await settled();
+  expect(readyOf('c1')).toMatchObject({ permissionKind: 'shell', shellCommand: 'make test', shellLanguage: 'bash' });
+  session.confirm('c1', false);
+  await shell;
+  const read = driveCall(pi, 'c2', 'read', { path: '/elsewhere/a.txt' });
+  await settled();
+  expect(readyOf('c2')).toMatchObject({ permissionKind: 'read', permissionPath: '/elsewhere/a.txt' });
+  session.confirm('c2', false);
+  await read;
+  const write = driveCall(pi, 'c3', 'write', { path: 'notes/b.txt', content: 'x' });
+  await settled();
+  expect(readyOf('c3')).toMatchObject({ permissionKind: 'write', permissionPath: join(root, 'notes', 'b.txt'), managedApprovalRequired: true });
+  session.confirm('c3', false);
+  await write;
 });
 
 it('still asks under projectTrust deny, because the inline extension is not the project\'s own', async () => {

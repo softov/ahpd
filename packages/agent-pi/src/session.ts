@@ -27,7 +27,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url';
 import { bag, createClientCalls, ensureWorkspacelessScratchDir, idFor, mergeLogicalTurnUsage, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type {
-  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects, TurnOptions,
+  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, PendingConfirmation, PermissionKind, Session, Start, StatusBits, ToolEffects, TurnOptions,
 } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
@@ -439,6 +439,25 @@ export function piSession(
     }
   };
 
+  /**
+   * What each of pi's own tools asks to do, in VS Code's permission kinds, as
+   * VS Code's Claude table rows the CLI's tools: a read and a search of a path,
+   * a write and an edit of one, and a command in the shell the tool is named
+   * for. Any other tool, a host's or a client's, is a custom tool, as VS
+   * Code's table falls back.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L134
+   */
+  const PI_PERMISSIONS: Record<string, PermissionKind> = {
+    read: 'read',
+    grep: 'read',
+    find: 'read',
+    ls: 'read',
+    edit: 'write',
+    write: 'write',
+    bash: 'shell',
+    powershell: 'shell',
+  };
+
   /** What pi's own tools do to the world, by the name pi calls them. */
   const PI_EFFECTS: Record<string, ToolEffects> = {
     read: { reads: true },
@@ -519,18 +538,19 @@ export function piSession(
   };
 
   /**
-   * What to do about one call: run it, ask a person, or refuse it.
+   * What to do about one call: run it, ask a person, ask as a managed rule
+   * asks, or refuse it.
    *
    * The operator's rule is read first, by the tool's name, because it is the
-   * host's setting rather than a window's: a matched call is `ask` in every
-   * mode, `bypassPermissions` included, and `dontAsk`, which never asks,
-   * refuses it. Otherwise the modes are the siblings' six. A shell command the
+   * host's own setting: a matched call is `managed` in every mode,
+   * `bypassPermissions` included, and `dontAsk`, which never asks, refuses
+   * it. Otherwise the modes are the siblings' six. A shell command the
    * owner's rules already allow is taken out of the ones a mode would ask
    * about; the check narrows the questions and adds none, so a mode that
    * refuses a call still refuses it and a mode that runs one still runs it
    * without consulting the rules.
    */
-  const decide = async (toolName: string, input: Bag): Promise<ToolCallEventResult | 'ask' | undefined> => {
+  const decide = async (toolName: string, input: Bag): Promise<ToolCallEventResult | 'ask' | 'managed' | undefined> => {
     // A tool the host offered is `host/<name>` to the rule, the name Claude and
     // ACP give it on the host's MCP server, which VS Code names `host`; pi's
     // own tools keep their own.
@@ -538,7 +558,7 @@ export function piSession(
     if (start.getAutoApproval?.('tool', ruled) === 'ask') {
       return modeOf(values.permissionMode) === 'dontAsk'
         ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
-        : 'ask';
+        : 'managed';
     }
     const effects = effectsOf(toolName);
     /** Whether the modes that ask before a change ask about this call. */
@@ -637,10 +657,30 @@ export function piSession(
     };
 
     const decided = await decide(event.toolName, input);
-    if (decided === 'ask') {
+    if (decided === 'ask' || decided === 'managed') {
       const title = `Run ${displayName}?`;
+      /*
+       * What the host decides the question by, said beside its ready, as VS
+       * Code's agents raise a pending confirmation: the kind by pi's tool, the
+       * path a read or a write names in the session's folder, and a command
+       * in the shell its tool is named for, as VS Code's Copilot agent names
+       * the language of a shell tool it knows; and the operator's rule as the
+       * managed approval it asks for.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L7983-L7991
+       */
+      const permissionKind = PI_PERMISSIONS[event.toolName] ?? 'custom-tool';
+      const target = permissionKind === 'read' ? readTarget(input) : permissionKind === 'write' ? input.path : undefined;
+      const confirmation: PendingConfirmation = {
+        permissionKind,
+        ...(typeof target === 'string' && target !== '' ? { permissionPath: resolve(where, piPath(target)) } : {}),
+        ...(permissionKind === 'shell' && typeof input.command === 'string'
+          ? { shellCommand: input.command, shellLanguage: event.toolName === 'powershell' ? 'powershell' as const : 'bash' as const }
+          : {}),
+        ...(decided === 'managed' ? { managedApprovalRequired: true } : {}),
+      };
       return await new Promise<ToolCallEventResult | undefined>((settle) => {
-        ready({ confirmationTitle: title });
+        ready({ confirmationTitle: title, ...confirmation });
         const toolCall = row ?? { toolCallId: id, toolName: displayName, displayName };
         const entry: Bag = { id, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall };
         pending.set(id, {

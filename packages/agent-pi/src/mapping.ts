@@ -464,8 +464,16 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
        * validate, or an extension that blocked it first. A client completes a
        * call only from `running` or `pending-confirmation`, so it is readied
        * here, or the row would stay open in every client.
+       *
+       * So is a call refused at its question: a refusal the host makes itself
+       * is said to no client, which still holds the call as pi opened it, and
+       * the failure pi reports for the block is what ends it for them, as
+       * VS Code's agents report the failure their runtime gives a refused
+       * call. A client that said the refusal holds the call cancelled, and
+       * takes neither.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1727-L1735
        */
-      const unreadied = held.status === 'streaming';
+      const unreadied = held.status === 'streaming' || held.status === 'cancelled';
       const owner = turn.ownerOf?.(call.toolName);
       const readied: Bag = {
         invocationMessage,
@@ -479,9 +487,9 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
         ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
       };
       /*
-       * A call a person declined is already `cancelled`. pi reports the block
-       * as a failed execution, and a result does not reopen a row somebody
-       * answered no to.
+       * A call refused at its question is already `cancelled` here. pi reports
+       * the block as a failed execution, and a result does not reopen a row
+       * somebody answered no to.
        *
        * Otherwise onto the held call and into the actions, from one object
        * each. The protocol's reducer builds a completed call from the running

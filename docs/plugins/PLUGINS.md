@@ -403,7 +403,8 @@ An ACP server's question says its kind by the call's ACP kind (`execute` a shell
 The server is answered once whatever the host keeps, its `allow_once` or `reject_once`, and `cancelled` where it offered no once option of that kind; a mode switch's button the person picked is sent as itself.
 cofold offers none, so the host's are put, and says what each call asks for by its tool, as VS Code's Claude table rows the CLI's: `shell_exec` a shell's, its command in PowerShell on Windows and else in bash, the `sh` cofold runs it through; `read_file`, `list_files` and `search_files` a read's, `write_file` and `edit_file` a write's, each of the path its input names resolved against the workspace; `web_fetch` a URL's, `memory_read` and `memory_write` memory's, and any other tool a custom tool's.
 cofold is answered for that call alone, whatever the host keeps of the answer.
-pi offers none, so the host's three are put.
+pi offers none, so the host's are put, and says what each call asks for by its tool: `bash` and `powershell` a shell's, its command in the language the tool is named for; `read`, `grep`, `find` and `ls` a read's and `edit` and `write` a write's, each of the path its input names in the session's folder; and any other tool a custom tool's.
+A call the host refuses without asking anybody is ended by the failure pi reports for the block.
 
 ### A contributed setting can be a question
 
