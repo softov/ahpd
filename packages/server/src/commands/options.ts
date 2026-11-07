@@ -116,7 +116,7 @@ export interface Options {
   clientToolCallDisconnectTimeoutMs?: number;
   /** The environment every shell this host starts is given, absent when the deployment named none. */
   shellEnv?: ShellEnv;
-  /** The rules a session's commands are matched against when its window pushed none. */
+  /** The rules a session's commands are matched against when no window pushed any. */
   terminalAutoApproveDefaults: 'vscode' | 'none';
   /** The managed permissions every session is held to, absent when the deployment set none. */
   managedSettingsPermissions?: ManagedSettingsPermissions;
@@ -707,7 +707,7 @@ export const serverFields = {
   terminalAutoApproveDefaults: {
     type: 'string',
     enum: ['vscode', 'none'],
-    description: 'The rules a session\'s shell commands are matched against when the window that started it pushed none: vscode uses VS Code\'s terminal auto-approve table, none approves no command.',
+    description: 'The rules a session\'s shell commands are matched against when no window pushed any: vscode uses VS Code\'s terminal auto-approve table, none approves no command.',
   },
   managedSettingsPermissions: {
     type: 'object',
