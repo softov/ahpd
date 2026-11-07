@@ -79,6 +79,20 @@ describe('the new session form in a locale', () => {
     expect(properties.isolation?.enumLabels).toEqual(['Pasta', 'Worktree']);
   });
 
+  /*
+   * A value's description is translated with its label, as VS Code localizes
+   * the two together.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L387-L405
+   */
+  it('translates each enum value\'s description from the catalog, and keeps the English one with no entry', async () => {
+    (HOST_CATALOGS.pt as { session: { isolation: Record<string, unknown> } }).session.isolation.enumDescriptions = { folder: 'Trabalhar na pasta' };
+    const properties = await form({ locale: 'pt' }) as Record<string, Property & { enumDescriptions?: string[] }>;
+    expect(properties.isolation?.enumDescriptions).toEqual([
+      'Trabalhar na pasta',
+      'Work in a git worktree of its own, so two sessions in one repository do not edit under each other',
+    ]);
+  });
+
   it('answers the English form to a client with no locale', async () => {
     const english = await form({});
     expect(english.isolation?.title).toBe('Isolation');

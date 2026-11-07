@@ -1529,7 +1529,7 @@ The value names a folder in the package. Each `<locale>.json` in it is one catal
 | `options.<key>` | One property of the `optionsSchema` |
 | `session.<key>` | One key of the new session form that the plugin declares |
 
-Each key takes `title`, `description`, `enum.<value>` for the label of one value, and `items.title`. A key that sets `enumDynamic` keeps its labels, because its values are data.
+Each key takes `title`, `description`, `enum.<value>` for the label of one value, `enumDescriptions.<value>` for its description, and `items.title`. A key that sets `enumDynamic` keeps its labels and their descriptions, because its values are data.
 
 The host looks up each string on its own. It tries the catalogs of the plugin that declared the key, then the host's own catalogs. In each, it tries the tag as given and then its language alone, so `pt.json` answers `pt` and `pt-BR`. A string that no catalog has stays in English. English is never in a catalog: it is the text the manifest and the code hold.
 
