@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { expect, it } from 'vitest';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
@@ -55,11 +56,14 @@ const settle = async (times = 8): Promise<void> => {
 };
 
 /**
- * Past the catalogue's 100 ms debounce, so every row that moved has been said,
- * as VS Code's host says a session's moves together once they are quiet.
+ * A session's row as a client holds it, once the catalogue's debounce has said
+ * what `says` waits for. The change the debounce sends is its own event, as
+ * VS Code's host says a session's moves together once they are quiet, and it
+ * is waited on for as long as a case waits for anything.
  */
-const flushed = async (): Promise<void> => {
-  await new Promise((r) => { setTimeout(r, 120); });
+const said = async (row: () => Bag[], says: (held: Bag) => boolean): Promise<Bag> => {
+  for (const until = Date.now() + WAIT_MS; Date.now() < until && !says(held(row()));) await settle();
+  return held(row());
 };
 
 /** Every action dispatched on one channel, in order. */
@@ -979,8 +983,7 @@ it('reads a session as running while its worker runs after the lead turn, and li
   const { ask, uri, lead, row, activity } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
-  await flushed();
-  const running = held(row());
+  const running = await said(row, (one) => activity(one.status) === 8);
   expect(activity(running.status)).toBe(8);
   expect((running.chats as Bag[]).map((one) => one.resource)).toEqual([lead]);
   const listed = await ask('listSessions', { channel: 'ahp-root://' }) as { items: { resource: string; chats?: { resource: string }[] }[] };
@@ -988,8 +991,7 @@ it('reads a session as running while its worker runs after the lead turn, and li
   expect(chatOn(running, worker)).toBeUndefined();
 
   finishWorker();
-  await flushed();
-  const ended = held(row());
+  const ended = await said(row, (one) => activity(one.status) === 1);
   expect(activity(ended.status)).toBe(1);
   expect(chatOn(ended, worker)).toBeUndefined();
 });
@@ -997,8 +999,7 @@ it('reads a session as running while its worker runs after the lead turn, and li
 it('reads a session as waiting while its worker asks, though the lead is running', async () => {
   const { ask, lead, row, activity } = await busyHost();
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'ask' } } });
-  await flushed();
-  expect(activity(held(row()).status)).toBe(24);
+  expect(activity((await said(row, (one) => activity(one.status) === 24)).status)).toBe(24);
 });
 
 it('reads a session as running while a second chat runs and its default chat is idle, and the second on its own row', async () => {
@@ -1007,8 +1008,7 @@ it('reads a session as running while a second chat runs and its default chat is 
   await ask('createChat', { channel: uri, chat: second });
   await ask('subscribe', { channel: second });
   await ask('dispatchAction', { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work' } } });
-  await flushed();
-  const moved = held(row());
+  const moved = await said(row, (one) => activity(one.status) === 8 && activity(chatOn(one, second)) === 8);
   expect(activity(moved.status)).toBe(8);
   expect(activity(chatOn(moved, second))).toBe(8);
 });
