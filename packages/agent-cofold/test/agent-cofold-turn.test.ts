@@ -153,7 +153,8 @@ it('keeps the origin a client sent with the message, on the wire and in the cata
 
 it('carries the model a turn runs on, on the message', async () => {
   const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
-  const { client, peer: p, chatUri } = await talking(model);
+  // A model the agent offers: the host ends a turn naming one it does not.
+  const { client, peer: p, chatUri } = await talking(model, [], { model: 'open_router/x' });
   client.handle({
     method: 'dispatchAction',
     params: {
