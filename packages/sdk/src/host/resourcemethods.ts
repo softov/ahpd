@@ -68,9 +68,9 @@ const CONFLICT = -32011;
     if (scheme === AGENT_CLIENT_SCHEME) return clientResources;
     if (scheme === TOOL_RESULT_RESOURCE_SCHEME) return ctx.toolResults.provider;
     const provider = options.resourceProviders?.[scheme];
-    // A scheme nobody serves is not the file store's to read, and it is
-    // not a permission answer either: the host has nothing for it, which
-    // is `-32601`.
+    // A scheme nobody serves: the host has nothing for it, which is
+    // NotFound, as VS Code's host answers a resource its file system cannot
+    // serve.
     if (provider === undefined) throw notServed(uri);
     return provider;
   };
