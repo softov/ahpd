@@ -6,7 +6,7 @@ import { disableConditionsProblem } from '../automations/automations.js';
 import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn } from './gate.js';
-import { AUTOMATIONS, chatUriFor, isAutomationResource, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { ANNOTATIONS_PATH_SEGMENT, AUTOMATIONS, chatUriFor, isAutomationResource, isRootChannel, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './sessionlifecycle.js';
@@ -225,11 +225,11 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14267-L14295
      */
     if (type.startsWith('annotations/')) {
-      if (!channel.endsWith(MARKS)) {
-        no(`${type} belongs on a session's ${MARKS} channel, not ${channel}`);
+      if (!channel.endsWith(ANNOTATIONS_PATH_SEGMENT)) {
+        no(`${type} belongs on a session's ${ANNOTATIONS_PATH_SEGMENT} channel, not ${channel}`);
         return;
       }
-      const owning = channel.slice(0, -MARKS.length);
+      const owning = channel.slice(0, -ANNOTATIONS_PATH_SEGMENT.length);
       const id = idOf(owning);
       const mark = (): void => {
         const next = annotationsReducer(marksOf(id), action as unknown as AnnotationsAction);

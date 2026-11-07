@@ -2,7 +2,7 @@ import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { RpcError } from '../rpc.js';
-import { baseOf, chatIdFor, chatOfCanvas, chatUriFor, MARKS, spaceOf } from './channels.js';
+import { ANNOTATIONS_PATH_SEGMENT, chatIdFor, chatOfCanvas, chatUriFor, ownerUriOf, spaceOf } from './channels.js';
 import { CLOSING, ENDINGS } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
@@ -123,9 +123,9 @@ export function createSleep(ctx: HostContext): Sleep {
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentHostSubscriptionService.ts#L42-L62
    */
   const residentOf = (channel: string): string | undefined => {
-    if (channel.endsWith(MARKS)) return undefined;
-    const base = chatOfCanvas(channel) ?? baseOf(channel);
-    return sessionHolding(base) ?? (spaceOf(base) === 'chat' ? sessionFor(base) : base);
+    if (channel.endsWith(ANNOTATIONS_PATH_SEGMENT)) return undefined;
+    const owner = chatOfCanvas(channel) ?? ownerUriOf(channel);
+    return sessionHolding(owner) ?? (spaceOf(owner) === 'chat' ? sessionFor(owner) : owner);
   };
 
   /**

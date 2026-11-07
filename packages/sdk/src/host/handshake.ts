@@ -4,7 +4,7 @@ import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../resources/fileuri.js';
 import { bag, str } from '../utils/values.js';
 import { keyOf, normalizeScopes, storedAuthToken } from './auth.js';
-import { AUTOMATIONS_TEMPLATE, baseOf, ROOT, spaceOf } from './channels.js';
+import { AUTOMATIONS_TEMPLATE, ownerUriOf, ROOT, spaceOf } from './channels.js';
 import { BANG } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -398,7 +398,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
            */
           const asked = meantBy(channel);
           const space = spaceOf(asked);
-          if ((space === 'session' || space === 'chat' || space === 'terminal') && baseOf(asked) === asked
+          if ((space === 'session' || space === 'chat' || space === 'terminal') && ownerUriOf(asked) === asked
             && ctx.stateOf(asked) === undefined && !sessions.has(asked) && !ctx.byChat.has(asked) && !ctx.terminals.has(asked)) {
             connection.activeSubscriptions.add(asked);
             const owed = ctx.baselineDebt.get(connection.clientId) ?? new Set<string>();

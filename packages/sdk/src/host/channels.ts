@@ -34,8 +34,12 @@ export const AUTOMATIONS_TEMPLATE = `${AUTOMATIONS}{?owner}`;
 /** The catalogue narrowed to the caller's own automations: the template with `owner` `me`. */
 export const AUTOMATIONS_ME = `${AUTOMATIONS}?owner=me`;
 
-/** What a session's annotations channel is called, under the session's own URI. */
-export const MARKS = '/annotations';
+/**
+ * The segment a session's annotations channel adds to the session's URI, as
+ * VS Code's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/annotationsUri.ts#L22-L23
+ */
+export const ANNOTATIONS_PATH_SEGMENT = '/annotations';
 
 /** The scheme a URI names, lowercased, or the empty string when it names none. */
 export const schemeOf = (uri: string): string => (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1] ?? '').toLowerCase();
@@ -67,9 +71,16 @@ export const servedIn = (channels: Readonly<Record<string, ServedChannel>> | und
 export const methodIn = (methods: Readonly<Record<string, ServedMethod>> | undefined, name: string): ServedMethod | undefined =>
   (methods !== undefined && name.startsWith('x-') && Object.hasOwn(methods, name) ? methods[name] : undefined);
 
-/** A session's own channel under a name: the name, less `/annotations` or `/changeset/<scope>`. */
-export const baseOf = (uri: string): string => {
-  if (uri.endsWith(MARKS)) return uri.slice(0, -MARKS.length);
+/**
+ * The channel a name is nested under, the name less `/annotations` or
+ * `/changeset/<scope>`: an annotations channel's `sessionUri` and a
+ * changeset's `ownerUri`, as VS Code parses each back. Any other name is its
+ * own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/annotationsUri.ts#L30-L42
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/changesetUri.ts#L314
+ */
+export const ownerUriOf = (uri: string): string => {
+  if (uri.endsWith(ANNOTATIONS_PATH_SEGMENT)) return uri.slice(0, -ANNOTATIONS_PATH_SEGMENT.length);
   const cut = uri.indexOf('/changeset/');
   return cut > 0 ? uri.slice(0, cut) : uri;
 };

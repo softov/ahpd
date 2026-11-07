@@ -3,7 +3,7 @@ import { Status, idOf } from '../sessions/catalog.js';
 import { windowOf } from '../sessions/paging.js';
 import { RpcError } from '../rpc.js';
 import { runState } from './automations.js';
-import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, MARKS, chatUriFor, servedIn, schemeOf, spaceOf, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
+import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, ANNOTATIONS_PATH_SEGMENT, chatUriFor, servedIn, schemeOf, spaceOf, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { ownerFilter } from '../utils/values.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
@@ -381,8 +381,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * there is a failed open, and a client that treats the three as one
      * hydration renders nothing at all.
      */
-    if (channel.endsWith(MARKS) && sessionChannel(channel)) {
-      const owning = channel.slice(0, -MARKS.length);
+    if (channel.endsWith(ANNOTATIONS_PATH_SEGMENT) && sessionChannel(channel)) {
+      const owning = channel.slice(0, -ANNOTATIONS_PATH_SEGMENT.length);
       const id = idOf(owning);
       /*
        * Asked of `restoreSession`, which consults the catalogue itself, rather than of
