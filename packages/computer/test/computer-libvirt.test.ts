@@ -153,10 +153,16 @@ it.skipIf(!posix)('starts a nested host from where the template puts ahpd', asyn
   expect(how?.args.at(-1)).toContain('--stdio');
 });
 
-it.skipIf(!posix)('waits for an address and removes the VM and its disk when none comes', async () => {
+/*
+ * A VM that did not come up is stopped and kept, as VS Code stops a container
+ * whose preparation failed and keeps it (devContainerAgentHostService.ts
+ * L443-L456 at 6b68d3fe).
+ */
+it.skipIf(!posix)('waits for an address, and stops and keeps the VM when none comes', async () => {
   const vms = runtime({ waits: { boot: 150, ready: 150, every: 10 } }, { VIRSH_FAKE_ADDRESS_AFTER: 'never' });
   await expect(vms.run(spec())).rejects.toThrow(/vm-1 had no address within 150ms/);
-  expect(box()).toEqual({ volumes: [TEMPLATE], domains: {} });
+  expect(box().domains['vm-1']?.state).toBe('shut off');
+  expect(box().volumes).toContain(TEMPLATE);
 });
 
 it.skipIf(!posix)('takes an address that comes after a few asks', async () => {
@@ -165,10 +171,10 @@ it.skipIf(!posix)('takes an address that comes after a few asks', async () => {
   expect(calls(virshLog()).filter((one) => one.includes('domifaddr')).length).toBeGreaterThanOrEqual(4);
 });
 
-it.skipIf(!posix)('removes a VM whose cloud-init failed', async () => {
+it.skipIf(!posix)('stops and keeps a VM whose cloud-init failed', async () => {
   const vms = runtime({}, { CLOUD_INIT: '1' });
   await expect(vms.run(spec())).rejects.toThrow(/vm-1 did not finish cloud-init: status: done/);
-  expect(box().domains).toEqual({});
+  expect(box().domains['vm-1']?.state).toBe('shut off');
 });
 
 it.skipIf(!posix)('takes a cloud-init that finished with a warning', async () => {

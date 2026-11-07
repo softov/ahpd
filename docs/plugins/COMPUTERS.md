@@ -693,6 +693,8 @@ A change to `versions.json` or to the ahpd part is a new hash, so the next VM bu
 
 A VM is another host, so every backend of a session in one runs nested, and its login is reached with this host's own key, through the box. A box with an `identity` is left out, as it is for Docker: name the key for its destination in ssh's own configuration instead. A VM takes no bind mount, no copied file, no variable and no state volume, so a profile that needs one of them is refused at create, with what it needs named. Use `state: "host"`, or a Docker profile.
 
+A VM that does not come up (no address, no ssh, a cloud-init that failed, or a tree that was not seeded) is stopped and kept, and the make answers why, as VS Code stops a [container whose preparation failed](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L443-L456) and keeps it: start it again, or remove it, once its console has been read. A stop that fails too is one line in the log.
+
 A VM can be held: writing `suspended` to its [state](#state) pauses it where it is, and `running` lets it go on. A suspended VM is not up, so its up-time stretch closes when it is held and a new one opens when it goes on. Its owner pays only for the time it runs. Stopping a VM asks the guest to shut down, and cuts it off when it has not within a minute. Removing one brings its work back first, as [Disposable machines](#disposable-machines) says, then removes the VM and its disk.
 
 ## Disposable machines

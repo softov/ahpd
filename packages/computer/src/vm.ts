@@ -616,13 +616,21 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
         memory: memoryOf(spec.memory),
       });
       where.set(spec.name, server);
+      /*
+       * A VM that did not come up, or whose tree was not seeded, is stopped
+       * and kept for a person to look at or start again, as VS Code stops a
+       * container whose preparation failed and keeps it; a stop that fails
+       * too is said in one line, and the first failure is what the make
+       * answers.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L443-L456
+       */
       try {
         const reach = await upOn(server, spec.name, machineKeyHeld, profile);
         if (tree !== undefined) await seeded(spec, reach, tree);
       }
       catch (error) {
-        await destroyed(server, spec.name).catch((gone: unknown) => {
-          options.log?.(`${spec.name} was not removed after it failed: ${gone instanceof Error ? gone.message : String(gone)}`);
+        await shutDown(server, spec.name).catch((stuck: unknown) => {
+          options.log?.(`${spec.name} was not stopped after it failed to come up: ${stuck instanceof Error ? stuck.message : String(stuck)}`);
         });
         throw error;
       }
