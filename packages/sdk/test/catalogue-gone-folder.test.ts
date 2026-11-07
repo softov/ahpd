@@ -100,7 +100,10 @@ describe('a folder that has gone', () => {
 
   it('keeps a URI that names another machine', async () => {
     const folder = 'computer://box/workspaces/app';
-    const { client } = await watching([backend('claude', [row('box', 'Box', folder)])]);
+    // A session this host ran in that machine.
+    const store = memorySessions();
+    store.setProvider('box', 'claude');
+    const { client } = await watching([backend('claude', [row('box', 'Box', folder)])], store);
     expect((await list(client)).items[0]?.workingDirectories).toEqual([folder]);
   });
 
