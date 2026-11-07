@@ -59,41 +59,43 @@ export const asksForTool = (rootConfig: Record<string, unknown>, tool: string): 
 };
 
 /**
+ * The MCP server a call's tool belongs to, by its name: the customization the
+ * call's `contributor` names among the session's, a plugin's children
+ * included, as AHP names an MCP tool's server on the call itself. Nothing for
+ * a call no MCP server contributes.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1338-L1344
+ */
+export const mcpServerOf = (contributor: unknown, customizations: unknown): string | undefined => {
+  const named = contributor as Bag | undefined;
+  if (named?.kind !== 'mcp' || typeof named.customizationId !== 'string') return undefined;
+  const every = (Array.isArray(customizations) ? customizations as Bag[] : [])
+    .flatMap((one) => [one, ...(Array.isArray(one.children) ? one.children as Bag[] : [])]);
+  const found = every.find((one) => one.id === named.customizationId);
+  return typeof found?.name === 'string' ? found.name : undefined;
+};
+
+/**
  * Whether the operator's rule makes a question about a call's tool ask every
- * time, read from the name the call carries by each name a backend gives that
- * tool when it asks `getAutoApproval`.
+ * time, read from the name the call carries by each name the rule gives that
+ * tool.
  *
  * A backend's own tool is its own name, and a tool this host offered, one of
- * `offered`, is `ahp/<name>`. An MCP server's tool is `mcp__<server>__<tool>`
- * on a call and `<server>/<tool>` to the rule. The CLI hands that name as one
- * string, so it is cut at the first `__` after the server's first character,
- * as the CLI and the backends cut it. A rule's server is the prefix's as it is
- * written, or as the Claude CLI spells a server's name in a tool's: every
- * character outside letters, digits, `_` and `-` an underscore, and a
- * `claude.ai` server's underscores run together and trimmed, as the CLI that
- * `@anthropic-ai/claude-agent-sdk` 0.3.301 bundles spells it. A rule naming
- * the tool answers on its own, as `asksForTool` reads an exact name before
- * the server's `<server>/*`.
+ * `offered`, is `ahp/<name>`. An MCP server's tool is `<server>/<tool>` to the
+ * rule, its server the one `server` names from the call's contributor: a rule
+ * names it where its tool part is the call's tool name or the end of it after
+ * a `__`, the way an MCP client names a server's tool, and `<server>/*` names
+ * every tool of the server. A rule naming the tool answers on its own, as
+ * `asksForTool` reads an exact name before the server's `<server>/*`. A call
+ * no server contributes is named by its full tool name alone.
  */
-export const alwaysAsks = (rootConfig: Record<string, unknown>, toolName: string, offered: readonly string[]): boolean => {
+export const alwaysAsks = (rootConfig: Record<string, unknown>, toolName: string, offered: readonly string[], server?: string): boolean => {
   if (asksForTool(rootConfig, toolName)) return true;
   if (offered.includes(toolName) && asksForTool(rootConfig, `ahp/${toolName}`)) return true;
   const held = rootConfig.eligibleForAutoApproval;
-  const prefix = 'mcp__';
-  const cut = toolName.startsWith(prefix) ? toolName.indexOf('__', prefix.length + 1) : -1;
-  if (held === null || typeof held !== 'object' || Array.isArray(held) || cut === -1 || cut + 2 >= toolName.length) return false;
-  const server = toolName.slice(prefix.length, cut);
-  const tool = toolName.slice(cut + 2);
-  const spelled = (name: string): string => {
-    const safe = name.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return name.startsWith('claude.ai ') ? safe.replace(/_+/g, '_').replace(/^_|_$/g, '') : safe;
-  };
-  const rules = Object.entries(held as Record<string, unknown>).flatMap(([key, value]) => {
-    const slash = key.indexOf('/');
-    const named = slash > 0 && (key.slice(0, slash) === server || spelled(key.slice(0, slash)) === server);
-    return named ? [{ tool: key.slice(slash + 1), value }] : [];
-  });
-  const exact = rules.filter((one) => one.tool === tool);
+  if (held === null || typeof held !== 'object' || Array.isArray(held) || server === undefined) return false;
+  const rules = Object.entries(held as Record<string, unknown>).flatMap(([key, value]) =>
+    (key.startsWith(`${server}/`) ? [{ tool: key.slice(server.length + 1), value }] : []));
+  const exact = rules.filter((one) => one.tool !== '*' && (one.tool === toolName || toolName.endsWith(`__${one.tool}`)));
   if (exact.length > 0) return exact.some((one) => one.value === false);
   return rules.some((one) => one.tool === '*' && one.value === false);
 };

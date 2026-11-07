@@ -68,7 +68,7 @@ type Answer = [string, boolean, string | undefined];
  * The echo backend, asking a person about one call of `tool` in every turn it
  * is sent, and keeping every answer it is handed.
  */
-const asking = (answers: Answer[], tool = 'bash'): Agent => {
+const asking = (answers: Answer[], tool = 'bash', server?: { id: string; name: string }): Agent => {
   const base = echo({ path: dir, pace: 50 });
   return {
     ...base,
@@ -76,11 +76,21 @@ const asking = (answers: Answer[], tool = 'bash'): Agent => {
       const session = base.create(start) as Session;
       return {
         ...session,
+        // An MCP server the backend loaded, which a call's contributor names by its id.
+        ...(server === undefined ? {} : {
+          sessionState: () => ({
+            ...session.sessionState(),
+            customizations: [{ type: 'mcpServer', id: server.id, uri: 'file:///servers.json', name: server.name, state: { status: 'ready' } }],
+          }),
+        }),
         sendMessage: (...args: Parameters<Session['sendMessage']>) => {
           session.sendMessage(...args);
           const turnId = args[0];
           const toolCallId = `call-${turnId}`;
-          start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId, toolName: tool, displayName: 'Bash' });
+          start.emit('chat', {
+            type: 'chat/toolCallStart', turnId, toolCallId, toolName: tool, displayName: 'Bash',
+            ...(server === undefined ? {} : { contributor: { kind: 'mcp', customizationId: server.id } }),
+          });
           start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: 'Run ls', toolInput: 'ls', confirmationTitle: 'Run Bash?' });
         },
         confirm: (toolCallId: string, approved: boolean, optionId?: string) => {
@@ -149,18 +159,31 @@ it('offers Allow Once and Skip alone where the operator\'s rule makes the tool a
 });
 
 /*
- * The Claude CLI names an MCP tool `mcp__<server>__<tool>` with the server's
- * name spelled in letters, digits, `_` and `-`, and the rule names it
- * `<server>/<tool>` with the server's own name.
+ * An MCP server's tool is `<server>/<tool>` to the rule, its server the one the
+ * call's contributor names among the session's customizations, as AHP names an
+ * MCP tool's server on the call.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1338-L1344
  */
-it('reads an MCP tool\'s server as the Claude CLI spells it in the tool\'s name', async () => {
+it('reads an MCP tool\'s server from the customization its call\'s contributor names', async () => {
   const answers: Answer[] = [];
-  const { host, p, dispatch, turn } = await serving(asking(answers, 'mcp__my_tracker__create'));
+  const { host, p, dispatch, turn } = await serving(asking(answers, 'mcp__tracker__create', { id: 'mcp:tracker', name: 'my.tracker' }));
   await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'my.tracker/create': false } } });
   expect((await turn('t1')).options).toEqual(ONCE);
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't1'), 'the first turn');
   await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'other.tracker/create': false } } });
   expect((await turn('t2')).options).toEqual(STANDARD);
+  await host.close();
+});
+
+/* A call no MCP server contributes is named by its full tool name alone. */
+it('names an MCP tool a call carries no contributor for by its full tool name alone', async () => {
+  const answers: Answer[] = [];
+  const { host, p, dispatch, turn } = await serving(asking(answers, 'mcp__my_tracker__create'));
+  await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'my.tracker/create': false, 'my_tracker/create': false } } });
+  expect((await turn('t1')).options).toEqual(STANDARD);
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't1'), 'the first turn');
+  await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'mcp__my_tracker__create': false } } });
+  expect((await turn('t2')).options).toEqual(ONCE);
   await host.close();
 });
 

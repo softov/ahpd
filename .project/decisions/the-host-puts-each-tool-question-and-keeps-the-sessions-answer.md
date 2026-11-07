@@ -48,7 +48,9 @@ What a person allowed is in the session's config, where a client reads it and ca
 Each backend must ask with no options of its own, except a tool's own choices, and must keep no "always" of its own.
 Claude reads the session's `permissions` itself; the host answers the questions of the others.
 A rule with a specifier, such as `Shell(npm run *)`, names no call, because a backend's question does not say what the call runs or touches.
-The host reads the rule by each name a backend gives a tool, an MCP server's spelled as the Claude CLI spells it.
+The host reads the rule by each name a backend gives a tool.
+An MCP server's tool is `<server>/<tool>`, its server read from the call's `contributor`, the session's customization it names, as AHP names an MCP tool's server.
+A call with no contributor is named by its full tool name alone.
 An ACP agent decides itself whether to ask, so the rule reaches only the MCP tools this host serves it.
 This differs from VS Code, where the session's Auto-Approve level still skips `eligibleForAutoApproval`.
 

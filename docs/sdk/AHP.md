@@ -216,6 +216,7 @@ A daemon that restarts therefore holds no rule until a window pushes it again.
 A key names one tool exactly, or every tool of a server through `<server>/*`.
 A key is the backend's own tool name, matched with its case, so Claude's `Bash` and pi's `bash` are different keys.
 A tool this host offers is `ahp/<name>` in every backend.
+An MCP server's tool is `<server>/<tool>`: its server is the session's customization its call's `contributor` names, as [AHP](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1338-L1344) names an MCP tool's server on the call, and `<tool>` is the call's tool name or what ends it after a `__`. A call with no contributor is named by its full tool name alone.
 A matched call asks in every backend and every permission mode, `bypassPermissions` included.
 A `dontAsk` session refuses the call instead of asking.
 The question offers no "always" option, so an answer applies to that call alone.

@@ -17,7 +17,7 @@ import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
-import { alwaysAsks, answeredInSession, asksForTool, CONFIRMATION_OPTIONS, MANAGED_CONFIRMATION_OPTIONS } from './permissions.js';
+import { alwaysAsks, answeredInSession, asksForTool, CONFIRMATION_OPTIONS, MANAGED_CONFIRMATION_OPTIONS, mcpServerOf } from './permissions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
@@ -421,9 +421,12 @@ export function createSpawn(ctx: HostContext): Spawn {
       .find((one) => one !== undefined && one.toolCallId === toolCallId);
     const toolName = typeof call?.toolName === 'string' ? call.toolName : undefined;
     const owning = sessions.get(session);
-    // Read against the tools this host offered the chat, which a backend names to the rule as `ahp/<name>`.
+    const contributor = (action.contributor ?? call?.contributor) as Bag | undefined;
+    // Read against the tools this host offered the chat, which a backend names to the rule as `ahp/<name>`,
+    // and an MCP server's tool against the server its contributor names among the session's customizations.
     const managed = toolName !== undefined && alwaysAsks(ctx.rootConfig, toolName,
-      ctx.boundTools(session, chat, owning?.backends.get(chat)?.agent.provider ?? owning?.agent.provider).map((one) => one.definition.name));
+      ctx.boundTools(session, chat, owning?.backends.get(chat)?.agent.provider ?? owning?.agent.provider).map((one) => one.definition.name),
+      mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
     const options = managed ? MANAGED_CONFIRMATION_OPTIONS.slice() : Array.isArray(action.options) ? action.options : CONFIRMATION_OPTIONS.slice();
     const answer = toolName === undefined ? undefined : answeredInSession(owning?.config.permissions, toolName);
     if (answer === 'deny') {
@@ -431,7 +434,6 @@ export function createSpawn(ctx: HostContext): Spawn {
       return undefined;
     }
     if (answer !== 'allow' || managed) return { ...action, options };
-    const contributor = (action.contributor ?? call?.contributor) as Bag | undefined;
     if (contributor?.kind === 'client') {
       return { ...action, options, _meta: { ...(call?._meta as Bag | undefined), ...(action._meta as Bag | undefined), autoApproveBySetting: true } };
     }
