@@ -173,7 +173,7 @@ It loads the plugin with its defaults, and what holds inside a machine is its pr
 
 **The host comes from the `ahpd` part.**
 cofold and pi each declare the `ahpd` part as a need, so the machine has `/opt/ahpd/ahpd` mounted and `ahpd` on its `PATH`, run by the Node of the `node` part. The part holds `@ahpd/agent-cofold` and `@ahpd/agent-pi` in `/opt/ahpd/ahpd/plugins`, and its launcher sets `AHPD_PLUGIN_ROOT` to that directory, so the inner host finds both plugins with nothing in its configuration directory.
-Any glibc image runs it with nothing installed, `debian:bookworm-slim`, the default, among them. A checkout builds the part from its own packed packages and an installed daemon from npm at its own version; see [Parts](#parts).
+Any glibc image runs it with nothing installed, `debian:bookworm-slim`, the default, among them. The part is ahpd from npm at the version the versions file names, or a checkout's own packed packages where `AHPD_PART_AHPD_ROOT` names the checkout; see [Parts](#parts).
 A machine whose part could not be built is refused for these sessions by name, like any part an agent needs.
 
 **The image's user owns a writable `HOME` and `XDG_CONFIG_HOME`, with no mount under either.**
@@ -933,9 +933,11 @@ The versions file is `packages/computer/images/versions.json`, and it is the onl
 | `node` | The Node every npm part needs | One download per platform |
 | `npm` | A CLI published to npm | `packages`, installed onto the node part, each at the part's `version` or at its own when written `<package>@<version>` |
 | `archive` | A CLI published as a tarball | `archives`, one url and sha256 per platform, and any `packages` installed onto the node part beside it, each written `<package>@<version>` |
-| `ahpd` | ahpd itself | From npm, or from a checkout's own tarballs |
+| `ahpd` | ahpd itself | From npm at its `version`, or a checkout's own packages where `AHPD_PART_AHPD_ROOT` names the checkout |
 
-A part is built the first time it is asked for and never again for that version: the tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than rebuilt. A package pinned at its own version adds that version to the tag, so `ahpd-part/claude:0.85.1-2.1.291` moves when either moves. A short hash of the Dockerfile that writes the image is in the tag after them, so an ahpd upgrade that changes how an image is written is a different image at the same versions and the part is built again. A part whose build fails is refused by name and every other part still builds.
+A part is built the first time it is asked for and never again for that version: the tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than rebuilt. A package pinned at its own version adds that version to the tag, so `ahpd-part/claude:0.85.1-2.1.291` moves when either moves. A short hash of the Dockerfile that writes the image is in the tag after them, so an ahpd upgrade that changes how an image is written is a different image at the same versions and the part is built again. A part whose build fails is refused by name and every other part still builds; a machine asking for it within 30 seconds is told the same failure without another build, and the next ask after that builds it again, as VS Code holds a [failed SDK load](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395). The hold is per Docker, so a failure on one refuses nothing on another.
+
+The `ahpd` part takes local code only when asked: `AHPD_PART_AHPD_ROOT` in the daemon's environment names a checkout of this repository, whose packages are packed with `pnpm pack`, which needs `pnpm build` first, and installed into the part, and the daemon logs one line naming the checkout. Without it a checkout runs the version the versions file names, as an installed daemon does, as VS Code takes an agent SDK's local code only from that SDK's [override variable](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L364-L370).
 
 ### Parts in a machine
 

@@ -782,7 +782,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     // A template's parts come out of the joined image on this host's Docker.
     parts: partsFromDocker(
       { command, ...(args === undefined ? {} : { args }), ...(env === undefined ? {} : { env }) },
-      async () => (await ensureJoined({ runtime: dockered })).tag,
+      async () => (await ensureJoined({ runtime: dockered, log: noted })).tag,
     ),
     log: noted,
   });
@@ -846,7 +846,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(host.hostId === undefined ? {} : { hostId: host.hostId }),
     parts: partsFromDocker(
       { command, ...(args === undefined ? {} : { args }), ...(env === undefined ? {} : { env }) },
-      async () => (await ensureJoined({ runtime: dockered })).tag,
+      async () => (await ensureJoined({ runtime: dockered, log: noted })).tag,
     ),
     log: noted,
   });
@@ -1172,7 +1172,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       if (!vm && asked.partsAsked !== undefined && asked.partsAsked.length > 0) {
         const far = key === undefined ? undefined : farValues[key];
         const builder = far === undefined ? dockered : computerRouter.runtimes[far] ?? dockered;
-        const built = await ensureParts(asked.partsAsked, { runtime: builder });
+        const built = await ensureParts(asked.partsAsked, { runtime: builder, log: noted });
         /*
          * A failed part whose need names a fallback has that host mount in its
          * place, and the machine counts it as had: its `ahpd.parts` label names

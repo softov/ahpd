@@ -293,12 +293,10 @@ export const hashOf = (
 };
 
 /**
- * Where the ahpd part's own code comes from.
- *
- * A checkout packs the workspace's own packages and installs those tarballs,
- * so a developer tests the code they are editing; an installed package names
- * the version from npm, which is the only one there is - the answer is made
- * once, in this one function, so the choice is one place to change.
+ * Where the ahpd part's own code comes from: the version the versions file
+ * names, from npm, or the packed packages of the checkout the part's override
+ * variable names, so a developer tests the code they are editing. The answer
+ * is made once, in `ahpdSourceOf`, so the choice is one place to change.
  */
 export type AhpdSource =
   | { from: 'workspace'; hash: string; tarballs: Tarball[]; plugins: Tarball[] }
@@ -319,18 +317,9 @@ export interface EnsureOptions {
   runtime: ComputerRuntime;
   /** The parts to read, which is the shipped file unless a caller says otherwise. */
   parts?: Part[];
+  /** Where a line the load says goes: the override in use. */
+  log?: (line: string) => void;
 }
-
-/** The directory holding `versions.json`, which is the package root in both cases. */
-const packageRoot = (): string => dirname(dirname(fileURLToPath(import.meta.url)));
-
-/** The repository this is a checkout of, or nothing when it is an installed package. */
-const checkoutRoot = (): string | undefined => {
-  for (let at = packageRoot(); ; at = dirname(at)) {
-    if (existsSync(join(at, 'pnpm-workspace.yaml'))) return at;
-    if (dirname(at) === at) return undefined;
-  }
-};
 
 /** Where a workspace package of this repository lives, by the name it publishes under. */
 const workspaceDir = (root: string, name: string): string | undefined => {
@@ -359,27 +348,23 @@ const workspacePackages = (root: string): string[] => {
   return ['@ahpd/server', ...own];
 };
 
-/** One packed workspace package, named as the Dockerfile will name it. */
+/**
+ * One packed workspace package, named as the Dockerfile will name it.
+ *
+ * Written where `--out` names it, which is pnpm's own way to say where a
+ * tarball goes.
+ * https://pnpm.io/cli/pack
+ */
 const packOf = (root: string, name: string, into: string): { name: string; bytes: Buffer } => {
   const at = workspaceDir(root, name);
   if (at === undefined) throw new Error(`${root} has no ${name}, so the ahpd part cannot be built from this checkout`);
-  const packed = spawnSync('pnpm', ['pack', '--pack-destination', into], { cwd: at, encoding: 'utf8', windowsHide: true });
+  const file = `${name.replace(/^@/, '').replace('/', '-')}.tgz`;
+  const packed = spawnSync('pnpm', ['pack', '--out', join(into, file)], { cwd: at, encoding: 'utf8', windowsHide: true });
   if (packed.status !== 0) {
     const said = (packed.stderr.trim() || packed.stdout.trim()).split('\n').slice(-3).join(' ');
     throw new Error(`pnpm pack could not pack ${name}, which the release workflow runs after pnpm build: ${said}`);
   }
-  /*
-   * The tarball it says it wrote, which is where it wrote it.
-   *
-   * The last line of `pnpm pack`'s output is the tarball's path, and both
-   * shapes are read: an absolute one, which is what the real `pnpm` prints -
-   * joined onto nothing, because `join` reads a second absolute path as a
-   * relative one and the read then names the scratch directory twice over,
-   * which is `ENOENT` whatever the pack did - and a relative one, read against
-   * the directory the pack was asked to write into.
-   */
-  const file = packed.stdout.trim().split('\n').pop() ?? '';
-  return { name: `${name.replace(/^@/, '').replace('/', '-')}.tgz`, bytes: readFileSync(resolve(into, file)) };
+  return { name: file, bytes: readFileSync(join(into, file)) };
 };
 
 /** The tarballs a checkout builds the ahpd part from, and the hash their bytes make. */
@@ -407,33 +392,35 @@ const packedOf = (root: string, part: Part): { tarballs: { name: string; bytes: 
 let answered: Promise<AhpdSource> | undefined;
 
 /**
- * What the ahpd part is built from, which is the workspace's own code in a
- * checkout and the pinned version anywhere else.
+ * What the ahpd part is built from: the version the versions file names, from
+ * npm, unless `AHPD_PART_<ID>_ROOT` names a checkout of this repository, whose
+ * own packages are packed instead, as VS Code takes an agent SDK's local code
+ * only from the SDK's override variable and otherwise its pinned download, and
+ * says the override it uses.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L364-L370
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentService.ts#L226
  *
  * Packing is a `pnpm pack` per package and it is done once and remembered: the
  * bytes are what the build context carries and what the tag's hash covers, and
  * two builds in one process have to agree on them.
  */
-export const ahpdSourceOf = async (): Promise<AhpdSource> => {
+export const ahpdSourceOf = async (log?: (line: string) => void): Promise<AhpdSource> => {
   if (answered === undefined) {
     const asked: Promise<AhpdSource> = (async () => {
       const part = readParts().find((one) => one.kind === 'ahpd');
       if (part === undefined) throw new Error(`${versionsPath()} names no ahpd part`);
-      const root = checkoutRoot();
-      if (root === undefined) {
+      const variable = `AHPD_PART_${part.id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_ROOT`;
+      const root = process.env[variable];
+      if (root === undefined || root === '') {
         return { from: 'npm', version: part.version, hash: createHash('sha256').update(part.version).digest('hex').slice(0, 12) };
       }
-      return { from: 'workspace', ...packedOf(root, part) };
+      log?.(`the ${part.id} part is built from the checkout at ${root}, which ${variable} names`);
+      return { from: 'workspace', ...packedOf(resolve(root), part) };
     })();
     answered = asked;
     /*
-     * A pack that failed is not remembered.
-     *
-     * The pack runs before the daemon is built - `pnpm build` is what makes
-     * `prepack`'s `tsc -p .` resolve - so the first build after a start can be
-     * the one that fails, and a remembered refusal would be every ahpd part
-     * build until the next restart. The caller that met it still gets it; the
-     * next one asks again.
+     * A pack that failed is not kept here: `ensurePart` refuses the part for
+     * the time VS Code holds a failed load, and the ask after that packs again.
      */
     void asked.catch(() => { if (answered === asked) answered = undefined; });
   }
@@ -815,31 +802,62 @@ export const once = <T>(tag: string, work: () => Promise<T>): Promise<T> => {
 };
 
 /**
+ * How long a part that failed to load is refused before it is asked for again,
+ * as VS Code holds a failed SDK load: long enough that every machine asking in
+ * the meantime is not one more failed build.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L230-L231
+ */
+const LOAD_FAILURE_HELD_MS = 30_000;
+
+/**
+ * The last failed load of each part, with when it may be asked again, kept per
+ * runtime: the runtime is where a part loads, as VS Code's downloader keeps
+ * its own, so a failure on one Docker refuses nothing on another.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L277-L289
+ */
+const failedLoads = new WeakMap<ComputerRuntime, Map<string, { error: Error; until: number }>>();
+
+/**
  * One part's tag, its image built the first time anything asks for it.
  *
  * A part that names a `requires` is not built until those are, because its
  * Dockerfile copies the `node` part's image in by tag and a build without it
- * fails on a stage Docker cannot resolve.
+ * fails on a stage Docker cannot resolve. A part whose load failed is refused
+ * with that failure until `LOAD_FAILURE_HELD_MS` has passed, and loaded again
+ * after it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395
  */
 export const ensurePart = async (id: string, options: EnsureOptions): Promise<string> => {
-  const parts = options.parts ?? readParts();
-  const part = parts.find((one) => one.id === id);
-  if (part === undefined) throw new Error(`${versionsPath()} names no ${id} part`);
-  for (const need of part.requires ?? []) {
-    await ensurePart(need, { ...options, parts });
-  }
-  const source = part.kind === 'ahpd' ? await ahpdSourceOf() : undefined;
-  // The Dockerfile is what the image is, so it is written once and is both what
-  // the tag hashes and what is built: an upgrade that changes how a part is
-  // written changes the image while the versions stand still.
-  const file = dockerfileOf(part, source);
-  const tag = tagOf(part, source?.hash, file);
-  return once(tag, async () => {
-    if (await options.runtime.hasImage(tag)) return tag;
-    const files = source?.from === 'workspace' ? [...source.tarballs, ...source.plugins] : [];
-    await options.runtime.buildImage(tag, contextOf(file, files));
+  const failures = failedLoads.get(options.runtime) ?? new Map<string, { error: Error; until: number }>();
+  failedLoads.set(options.runtime, failures);
+  const held = failures.get(id);
+  if (held !== undefined && held.until > Date.now()) throw held.error;
+  try {
+    const parts = options.parts ?? readParts();
+    const part = parts.find((one) => one.id === id);
+    if (part === undefined) throw new Error(`${versionsPath()} names no ${id} part`);
+    for (const need of part.requires ?? []) {
+      await ensurePart(need, { ...options, parts });
+    }
+    const source = part.kind === 'ahpd' ? await ahpdSourceOf(options.log) : undefined;
+    // The Dockerfile is what the image is, so it is written once and is both what
+    // the tag hashes and what is built: an upgrade that changes how a part is
+    // written changes the image while the versions stand still.
+    const file = dockerfileOf(part, source);
+    const tag = tagOf(part, source?.hash, file);
+    await once(tag, async () => {
+      if (await options.runtime.hasImage(tag)) return;
+      const files = source?.from === 'workspace' ? [...source.tarballs, ...source.plugins] : [];
+      await options.runtime.buildImage(tag, contextOf(file, files));
+    });
+    failures.delete(id);
     return tag;
-  });
+  }
+  catch (error) {
+    const failed = error instanceof Error ? error : new Error(String(error));
+    failures.set(id, { error: failed, until: Date.now() + LOAD_FAILURE_HELD_MS });
+    throw failed;
+  }
 };
 
 /** One part a machine is made with: its id, the image it comes from, and the version that image is. */
@@ -1071,12 +1089,12 @@ export const ensureJoined = async (options: EnsureOptions): Promise<Joined> => {
   //
   // Asked for only when the ahpd part is one of the parts that built. Its build
   // asks for it too, so an ahpd part in the image has already answered it and
-  // this is the remembered answer. An ahpd part that did not build - a checkout
-  // with no `pnpm build`, which is what `prepack`'s `tsc -p .` needs - is in
-  // `missing` with its reason, and asking again here would throw the same
+  // this is the remembered answer. An ahpd part that did not build - from a
+  // checkout with no `pnpm build`, which is what `prepack`'s `tsc -p .` needs -
+  // is in `missing` with its reason, and asking again here would throw the same
   // refusal out of the whole join: no machine at all would be made, where the
   // point of `missing` is that every machine not needing that part still is.
-  const hash = held.some((one) => one.kind === 'ahpd') ? (await ahpdSourceOf()).hash : undefined;
+  const hash = held.some((one) => one.kind === 'ahpd') ? (await ahpdSourceOf(options.log)).hash : undefined;
   const file = joinedDockerfile(held, tags);
   const tag = `ahpd-agents:${hashOf(hash, named, held.map((part) => part.id), file)}`;
   return once(tag, async () => {

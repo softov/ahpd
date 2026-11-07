@@ -121,35 +121,51 @@ it('refuses a part the file does not name, before any runtime call', async () =>
   expect(held(path).calls).toEqual([]);
 });
 
-it('names what Docker said when a build fails, and does not remember the failure', async () => {
-  const path = state();
-  const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
-  // The node part is already here, so only the codex build is the one that fails.
-  record.images = [tagFor(node)];
-  record.failBuild = true;
-  writeFileSync(path, JSON.stringify(record));
+/*
+ * A failed load is refused for 30 seconds and loaded again after, as VS Code
+ * holds a failed SDK load (agentSdkDownloader.ts L230-L231 and L372-L395 at
+ * 6b68d3fe), so every machine asking in the meantime is not one more build.
+ */
+it('names what Docker said when a build fails, refuses the part for 30 seconds, and builds it again after', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    const path = state();
+    const record = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    // The node part is already here, so only the codex build is the one that fails.
+    record.images = [tagFor(node)];
+    record.failBuild = true;
+    writeFileSync(path, JSON.stringify(record));
 
-  const docker = runtime(path);
-  const failed = await ensurePart('codex', { runtime: docker, parts }).catch((error: unknown) => error as Error);
-  expect(failed).toBeInstanceOf(Error);
-  expect((failed as Error).message).toContain(`build -t ${tagFor(codex)} exited 1`);
-  expect((failed as Error).message).toContain('ERROR: failed to solve');
+    const docker = runtime(path);
+    const failed = await ensurePart('codex', { runtime: docker, parts }).catch((error: unknown) => error as Error);
+    expect(failed).toBeInstanceOf(Error);
+    expect((failed as Error).message).toContain(`build -t ${tagFor(codex)} exited 1`);
+    expect((failed as Error).message).toContain('ERROR: failed to solve');
 
-  /*
-   * Both waiters are refused, and the failure is not cached.
-   *
-   * Two callers share the one build, so both are told why; and the entry is
-   * dropped, so the next caller runs its own rather than being handed a refusal
-   * for a build that is not being run.
-   */
-  const also = await Promise.allSettled([
-    ensurePart('codex', { runtime: docker, parts }),
-    ensurePart('codex', { runtime: docker, parts }),
-  ]);
-  expect(also.map((one) => one.status)).toEqual(['rejected', 'rejected']);
-  expect(held(path).images).toEqual([tagFor(node)]);
-  expect(held(path).builds.map((one) => one.tag))
-    .toEqual([tagFor(codex), tagFor(codex)]);
+    // Within the 30 seconds both callers are told the same failure, and nothing
+    // is built for either.
+    vi.setSystemTime(Date.now() + 29_000);
+    const also = await Promise.allSettled([
+      ensurePart('codex', { runtime: docker, parts }),
+      ensurePart('codex', { runtime: docker, parts }),
+    ]);
+    expect(also.map((one) => (one.status === 'rejected' ? (one.reason as Error).message : one.status)))
+      .toEqual([(failed as Error).message, (failed as Error).message]);
+    expect(held(path).builds.map((one) => one.tag)).toEqual([tagFor(codex)]);
+
+    // A failure on one runtime refuses nothing on another: that one builds.
+    await expect(ensurePart('codex', { runtime: runtime(path), parts })).rejects.toThrow(/ERROR: failed to solve/);
+    expect(held(path).builds.map((one) => one.tag)).toEqual([tagFor(codex), tagFor(codex)]);
+
+    // After the 30 seconds the part is built again, and a build that works is the answer.
+    vi.setSystemTime(Date.now() + 2_000);
+    writeFileSync(path, JSON.stringify({ ...held(path), failBuild: false }));
+    expect(await ensurePart('codex', { runtime: docker, parts })).toBe(tagFor(codex));
+    expect(held(path).builds.map((one) => one.tag)).toEqual([tagFor(codex), tagFor(codex), tagFor(codex)]);
+  }
+  finally {
+    vi.useRealTimers();
+  }
 });
 
 it('pipes a context holding the Dockerfile and nothing else for a part with no files', async () => {
@@ -317,17 +333,19 @@ it('builds a part, and the joined image, again when the Dockerfile that writes t
  * A real pack is not available here - `pnpm build` is what makes `prepack`'s
  * `tsc -p .` resolve, and CI runs the tests before it - so these cases put a
  * `pnpm` of their own first on `PATH`. It is a shell script that writes a
- * tarball into the directory it was given and prints its absolute path as its
- * last line, which is what the real one prints and where the reading went
- * wrong. Each case imports the module again, because the answer is remembered
- * once per process.
+ * tarball where `--out` names it, as the real one does. Each case imports the
+ * module again, because the answer is remembered once per process, and names
+ * this checkout in `AHPD_PART_AHPD_ROOT`, the variable that asks for its code.
  */
+
+/** This repository's root, the checkout the cases name. */
+const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 /** How a fake `pnpm` answers: everything packs, only the first ask fails, or the pack never works. */
 type Pnpm = 'never' | 'first' | 'always';
 
-/** A `pnpm` that packs what it is asked into a file of its own, and says where. */
-const fakePnpm = (dir: string, fail: Pnpm = 'never', relative = false): void => {
+/** A `pnpm` that packs what it is asked into the file `--out` names. */
+const fakePnpm = (dir: string, fail: Pnpm = 'never'): void => {
   const marker = join(dir, 'asked');
   const refuse = fail === 'always'
     ? `echo "pnpm pack: no build to pack yet" >&2
@@ -341,21 +359,15 @@ exit 1
 fi
 `
       : '';
-  // The last line is where the tarball is: the real `pnpm` prints an absolute
-  // path, and a version that printed the name alone is the other shape read.
-  const where = relative ? '"$name"' : '"$into/$name"';
   writeFileSync(join(dir, 'pnpm'), `#!/bin/sh
-into=""
+out=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --pack-destination) into="$2"; shift 2 ;;
+    --out) out="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
-${refuse}name="packed-$$.tgz"
-printf 'packed %s\\n' "$name"
-printf 'the bytes of %s\\n' "$name" > "$into/$name"
-printf '%s\\n' ${where}
+${refuse}printf 'the bytes of %s\\n' "$(basename "$out")" > "$out"
 `, { mode: 0o755 });
 };
 
@@ -365,18 +377,26 @@ const freshParts = async (): Promise<typeof import('../src/parts.js')> => {
   return await import('../src/parts.js');
 };
 
-/** Whatever `PATH` a case replaced, put back. */
-let realPath: string | undefined;
-const withFakePnpm = async (run: (parts: typeof import('../src/parts.js')) => Promise<void>, fail: Pnpm = 'never', relative = false): Promise<void> => {
+/** Whatever `PATH` and override a case replaced, put back; a `root` of `null` sets no override. */
+const withFakePnpm = async (
+  run: (parts: typeof import('../src/parts.js')) => Promise<void>,
+  fail: Pnpm = 'never',
+  root: string | null = ROOT,
+): Promise<void> => {
   const dir = mkdtempSync(join(tmpdir(), 'ahpd-fake-pnpm-'));
-  fakePnpm(dir, fail, relative);
-  realPath = process.env.PATH;
+  fakePnpm(dir, fail);
+  const realPath = process.env.PATH;
+  const realRoot = process.env.AHPD_PART_AHPD_ROOT;
   process.env.PATH = `${dir}:${realPath ?? ''}`;
+  if (root === null) delete process.env.AHPD_PART_AHPD_ROOT;
+  else process.env.AHPD_PART_AHPD_ROOT = root;
   try {
     await run(await freshParts());
   }
   finally {
     process.env.PATH = realPath;
+    if (realRoot === undefined) delete process.env.AHPD_PART_AHPD_ROOT;
+    else process.env.AHPD_PART_AHPD_ROOT = realRoot;
     rmSync(dir, { recursive: true, force: true });
   }
 };
@@ -384,29 +404,36 @@ const withFakePnpm = async (run: (parts: typeof import('../src/parts.js')) => Pr
 /** The scratch directories `pnpm pack` was given, as they are now. */
 const scratch = (): string[] => readdirSync(tmpdir()).filter((one) => one.startsWith('ahpd-pack-'));
 
+/*
+ * The ahpd part is the version the versions file names, from npm, unless its
+ * override variable names a checkout, as VS Code takes an agent SDK's local
+ * code only from the SDK's override variable (agentSdkDownloader.ts
+ * L364-L370 at 6b68d3fe), and a checkout's tarball is read where `--out`
+ * wrote it.
+ */
 // POSIX-only: the stand-in pnpm is a shell script on `PATH`, which Windows does not run.
-it.skipIf(!posix)('reads the tarball a pack names, by the absolute path it printed', async () => {
-  const before = scratch();
+it.skipIf(!posix)('builds the ahpd part from npm at its version, and from the checkout AHPD_PART_AHPD_ROOT names', async () => {
+  const ahpd = readParts().find((one) => one.kind === 'ahpd') as Part;
+  // Run from this checkout with no variable: the pinned version, nothing packed.
   let source: { from: string; version?: string; hash: string } | undefined;
-  await withFakePnpm(async (parts) => { source = await parts.ahpdSourceOf() as { from: string; hash: string }; });
-  // `pnpm pack` prints the tarball's absolute path, and `join(into, file)`
-  // read the scratch directory twice over - `ENOENT` whatever the pack did, so
-  // a checkout could never answer where its own ahpd part came from.
-  expect(source?.from).toBe('workspace');
-  expect(source?.hash).toMatch(/^[0-9a-f]{12}$/);
+  await withFakePnpm(async (parts) => { source = await parts.ahpdSourceOf() as { from: string; hash: string }; }, 'always', null);
+  expect(source).toMatchObject({ from: 'npm', version: ahpd.version });
+
+  // With it: the checkout's own packages, each read from the file `--out` named,
+  // and one line saying which checkout.
+  const before = scratch();
+  const lines: string[] = [];
+  let packed: { from: string; hash: string; tarballs: { name: string; bytes: Buffer }[] } | undefined;
+  await withFakePnpm(async (parts) => {
+    packed = await parts.ahpdSourceOf((line) => { lines.push(line); }) as typeof packed;
+  });
+  expect(packed?.from).toBe('workspace');
+  expect(packed?.hash).toMatch(/^[0-9a-f]{12}$/);
+  expect(packed?.tarballs[0]).toMatchObject({ name: 'ahpd-server.tgz' });
+  expect(packed?.tarballs[0]?.bytes.toString('utf8')).toBe('the bytes of ahpd-server.tgz\n');
+  expect(lines).toEqual([`the ahpd part is built from the checkout at ${ROOT}, which AHPD_PART_AHPD_ROOT names`]);
   // And the directory it packed into is gone once the bytes are in hand.
   expect(scratch().filter((one) => !before.includes(one))).toEqual([]);
-});
-
-// POSIX-only: the stand-in pnpm is a shell script on `PATH`, which Windows does not run.
-it.skipIf(!posix)('reads the tarball a pack named relatively, against the directory it packed into', async () => {
-  let source: { from: string; hash: string } | undefined;
-  await withFakePnpm(async (parts) => { source = await parts.ahpdSourceOf() as { from: string; hash: string }; }, 'never', true);
-  // A `pnpm` that names the tarball `packed-123.tgz` rather than its full path:
-  // resolved against the scratch directory it was packed into, which is where
-  // the file is. Resolved against the working directory it is not there at all.
-  expect(source?.from).toBe('workspace');
-  expect(source?.hash).toMatch(/^[0-9a-f]{12}$/);
 });
 
 // POSIX-only: the stand-in pnpm is a shell script on `PATH`, which Windows does not run.

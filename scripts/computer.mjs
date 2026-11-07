@@ -265,8 +265,8 @@ const verbs = {
         return one;
       });
 
-    // The ahpd part's tag carries a hash of its own source, so from a checkout
-    // the question has to be answered before it is asked.
+    // The ahpd part's tag carries a hash of its own source, so the question has
+    // to be answered before it is asked.
     const tagFor = async (part) =>
       tagOf(part, part.kind === 'ahpd' ? (await ahpdSourceOf()).hash : undefined);
 
