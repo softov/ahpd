@@ -3,6 +3,7 @@ import { accountKey } from './root.js';
 import { SESSION_META_EXTERNAL_KEY, Status, idFor, idOf, normalizeTitle, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { isDeepStrictEqual } from 'node:util';
+import { isWorkspaceless } from './lifecycle.js';
 import type { Summary, SummaryChat } from '../types/catalog.js';
 import type { ChangesSummary } from '../types/changes.js';
 import type { Agent, Listed } from '../types/agent.js';
@@ -314,17 +315,29 @@ export function createCatalogue(ctx: HostContext): Catalogue {
 
   /**
    * Why a chat refuses its move now for its own state, in VS Code's reason and
-   * words, or nothing: it works in no folder, or it has no turn yet, so nothing
-   * of it exists beyond its composer. Its turns are read off its held state and
+   * words, or nothing: it works in no folder or in a scratch folder a staying
+   * chat shares, or it has no turn yet, so nothing of it exists beyond its
+   * composer. Its turns are read off its held state and
    * off its backend, which holds the turns of a chat read back from its record
    * whether or not anybody holds the chat's state.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L8150-L8176
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9523-L9525
    */
   const chatMoveRefusal = (uri: string, ownSession = false): MoveRefusal | undefined => {
-    const held = sessions.get(sessionHolding(uri) ?? '');
+    const session = sessionHolding(uri);
+    const held = sessions.get(session ?? '');
     const lead = held && leadOf(held);
     if ((lead?.workingDirectories() ?? []).length === 0) return { reason: 'workspaceless', message: `Chat ${uri} has no folder.` };
+    /*
+     * A chat of a workspace-less session works in the session's scratch
+     * folder, which the session's default chat, staying where it is, works in
+     * too, as VS Code refuses a chat whose scratch folder a staying chat uses.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9526-L9528
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatMovability.ts#L314
+     */
+    if (session !== undefined && isWorkspaceless(session, ctx.dirOf(session))) {
+      return { reason: 'workspaceless', message: `Chat ${uri} works in a scratch folder that another chat of ${session} also uses.` };
+    }
     const state = ctx.stateOf(uri);
     const active = state?.activeTurn;
     const chat = held?.chats.get(uri);

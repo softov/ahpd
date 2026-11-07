@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { sep } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../tools/artifacts.js';
-import { SESSION_META_EXTERNAL_KEY, idOf } from '../sessions/catalog.js';
+import { SESSION_META_EXTERNAL_KEY, SESSION_META_WORKSPACELESS_KEY, idOf } from '../sessions/catalog.js';
+import { isWorkspaceless } from './lifecycle.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { CREATED_BY_META, MULTI_ROOT_META, REMOTE_ORIGIN_META, SPAWN_DEPTH_META, depthOf } from '../sessions/remotesession.js';
 import { reason } from '../utils/values.js';
@@ -362,6 +363,9 @@ export function createFacts(ctx: HostContext): Facts {
       // A backend's session made outside this host and adopted by nobody here,
       // marked where the window reads it.
       ...(ctx.isExternal(uri) ? { [SESSION_META_EXTERNAL_KEY]: true } : {}),
+      // And one working in its own scratch folder, which the window draws as a
+      // chat with no workspace.
+      ...(isWorkspaceless(uri, dir) ? { [SESSION_META_WORKSPACELESS_KEY]: true } : {}),
     };
     if (dir === undefined) {
       const meta = { ...byAgent, ...pluginMeta(uri), ...sent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };

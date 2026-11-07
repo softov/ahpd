@@ -1807,6 +1807,37 @@ describe('more than one chat in a session', () => {
     }
   });
 
+  /*
+   * A chat of a workspace-less session works in the session's scratch folder,
+   * which its default chat, staying, works in too: it is offered no move and
+   * a move is refused, in VS Code's reason and words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9526-L9528
+   */
+  it('refuses a move of a chat working in its session\'s scratch folder, which the default chat shares', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('USERPROFILE', root);
+    try {
+      const { client } = await hostAt(join(root, 'sessions'), backend([]), { workspacelessFolder: 'scratch' });
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await opened(client, LIVE);
+      await firstTurn(client, PEER, 't0');
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      await expect(client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'newSession' } } }))
+        .rejects.toMatchObject({
+          code: -32602,
+          message: `Chat ${PEER} works in a scratch folder that another chat of ${LIVE} also uses.`,
+          data: { reason: 'workspaceless' },
+        });
+    }
+    finally {
+      vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('holds a chat where it is while a turn of it is running', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {

@@ -219,6 +219,15 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   bareSessions: Set<string>;
   /**
+   * The sessions that started workspace-less, kept from the start that
+   * found one working in its scratch folder, before its tools are bound, so a
+   * workspace it takes since leaves `set_workspace` offered as it was, as VS
+   * Code's host keeps them: a tool list that moved would miss the prompt
+   * cache.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2206-L2213
+   */
+  startedWorkspaceless: Set<string>;
+  /**
    * The turns that run a `!` command, by chat and turn id while they run
    * (`commandTurnKey`).
    *

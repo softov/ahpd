@@ -146,6 +146,44 @@ describe('where the agent works', () => {
     expect(existsSync(folder)).toBe(false);
   });
 
+  /*
+   * A session working in its scratch folder is VS Code's workspace-less
+   * session: marked on its `_meta`, its agent told last that it works in a
+   * scratch folder, and `set_workspace` offered to it up front; a session in
+   * the first served folder is none of it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10698-L10700
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/prompts/promptRegistry.ts#L220-L229
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L2255-L2258
+   */
+  it('makes a session in its scratch folder VS Code\'s workspace-less session, and one in the first served folder none of it', async () => {
+    homed();
+    const told = async (over: Partial<HostOptions>) => {
+      const client = await opened([], { tools: hostTools(), ...over });
+      const uri = `ahp-session:/${over.workspacelessFolder ?? 'first'}`;
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      await settle();
+      const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { _meta?: Record<string, unknown> } };
+      }).snapshot.state;
+      const query = sessionQueries().at(-1);
+      const servers = query?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>;
+      return {
+        mark: state._meta?.workspaceless,
+        prompt: (query?.options.systemPrompt as { append?: string } | undefined)?.append ?? '',
+        upFront: servers.ahp?.tools.find((one) => one.name === 'set_workspace')?._meta?.['anthropic/alwaysLoad'],
+      };
+    };
+    const scratch = await told({ workspacelessFolder: 'scratch' });
+    expect(scratch.mark).toBe(true);
+    expect(scratch.prompt).toContain('This lightweight chat has a SCRATCH working directory, not a project or repository.');
+    expect(scratch.upFront).toBe(true);
+
+    const first = await told({});
+    expect(first.mark).toBeUndefined();
+    expect(first.prompt).not.toContain('<workspaceless_chat>');
+    expect(first.upFront).toBe(false);
+  });
+
   it('makes a session\'s scratch folder again when a start finds it gone', async () => {
     const home = homed();
     const client = await opened([], { workspacelessFolder: 'scratch' });
@@ -707,8 +745,8 @@ describe('more than one directory', () => {
   };
 
   /** A window's session over the given folders, made from a multi-root workspace or not, and spoken in. */
-  const windowed = async (folders: string[], multiRoot = true) => {
-    const host = serving('/home/softov');
+  const windowed = async (folders: string[], multiRoot = true, over: Partial<HostOptions> = {}) => {
+    const host = serving('/home/softov', [], over);
     const p = peer();
     p.request = async () => ({ trusted: true });
     const client = host.accept(p);
@@ -832,6 +870,27 @@ describe('more than one directory', () => {
       ['session/workingDirectorySet', 5, `Session does not support dynamic working-directory changes: ${single.uri}`],
     ]);
     expect(sessionQueries().length).toBe(before + 1);
+  });
+
+  /*
+   * A workspace-less session takes no folder change, made from a multi-root
+   * workspace or not, as VS Code's host refuses one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12675-L12682
+   */
+  it('refuses a folder change to a workspace-less session, in VS Code\'s words', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ahpd-home-'));
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    onTestFinished(async () => {
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    });
+    const scratch = await windowed([], true, { workspacelessFolder: 'scratch' });
+    await scratch.client.handle({ method: 'dispatchAction', params: { channel: scratch.uri, clientSeq: 1, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    await settle(8);
+    expect(folderActions(scratch.peer, scratch.uri)).toEqual([
+      ['session/workingDirectorySet', 1, `Session does not support dynamic working-directory changes: ${scratch.uri}`],
+    ]);
   });
 
   /*

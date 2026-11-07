@@ -249,6 +249,19 @@ export const workspacelessScratchDir = (uri: string): string | undefined => {
   return inside === '' || inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside) ? undefined : folder;
 };
 
+/**
+ * Whether a session working in `folder` is workspace-less, as VS Code marks
+ * one: its folder is its own scratch folder, where a session that named none
+ * works under `workspacelessFolder: scratch` until `set_workspace` gives it a
+ * workspace, as VS Code's conversion takes the mark off.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10698-L10700
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L829-L832
+ */
+export const isWorkspaceless = (uri: string, folder: string | undefined): boolean => {
+  const scratch = workspacelessScratchDir(uri);
+  return scratch !== undefined && folder === scratch;
+};
+
 export function createLifecycle(ctx: HostContext): Lifecycle {
   const {
     options, sessions, byChat, subagents, owners, kept, decided, offered, worktrees, worktreeOf, origins,
@@ -276,8 +289,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * A session that names no folder, given its own under `scratch`: made now,
    * before anything reads it, as VS Code's agent ensures a workspace-less
    * session's scratch folder when it creates the session. A session id that
-   * names no folder under the chats folder is refused, since the folder is
-   * the session's alone.
+   * names no folder under the chats folder is refused: VS Code joins the ids it
+   * mints itself, which never meet the case, and a folder made outside the
+   * chats folder for a session is a fault, so it is refused.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/workspacelessScratchDir.ts#L10-L15
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1565-L1570
    */

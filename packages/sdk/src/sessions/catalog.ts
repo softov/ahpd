@@ -102,6 +102,14 @@ export const uriFor = (sessionId: string): string => `ahp-session:/${sessionId}`
 export const SESSION_META_EXTERNAL_KEY = 'vscode.external';
 
 /**
+ * The `_meta` key a workspace-less session is marked under, VS Code's: a
+ * session that named no folder and works in a scratch folder of its own,
+ * which a client draws as a chat with no workspace.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1999-L2008
+ */
+export const SESSION_META_WORKSPACELESS_KEY = 'workspaceless';
+
+/**
  * The id inside a channel URI, whatever its scheme.
  *
  * A client may name a channel under any scheme: an older VS Code window names

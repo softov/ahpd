@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
-import { idOf, Status } from '../sessions/catalog.js';
+import { SESSION_META_WORKSPACELESS_KEY, idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { readMultiRoot } from '../sessions/remotesession.js';
 import { filesOf, needsAsyncRewrite, snapshot } from './attachments.js';
@@ -1005,8 +1005,9 @@ export function chatAction(
      * A folder a window adds to the session's set or takes from it, on VS
      * Code's conditions and in its words: an editor window, on the session's
      * channel, a session that is ready, was made from a multi-root workspace,
-     * works in its folders rather than in a worktree and has its default chat
-     * alone, on a backend that works in more than one folder; the first folder
+     * is neither workspace-less nor isolated in a worktree and has its default
+     * chat alone, on a backend that works in more than one folder; the first
+     * folder
      * stays, and so does a folder a chat is scoped to. The set and the removal
      * are the protocol's reducers', and an action that changes nothing goes to
      * every client of the session.
@@ -1045,7 +1046,8 @@ export function chatAction(
       }
       const chats = (Array.isArray(state.chats) ? state.chats : []) as Bag[];
       const values = (typeof state.config === 'object' && state.config !== null ? (state.config as Bag).values : undefined) as Bag | undefined;
-      if (readMultiRoot(state) === undefined || values?.isolation === 'worktree'
+      const meta = (typeof state._meta === 'object' && state._meta !== null ? state._meta : {}) as Bag;
+      if (readMultiRoot(state) === undefined || meta[SESSION_META_WORKSPACELESS_KEY] === true || values?.isolation === 'worktree'
         || chats.length !== 1 || state.defaultChat !== chats[0]?.resource) {
         no(`Session does not support dynamic working-directory changes: ${uri}`);
         break;

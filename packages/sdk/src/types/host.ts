@@ -1187,6 +1187,12 @@ export interface ToolSession {
   config?: Record<string, unknown> | undefined;
   /** The connectors this session may use, by alias. */
   bindings?: Record<string, string> | undefined;
+  /**
+   * Whether the session started workspace-less, as VS Code's accessor
+   * answers: marked workspace-less now, or at any time since this host took
+   * it, a workspace it took since included.
+   */
+  startedWorkspaceless?: boolean | undefined;
 }
 
 /**
@@ -1264,10 +1270,11 @@ interface HostToolCommon {
   /**
    * The shape one session asks for, as VS Code's `getDefinitionForSession`
    * tailors a tool's wording to a session: `undefined` leaves the tool as it
-   * is, and `definition` is merged over the tool's own.
+   * is, `definition` is merged over the tool's own, and `deferLoading` is the
+   * session's answer over the tool's own.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L93
    */
-  forSession?: (session: ToolSession) => { definition?: Partial<ToolDefinition> } | undefined;
+  forSession?: (session: ToolSession) => { definition?: Partial<ToolDefinition>; deferLoading?: boolean } | undefined;
   /**
    * A host-side hint that the harness may hide this tool behind tool search.
    *

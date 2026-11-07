@@ -594,6 +594,7 @@ export function createTooling(ctx: HostContext): Tooling {
     titleStrategy: strategyOf(uri),
     config: kept.config(idOf(uri)),
     bindings: sessionBindings(uri),
+    startedWorkspaceless: ctx.startedWorkspaceless.has(uri),
   });
   /**
    * One tool's definition for a session, shaped for it, or nothing where the
@@ -2405,6 +2406,7 @@ export function createTooling(ctx: HostContext): Tooling {
     for (const opened of served.get(uri) ?? []) opened.close();
     served.delete(uri);
     decided.delete(uri);
+    ctx.startedWorkspaceless.delete(uri);
   };
 
   /**
@@ -2433,6 +2435,9 @@ export function createTooling(ctx: HostContext): Tooling {
     ...clientTools(uri),
     ...contributingTo(uri, provider).flatMap((one): BoundTool[] => {
       const definition = shapedDefinition(one, uri);
+      // Deferred as the session asks, where it asks, as VS Code's
+      // `getDefinitionForSession` answers a definition's `deferLoading`.
+      const deferLoading = one.forSession?.(toolSession(uri))?.deferLoading ?? one.deferLoading;
       return definition === undefined ? [] : [{
         /*
          * A frozen copy: this one leaves the host with the backend, and a
@@ -2463,7 +2468,7 @@ export function createTooling(ctx: HostContext): Tooling {
         },
         ...(one.effects !== undefined ? { effects: frozenCopy(one.effects) } : {}),
         ...(one.confirm !== undefined ? { confirm: one.confirm } : {}),
-        ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
+        ...(deferLoading !== undefined ? { deferLoading } : {}),
       }];
     }),
   ];

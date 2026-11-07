@@ -39,7 +39,8 @@ import type { Session, SubagentChat, SubagentRequest } from '../types/session.js
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
-import { workspacelessScratchDir } from './lifecycle.js';
+import { isWorkspaceless } from './lifecycle.js';
+import { AGENT_HOST_WORKSPACELESS_INSTRUCTIONS } from '../vscode/workspacelessinstructions.js';
 import type { Move } from './lifecycle.js';
 import type { HostContext } from './context.js';
 import type { Origin } from './state.js';
@@ -1021,8 +1022,10 @@ export function createSpawn(ctx: HostContext): Spawn {
      * runs in it.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1785-L1791
      */
-    const scratch = workspacelessScratchDir(uri);
-    if (scratch !== undefined && workingDirectory === scratch) mkdirSync(scratch, { recursive: true });
+    const workspaceless = isWorkspaceless(uri, workingDirectory);
+    if (workspaceless && workingDirectory !== undefined) mkdirSync(workingDirectory, { recursive: true });
+    // Kept before its tools are bound, which is what `set_workspace` is offered by.
+    if (workspaceless) ctx.startedWorkspaceless.add(uri);
     /*
      * What this session's turns cost, kept against each turn until it ends.
      *
@@ -1209,9 +1212,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      * tools every session is offered; what the session was asked for joins
      * them after, which is where a request's own words belong - it may name a
      * tool that only its session has, so nothing in front of it could account
-     * for that.
+     * for that. A workspace-less session is told last that it works in a
+     * scratch folder, as VS Code's agents append that to what they are told.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/prompts/promptRegistry.ts#L220-L229
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2159-L2162
      */
-    const told = [...ctx.instructions(uri), ...(askedInstructions ?? [])];
+    const told = [...ctx.instructions(uri), ...(askedInstructions ?? []), ...(workspaceless ? [AGENT_HOST_WORKSPACELESS_INSTRUCTIONS] : [])];
     /*
      * Whether the backend loads the person's own settings, read off the store
      * rather than off a request: a restart has no request, and what the session
