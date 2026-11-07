@@ -1684,6 +1684,26 @@ export function piSession(
       closed = true;
       calls.release('The turn was stopped');
       releasePending('The turn was stopped', true);
+      /*
+       * A turn still running ends for every client, as VS Code's agent ends a
+       * turn whose runtime goes: an error part not marked resumable, and then
+       * the turn's completion. Neither pi's own file nor this process's record
+       * of the turn gets an ending, so a read back finds the turn interrupted
+       * and resumable, as VS Code's reader finds one its runtime never ended.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L4606-L4646
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1152-L1155
+       */
+      if (active !== undefined) {
+        const turnId = String(active.id);
+        const duration = resumedFrom === undefined ? Date.now() - Date.parse(String(active.startedAt)) : Date.now() - resumedFrom.at;
+        emit('chat', {
+          type: 'chat/error',
+          turnId,
+          duration,
+          part: { kind: 'error', error: { errorType: 'sessionClosed', message: 'The session closed while the turn ran.' } },
+        });
+        emit('chat', { type: 'chat/turnComplete', turnId, duration });
+      }
       unsubscribe?.();
       unsubscribe = undefined;
       namePrompt();

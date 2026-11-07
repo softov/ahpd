@@ -1153,6 +1153,31 @@ it('reads back a turn that had not ended as interrupted, as pi file reads one ba
   expect(closed?.[0]?.responseParts.at(-1)).toEqual(interrupted);
 });
 
+/*
+ * A turn whose session closes under it ends for every client as VS Code's
+ * agent ends a turn whose runtime goes: an error part that is not resumable,
+ * and then the turn's completion. The read back above finds the same turn
+ * interrupted and resumable, since nothing records an ending for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L4606-L4646
+ */
+it('ends a turn still running at close for every client, an error not marked resumable and then its completion', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.sendMessage('t1', 'hello');
+  await settled();
+  session.close();
+  const ending = sent.map((one) => one.action).filter((action) => action.type === 'chat/error' || action.type === 'chat/turnComplete');
+  expect(ending).toEqual([
+    {
+      type: 'chat/error',
+      turnId: 't1',
+      duration: expect.any(Number) as number,
+      part: { kind: 'error', error: { errorType: 'sessionClosed', message: 'The session closed while the turn ran.' } },
+    },
+    { type: 'chat/turnComplete', turnId: 't1', duration: expect.any(Number) as number },
+  ]);
+});
+
 it('lists a session it watched as modified at its last change, as the chat is', async () => {
   /*
    * A listing dates a session by its last activity, as Codex's catalogue dates

@@ -257,6 +257,13 @@ THEN the backend reads the pi session file and raises its entries as the events 
 AND it maps them through the same `mapEvent` as a live turn
 AND each turn keeps the id of the entry where it ended, so a rewind can cut at a turn from disk.
 
+### A pi turn at close
+
+WHEN a pi session closes while a turn runs
+THEN the turn ends for every client with an error that is not resumable, and then its completion
+AND nothing records an ending for it, so a read back finds it interrupted and resumable.
+The reason: VS Code's agent ends a turn whose runtime goes in this way, and its reader finds a turn with no ending interrupted.
+
 ### A pi chat is forked
 
 WHEN a client forks a pi chat at a turn
