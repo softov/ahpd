@@ -185,6 +185,20 @@ it('lists the default chat of a session a run started as the user\'s', async () 
   expect(opened.snapshot.state.chats.map((one) => one.origin)).toEqual([{ kind: 'user' }]);
 });
 
+/*
+ * The session a run started is announced with the automation that started it,
+ * as VS Code's host carries a session's origin on the summary it adds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L660-L680
+ */
+it('announces the session a run started with the automation that started it', async () => {
+  const { client, peer: p } = await connected();
+  await write(client, DEFINITION);
+  await client.handle({ method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'announced' } });
+  await until(() => p.notes.some((n) => n.method === 'root/sessionAdded'));
+  const added = p.notes.find((n) => n.method === 'root/sessionAdded')?.params as { summary: { origin?: Record<string, unknown> } };
+  expect(added.summary.origin).toMatchObject({ kind: 'automation', automation: ONE });
+});
+
 it('answers a run on the automations channel, which is the one it declares', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);

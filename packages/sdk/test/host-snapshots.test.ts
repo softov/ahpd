@@ -1006,7 +1006,7 @@ describe('the fields a client reads by name', () => {
     expect((after[0]?.params as { origin?: { clientSeq?: number } }).origin?.clientSeq).toBe(2);
   });
 
-  it('marks a worker chat read, which the row lists like any other', async () => {
+  it('marks a worker chat read, which its session lists like any other chat and no row lists', async () => {
     sdk.sessions.push({ sessionId: 'restored', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
     const host = serving('/home/softov', [], {
       agents: [{
@@ -1027,8 +1027,11 @@ describe('the fields a client reads by name', () => {
     await settle(8);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     await flushed();
+    const listed = async () => (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } }) as {
+      snapshot: { state: { chats: { resource: string; status?: number; interactivity?: string }[] } };
+    }).snapshot.state.chats;
 
-    const worker = chatsOf(p, 'ahp-session:/restored').find((one) => one.interactivity === 'read-only');
+    const worker = (await listed()).find((one) => one.interactivity === 'read-only');
     expect(worker?.resource).toContain('toolu_task');
     p.notes.length = 0;
 
@@ -1040,7 +1043,9 @@ describe('the fields a client reads by name', () => {
     // Read is the client's own bit and outlives every reason the turns are
     // read-only: somebody who has read what a subagent did does not want it
     // back as unread when they open the session again.
-    expect(statusOf(p, 'ahp-session:/restored', worker?.resource as string)).toBe(Status.Idle | Status.IsRead);
+    expect((await listed()).find((one) => one.resource === worker?.resource)?.status).toBe(Status.Idle | Status.IsRead);
+    // And no row lists it: a client draws a worker under the call that spawned it.
+    expect(chatsOf(p, 'ahp-session:/restored').some((one) => one.resource === worker?.resource)).toBe(false);
   });
 
   it('reads back a worker\'s call that never finished as cancelled, with no link it cannot carry', async () => {

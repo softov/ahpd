@@ -952,23 +952,28 @@ const chatOn = (row: Bag, chat: string): number | undefined =>
  * A session's row is promoted by its chats as the reference host aggregates
  * them: a chat that needs input makes it need input, else a chat that runs
  * makes it run, else it reads its default chat. A worker is a chat of the
- * session and counts. Each chat's own status is on the row's list of chats.
- * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
+ * session and counts, and the row's list of chats leaves it out, as VS Code's
+ * host projects a session's chats into its summary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3345-L3366
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L682-L700
  */
-it('reads a session as running while its worker runs after the lead turn, and the worker on its own row', async () => {
+it('reads a session as running while its worker runs after the lead turn, and lists the worker on no row', async () => {
   const { ask, uri, lead, row, activity } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await flushed();
   const running = held(row());
   expect(activity(running.status)).toBe(8);
-  expect(activity(chatOn(running, worker))).toBe(8);
+  expect((running.chats as Bag[]).map((one) => one.resource)).toEqual([lead]);
+  const listed = await ask('listSessions', { channel: 'ahp-root://' }) as { items: { resource: string; chats?: { resource: string }[] }[] };
+  expect(listed.items.find((one) => one.resource === uri)?.chats?.map((one) => one.resource)).toEqual([lead]);
+  expect(chatOn(running, worker)).toBeUndefined();
 
   finishWorker();
   await flushed();
   const ended = held(row());
   expect(activity(ended.status)).toBe(1);
-  expect(activity(chatOn(ended, worker))).toBe(1);
+  expect(chatOn(ended, worker)).toBeUndefined();
 });
 
 it('reads a session as waiting while its worker asks, though the lead is running', async () => {

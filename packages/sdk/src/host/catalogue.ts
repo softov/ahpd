@@ -408,37 +408,30 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     )),
   ];
   /**
-   * The workers a running session read back, as they were last read.
+   * One session's chats as its summary carries them, as VS Code's host
+   * projects a session's chats into its summary: every chat but a worker,
+   * which a tool call spawned and a client draws under that call, each with
+   * its title, origin, agent, interactivity, status, the `archived` an AHP 0.9
+   * client reads off an archived chat, and its changes.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L682-L700
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L2077-L2080
    *
-   * `summaryOf` answers in the same tick as the row it builds, and a backend's
-   * record is not read in one, so the row reads the cache the session's own
-   * snapshot fills: both list the same workers, and the row asks the disk
-   * nothing behind the state's back. Until something has looked
-   * for them the row carries the chats this host is holding and no more, and
-   * the next move of it carries them - a session nobody has subscribed to has
-   * workers nobody has asked about.
+   * `SessionChatSummary` is the protocol's compact chat, what a client draws a
+   * session's chats from without subscribing to any of them, and it carries
+   * neither of a `ChatSummary`'s `activity` and `modifiedAt`.
    */
-  const restoredOf = (session: string): RestoredWorker[] =>
-    (ctx.subHistory.get(idOf(session)) ?? [])
-      .map((one) => ({ one, uri: subagentChatUri(session, String(one.toolCallId ?? '')) }))
-      .filter(({ uri }) => !subagents.has(uri));
-  /**
-   * One session's chats, cut to the fields a catalogue row carries.
-   *
-   * `SessionChatSummary` is the protocol's compact chat - what a client draws
-   * a session's chats from without subscribing to any of them - and it
-   * carries neither of a `ChatSummary`'s `activity` and `modifiedAt`, either
-   * of which would make the row change on its own: a worker read back from a
-   * record is stamped with the moment it was built, so a list carrying that
-   * would differ on every read.
-   */
-  const compactChats = (chats: Bag[]): SummaryChat[] => chats.map((chat) => ({
-    resource: String(chat.resource),
-    title: String(chat.title),
-    ...(chat.origin !== undefined ? { origin: chat.origin as Record<string, unknown> } : {}),
-    ...(chat.interactivity !== undefined ? { interactivity: String(chat.interactivity) } : {}),
-    ...(chat.status !== undefined ? { status: Number(chat.status) } : {}),
-  }));
+  const toSessionSummaryChats = (chats: Bag[]): SummaryChat[] => chats
+    .filter((chat) => (chat.origin as Bag | undefined)?.kind !== 'tool')
+    .map((chat) => ({
+      resource: String(chat.resource),
+      title: String(chat.title),
+      ...(chat.origin !== undefined ? { origin: chat.origin as Record<string, unknown> } : {}),
+      ...(chat.provider !== undefined ? { provider: String(chat.provider) } : {}),
+      ...(chat.interactivity !== undefined ? { interactivity: String(chat.interactivity) } : {}),
+      ...(chat.status !== undefined ? { status: Number(chat.status) } : {}),
+      ...((Number(chat.status ?? 0) & Status.IsArchived) !== 0 ? { archived: true } : {}),
+      ...(chat.changes !== undefined ? { changes: chat.changes as ChangesSummary } : {}),
+    }));
 
   /**
    * A session's status as its catalogue row says it: the activity bits its
@@ -584,13 +577,15 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
   /**
    * A running session's catalogue row: the summary fields of the state the
-   * session holds, with the ones only a row carries.
+   * session holds, with the ones only a row carries, as VS Code's host
+   * projects a session's summary for its addition, its changes and a listing
+   * alike.
    *
    * The session's state is what its row mirrors, so a row and the session it
    * opens are one answer. `status`, `activity` and `modifiedAt` are what the
    * session's chats decide, by the protocol's rules for a session made of
    * chats; `createdAt` and `changes` are the row's own.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L660-L680
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L660-L680
    *
    * Undefined for a session this host is not running, which is not an error: a
    * row read from a transcript is in the catalogue and has no `Held`.
@@ -625,8 +620,12 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        * none of them. Both fields are optional in the protocol, and both are
        * read off the session's state.
        */
-      chats: compactChats(Array.isArray(state.chats) ? state.chats as Bag[] : []),
+      chats: toSessionSummaryChats(Array.isArray(state.chats) ? state.chats as Bag[] : []),
       ...(state.defaultChat !== undefined ? { defaultChat: state.defaultChat } : {}),
+      // The automation run that started it, which a client groups the session
+      // under from the row it is added with.
+      ...(origins.get(uri) !== undefined ? { origin: origins.get(uri) } : {}),
+      ...(state.annotations !== undefined ? { annotations: state.annotations } : {}),
       // A row's own field, and a row's alone: `SessionState` does not declare
       // it, so it is added here, to the row.
       ...changesOf(uri),
@@ -1364,46 +1363,24 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   /**
-   * The rows of the sessions this host is running, built now, on each answer.
+   * The rows of the sessions this host is running, built now, on each answer,
+   * each the summary `summaryOf` projects, as VS Code's host lists a live
+   * session through the summary it announces.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1458-L1477
    *
    * A live row changes every second and building one reads a handful of
    * in-memory objects, while a backend row costs a pass over every transcript
    * on the machine. The held catalogue keeps the expensive half and this is
-   * built for each answer, so a session somebody is looking at is current.
+   * built for each answer, so a session somebody is looking at is current. A
+   * session not yet announced is nobody's row, as VS Code's host lists no idle
+   * provisional session.
    */
-  const liveRows = (): Summary[] => {
-    // Sessions this host started are real and are not listed by a backend yet,
-    // and the one being looked at is among them. One not yet announced is
-    // nobody's row, as VS Code's host lists no idle provisional session.
-    const live: Summary[] = [];
-    for (const [uri, held] of sessions) {
-      const lead = leadOf(held);
-      if (!lead || provisionalSessionKeys.has(uri))
-        continue;
-      const started = origins.get(uri);
-      live.unshift({
-        resource: uri,
-        provider: held.agent.provider,
-        title: lead.title(),
-        status: statusOf(uri),
-        // What it is doing, so a list of twenty sessions says which one is
-        // busy and with what.
-        ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
-        createdAt: held.createdAt,
-        modifiedAt: modifiedOf(held),
-        workingDirectories: lead.workingDirectories(),
-        // The chats and the default one, as `summaryOf` carries them: a client
-        // that lists without subscribing reads a row's chats from here, and
-        // the row agrees with the session it names.
-        chats: compactChats(chatCatalogOf(uri, held, restoredOf(uri))),
-        defaultChat: held.defaultChat,
-        ...(started !== undefined ? { origin: started } : {}),
-        ...changesOf(uri),
-        ...ctx.describes(uri),
-      });
-    }
-    return live;
-  };
+  const liveRows = (): Summary[] => [...sessions.keys()]
+    .filter((uri) => !provisionalSessionKeys.has(uri))
+    .flatMap((uri) => {
+      const summary = summaryOf(uri);
+      return summary === undefined ? [] : [summary as unknown as Summary];
+    });
 
   /**
    * Every row a client is handed, as one list: the running sessions now, the

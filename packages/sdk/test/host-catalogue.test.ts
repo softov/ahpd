@@ -1012,6 +1012,25 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(await isRead(client, second)).toBe(true);
   });
 
+  /*
+   * An archived chat on its session's row says so in its status and in the
+   * `archived` an AHP 0.9 client reads, as VS Code's host projects a session's
+   * chats into its summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L682-L700
+   */
+  it('lists an archived chat on its session\'s row with the archived flag an AHP 0.9 client reads', async () => {
+    const { client, uri, chatUri } = await twoChats();
+    await firstMessage(client, chatUri);
+    await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; chats?: { resource: string; status?: number; archived?: boolean }[] }[];
+    };
+    const chats = listed.items.find((one) => one.resource === uri)?.chats ?? [];
+    expect(chats.find((one) => one.resource === second)).toMatchObject({ archived: true });
+    expect((chats.find((one) => one.resource === second)?.status ?? 0) & Status.IsArchived).toBe(Status.IsArchived);
+    expect(chats.find((one) => one.resource === chatUri)).not.toHaveProperty('archived');
+  });
+
   it('changes no read bit when a chat is taken out of the archive', async () => {
     const { client, peer: p } = await twoChats();
     await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
@@ -1316,7 +1335,14 @@ describe("a row lists the session's chats", () => {
     expect(resourcesOf(p, 'ahp-session:/live')).toEqual([rowOf(p, 'ahp-session:/live')?.defaultChat]);
   });
 
-  it('lists a worker chat read back from a backend, and read-only', async () => {
+  /*
+   * A worker read back is a chat of its session, read-only, and no row lists
+   * it, as VS Code's host registers a restored worker in its session's chats
+   * and leaves a worker off a summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16562-L16572
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L682-L700
+   */
+  it('lists a worker chat read back from a backend among its session\'s chats, read-only, and on no row', async () => {
     sdk.sessions.push({ sessionId: 'restored', summary: 'Restored', lastModified: 2, cwd: '/home/softov' });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     /*
@@ -1339,19 +1365,23 @@ describe("a row lists the session's chats", () => {
     });
     await settle(8);
     // Subscribing again is what reads the backend's record of the workers it
-    // ran, which is where the row's copy of them comes from.
+    // ran, which is where the session's list of them comes from.
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } });
     await settle();
-
-    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
-      items: { resource: string; chats?: { resource: string; title: string; interactivity?: string }[] }[];
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } }) as {
+      snapshot: { state: { chats: { resource: string; title: string; interactivity?: string }[] } };
     };
-    const row = listed.items.find((one) => one.resource === 'ahp-session:/restored');
-    const worker = row?.chats?.find((one) => one.interactivity === 'read-only');
+
+    const worker = opened.snapshot.state.chats.find((one) => one.interactivity === 'read-only');
     // A worker is a chat of its session even though no `Session` holds it, and
     // a client that never subscribes to it still has to see that it is there.
     expect(worker?.title).toBe('Explore');
     expect(worker?.resource).toContain('toolu_task');
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; chats?: { resource: string }[] }[];
+    };
+    const row = listed.items.find((one) => one.resource === 'ahp-session:/restored');
+    expect(row?.chats?.map((one) => one.resource)).toEqual([chatUriFor('ahp-session:/restored')]);
   });
 });
 
