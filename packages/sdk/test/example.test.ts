@@ -84,8 +84,9 @@ it('offers the backend\'s own settings, and not another\'s', async () => {
   }) as { schema: { properties: Record<string, unknown> }; values: Record<string, string> };
   // Claude's permission mode and effort are Claude's. A host that offered
   // them here would be offering controls this backend has never heard of.
-  // The sensitive edit locations are this host's, on every session.
-  expect(Object.keys(config.schema.properties)).toEqual(['sensitiveEditLocations', 'voice']);
+  // The permission rules and the sensitive edit locations are this host's, on
+  // every session.
+  expect(Object.keys(config.schema.properties)).toEqual(['permissions', 'sensitiveEditLocations', 'voice']);
   expect(config.values).toEqual({ voice: 'plain' });
 });
 
