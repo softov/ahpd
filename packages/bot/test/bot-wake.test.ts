@@ -329,6 +329,8 @@ it('starts a back session on the first message, and says the second in it', asyn
   expect(one.starts).toEqual([{
     owner: PERSON, provider: 'base', workingDirectory: WORKSPACE, trusted: true, userSettings: false,
     title: 'Backer', tools: ['post_message'],
+    // The main turn it was started for, as VS Code records a session's creator.
+    config: { _meta: { 'agentHost/createdBySession': { session: CHAT, chat: MAIN, turnId: 't1' } } },
   }]);
   expect(one.sent).toMatchObject([{
     channel: 'ahp-chat:/1',
