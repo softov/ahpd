@@ -58,6 +58,7 @@ function fakePi() {
     leaf: () => 'entry-1',
     promptAfter: () => undefined,
     levels: () => ['off'],
+    startsOn: () => undefined,
     modelSelection: () => undefined,
     supportsVision: () => false,
     setModel: async () => true,

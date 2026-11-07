@@ -134,6 +134,7 @@ export function fakePi() {
     },
     models: async () => runtime,
     levels: (model) => (model.provider === 'anthropic' ? ['off', 'medium', 'high'] : ['off']),
+    startsOn: (model) => (model.provider === 'anthropic' ? 'medium' : undefined),
     modelSelection: () => ({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'off' } }),
     supportsVision: () => takes,
     /*

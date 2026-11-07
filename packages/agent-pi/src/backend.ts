@@ -75,6 +75,11 @@ export interface PiBackend {
   promptAfter(entryId: string | undefined): string | undefined;
   /** The thinking levels a model offers, which is pi's own rule. */
   levels(model: PiModel): string[];
+  /**
+   * The level pi starts a session on for a model, as its settings name it: the
+   * model's own `modelThinkingLevels` entry, else `defaultThinkingLevel`.
+   */
+  startsOn(model: PiModel): string | undefined;
   /** The protocol's `ModelSelection` a new message would run on right now. */
   modelSelection(): { id: string; config: Record<string, unknown> } | undefined;
   /**
@@ -345,14 +350,16 @@ export function resumeOrCreate(sdk: Pi, options: BackendOptions): SessionManager
  * The default reads pi's agent directory; a caller may pass its own, as a
  * session may pass its own `open`.
  */
-export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[] }[]>;
+export type RuntimeModels = () => Promise<{ model: PiModel; levels: string[]; startsOn?: string }[]>;
 
 /**
  * The models pi's runtime has for its agent directory.
  *
  * Built the way pi builds a session's runtime, from `auth.json` and
  * `models.json` in the agent directory, so the list is the one a session
- * opened anywhere would report, less what a project's own extensions add.
+ * opened anywhere would report, less what a project's own extensions add; the
+ * level pi starts each on from the agent directory's own settings, no
+ * project's.
  */
 export const runtimeModels: RuntimeModels = async () => {
   const sdk = await loadPi();
@@ -361,11 +368,16 @@ export const runtimeModels: RuntimeModels = async () => {
     authPath: join(agentDir, 'auth.json'),
     modelsPath: join(agentDir, 'models.json'),
   });
+  const settings = sdk.SettingsManager.create(agentDir, agentDir, { projectTrusted: false });
   const available = await runtime.getAvailable();
-  return (available as unknown as PiModel[]).map((model) => ({
-    model,
-    levels: sdk.getSupportedThinkingLevels(model as never) as string[],
-  }));
+  return (available as unknown as PiModel[]).map((model) => {
+    const startsOn = settings.getModelThinkingLevel(model.provider, model.id) ?? settings.getDefaultThinkingLevel();
+    return {
+      model,
+      levels: sdk.getSupportedThinkingLevels(model as never) as string[],
+      ...(startsOn === undefined ? {} : { startsOn }),
+    };
+  });
 };
 
 /**
@@ -454,6 +466,7 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
      * the current model's would offer a control the other rows do not have.
      */
     levels: (model) => sdk.getSupportedThinkingLevels(model as never) as string[],
+    startsOn: (model) => session.settingsManager.getModelThinkingLevel(model.provider, model.id) ?? session.settingsManager.getDefaultThinkingLevel(),
     // The model pi is on, with the level it is on in the config the model's
     // schema puts it in, wherever pi moved it.
     modelSelection: () => {

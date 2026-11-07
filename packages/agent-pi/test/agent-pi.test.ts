@@ -155,11 +155,33 @@ it('resolves a qualified id, and a bare one only when it is unambiguous', () => 
   expect(modelFor(models, 'gpt-5', { provider: 'azure', id: 'gpt-5' })?.provider).toBe('azure');
 });
 
-it('offers the thinking form only for a model with more than one level', () => {
-  const many = listed({ provider: 'anthropic', id: 'claude-opus-5' }, ['off', 'high']);
-  expect(many.configSchema).toBeDefined();
-  // A form with one answer is a control nobody can use.
-  expect(listed({ provider: 'openai', id: 'gpt-5' }, ['off']).configSchema).toBeUndefined();
+/*
+ * A model's levels in the property VS Code's agent host draws, over pi's own
+ * levels in pi's words: each level's label and description from VS Code's
+ * shared helpers, `off` taking the helpers' label and no description, a
+ * one-level picker as VS Code's hosts draw one, and the level pi starts on
+ * its default where offered, else VS Code's resolution.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L4536-L4553
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/reasoningEffort.ts#L46-L111
+ */
+it('offers a model\'s thinking levels in VS Code\'s property, a single level included', () => {
+  const levels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
+  const thinking = (offered: ReturnType<typeof listed>): unknown => bag(bag(offered.configSchema).properties)[THINKING_KEY];
+  expect(thinking(listed({ provider: 'anthropic', id: 'claude-opus-5' }, levels, 'low'))).toEqual({
+    type: 'string',
+    title: 'Effort Level',
+    description: 'Controls how much reasoning effort the model uses.',
+    default: 'low',
+    enum: levels,
+    enumLabels: ['Off', 'Minimal', 'Low', 'Medium', 'High', 'Extra High'],
+    enumDescriptions: [
+      '', 'Minimal reasoning for fastest responses', 'Faster responses with less reasoning', 'Balanced reasoning and speed',
+      'Greater reasoning depth but slower', 'Highest reasoning depth but slowest',
+    ],
+  });
+  // With no level pi starts on, VS Code's resolution: high for a Claude model.
+  expect(thinking(listed({ provider: 'anthropic', id: 'claude-opus-5' }, levels))).toMatchObject({ default: 'high' });
+  expect(thinking(listed({ provider: 'openai', id: 'gpt-5' }, ['off']))).toMatchObject({ enum: ['off'], default: 'off' });
 });
 
 it('says a model context window and output limit when pi knows them', () => {
@@ -185,11 +207,12 @@ it('lists a session\'s models with their limits, their vision and their thinking
   const models = session.models();
   expect(models.length).toBeGreaterThan(0);
   expect(models.flatMap((one) => Object.keys(one)).filter((key) => !fields.has(key))).toEqual([]);
-  // The fake's Opus has three levels and its limits; its GPT has one level.
+  // The fake's Opus has three levels and its limits, and pi starts it on
+  // medium; its GPT has one level.
   const opus = models.find((one) => one.id === 'anthropic/claude-opus-5');
   expect(opus).toMatchObject({ maxContextWindow: 200000, maxOutputTokens: 64000 });
-  expect(bag(bag(opus?.configSchema).properties)[THINKING_KEY]).toMatchObject({ enum: ['off', 'medium', 'high'] });
-  expect(models.find((one) => one.id === 'openai/gpt-5')?.configSchema).toBeUndefined();
+  expect(bag(bag(opus?.configSchema).properties)[THINKING_KEY]).toMatchObject({ enum: ['off', 'medium', 'high'], default: 'medium' });
+  expect(bag(bag(models.find((one) => one.id === 'openai/gpt-5')?.configSchema).properties)[THINKING_KEY]).toMatchObject({ enum: ['off'] });
   expect(listed({ provider: 'anthropic', id: 'claude-opus-5', input: ['text', 'image'] }, ['off']).supportsVision).toBe(true);
   expect(listed({ provider: 'openai', id: 'gpt-5', input: ['text'] }, ['off']).supportsVision).toBe(false);
 });

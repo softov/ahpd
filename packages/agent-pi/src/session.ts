@@ -1015,7 +1015,7 @@ export function piSession(
     // The model list is held for `Session.models()`, which the host reads for
     // a client; pi only knows it once its runtime exists.
     const available = await backend.models();
-    models = available.map((model) => listed(model, backend.levels(model)));
+    models = available.map((model) => listed(model, backend.levels(model), backend.startsOn(model)));
     if (first) {
       /*
        * The model the configuration names, when nobody has chosen one.

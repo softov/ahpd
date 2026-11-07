@@ -126,7 +126,7 @@ export function piAgent(
      */
     probe: async (): Promise<Offered> => {
       let found: Offered['models'] = [];
-      try { found = (await models()).map(({ model, levels }) => listed(model, levels)); }
+      try { found = (await models()).map(({ model, levels, startsOn }) => listed(model, levels, startsOn)); }
       catch { found = []; }
       return { models: found, customizations: [], commands: [] };
     },

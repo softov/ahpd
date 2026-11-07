@@ -232,8 +232,9 @@ This is so that a turn does not go to a provider that nobody chose.
 
 ### pi thinking and approvals
 
-WHEN a pi model has more than one thinking level
-THEN its `configSchema` offers them under `thinkingLevel`.
+WHEN pi gives a model a thinking level
+THEN its `configSchema` offers pi's levels under `thinkingLevel` in VS Code's property, a single level included
+AND its default is the level pi starts a session on for that model, where offered.
 WHEN a pi session shows its approvals
 THEN it offers the pi `permissionMode` property.
 
