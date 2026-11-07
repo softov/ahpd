@@ -11,10 +11,11 @@ import type { ComputerRuntime } from './runtime.js';
  * The parts a machine is made of, and the one file that says what they are.
  *
  * A part is one agent CLI, or ahpd itself, at an exact version, built into an
- * image of its own and mounted or copied at `/opt/ahpd/<id>`. Nothing here fetches or builds:
- * this is the file, what it is allowed to say, the Dockerfiles that build them
- * and the tags they answer, so a version move is a pull request and whether an
- * image is already there is one `docker image inspect`.
+ * image of its own by the release workflow, pulled by a host that needs it,
+ * and mounted or copied at `/opt/ahpd/<id>`. This is the file, what it is
+ * allowed to say, the Dockerfiles that build them and the tags they answer,
+ * so a version move is a pull request and whether an image is already there
+ * is one `docker image inspect`.
  */
 
 /** One part, as the versions file names it. */
@@ -50,6 +51,25 @@ export interface Part {
 
 /** Where the file is, in a checkout and in an installed package alike. */
 export const versionsPath = (): string => fileURLToPath(new URL('../images/versions.json', import.meta.url));
+
+/**
+ * Where the release workflow publishes the parts and a host pulls them from:
+ * the GitHub container registry namespace of the repository this package
+ * names, `ghcr.io/<owner>`, lowercase as the registry's names are.
+ * https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry
+ */
+export const registryOf = (): string => {
+  const manifest = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as {
+    repository?: string | { url?: string };
+  };
+  const said = typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url ?? '';
+  const url = URL.canParse(said) ? new URL(said) : undefined;
+  const owner = url?.hostname === 'github.com' ? url.pathname.split('/')[1] ?? '' : '';
+  if (owner === '') {
+    throw new Error(`@ahpd/computer names ${said === '' ? 'no repository' : `the repository ${said}`}, and its parts are pulled from the GitHub container registry of a GitHub repository`);
+  }
+  return `ghcr.io/${owner.toLowerCase()}`;
+};
 
 /** The kinds an entry may say, so a typo is a refusal rather than a part nothing can build. */
 const KINDS = ['npm', 'archive', 'ahpd', 'node'] as const;
@@ -227,16 +247,17 @@ export const pinnedOf = (part: Part): string =>
 const fileHashOf = (dockerfile: string): string => createHash('sha256').update(dockerfile).digest('hex').slice(0, 12);
 
 /**
- * The image a part is built as, and the one place that is spelled.
+ * The image a part is built as, and the one place that is spelled: the tag the
+ * release workflow pushes it at and a host pulls it at.
  *
- * The tag is the version, so whether a part is built is one `docker image
+ * The tag is the version, so whether a part is here is one `docker image
  * inspect`. The `ahpd` part carries a hash of its own source beside the
  * version, because a checkout that changed its code has not changed its
  * version and would otherwise reuse the image built from the code before it -
  * the thing that hash is there for. And the Dockerfile's own text is in the tag
  * with them, because an upgrade that changes how an image is written changes
  * what is in it while the versions stand still, and the tag is the whole of
- * what makes `ensurePart` reuse the image the older code built.
+ * what makes `ensurePart` reuse the image the older code made.
  */
 export const tagOf = (part: Part, sourceHash?: string, dockerfile?: string): string => {
   const built = dockerfile === undefined ? '' : `-${fileHashOf(dockerfile)}`;
@@ -311,9 +332,9 @@ export type Tarball = { name: string; bytes: Buffer };
  */
 export type ArchiveEntry = Tarball & { uid?: number; gid?: number; directory?: boolean };
 
-/** What `ensurePart` needs to answer, and builds with. */
+/** What `ensurePart` needs to answer, and loads with. */
 export interface EnsureOptions {
-  /** The runtime the image is built on, which is where the build happens. */
+  /** The runtime the image is pulled to or built on, which is the Docker that mounts it. */
   runtime: ComputerRuntime;
   /** The parts to read, which is the shipped file unless a caller says otherwise. */
   parts?: Part[];
@@ -445,8 +466,9 @@ const tarFlag = (url: string): string => {
 /**
  * The tag of the `node` part, which every part installed by npm copies in.
  *
- * It is the tag `ensurePart` builds the `node` part at, Dockerfile hash and all,
- * because a `COPY --from` naming anything else is a stage Docker cannot resolve.
+ * It is the tag the `node` part is at, Dockerfile hash and all, because a
+ * `COPY --from` naming anything else is a stage Docker cannot resolve; the
+ * release workflow builds against the registry's image of that tag.
  */
 const nodeTag = (): string => {
   const node = readParts().find((one) => one.kind === 'node');
@@ -818,13 +840,17 @@ const LOAD_FAILURE_HELD_MS = 30_000;
 const failedLoads = new WeakMap<ComputerRuntime, Map<string, { error: Error; until: number }>>();
 
 /**
- * One part's tag, its image built the first time anything asks for it.
+ * One part's tag, its image pulled the first time anything asks for it: the
+ * image the release workflow built from the same Dockerfile and pushed to
+ * `registryOf()` at the same tag, as VS Code's build produces each agent SDK
+ * once per release and a host downloads it at first use. A checkout's own
+ * ahpd part, which no release holds, is built here.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5
  *
- * A part that names a `requires` is not built until those are, because its
- * Dockerfile copies the `node` part's image in by tag and a build without it
- * fails on a stage Docker cannot resolve. A part whose load failed is refused
- * with that failure until `LOAD_FAILURE_HELD_MS` has passed, and loaded again
- * after it.
+ * A part's `requires` are here first: a part installed by npm runs on the
+ * `node` part's Node, and a checkout's ahpd part is built on it. A part whose
+ * load failed is refused with that failure until `LOAD_FAILURE_HELD_MS` has
+ * passed, and loaded again after it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395
  */
 export const ensurePart = async (id: string, options: EnsureOptions): Promise<string> => {
@@ -847,8 +873,8 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
     const tag = tagOf(part, source?.hash, file);
     await once(tag, async () => {
       if (await options.runtime.hasImage(tag)) return;
-      const files = source?.from === 'workspace' ? [...source.tarballs, ...source.plugins] : [];
-      await options.runtime.buildImage(tag, contextOf(file, files));
+      if (source?.from === 'workspace') await options.runtime.buildImage(tag, contextOf(file, [...source.tarballs, ...source.plugins]));
+      else await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
     });
     failures.delete(id);
     return tag;
@@ -882,7 +908,7 @@ export interface MadePart {
  * `devcontainer.metadata`, and VS Code reads a container's labels as JSON.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L967-L976
  *
- * Only the parts it was made with: a part whose build failed is not on it, and
+ * Only the parts it was made with: a part whose load failed is not on it, and
  * that absence is what refuses a session needing that part. The joined image
  * carries the same label with ids alone, so a machine made from it reads the
  * same way.
@@ -891,7 +917,7 @@ export const MACHINE_PARTS = 'ahpd.parts';
 
 /**
  * The label value for a machine made with these parts, and with `host` mounted
- * from this host in place of parts that could not be built, each of those at
+ * from this host in place of parts that could not be loaded, each of those at
  * the version `host`.
  */
 export const partsLabel = (parts: readonly MadePart[], host: readonly string[] = []): string =>
@@ -974,11 +1000,11 @@ export const withRequires = (ids: readonly string[], parts?: Part[]): string[] =
 };
 
 /**
- * Every part a machine asks for, built where it is not already, with what each
+ * Every part a machine asks for, loaded where it is not already, with what each
  * requires.
  *
- * A part whose build fails, or whose requirement's build fails, is answered
- * among `failed` with the build's own reason rather than thrown: the machine is
+ * A part whose load fails, or whose requirement's load fails, is answered
+ * among `failed` with the load's own reason rather than thrown: the machine is
  * made with the rest, and only a session that needs the missing part is
  * refused.
  */
@@ -990,7 +1016,7 @@ export const ensureParts = async (
   const failed: { id: string; reason: string }[] = [];
   let named: Part[] = [];
   try { named = options.parts ?? readParts(); }
-  catch { /* each build below says why the file could not be read */ }
+  catch { /* each load below says why the file could not be read */ }
   for (const id of withRequires(ids, options.parts)) {
     try {
       const tag = await ensurePart(id, options);
@@ -1020,8 +1046,8 @@ export const refusedWithout = (spec: { sessionParts?: string[] }, failed: readon
 export const JOINED_PACKAGES = 'ca-certificates git ripgrep';
 
 /**
- * The Dockerfile of the one image ahpd publishes: a machine with every part in
- * it, at the path each is mounted at.
+ * The Dockerfile of the joined image: a machine with every part in it, at the
+ * path each is mounted at, copied from the part images this host has.
  *
  * Built only for a runtime that cannot mount image parts, which is why a profile
  * naming no image stays on `debian:bookworm-slim` with its parts mounted
@@ -1049,14 +1075,14 @@ export interface Joined {
   tag: string;
   /** Every part whose image was here, at the path it is mounted at. */
   parts: Part[];
-  /** The parts whose image could not be built, in the order the file names them. */
+  /** The parts whose image could not be loaded, in the order the file names them. */
   missing: string[];
 }
 
 /**
- * The joined image, every part in it and every part built on the way.
+ * The joined image, every part in it and every part loaded on the way.
  *
- * A part that will not build does not stop the rest: the image is built without
+ * A part that will not load does not stop the rest: the image is built without
  * it and the answer says which is missing, so a machine whose agent needs that
  * one is refused by name and every other machine is made. The alternative -
  * refusing the joined image over one CLI - would take thirteen working agents

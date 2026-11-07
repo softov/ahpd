@@ -611,11 +611,12 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
     capabilities: () => CAPABILITIES,
 
     /*
-     * Images are this host's own, and a box is not: a part is built on a
-     * runtime that makes machines, so neither verb has anything to do here.
+     * Images are this host's own, and a box is not: a part is pulled or built
+     * on a runtime that makes machines, so no image verb has anything to do here.
      */
     hasImage: async () => false,
     buildImage: async () => { throw new Error('an image is not built for a box this host reaches over ssh'); },
+    pullImage: async () => { throw new Error('an image is not pulled for a box this host reaches over ssh'); },
   };
 };
 

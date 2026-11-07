@@ -109,10 +109,12 @@ const fake = () => {
       actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
       resources: ['status', 'capabilities', 'stats', 'state'],
     }),
-    // No image is here and nothing builds one: a machine is made from an image
-    // this runtime already has, and which one is the caller's own business.
+    // Every image is here and nothing builds or pulls one: a machine is made
+    // from an image this runtime already has, and which one is the caller's
+    // own business.
     hasImage: async () => true,
     buildImage: async (tag) => { calls.push(`build ${tag}`); },
+    pullImage: async (from, tag) => { calls.push(`pull ${from} ${tag}`); },
   };
   return { runtime, held, calls, specs };
 };

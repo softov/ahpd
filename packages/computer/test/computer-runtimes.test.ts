@@ -53,6 +53,7 @@ const faker = (name: string, over: Partial<ComputerRuntime> = {}): ComputerRunti
   capabilities: () => capabilities(name, ['create', 'list', 'exec']),
   hasImage: async () => false,
   buildImage: async () => {},
+  pullImage: async () => {},
   ...over,
 });
 

@@ -209,3 +209,54 @@ jobs:
             fi
             exit "$code"
           done
+
+  # The part images every host pulls, built once here from the Dockerfiles this
+  # tag writes, for both platforms a machine runs on, and pushed to the GitHub
+  # container registry the computer package names, as VS Code's build produces
+  # each agent SDK once per release for every host to download:
+  # https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5
+  #
+  # A tag already there is left as it is, so a re-run pushes only what is
+  # missing. A part's package pushed to a personal account is private the first
+  # time, GitHub's default for a new package there, and a host cannot pull it
+  # until it is made public once on its package page:
+  # https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility
+  parts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Both platforms from one runner, the arm64 build under emulation.
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: ${{ inputs.dry_run != true }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The plugin's own source, read through the resolver and the condition
+      # that point each workspace package at its source, so nothing is built
+      # first.
+      - name: Build the parts, and push them
+        if: ${{ inputs.dry_run != true }}
+        run: node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs --push
+
+      - name: Build the parts, and push nothing
+        if: ${{ inputs.dry_run == true }}
+        run: node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs

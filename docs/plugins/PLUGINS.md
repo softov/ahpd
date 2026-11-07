@@ -322,7 +322,7 @@ A need is delivered six ways, and the field that names the way is the one that c
 | `{ file, target, readOnly? }` | a host file | a bind mount at `target` |
 | `{ name, default? }` | an environment variable | `-e <name>=<value>` |
 | `{ source, target }` | a host path | a `docker cp` after the create |
-| `{ part, fallback? }` | one agent CLI, or ahpd itself, built by the host at the version its versions file pins | the part's own image, read-only at `/opt/ahpd/<part>` with the parts it requires beside it |
+| `{ part, fallback? }` | one agent CLI, or ahpd itself, built at release and pulled by the host at the version its versions file pins | the part's own image, read-only at `/opt/ahpd/<part>` with the parts it requires beside it |
 | `{ state, seed? }` | a directory the agent keeps its own configuration in | a named volume, seeded from the host files the need lists and never from a login file |
 
 Every one of them takes `default`, `required` and `description`.

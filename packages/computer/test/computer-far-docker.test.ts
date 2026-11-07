@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
+import { registryOf } from '../src/parts.js';
 import { dockerAddressOf } from '../src/plugin.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
@@ -177,16 +178,17 @@ it('makes a profile\'s machine on its box\'s Docker, lists it by that runner and
   expect(usage.entries[0]).toMatchObject({ computer: 'docker-far.box', owner: 'user:ana' });
 });
 
-it('builds a far profile\'s parts on its box\'s Docker, which mounts them, and none on this host\'s', async () => {
+it('pulls a far profile\'s parts on its box\'s Docker, which mounts them, and none on this host\'s', async () => {
   const at = files();
   const { problems, provider } = await load(at, { far: { server: 'dev02', parts: ['node'] } });
   expect(problems).toEqual([]);
 
   await provider.write('computer://box', said(JSON.stringify({ image: 'node:22', profile: 'far' })), 'user:ana');
-  const far = held(farFile(at.local)) as Held & { builds?: { tag: string }[] };
-  expect(far.builds?.map((one) => one.tag.split(':')[0])).toEqual(['ahpd-part/node']);
+  const far = held(farFile(at.local)) as Held & { pulls?: string[] };
+  expect((far.pulls ?? []).filter((one) => one.includes('/ahpd-part/')).map((one) => one.split(':')[0]))
+    .toEqual([`${registryOf()}/ahpd-part/node`]);
   expect(far.machines.map((one) => one.name)).toEqual(['box']);
-  expect((held(at.local) as Held & { builds?: unknown[] }).builds ?? []).toEqual([]);
+  expect(((held(at.local) as Held & { pulls?: string[] }).pulls ?? []).filter((one) => one.includes('/ahpd-part/'))).toEqual([]);
 });
 
 it('refuses to make a machine on a box with no Docker, with the fix lines', async () => {

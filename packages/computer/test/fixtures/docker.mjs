@@ -143,6 +143,25 @@ if (verb === 'image') {
   process.exit(1);
 }
 
+/**
+ * Every entry of a piped build context, by name, in the order it holds them.
+ *
+ * A tar is a ustar header: `ustar` at 257. Anything else is the Dockerfile on
+ * its own, which is what a part with no files beside it is built from.
+ */
+const contextEntries = (piped) => {
+  if (!(piped.length > 262 && piped.subarray(257, 262).toString('latin1') === 'ustar')) return [{ name: 'Dockerfile', bytes: piped }];
+  const found = [];
+  for (let at = 0; at + 512 <= piped.length;) {
+    const header = piped.subarray(at, at + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const size = Number.parseInt(header.subarray(124, 136).toString('latin1').replace(/\0.*$/s, '').trim(), 8);
+    found.push({ name: header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, ''), bytes: piped.subarray(at + 512, at + 512 + size) });
+    at += 512 + ((size + 511) & ~511);
+  }
+  return found;
+};
+
 if (verb === 'build') {
   /*
    * A build whose context is piped, which is the whole build context: a tar
@@ -152,24 +171,9 @@ if (verb === 'build') {
    * assert on the text without a real build - `pnpm test` runs nowhere near a
    * daemon, and the point of the provider is the Dockerfile, not Docker.
    */
-  const piped = await readStdin();
   const named = args.indexOf('-t');
   const tag = named === -1 ? undefined : args[named + 1];
-  // A tar is a ustar header: `ustar` at 257. Anything else is the Dockerfile on
-  // its own, which is what a part with no files beside it is built from.
-  const isTar = piped.length > 262 && piped.subarray(257, 262).toString('latin1') === 'ustar';
-  // Every entry of a tar, by name, in the order the archive holds them.
-  const entries = isTar ? (() => {
-    const found = [];
-    for (let at = 0; at + 512 <= piped.length;) {
-      const header = piped.subarray(at, at + 512);
-      if (header.every((byte) => byte === 0)) break;
-      const size = Number.parseInt(header.subarray(124, 136).toString('latin1').replace(/\0.*$/s, '').trim(), 8);
-      found.push({ name: header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, ''), bytes: piped.subarray(at + 512, at + 512 + size) });
-      at += 512 + ((size + 511) & ~511);
-    }
-    return found;
-  })() : [{ name: 'Dockerfile', bytes: piped }];
+  const entries = contextEntries(await readStdin());
   const dockerfile = entries.find((one) => one.name === 'Dockerfile');
   if (dockerfile === undefined) {
     keep();
@@ -197,18 +201,63 @@ if (verb === 'build') {
 }
 
 /*
+ * `docker buildx`, as the release workflow builds with it: `imagetools
+ * inspect` answers for an image the registry holds, which `published` lists,
+ * and `build` is recorded in `buildx` with its platforms, tags, build
+ * contexts, labels, whether it pushed and the Dockerfile it was piped; a
+ * pushed tag is then published.
+ */
+if (verb === 'buildx') {
+  if (args[1] === 'imagetools' && args[2] === 'inspect') {
+    keep();
+    process.exit((held.published ?? []).includes(args[3]) ? 0 : 1);
+  }
+  const flag = (name) => args.flatMap((one, at) => (args[at - 1] === name ? [one] : []));
+  const dockerfile = contextEntries(await readStdin()).find((one) => one.name === 'Dockerfile');
+  held.buildx ??= [];
+  held.buildx.push({
+    platforms: flag('--platform'),
+    tags: flag('--tag'),
+    contexts: flag('--build-context'),
+    labels: flag('--label'),
+    push: args.includes('--push'),
+    dockerfile: dockerfile?.bytes.toString('utf8'),
+  });
+  if (args.includes('--push')) held.published = [...held.published ?? [], ...flag('--tag')];
+  keep();
+  process.exit(0);
+}
+
+/*
  * `docker pull`, which puts an image here unless `failPull` says the registry
- * has none.
+ * has none: `true` for every image, or the references it has none of. Each
+ * pull is recorded in `pulls`, the failed ones too, as a build is in `builds`.
  */
 if (verb === 'pull') {
   const tag = args[args.length - 1];
-  if (held.failPull === true) {
+  held.pulls ??= [];
+  held.pulls.push(tag);
+  if (held.failPull === true || (Array.isArray(held.failPull) && held.failPull.includes(tag))) {
     keep();
     process.stderr.write(`Error response from daemon: pull access denied for ${tag}, repository does not exist or may require 'docker login'\n`);
     process.exit(1);
   }
   held.images ??= [];
   if (!held.images.includes(tag)) held.images.push(tag);
+  keep();
+  process.exit(0);
+}
+
+/* `docker tag <image> <tag>`, which names an image that is here by another tag. */
+if (verb === 'tag') {
+  const [from, to] = args.slice(1);
+  held.images ??= [];
+  if (!held.images.includes(from)) {
+    keep();
+    process.stderr.write(`Error response from daemon: No such image: ${from}\n`);
+    process.exit(1);
+  }
+  if (!held.images.includes(to)) held.images.push(to);
   keep();
   process.exit(0);
 }

@@ -746,10 +746,11 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
 
     /*
      * A VM is made from its template, and an image is Docker's: a part is
-     * built on a runtime that makes containers.
+     * pulled or built on a runtime that makes containers.
      */
     hasImage: async () => false,
     buildImage: async () => { throw new Error(`an image is not built by ${maker.kind}`); },
+    pullImage: async () => { throw new Error(`an image is not pulled by ${maker.kind}`); },
   };
 };
 

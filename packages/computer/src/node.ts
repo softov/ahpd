@@ -177,10 +177,11 @@ export const nodeRuntime = (nodes: NodeRegistry): ComputerRuntime => {
     capabilities: () => CAPABILITIES,
 
     /*
-     * Images are this host's own, and a node is not: a part is built on a
-     * runtime that makes machines, so neither verb has anything to do here.
+     * Images are this host's own, and a node is not: a part is pulled or built
+     * on a runtime that makes machines, so no image verb has anything to do here.
      */
     hasImage: async () => false,
     buildImage: async () => { throw new Error('an image is not built for a node that joined this host'); },
+    pullImage: async () => { throw new Error('an image is not pulled for a node that joined this host'); },
   };
 };

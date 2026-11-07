@@ -1144,8 +1144,8 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     }));
   /*
    * The parts this machine asks for: the profile's own, then each agent's part
-   * needs, then what each of those requires. Built by whoever makes the
-   * machine, which may leave out one whose build fails.
+   * needs, then what each of those requires. Loaded by whoever makes the
+   * machine, which may leave out one whose load fails.
    */
   const parts = withRequires([
     ...(profile.parts ?? []),

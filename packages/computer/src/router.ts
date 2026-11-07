@@ -279,9 +279,10 @@ export const routed = (
     // made on that runtime.
     capabilities: () => maker().capabilities(),
 
-    // Images are this host's own either way: a part is built here and mounted
-    // into a machine, so both verbs are the default runtime's.
+    // Images are this host's own either way: a part is pulled or built here and
+    // mounted into a machine, so the image verbs are the default runtime's.
     hasImage: (tag) => maker().hasImage(tag),
     buildImage: (tag, context) => maker().buildImage(tag, context),
+    pullImage: (from, tag) => maker().pullImage(from, tag),
   };
 };

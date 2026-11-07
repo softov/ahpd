@@ -1157,18 +1157,18 @@ export const apply: Plugin['apply'] = (host, options) => {
       const proxmox = key !== undefined && proxmoxProfiles[key] !== undefined;
       if (!proxmox && server !== undefined && gate !== undefined) await gate.requireOn(server, vm ? ['kvm', 'libvirt', 'libvirtAccess'] : ['docker', 'dockerAccess']);
       /*
-       * The parts the machine asks for, built before it is made. One that will
-       * not build is left out with a line naming it and the build's reason,
+       * The parts the machine asks for, loaded before it is made. One that will
+       * not load is left out with a line naming it and the load's reason,
        * and the machine is made with the rest: only a session needing the part
        * is refused, by the label that does not name it. A machine made for one
        * session whose own agent needs the part is not made at all, as
        * `refusedWithout` decides.
        *
-       * Built on the Docker that mounts them: a machine on a box's Docker
+       * Loaded on the Docker that mounts them: a machine on a box's Docker
        * mounts a part by its image there, which this host's Docker cannot give.
        */
       let spec = asked;
-      // A VM's parts are what its template carries, and none is built for one.
+      // A VM's parts are what its template carries, and none is loaded for one.
       if (!vm && asked.partsAsked !== undefined && asked.partsAsked.length > 0) {
         const far = key === undefined ? undefined : farValues[key];
         const builder = far === undefined ? dockered : computerRouter.runtimes[far] ?? dockered;
@@ -1186,10 +1186,10 @@ export const apply: Plugin['apply'] = (host, options) => {
         const refused = refusedWithout(asked, failed.map((one) => one.id));
         if (refused.length > 0) {
           const said = failed.filter((one) => refused.includes(one.id)).map((one) => `${one.id}: ${one.reason}`).join('; ');
-          throw new Error(`${asked.name} is not made, because ${refused.length === 1 ? 'the part' : 'the parts'} ${refused.join(', ')} this session's agent needs could not be built (${said})`);
+          throw new Error(`${asked.name} is not made, because ${refused.length === 1 ? 'the part' : 'the parts'} ${refused.join(', ')} this session's agent needs could not be loaded (${said})`);
         }
         for (const one of failed) noted(`${asked.name} is made without the part ${one.id}: ${one.reason}`);
-        for (const one of standIns) noted(`${asked.name} is made with ${one.source} mounted at ${one.target} in place of the part ${one.part}, which could not be built: ${one.reason}`);
+        for (const one of standIns) noted(`${asked.name} is made with ${one.source} mounted at ${one.target} in place of the part ${one.part}, which could not be loaded: ${one.reason}`);
         spec = {
           ...asked,
           parts: built.made,

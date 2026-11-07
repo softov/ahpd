@@ -385,16 +385,16 @@ export interface MachineSpec {
    */
   parts?: MadePart[];
   /**
-   * The host mount each asked part is replaced by when it cannot be built, by
+   * The host mount each asked part is replaced by when it cannot be loaded, by
    * part id, as the agent that needs the part declared it.
    *
    * What a manifest answers; the plugin adds a fallback's mount to `mounts`
-   * and its part to `hostParts` only for a part whose build failed.
+   * and its part to `hostParts` only for a part whose load failed.
    */
   partFallbacks?: PartFallback[];
   /**
    * The parts this machine has from this host rather than from their image,
-   * each a fallback mount made in place of a part that could not be built.
+   * each a fallback mount made in place of a part that could not be loaded.
    * The `ahpd.parts` label names each at the version `host`.
    */
   hostParts?: string[];
@@ -716,6 +716,8 @@ export interface ComputerRuntime {
   hasImage(tag: string): Promise<boolean>;
   /** Build one image from a build context piped on stdin. */
   buildImage(tag: string, context: Uint8Array): Promise<void>;
+  /** Pull one image from its registry and give it `tag` here. */
+  pullImage(from: string, tag: string): Promise<void>;
 }
 
 /**
@@ -2022,7 +2024,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
    * How a machine's parts reach it, and the parts that can.
    *
    * On the volume route each volume is filled first, and a part whose volume
-   * cannot be filled is left out with a line naming it, as a part whose build
+   * cannot be filled is left out with a line naming it, as a part whose load
    * failed is: the machine is made with the rest and labelled with them.
    */
   const mountable = async (
@@ -3440,8 +3442,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     }),
 
     /*
-     * Two verbs about images rather than machines, and they are the ones a part
-     * is built with.
+     * The verbs about images rather than machines, which are the ones a part
+     * is pulled and built with.
      *
      * `image inspect` rather than `inspect`, because the latter is machines and
      * its not-found answer is a container error. The context is piped rather
@@ -3458,6 +3460,19 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         // Dockerfile that names a stage that is not there.
         const said = held.stderr.trim() || held.stdout.trim() || 'no output';
         throw new Error(`${options.command} build -t ${tag} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
+      }
+    },
+
+    // The image under the registry's name, then the tag every machine names it by.
+    pullImage: async (from, tag) => {
+      for (const argv of [['pull', from], ['tag', from, tag]]) {
+        const held = await ran(options, argv);
+        if (held.code !== 0) {
+          // Docker's own last lines: a registry that has no such tag, a login
+          // it asks for, a network that is not there.
+          const said = held.stderr.trim() || held.stdout.trim() || 'no output';
+          throw new Error(`${options.command} ${argv.join(' ')} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
+        }
       }
     },
   };

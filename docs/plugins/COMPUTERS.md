@@ -174,7 +174,7 @@ It loads the plugin with its defaults, and what holds inside a machine is its pr
 **The host comes from the `ahpd` part.**
 cofold and pi each declare the `ahpd` part as a need, so the machine has `/opt/ahpd/ahpd` mounted and `ahpd` on its `PATH`, run by the Node of the `node` part. The part holds `@ahpd/agent-cofold` and `@ahpd/agent-pi` in `/opt/ahpd/ahpd/plugins`, and its launcher sets `AHPD_PLUGIN_ROOT` to that directory, so the inner host finds both plugins with nothing in its configuration directory.
 Any glibc image runs it with nothing installed, `debian:bookworm-slim`, the default, among them. The part is ahpd from npm at the version the versions file names, or a checkout's own packed packages where `AHPD_PART_AHPD_ROOT` names the checkout; see [Parts](#parts).
-A machine whose part could not be built is refused for these sessions by name, like any part an agent needs.
+A machine whose part could not be loaded is refused for these sessions by name, like any part an agent needs.
 
 **The image's user owns a writable `HOME` and `XDG_CONFIG_HOME`, with no mount under either.**
 The nested ahpd makes `$XDG_CONFIG_HOME/ahpd` when it starts, and exits with `EACCES` when it cannot.
@@ -237,7 +237,7 @@ The CLI runs with `CLAUDE_CONFIG_DIR=/ahpd/<variant>`: `/ahpd/claude` for the bu
 | `part` | The default. The `claude` part, so a session in a machine runs the pinned version and not the one installed on this host |
 | `host` | `claudeExecutable` in place of the part: what `~/.local/bin/claude` points at on this host, read-only, at `computerExecutable` when that is a path and `/usr/local/bin/claude` otherwise. It is resolved when the machine is made, so an update on this host is followed |
 
-`computerCliFallback` says what happens when the `claude` part cannot be built, offline or with a build that fails. It is read only with `computerCli: "part"`:
+`computerCliFallback` says what happens when the `claude` part cannot be loaded, offline or with a pull that fails. It is read only with `computerCli: "part"`:
 
 | Value | What happens |
 | --- | --- |
@@ -248,7 +248,7 @@ The CLI runs with `CLAUDE_CONFIG_DIR=/ahpd/<variant>`: `/ahpd/claude` for the bu
 { "plugins": [{ "name": "@ahpd/agent-claude", "options": { "computerCli": "part", "computerCliFallback": "host" } }] }
 ```
 
-The fallback mount is checked with every other mount when the machine is made, whether the part builds or not, so a mount at the same target is refused naming both. A host path that is not there is refused at create, naming the need and the path, instead of becoming an empty directory the session exits 127 in.
+The fallback mount is checked with every other mount when the machine is made, whether the part loads or not, so a mount at the same target is refused naming both. A host path that is not there is refused at create, naming the need and the path, instead of becoming an empty directory the session exits 127 in.
 
 **A variant takes its own `env` into the machine, and nothing of the daemon's.** The CLI in a machine runs with the record's own `env`, a credential a client pushed laid over it, and `CLAUDE_CONFIG_DIR` last. The daemon's `HOME`, `PATH` and `PWD` never cross, and its `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH_TOKEN` cross only when the variant's `env` names them, as `{ "fromEnv": "ANTHROPIC_API_KEY" }`. A variable the variant unsets with `null` is absent inside too. These travel by name on the one `docker exec` that starts the CLI, never as the container's own environment, because `docker exec` cannot unset a variable the container holds: so the built-in Claude and an OpenRouter variant on one machine each get only their own keys.
 
@@ -602,7 +602,7 @@ The names are published in the create schema as an `enum` with each profile's ti
 } }] }
 ```
 
-The machine is made on the box's own Docker, which this host reaches as `DOCKER_HOST=ssh://<destination>`. The parts it mounts are built there too, because a part is mounted by its image and only the Docker that holds the image can mount it.
+The machine is made on the box's own Docker, which this host reaches as `DOCKER_HOST=ssh://<destination>`. The parts it mounts are pulled there too, because a part is mounted by its image and only the Docker that holds the image can mount it.
 
 This is one profile's Docker, not the plugin's. The plugin's `env.DOCKER_HOST` moves every machine to that Docker, and `server` moves only that profile's machines, which get ids such as `docker-<profile>.ahpd-computer-…`. A profile whose `server` is the plugin's own `env.DOCKER_HOST` makes its machines there, as any other profile does. Docker is given no key file, so a box with `identity` is left out: name the key for its destination in ssh's own configuration instead.
 
@@ -935,13 +935,13 @@ The versions file is `packages/computer/images/versions.json`, and it is the onl
 | `archive` | A CLI published as a tarball | `archives`, one url and sha256 per platform, and any `packages` installed onto the node part beside it, each written `<package>@<version>` |
 | `ahpd` | ahpd itself | From npm at its `version`, or a checkout's own packages where `AHPD_PART_AHPD_ROOT` names the checkout |
 
-A part is built the first time it is asked for and never again for that version: the tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than rebuilt. A package pinned at its own version adds that version to the tag, so `ahpd-part/claude:0.85.1-2.1.291` moves when either moves. A short hash of the Dockerfile that writes the image is in the tag after them, so an ahpd upgrade that changes how an image is written is a different image at the same versions and the part is built again. A part whose build fails is refused by name and every other part still builds; a machine asking for it within 30 seconds is told the same failure without another build, and the next ask after that builds it again, as VS Code holds a [failed SDK load](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395). The hold is per Docker, so a failure on one refuses nothing on another.
+A part is built once, by the release workflow, for `linux/amd64` and `linux/arm64`, and pushed to the GitHub container registry of the repository `@ahpd/computer` names, `ghcr.io/<owner>/ahpd-part/<id>:<tag>`; a host pulls it at that tag the first time it is asked for and tags it `ahpd-part/<id>:<tag>`, as VS Code's build produces each agent SDK once per release and every host [downloads it at first use](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5). The tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than pulled again. A package pinned at its own version adds that version to the tag, so `ahpd-part/claude:0.85.1-2.1.291` moves when either moves. A short hash of the Dockerfile that writes the image is in the tag after them, so an ahpd upgrade that changes how an image is written is a different image at the same versions, and the release that carries the change publishes it. A part whose pull fails is refused by name and every other part still loads; a machine asking for it within 30 seconds is told the same failure without another pull, and the next ask after that pulls it again, as VS Code holds a [failed SDK load](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395). The hold is per Docker, so a failure on one refuses nothing on another.
 
-The `ahpd` part takes local code only when asked: `AHPD_PART_AHPD_ROOT` in the daemon's environment names a checkout of this repository, whose packages are packed with `pnpm pack`, which needs `pnpm build` first, and installed into the part, and the daemon logs one line naming the checkout. Without it a checkout runs the version the versions file names, as an installed daemon does, as VS Code takes an agent SDK's local code only from that SDK's [override variable](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L364-L370).
+The `ahpd` part takes local code only when asked: `AHPD_PART_AHPD_ROOT` in the daemon's environment names a checkout of this repository, whose packages are packed with `pnpm pack`, which needs `pnpm build` first, and installed into a part built on this host, and the daemon logs one line naming the checkout. Without it a checkout runs the version the versions file names, as an installed daemon does, as VS Code takes an agent SDK's local code only from that SDK's [override variable](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L364-L370).
 
 ### Parts in a machine
 
-A machine asks for a part two ways: its profile's `parts`, and an agent's part need, `{ "part": "codex" }`, in what its `machine()` answers. A profile's or the plugin option's `needs` value for that need names another part id, which is how a profile pins another build. Every part asked for is built with the parts it requires before the machine is made, and each lands read-only at `/opt/ahpd/<id>`; the target is never the agent's to choose, and a mount at it is refused as any other shared target.
+A machine asks for a part two ways: its profile's `parts`, and an agent's part need, `{ "part": "codex" }`, in what its `machine()` answers. A profile's or the plugin option's `needs` value for that need names another part id, which is how a profile pins another build. Every part asked for is loaded with the parts it requires before the machine is made, and each lands read-only at `/opt/ahpd/<id>`; the target is never the agent's to choose, and a mount at it is refused as any other shared target.
 
 A part reaches the machine one of two ways:
 
@@ -962,16 +962,16 @@ A dev container gets its parts the same way: an image mount as a `--mount` entry
 
 The machine is labelled `ahpd.parts` with the parts it was made with, as JSON, `[{"id":"codex","version":"2.1.1"}, ...]`, as the dev container tooling writes its structured label, `devcontainer.metadata`, and [VS Code](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L967-L976) reads a container's labels as JSON. A machine an older daemon labelled `<id>@<version>,...` is read by the id before each `@`, as VS Code reads a container's [older folder label](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L977-L981) beside the current one. Its `PATH` has each one's `bin` in front: a Docker machine's is set at `docker run` over the image's own, and a dev container's is put in front of the probed `PATH` every command is given. So a command a preset names is found inside without its path.
 
-A part whose build fails, or whose requirement's build fails, is left out of the machine with one log line naming it and the build's reason, and the machine is made with the rest. A session whose agent needs a part the label does not name is refused with a sentence naming the part, and every other session on the machine runs.
+A part whose load fails, or whose requirement's load fails, is left out of the machine with one log line naming it and the load's reason, and the machine is made with the rest. A session whose agent needs a part the label does not name is refused with a sentence naming the part, and every other session on the machine runs.
 
-A machine made for one session, a disposable or a `devcontainer://` made when the session starts, is the exception: when a part that session's agent needs fails to build, the machine is not made and the session is refused at create with a sentence naming the part, so no container, volume or `computers.json` entry is left behind. A failed part that session's agent does not need is left out as above.
+A machine made for one session, a disposable or a `devcontainer://` made when the session starts, is the exception: when a part that session's agent needs fails to load, the machine is not made and the session is refused at create with a sentence naming the part, so no container, volume or `computers.json` entry is left behind. A failed part that session's agent does not need is left out as above.
 
 ### The joined image
 
-`ahpd-agents:<hash>` is every part copied into one image, which is what ahpd publishes and what a runtime that cannot mount image parts runs. Its hash folds in the versions file and the ahpd part's own source, so a version that moved is a different image. Build it with:
+`ahpd-agents:<hash>` is every part copied into one image, built on this host from the part images it has, which is what a runtime that cannot mount image parts runs. Its hash folds in the versions file and the ahpd part's own source, so a version that moved is a different image. Build it with:
 
 ```sh
-node --import ./scripts/dev.mjs scripts/computer.mjs parts --joined
+node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --joined
 ```
 
 A machine made from a profile that names no image runs `debian:bookworm-slim` with its parts mounted, so a fifteen-part build never precedes the first default machine.
@@ -990,16 +990,26 @@ Bumps come by pull request. `.github/workflows/parts-bump.yml` runs weekly and o
 node scripts/parts-bump.mjs --dry-run
 ```
 
-### Building ahead
+### Pulling ahead
 
-The verb above is `parts`, and it warms every part image before the first session that would otherwise wait for one:
+The verb above is `parts`, and it loads every part image before the first session that would otherwise wait for one:
 
 ```sh
-node --import ./scripts/dev.mjs scripts/computer.mjs parts --all
-node --import ./scripts/dev.mjs scripts/computer.mjs parts codex goose
+node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --all
+node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts codex goose
 ```
 
-It needs the resolver because it runs the plugin's own source. Each line is the tag and whether it was `built` or `was already there`, so running it twice builds nothing.
+It needs the resolver and the `development` condition because it runs the plugin's own source, and each workspace package's. Each line is the tag and whether it was `pulled`, `built` for the ahpd part of a checkout `AHPD_PART_AHPD_ROOT` names, or `was already there`, so running it twice loads nothing.
+
+### Building the parts
+
+`scripts/parts-publish.mjs` builds every part from the Dockerfile this checkout writes, at the tag a daemon run from it asks for. The release workflow runs it with `--push`: each part is built for `linux/amd64` and `linux/arm64` and pushed to `ghcr.io/<owner>/ahpd-part/<id>:<tag>`, and a tag already there is left as it is, as VS Code's build leaves an [SDK already uploaded](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L52). With `--local` it builds each part on this host's Docker instead, for a checkout whose part Dockerfiles moved since the last release, and a daemon run from that checkout finds them by their tags:
+
+```sh
+node --conditions development --import ./scripts/dev.mjs scripts/parts-publish.mjs --local
+```
+
+With neither it builds for both platforms and pushes nothing, which is how the release rehearses.
 
 ## The three tools
 

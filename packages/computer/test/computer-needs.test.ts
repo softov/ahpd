@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { computersFor, machineRefusal } from '../../sdk/src/machines/computers.js';
-import { dockerfileOf, readParts, tagOf } from '../src/parts.js';
+import { dockerfileOf, readParts, registryOf, tagOf } from '../src/parts.js';
 import type { Part } from '../src/parts.js';
 import { dockerRuntime, stateVolumeOf } from '../src/runtime.js';
 import { revealed } from '../src/secrets.js';
@@ -1277,9 +1277,9 @@ it('reads a machine with no recorded needs again from the needs its agents decla
 });
 
 /*
- * Parts: a profile's own and the ones its agents need, each built with what it
+ * Parts: a profile's own and the ones its agents need, each pulled with what it
  * requires before the machine is made, and the machine labelled with the ones
- * it has. A part that will not build is left out, and only a session whose
+ * it has. A part that will not load is left out, and only a session whose
  * agent needs it is refused.
  */
 /*
@@ -1293,6 +1293,11 @@ const versionOf = (one: Part): string => {
   return tag.slice(tag.lastIndexOf(':') + 1);
 };
 const PARTS = new Map(readParts().map((one) => [one.id, versionOf(one)]));
+/** Where the release workflow pushed a part, which is where a host pulls it from. */
+const remote = (id: string): string => `${registryOf()}/ahpd-part/${id}:${PARTS.get(id) ?? ''}`;
+/** What the fake Docker was asked to pull from the parts' registry, in order. */
+const partPulls = (state: string): string[] =>
+  ((JSON.parse(readFileSync(state, 'utf8')) as { pulls?: string[] }).pulls ?? []).filter((one) => one.startsWith(`${registryOf()}/`));
 /** The `ahpd.parts` label of a machine made with these parts at their versions, and with `host` mounted from this host. */
 const label = (ids: string[], host: string[] = []): string =>
   JSON.stringify([...ids.map((id) => ({ id, version: PARTS.get(id) ?? '' })), ...host.map((id) => ({ id, version: 'host' }))]);
@@ -1328,10 +1333,10 @@ it('makes a machine with a profile\'s parts and what they require, labelled with
   const { options } = await loadParts(state, { parts: ['codex'] }, [CODEXER]);
   await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' });
 
-  const held = JSON.parse(readFileSync(state, 'utf8')) as Held & { builds: { tag: string }[] };
+  const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
   const box = held.machines.find((one) => one.name === 'box');
-  // Codex requires Node, so both are built and both are on the machine.
-  expect(held.builds.map((one) => one.tag)).toEqual([`ahpd-part/node:${PARTS.get('node') ?? ''}`, `ahpd-part/codex:${PARTS.get('codex') ?? ''}`]);
+  // Codex requires Node, so both are pulled and both are on the machine.
+  expect(partPulls(state)).toEqual([remote('node'), remote('codex')]);
   expect(box?.labels?.['ahpd.parts']).toBe(label(['codex', 'node']));
   // Each part's launchers ahead of the image's own PATH, so a command a preset
   // names is found inside without its path.
@@ -1359,10 +1364,10 @@ it('refuses a session whose agent needs a part the machine was made without, nam
   expect(await machineRefusal(options.computers, 'box', 'codexer', 'codexer:/one')).toBeUndefined();
 });
 
-it('makes the machine without a part whose build fails, and refuses only the session that needs it', async () => {
+it('makes the machine without a part whose load fails, and refuses only the session that needs it', async () => {
   const state = join(temp(), 'docker.json');
   const { options, lines } = await loadParts(state, { parts: ['codex', 'gemini'] }, [CODEXER, GEMINIER], {
-    failBuild: [`ahpd-part/gemini:${PARTS.get('gemini') ?? ''}`],
+    failPull: [remote('gemini')],
   });
   await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' });
 
@@ -1371,10 +1376,10 @@ it('makes the machine without a part whose build fails, and refuses only the ses
   // The healthy part beside it is there, and the machine was made.
   expect(box?.labels?.['ahpd.parts']).toBe(label(['codex', 'node']));
   expect(held.calls.filter((one) => one[0] === 'run').flat().join(' ')).not.toContain('/opt/ahpd/gemini');
-  // One line, naming the part and the build's own reason.
+  // One line, naming the part and the pull's own reason.
   const said = lines.filter((one) => one.includes('gemini'));
   expect(said).toHaveLength(1);
-  expect(said[0]).toMatch(/box is made without the part gemini: .*failed to solve/);
+  expect(said[0]).toMatch(/box is made without the part gemini: .*pull access denied/);
   // The codex session runs; the gemini one is refused by name.
   expect(await machineRefusal(options.computers, 'box', 'codexer', 'codexer:/one')).toBeUndefined();
   expect(await machineRefusal(options.computers, 'box', 'geminier', 'geminier:/one')).toMatch(/made without the part gemini, which geminier needs/);
@@ -1382,10 +1387,10 @@ it('makes the machine without a part whose build fails, and refuses only the ses
 
 /*
  * A machine made for one session is refused at create when a part that
- * session's agent needs fails to build, and nothing is left behind: no
+ * session's agent needs fails to load, and nothing is left behind: no
  * container, no volume, no record beside the configuration.
  */
-const GEMINI_FAILS = { failBuild: [`ahpd-part/gemini:${PARTS.get('gemini') ?? ''}`] };
+const GEMINI_FAILS = { failPull: [remote('gemini')] };
 
 /** Nothing of a machine is left in the fake Docker or beside the configuration. */
 const leftNothing = (state: string): void => {
@@ -1396,16 +1401,16 @@ const leftNothing = (state: string): void => {
   expect(existsSync(join(configHome(), 'computers.json'))).toBe(false);
 };
 
-it('refuses a disposable machine whose session\'s part fails to build, and makes nothing', async () => {
+it('refuses a disposable machine whose session\'s part fails to load, and makes nothing', async () => {
   const state = join(temp(), 'docker.json');
   // The healthy codex part beside it changes nothing.
   const { options } = await loadParts(state, { disposable: true, parts: ['codex'] }, [CODEXER, GEMINIER], GEMINI_FAILS);
   await expect(options.computers?.create?.({ source: 'disposable:box', session: 'geminier:/one', provider: 'geminier', owner: 'user:ada' }))
-    .rejects.toThrow(/is not made, because the part gemini this session's agent needs could not be built \(gemini: .*failed to solve/);
+    .rejects.toThrow(/is not made, because the part gemini this session's agent needs could not be loaded \(gemini: .*pull access denied/);
   leftNothing(state);
 });
 
-it('refuses a session-time dev container whose session\'s part fails to build, and runs no up', async () => {
+it('refuses a session-time dev container whose session\'s part fails to load, and runs no up', async () => {
   const dir = temp();
   const state = join(dir, 'docker.json');
   const devState = join(dir, 'dev.json');
@@ -1420,7 +1425,7 @@ it('refuses a session-time dev container whose session\'s part fails to build, a
     },
   });
   await expect(options.computers?.create?.({ source: `devcontainer://${folder}`, session: 'geminier:/one', provider: 'geminier', owner: 'user:ada' }))
-    .rejects.toThrow(/the part gemini this session's agent needs could not be built/);
+    .rejects.toThrow(/the part gemini this session's agent needs could not be loaded/);
   leftNothing(state);
   expect(existsSync(devState)).toBe(false);
 });
@@ -1437,10 +1442,10 @@ it('makes a session\'s machine when the part that fails is one its agent does no
 
 /*
  * A part need may carry a fallback mount, made in the part's place when the
- * part cannot be built: Claude's host binary, where `computerCliFallback` says
+ * part cannot be loaded: Claude's host binary, where `computerCliFallback` says
  * `host`. Without one, the part is left out and the session refused.
  */
-const CLAUDE_FAILS = { failBuild: [`ahpd-part/claude:${PARTS.get('claude') ?? ''}`] };
+const CLAUDE_FAILS = { failPull: [remote('claude')] };
 
 /** A Claude-like agent whose part need carries the host binary as its fallback, or none. */
 const clauder = (binary?: string): Agent => agent('clauder', {
@@ -1451,7 +1456,7 @@ const clauder = (binary?: string): Agent => agent('clauder', {
   },
 });
 
-it('makes the machine without a part that will not build and has no fallback, and refuses its session', async () => {
+it('makes the machine without a part that will not load and has no fallback, and refuses its session', async () => {
   const state = join(temp(), 'docker.json');
   const { options, lines } = await loadParts(state, { agents: ['clauder'] }, [clauder()], CLAUDE_FAILS);
   await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' });
@@ -1462,7 +1467,7 @@ it('makes the machine without a part that will not build and has no fallback, an
   expect(await machineRefusal(options.computers, 'box', 'clauder', 'clauder:/one')).toMatch(/made without the part claude, which clauder needs/);
 });
 
-it('mounts a part need\'s fallback when the part will not build, labelled as the host\'s, and runs its session', async () => {
+it('mounts a part need\'s fallback when the part will not load, labelled as the host\'s, and runs its session', async () => {
   const dir = temp();
   const state = join(dir, 'docker.json');
   const binary = join(dir, 'claude');
@@ -1476,12 +1481,12 @@ it('mounts a part need\'s fallback when the part will not build, labelled as the
   expect(box?.labels?.['ahpd.parts']).toBe(label(['node'], ['claude']));
   const said = lines.filter((one) => one.includes('the part claude'));
   expect(said).toHaveLength(1);
-  expect(said[0]).toContain(`box is made with ${binary} mounted at /usr/local/bin/claude in place of the part claude, which could not be built: `);
-  expect(said[0]).toMatch(/could not be built: .*failed to solve/);
+  expect(said[0]).toContain(`box is made with ${binary} mounted at /usr/local/bin/claude in place of the part claude, which could not be loaded: `);
+  expect(said[0]).toMatch(/could not be loaded: .*pull access denied/);
   expect(await machineRefusal(options.computers, 'box', 'clauder', 'clauder:/one')).toBeUndefined();
 });
 
-it('leaves a part need\'s fallback off a machine whose part builds', async () => {
+it('leaves a part need\'s fallback off a machine whose part loads', async () => {
   const dir = temp();
   const state = join(dir, 'docker.json');
   const binary = join(dir, 'claude');
@@ -1501,14 +1506,15 @@ it('refuses a machine whose part fallback lands where another mount does, naming
   const other = join(dir, 'other');
   writeFileSync(binary, '#!/bin/sh\n');
   writeFileSync(other, '#!/bin/sh\n');
-  // The part builds, and the clash is refused all the same: the fallback is
-  // checked where it would land, before anything is built.
+  // The part loads, and the clash is refused all the same: the fallback is
+  // checked where it would land, before anything is pulled.
   const { options } = await loadParts(state, { agents: ['clauder'], mounts: [`${other}:/usr/local/bin/claude:ro`] }, [clauder(binary)]);
   await expect(providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' }))
     .rejects.toThrow(`the profile's mount ${other}:/usr/local/bin/claude:ro and the fallback of need claudePart both land at /usr/local/bin/claude`);
   const held = JSON.parse(readFileSync(state, 'utf8')) as Held & { builds: unknown[] };
   expect(held.machines).toEqual([]);
   expect(held.builds).toEqual([]);
+  expect(partPulls(state)).toEqual([]);
 });
 
 it('makes a disposable machine for a session whose part falls back, and refuses one whose part has none', async () => {
@@ -1524,7 +1530,7 @@ it('makes a disposable machine for a session whose part falls back, and refuses 
   const again = join(dir, 'again.json');
   const { options: strict } = await loadParts(again, { disposable: true }, [clauder()], CLAUDE_FAILS);
   await expect(strict.computers?.create?.({ source: 'disposable:box', session: 'clauder:/one', provider: 'clauder', owner: 'user:ada' }))
-    .rejects.toThrow(/the part claude this session's agent needs could not be built/);
+    .rejects.toThrow(/the part claude this session's agent needs could not be loaded/);
 });
 
 it('leaves out a profile part the versions file does not name, and keeps the rest of the profile', async () => {
