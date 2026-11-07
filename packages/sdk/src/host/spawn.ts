@@ -173,7 +173,7 @@ function heldResources(store: ResourceStore): ResourceStore {
 
 export function createSpawn(ctx: HostContext): Spawn {
   const {
-    options, sessions, byChat, subagents, owners, kept, names, births, about,
+    options, sessions, byChat, subagents, owners, kept, names, births, moves, about,
     dispatch, log, described, links, restoredSessions,
     sessionHolding, dirOf, operationsMoved, refreshWatched, refreshFacts,
     fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, enteredIn, inMachine, bringBackOf,
@@ -1887,6 +1887,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const foreign = existing !== undefined ? agent !== existing.agent : own !== undefined && agent !== own.agent;
     const session = used.create(wired);
     titled = session;
+    const now = new Date().toISOString();
     const held = existing ?? {
       agent: own?.agent ?? agent,
       chats: new Map<string, Session>(),
@@ -1895,10 +1896,13 @@ export function createSpawn(ctx: HostContext): Spawn {
       backends: new Map<string, { agent: Agent; config: Record<string, unknown> }>(),
       workingDirectory,
       additional,
-      // The catalogue's value for a session being resumed; now, for one being
-      // started. A second chat in a session that already exists takes the
-      // session's own, because `sessions.get` answered above.
-      createdAt: births.get(uri) ?? new Date().toISOString(),
+      // The catalogue's values for a session being resumed or woken; now, for
+      // one being started, as VS Code's host dates a session it makes. A
+      // second chat in a session that already exists takes the session's own,
+      // because `sessions.get` answered above.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10712-L10713
+      createdAt: births.get(uri) ?? now,
+      modifiedAt: moves.get(uri) ?? now,
       quietSince: 0,
     };
     // Loaded now, which is activity: a session resumed a moment ago is not one

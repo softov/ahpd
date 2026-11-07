@@ -201,7 +201,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         backends: new Map(),
         workingDirectory: held.workingDirectory,
         additional: folders,
+        // Dated now, as VS Code's host dates the session it makes for a moved chat.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9141-L9142
         createdAt: now.toISOString(),
+        modifiedAt: now.toISOString(),
         quietSince: now.getTime(),
       };
       sessions.set(into, made);

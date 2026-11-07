@@ -555,12 +555,21 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       ? { status: Status.Idle, activity: undefined }
       : { status: activityBits(base.status), activity: base.activity };
   };
-  /** The most recent change across every chat of a session, as the protocol aggregates `modifiedAt`. */
-  const modifiedOf = (held: Held): string => chatsOf(held)
-    .map((one) => one.modifiedAt)
-    .filter((one) => one !== '')
-    .sort()
-    .at(-1) ?? held.createdAt;
+  /**
+   * A session's last change: the latest change across every chat of it, as
+   * the protocol aggregates `modifiedAt`, rolled into the session's own where
+   * it is later, as VS Code's host rolls its chats' latest into the session's
+   * catalogue timestamp. A row's `modifiedAt` moves forward only, so a chat
+   * that goes takes nothing back with it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3365
+   */
+  const modifiedOf = (held: Held): string => {
+    const latest = Math.max(...chatsOf(held).map((one) => Date.parse(one.modifiedAt)).filter(Number.isFinite));
+    const current = Date.parse(held.modifiedAt);
+    if (Number.isFinite(latest) && (!Number.isFinite(current) || latest > current)) held.modifiedAt = new Date(latest).toISOString();
+    return held.modifiedAt;
+  };
   /** What a session is doing: the activity of the chat that decides its status. */
   const activityOf = (held: Held): string | undefined => drivingOf(held).activity;
 

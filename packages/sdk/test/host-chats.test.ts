@@ -1367,6 +1367,42 @@ describe('more than one chat in a session', () => {
     }
   });
 
+  /*
+   * A row's time moves forward only, so a chat closed takes nothing back with
+   * it, as VS Code's host rolls a session's chats into the session's catalogue
+   * timestamp only where they are later.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
+   */
+  it('keeps the time a closed chat brought its session to', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await chatty(join(root, 'sessions'), backend([]));
+      await send(client, LIVE, 't0', 'here');
+      await flushed();
+      await send(client, PEER, 't1', 'over here');
+      await flushed();
+      const rowAt = async (): Promise<string | undefined> => ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+        items: { resource: string; modifiedAt: string }[];
+      }).items.find((one) => one.resource === LIVE)?.modifiedAt;
+      const held = await rowAt();
+      expect(held).toBeDefined();
+      const since = p.notes.length;
+
+      expect(await client.handle({ method: 'disposeChat', params: { channel: PEER } })).toBeNull();
+      await settle();
+      await flushed();
+
+      expect(await rowAt()).toBe(held);
+      expect(p.notes.slice(since)
+        .filter((n) => n.method === 'root/sessionSummaryChanged')
+        .map((n) => (n.params as { changes: { modifiedAt?: string } }).changes.modifiedAt)
+        .filter((one) => one !== undefined)).toEqual([]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not rebuild the chats of a session inside a machine', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
@@ -1938,6 +1974,7 @@ describe('more than one chat in a session', () => {
       const held = ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
         items: { resource: string; modifiedAt: string }[];
       }).items.find((one) => one.resource === LIVE)?.modifiedAt as string;
+      const since = p.notes.length;
 
       const answer = await client.handle({
         method: 'moveChat',
@@ -1975,22 +2012,26 @@ describe('more than one chat in a session', () => {
       /*
        * And the root rows, which is the catalogue both sessions are drawn from.
        *
-       * A row carries the time of its newest chat, so the chat arriving moves
-       * the destination's row forward and the chat leaving moves the source's
-       * row back to the newest of what it still holds. A row that kept the
-       * moved chat's time is a row a client draws in the wrong place.
+       * A row's time is the latest its chats have brought it to, and it moves
+       * forward only, as VS Code's host rolls a session's chats into the
+       * session's catalogue timestamp only where they are later: the chat
+       * arriving moves the destination's row to its own newer time, and the
+       * source's row keeps the time the chat brought it to.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
        */
-      // Each change carries the fields that moved, so the times are the
-      // changes that carried one.
-      const rows = p.notes
+      // Each change carries the fields that moved, so the times the move said
+      // are the changes after it that carried one.
+      const rows = p.notes.slice(since)
         .filter((n) => n.method === 'root/sessionSummaryChanged')
         .map((n) => n.params as { session: string; changes: { modifiedAt?: string } })
         .filter((one) => one.changes.modifiedAt !== undefined);
-      const cameTo = rows.filter((one) => one.session === 'ahp-session:/two');
-      const wentFrom = rows.filter((one) => one.session === 'ahp-session:/live');
-      expect(cameTo.at(-1)?.changes.modifiedAt).toBeDefined();
-      expect(wentFrom.at(-1)?.changes.modifiedAt).toBeDefined();
-      expect(String(wentFrom.at(-1)?.changes.modifiedAt) < held).toBe(true);
+      expect(rows.filter((one) => one.session === TWO).at(-1)?.changes.modifiedAt).toBe(held);
+      expect(rows.filter((one) => one.session === LIVE)).toEqual([]);
+      const after = ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+        items: { resource: string; modifiedAt: string }[];
+      }).items;
+      expect(after.find((one) => one.resource === LIVE)?.modifiedAt).toBe(held);
+      expect(after.find((one) => one.resource === TWO)?.modifiedAt).toBe(held);
 
       // Its turns came with it, and it goes on from there.
       expect(said(await opened(client, PEER))).toEqual(['over here']);
