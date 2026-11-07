@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   resetSdk, actions, claude, createHost, echo, emit, firstMessage, flushed, hello, hostTools, machine, open, peer,
- sdk, serving, sessionQueries, settle, running,
+ sdk, serving, sessionQueries, settle, showExternal, running,
 } from './support/host.js';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
 import type { HostTool } from '../src/types/host.js';
@@ -435,14 +435,20 @@ describe('the fields a client reads by name', () => {
   });
 
   it('still says what moved on a session no agent is running for', async () => {
-    sdk.sessions.push({ sessionId: 'browsed', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
+    // A transcript this host never ran, written an hour ago, which a client
+    // lists by the root's `showExternalSessions`.
+    sdk.sessions.push({ sessionId: 'browsed', summary: 'Read me', lastModified: Date.now() - 60 * 60 * 1000, cwd: '/home/softov' });
     const host = serving('/home/softov');
     const seen = peer();
     const watching = host.accept(seen);
     await watching.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await showExternal(watching);
     // Reading the catalogue is what teaches this host the row exists.
     await watching.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    // The pass that answer started behind it has landed.
+    await flushed();
 
+    const marked = catalogue(seen).length;
     watching.handle({
       method: 'dispatchAction',
       params: { channel: 'ahp-session:/browsed', action: { type: 'session/isReadChanged', isRead: true } },
@@ -460,13 +466,20 @@ describe('the fields a client reads by name', () => {
     expect((moved?.params.changes as Record<string, unknown>).status)
       .toBe(Status.Idle | Status.IsRead);
     // The mark is the first record the store holds for the row, and the row
-    // keeps the name it was listed by: the pass over the catalogue that lands
-    // after it says the row's fields under that name, and adds it under none.
-    await vi.waitFor(() => {
-      expect(summaries().some((n) => (n.params.changes as Record<string, unknown>).title !== undefined)).toBe(true);
-    });
-    expect(summaries().every((n) => n.params.session === 'ahp-session:/browsed')).toBe(true);
-    expect(catalogue(seen).filter((n) => n.method === 'root/sessionAdded')).toEqual([]);
+    // keeps the name it was listed by: a listing after it answers the row
+    // under that name, and the pass behind that answer, which reads the store
+    // the mark wrote, says nothing of it under another or removes it.
+    const passes = sdk.listed;
+    const again = await watching.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: { resource: string }[] };
+    expect(again.items.map((one) => one.resource)).toEqual(['ahp-session:/browsed']);
+    await vi.waitFor(() => { expect(sdk.listed).toBeGreaterThan(passes); });
+    await flushed();
+    const after = catalogue(seen).slice(marked);
+    expect(after.every((n) => n.params.session === 'ahp-session:/browsed')).toBe(true);
+    expect(after.filter((n) => n.method !== 'root/sessionSummaryChanged')).toEqual([]);
+    // Added once, by the mode that shows it, under the name it is listed by.
+    expect(catalogue(seen).filter((n) => n.method === 'root/sessionAdded')
+      .map((n) => (n.params.summary as { resource: string }).resource)).toEqual(['ahp-session:/browsed']);
   });
 
   /*
@@ -1540,7 +1553,8 @@ describe("a browsed session's _meta", () => {
    * The state of a session nothing runs is composed by `describes`, which asks
    * the backend's running agent for `_meta` while there is one. A browsed row
    * has no agent, so its keys are the ones the backend put on the row it
-   * listed - and the running agent's replace them once the session starts.
+   * listed, beside the mark of a session this host never ran - and the running
+   * agent's replace them once the session starts.
    */
   const PATH = '/home/softov';
   const STAMP = '2026-10-25T00:00:00.000Z';
@@ -1590,7 +1604,9 @@ describe("a browsed session's _meta", () => {
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as {
       snapshot: { state: State };
     };
-    expect(opened.snapshot.state._meta).toEqual({ bot: 'motion', color: 'red' });
+    // The keys the backend listed, and the mark VS Code's host puts on a
+    // session it never ran.
+    expect(opened.snapshot.state._meta).toEqual({ bot: 'motion', color: 'red', 'vscode.external': true });
   });
 
   it("replaces a listed row's _meta with the running agent's own", async () => {
