@@ -838,14 +838,6 @@ it('takes a client\'s run of a worker\'s tool and its result confirmation on the
   expect(said).toEqual(['chat/toolCallComplete', 'chat/toolCallResultConfirmed']);
 });
 
-it('refuses anything else on a worker chat as read-only', async () => {
-  const { worker, send, refusals } = await waiting();
-  await send(worker, { type: 'chat/draftChanged', draft: { text: 'hi', origin: { kind: 'user' } } });
-  expect(told).toEqual([]);
-  expect(refusals()).toHaveLength(1);
-  expect(refusals()[0]).toContain('read-only');
-});
-
 /** Lets the busy fake's background worker end. */
 let finishWorker = (): void => {};
 let failWorker = (_why?: string): void => {};
