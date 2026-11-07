@@ -25,7 +25,12 @@ export const RESTART_NEEDED = 'x-ahpd/restartNeeded';
 export const isRootChannel = (channel: string): boolean => channel === ROOT || channel.startsWith('ahp-root:');
 /** The automation catalogue, which belongs to the host rather than to a session. */
 export const AUTOMATIONS = 'ahp-automations://';
-/** The catalogue narrowed to the caller's own automations, which is the one filter there is. */
+/**
+ * The catalogue narrowed to one owner, an RFC 6570 template the handshake
+ * advertises and a client expands; `me` is the one owner it takes.
+ */
+export const AUTOMATIONS_TEMPLATE = `${AUTOMATIONS}{?owner}`;
+/** The catalogue narrowed to the caller's own automations: the template with `owner` `me`. */
 export const AUTOMATIONS_ME = `${AUTOMATIONS}?owner=me`;
 
 /** What a session's annotations channel is called, under the session's own URI. */

@@ -4,7 +4,7 @@ An **automation** is one instruction this host carries out with nobody watching:
 
 Automations live on a catalogue of their own, `ahp-automations://`. A client subscribes to it, writes definitions into it, and watches each run on the run's own channel.
 
-A client that wants only its own automations subscribes to `ahp-automations://?owner=me`. The snapshot keeps the entries whose `_meta['ahpd.owner']` is that connection's principal: `user:<id>` for a person, `plugin:<name>` for a plugin. A connection with no principal owns nothing, and the filter answers no entries. Any other value is refused with `-32602`, the way a wrong param is. An action about one automation reaches a filtered subscription only when that automation is the subscriber's own. A removal carries an id and no entry, so it reaches every filtered subscription.
+A client that wants only its own automations subscribes to `ahp-automations://?owner=me`: the RFC 6570 template `ahp-automations://{?owner}`, which `initialize` advertises as `_meta['ahpd.automations']` on a host that serves automations, expanded with `owner` `me`. The snapshot keeps the entries whose `_meta['ahpd.owner']` is that connection's principal: `user:<id>` for a person, `plugin:<name>` for a plugin. A connection with no principal owns nothing, and the filter answers no entries. Any other value is refused with `-32602`, the way a wrong param is. An action about one automation reaches a filtered subscription only when that automation is the subscriber's own. A removal carries an id and no entry, so it reaches every filtered subscription.
 
 Terms, one line each:
 

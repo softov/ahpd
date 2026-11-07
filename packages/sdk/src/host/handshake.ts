@@ -4,7 +4,7 @@ import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../resources/fileuri.js';
 import { bag, str } from '../utils/values.js';
 import { keyOf, normalizeScopes, storedAuthToken } from './auth.js';
-import { baseOf, ROOT, spaceOf } from './channels.js';
+import { AUTOMATIONS_TEMPLATE, baseOf, ROOT, spaceOf } from './channels.js';
 import { BANG } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -513,6 +513,14 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           // reference client offers a host's automations only where it says
           // so, so it goes with the `automations` capability above.
           ...(options.automations ? { 'vscode.autonomousAutomations': true } : {}),
+          /*
+           * The automations catalogue narrowed to one owner, as an RFC 6570
+           * template a client expands before it subscribes, as the protocol
+           * advertises the logs channel's (`telemetry.logs`): `owner=me` is
+           * the caller's own automations.
+           * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/common/commands.ts#L281-L290
+           */
+          ...(options.automations ? { 'ahpd.automations': AUTOMATIONS_TEMPLATE } : {}),
           /*
            * This host's session URIs are the AHP ones, and not the legacy
            * `provider:/id` spelling.

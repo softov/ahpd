@@ -583,6 +583,21 @@ describe('a template that names client plugins', () => {
       params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
     }) as { _meta?: Record<string, unknown> };
     expect('vscode.autonomousAutomations' in (answer._meta ?? {})).toBe(false);
+    expect('ahpd.automations' in (answer._meta ?? {})).toBe(false);
+  });
+
+  /*
+   * The catalogue narrowed to one owner is a template the client expands, as
+   * the protocol advertises the logs channel's.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/common/commands.ts#L281-L290
+   */
+  it('advertises the catalogue narrowed to one owner as a template a client expands', async () => {
+    const host = createHost({ path: DIR, agents: [echo({ path: DIR })], automations: memoryAutomations() });
+    const answer = await host.accept(peer()).handle({
+      method: 'initialize',
+      params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
+    }) as { _meta?: Record<string, unknown> };
+    expect(answer._meta?.['ahpd.automations']).toBe('ahp-automations://{?owner}');
   });
 });
 
