@@ -343,14 +343,17 @@ it('answers a read inside the session\'s working folder itself', async () => {
 /*
  * A fetch's question offers its host, in the session and always, between
  * Allow Once and Skip, and an Always Allow is kept in the host's own
- * `permissions` and answers the next fetch there, as VS Code's host offers and
- * keeps one.
+ * `permissions`, for this start and the next, and answers the next fetch
+ * there, as VS Code's host offers and keeps one.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L1024-L1036
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L636-L646
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1275-L1282
  */
 it('offers a fetch\'s host in the session and always, and keeps an Always Allow in the host\'s permissions', async () => {
   const answers: Answer[] = [];
-  const { host, p, dispatch, turn } = await serving(asking(answers, 'WebFetch', undefined, { permissionKind: 'url', permissionUrl: 'https://example.com/docs' }));
+  let kept: Record<string, unknown> = {};
+  const store = { read: () => kept, write: (values: Record<string, unknown>) => { kept = values; } };
+  const { host, p, dispatch, turn } = await serving(asking(answers, 'WebFetch', undefined, { permissionKind: 'url', permissionUrl: 'https://example.com/docs' }), { rootConfigStore: store });
   const always = 'allow-always-rules:["WebFetch(example.com)"]';
   expect((await turn('t1')).options).toEqual([
     { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
@@ -361,6 +364,7 @@ it('offers a fetch\'s host in the session and always, and keeps an Always Allow 
   await dispatch(CHAT, { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-t1', approved: true, confirmed: 'user-action', selectedOptionId: always });
   expect(p.heard.filter((one) => one.channel === ROOT && one.action.type === 'root/configChanged').map((one) => one.action.config))
     .toEqual([{ permissions: { allow: ['WebFetch(example.com)'], deny: [] } }]);
+  expect(kept).toEqual({ permissions: { allow: ['WebFetch(example.com)'], deny: [] } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === 't1'), 'the first turn');
   expect((await turn('t2')).confirmed).toBe('not-needed');
   await host.close();

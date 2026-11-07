@@ -772,6 +772,17 @@ export const automationStatePath = (): string => join(configDir(), 'automations-
 export const customizationStatePath = (): string => join(configDir(), 'customizations-state.json');
 
 /**
+ * Where the root config a client pushed is kept between starts.
+ *
+ * Beside the customizations for the same reason as those: one small file
+ * beside a hand-edited `config.json`, written whenever a window pushes a
+ * setting or a person picks Always Allow, as VS Code's host keeps
+ * `agent-host-config.json` in its global storage.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostBootstrap.ts#L136
+ */
+export const rootConfigPath = (): string => join(configDir(), 'root-config.json');
+
+/**
  * The one file an earlier daemon kept every automation in.
  *
  * Nothing writes it any more. Named here rather than beside the conversion

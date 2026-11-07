@@ -443,3 +443,21 @@ export const vscodeRootProperties: Record<string, ConfigPropertySchema> = {
     default: false,
   },
 };
+
+/**
+ * The root config keys a start leaves to each window's next push, VS Code's
+ * `clientOwnedApprovalRootConfigKeys`: a window pushes them at every connect,
+ * and each gates a question or a policy. VS Code's reason: "Their persisted
+ * value is a snapshot of one client's settings, so reviving it would re-grant
+ * approvals that a user, workspace, or policy tightened while the host was
+ * stopped."
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L1085-L1102
+ */
+export const clientOwnedApprovalRootConfigKeys: ReadonlySet<string> = new Set([
+  'globalAutoApproveEnabled',
+  'autoApprovePolicyRestricted',
+  'terminalAutoApproveEnabled',
+  'editAutoApprovePatterns',
+  'autoReplyEnabled',
+  'workspaceTrust',
+]);

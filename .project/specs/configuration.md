@@ -4,6 +4,7 @@ status: current
 covers:
   - packages/server/src/config.ts
   - packages/server/src/rootconfig.ts
+  - packages/server/src/rootconfigstore.ts
   - packages/server/src/commands/config.ts
   - packages/server/src/commands/options.ts
 decisions:
@@ -69,6 +70,21 @@ AND the connection token, the users file, `stdio` and the config file are not.
 
 WHEN a connection does not hold `config:read`
 THEN the daemon's keys are taken out of each `root/configChanged` it gets, its own change included.
+
+### The root config comes back at a start
+
+WHEN a client pushes root config, or a person picks Always Allow
+THEN the daemon writes the host's root config whole to `root-config.json` in the config folder
+AND a backend's account is left out of it.
+This is how VS Code's host keeps its own root config.
+
+WHEN the daemon starts
+THEN the root config opens with each key of that file the schema declares, where its property accepts the value
+AND `globalAutoApproveEnabled`, `autoApprovePolicyRestricted`, `terminalAutoApproveEnabled`, `editAutoApprovePatterns`, `autoReplyEnabled` and `workspaceTrust` wait for a window's push.
+The reason, VS Code's: restoring them "could re-grant an approval that was tightened while the host was stopped".
+
+WHEN `root-config.json` cannot be read, or holds a version the daemon does not know
+THEN the daemon says so on stderr and starts with nothing kept.
 
 ### A change applies live or on restart
 

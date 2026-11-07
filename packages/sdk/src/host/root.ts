@@ -4,7 +4,8 @@ import { seesAccount, seesConfig } from './gate.js';
 import { OPERATIONS, operationsOf } from '../access/users.js';
 import { REMOTE_SESSIONS_META } from '../sessions/remotesession.js';
 import { sdkVersion } from '../version.js';
-import { vscodeRootProperties } from '../vscoderootconfig.js';
+import { accepts } from '../utils/configvalues.js';
+import { clientOwnedApprovalRootConfigKeys, vscodeRootProperties } from '../vscoderootconfig.js';
 import { CLIENT_QUEUE_BYTES, MINIMUM_LIMIT_BYTES, REPLAY_BYTES } from './limits.js';
 import { ROOT } from './channels.js';
 import type { Connection, HostOptions } from '../types/host.js';
@@ -244,6 +245,14 @@ export interface Root {
    * Nothing when the root is not held yet: its first snapshot reads the port.
    */
   daemonValuesChanged(): Promise<void>;
+  /**
+   * Keep the root config this host holds for its clients in
+   * `HostOptions.rootConfigStore`, whole, a backend's account aside: what
+   * VS Code's host writes after each change a client or the host makes to it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1275-L1313
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13661-L13662
+   */
+  persistRootConfig(): void;
 }
 
 export function createRoot(ctx: HostContext): Root {
@@ -372,6 +381,9 @@ export function createRoot(ctx: HostContext): Root {
    * names is acted on: `values` is state a client reads back, and what the
    * host has a client learns from the declared properties.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2878-L2898
+   *
+   * A start opens it with what `HostOptions.rootConfigStore` kept, read
+   * against the schema below once the providers' keys are known.
    */
   const rootConfig: Record<string, unknown> = {};
   /**
@@ -584,6 +596,29 @@ export function createRoot(ctx: HostContext): Root {
     Object.entries(providerProperties()).filter(([, property]) => property.default !== undefined)
       .map(([key, property]) => [key, property.default]),
   );
+  /*
+   * What a start brings back of the root config `HostOptions.rootConfigStore`
+   * kept: each key the schema declares whose value its property accepts, as
+   * VS Code's host restores its persisted values schema by schema. A
+   * provider's settings come back with the rest: this host keeps them as root
+   * settings, in this store alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1399
+   *
+   * The client-owned approval and policy keys are left to each window's next
+   * push, VS Code's reason: "Approval and policy values are a snapshot of one
+   * client's settings and are re-pushed on every connect, so restoring them
+   * could re-grant an approval that was tightened while the host was
+   * stopped."
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1401-L1416
+   *
+   * The restart mark is this process's and a daemon key its port's, so both
+   * stay out, as a push keeps them out of `rootConfig`.
+   */
+  const declared: Record<string, unknown> = { ...ROOT_CONFIG_SCHEMA.properties, ...providerProperties() };
+  for (const [key, value] of Object.entries(options.rootConfigStore?.read() ?? {})) {
+    if (Object.hasOwn(declared, key) && accepts(declared[key], value) && !clientOwnedApprovalRootConfigKeys.has(key)
+      && key !== RESTART_KEY && !daemonKey(key)) rootConfig[key] = value;
+  }
   /**
    * What this host serves beside `file:`, as one map a client reads.
    *
@@ -702,6 +737,10 @@ export function createRoot(ctx: HostContext): Root {
   /** Whether a root config key is one a backend's account is published under. */
   const isAccountKey = (key: string): boolean =>
     [...agents.values()].some((agent) => accountKey(agent.provider) === key);
+
+  const persistRootConfig = (): void => {
+    options.rootConfigStore?.write(Object.fromEntries(Object.entries(rootConfig).filter(([key]) => !isAccountKey(key))));
+  };
 
   const keptOnReplace = (pushed: Record<string, unknown>): Record<string, unknown> => {
     const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
@@ -843,6 +882,6 @@ export function createRoot(ctx: HostContext): Root {
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
     daemonKey, daemonHeld, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
-    daemonValues, rootSeed, rootFor, keptOnReplace, changesNothing, daemonValuesChanged,
+    daemonValues, rootSeed, rootFor, keptOnReplace, changesNothing, daemonValuesChanged, persistRootConfig,
   };
 }

@@ -2103,6 +2103,10 @@ export function chatAction(
         if (permissions === undefined) break;
         ctx.rootConfig.permissions = permissions;
         dispatch(ROOT, { type: 'root/configChanged', config: { permissions } });
+        // Kept for the next start, as VS Code's host persists the root config
+        // a change of its own makes.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1275-L1282
+        ctx.persistRootConfig();
         break;
       }
       const permissions = withGrant(owning.config.permissions, grant.rules);

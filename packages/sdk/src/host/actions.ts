@@ -286,8 +286,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * Every key pushed is applied and kept, as VS Code's host applies a root
        * patch whatever keys it carries, a client learning what the host has
        * from the properties the schema declares. A start brings back the
-       * declared keys alone: the daemon's from its configuration, as VS Code's
-       * host restores its persisted values by its schemas.
+       * declared keys alone: the daemon's from its configuration and the rest
+       * from `HostOptions.rootConfigStore`, as VS Code's host restores its
+       * persisted values by its schemas (`createRoot`).
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2878-L2898
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1399
        *
@@ -415,6 +416,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * the echo.
          */
         dispatch(ROOT, { ...action, config: echoed }, origin);
+        // Kept for the next start, as VS Code's host persists the root config
+        // after each push a client makes.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13661-L13662
+        ctx.persistRootConfig();
         // Moving chats turned on or off moves every chat's offer of a move.
         if (Object.hasOwn(config, 'chatMoves.enabled')) for (const chat of byChat.keys()) ctx.updateChatMovability(chat);
       };

@@ -6,7 +6,7 @@ import { CLIENT_QUEUE_BYTES, REPLAY_BYTES, clientQueueBytes, replayBytes } from 
 import { vscodeRootProperties } from '../src/vscoderootconfig.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
-import type { HostOptions } from '../src/types/host.js';
+import type { HostOptions, RootConfigStore } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Users } from '../src/types/users.js';
 
@@ -876,6 +876,73 @@ it('keeps every key a push that replaces the lot carries', async () => {
   // kept beside what it set.
   const held = (await rootOf(admin.client)).config as { values: Record<string, unknown> };
   expect(held.values).toEqual({ telemetryLevel: 'off', nonsense: 1 });
+});
+
+/** A store over one bag, as the daemon's file is one, which every host built over it reads. */
+const kept = (values: Record<string, unknown> = {}): RootConfigStore & { values: Record<string, unknown> } => {
+  const store = {
+    values,
+    read: () => store.values,
+    write: (next: Record<string, unknown>) => { store.values = next; },
+  };
+  return store;
+};
+
+/** The root config values a host built over `store` opens with, as a client subscribing first reads them. */
+const startedWith = async (store: RootConfigStore): Promise<Record<string, unknown>> => {
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], rootConfigStore: store });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'later', protocolVersions: ['0.9.0'] } });
+  const { snapshot } = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as { snapshot: { state: { config: { values: Record<string, unknown> } } } };
+  await host.close();
+  return snapshot.state.config.values;
+};
+
+/*
+ * A start brings back the root config a client pushed, the declared keys
+ * alone, each with a value its property accepts, as VS Code's host writes
+ * every key after a push and restores its persisted values schema by schema.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1284-L1313
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1399
+ */
+it('keeps every key a push carries for the next start, which brings back the declared ones its schema accepts', async () => {
+  const store = kept();
+  const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], rootConfigStore: store });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'one', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
+  const pushed = { defaultShell: '/bin/zsh', telemetryLevel: 'off', nonsense: 1, clientQueueBytes: 'lots' };
+  await client.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config: pushed } } });
+  await settle();
+  expect(store.values).toEqual(pushed);
+  await host.close();
+
+  // `nonsense` has no property, and `clientQueueBytes` is a number.
+  expect(await startedWith(store)).toEqual({ defaultShell: '/bin/zsh', telemetryLevel: 'off' });
+});
+
+/*
+ * Of the declared keys, a start leaves out the six a window pushes at every
+ * connect and that gate a question or a policy, VS Code's
+ * `clientOwnedApprovalRootConfigKeys`: restored, a value kept from one window
+ * could grant again what was tightened while the host was stopped. The terminal
+ * rules and the host's own permissions come back with the rest.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1401-L1416
+ */
+it('leaves the client-owned approval and policy keys a store kept to the next push, as VS Code\'s host restores none of them', async () => {
+  const store = kept({
+    globalAutoApproveEnabled: true,
+    autoApprovePolicyRestricted: false,
+    terminalAutoApproveEnabled: true,
+    editAutoApprovePatterns: { '**/*': true },
+    autoReplyEnabled: true,
+    workspaceTrust: { enabled: true, trustedUris: ['file:///work'] },
+    terminalAutoApproveRules: { npm: true },
+    permissions: { allow: ['WebFetch(example.com)'], deny: [] },
+  });
+  expect(await startedWith(store)).toEqual({
+    terminalAutoApproveRules: { npm: true },
+    permissions: { allow: ['WebFetch(example.com)'], deny: [] },
+  });
 });
 
 it('asks the daemon for its key alone when an undeclared key is beside it', async () => {

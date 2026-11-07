@@ -1040,6 +1040,25 @@ export interface HostOptions {
    */
   rootConfig?: RootConfigPort;
   /**
+   * Where the root config a client pushed is kept between starts.
+   *
+   * Written whole after each change a client or this host makes to it, and
+   * read once, when the host is built, as VS Code's host keeps its root config
+   * in a file it writes after each change and reads at its start. What is
+   * written is every key this host keeps for its clients, a backend's account
+   * aside, which its harness says. A start brings back the keys the root
+   * config's schema declares, each with a value its property accepts, and
+   * leaves the client-owned approval and policy keys to each window's next
+   * push.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1284-L1313
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1416
+   *
+   * Left out, the root config lasts as long as the process, which is what a
+   * host embedded in something short-lived wants. The daemon keeps it in
+   * `root-config.json` beside its configuration.
+   */
+  rootConfigStore?: RootConfigStore;
+  /**
    * What this host says about itself when a window asks.
    *
    * The reference window has requests of its own for the host's version, its
@@ -1152,6 +1171,19 @@ export interface RootConfigAnswer {
    * `markRestartNeeded`.
    */
   restartNeeded?: boolean;
+}
+
+/**
+ * Where the root config a client pushed is kept between starts.
+ *
+ * One bag of values, written whole and read whole: the host decides what goes
+ * in and what comes back, and the store keeps what it is given.
+ */
+export interface RootConfigStore {
+  /** What was kept last, read once when the host is built; empty where nothing was. */
+  read(): Record<string, unknown>;
+  /** Keep these values in place of what was kept. */
+  write(values: Record<string, unknown>): void;
 }
 
 /** What a host knows about itself, for the window's diagnostics. */
