@@ -239,8 +239,10 @@ export interface SessionContext extends Config, Handlers, Opening, Turn, ClientC
     allow?: string;
     /** The option a refusal with no option picked selects, when it offered a once option. */
     reject?: string;
-    /** Every option the server offered, as the call offers them to a person. */
+    /** The options the call offers of its own, a mode switch's buttons. */
     offered: ConfirmationOption[];
+    /** Whether the call was said running before its question, which a refusal puts back. */
+    readied: boolean;
     /** The input-needed entry said for it, which the session's state lists while it stands. */
     entry?: Bag;
     settle(answer: PermissionAnswer): void;

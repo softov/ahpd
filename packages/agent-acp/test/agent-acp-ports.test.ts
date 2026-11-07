@@ -449,14 +449,19 @@ it('says a pseudoterminal runs a terminal, and names a command\'s while it runs'
   expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
 });
 
-/** The fixture's three options, as the protocol offers them: approve before deny, in the server's order. */
-const OFFERED = [
-  { id: 'yes-once', label: 'Allow once', kind: 'approve', group: 1 },
-  { id: 'yes-always', label: 'Always allow', kind: 'approve', group: 1 },
-  { id: 'no-once', label: 'Reject once', kind: 'deny', group: 2 },
+/** VS Code's options for a write whose path the call names nowhere, in its words. */
+const ONCE = [
+  { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+  { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
 ];
 
-it('offers every option the server listed, on the call and on the ask', async () => {
+/*
+ * A question carries no option of the server's: the host puts VS Code's on
+ * it, as VS Code's agents raise a pending confirmation for their host's chain
+ * to put the options on, here a removal's, which names no path to grant.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L610
+ */
+it('offers none of the server\'s options, the host putting VS Code\'s on the call and on the ask', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'ask me first');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
@@ -467,19 +472,19 @@ it('offers every option the server listed, on the call and on the ask', async ()
   // A ready with no `confirmed`, so a call the server announced as running
   // goes back to `pending-confirmation` with the choices on it.
   expect(ready?.confirmed).toBeUndefined();
-  expect(ready?.options).toEqual(OFFERED);
+  expect(ready?.options).toEqual(ONCE);
   expect(ready?.confirmationTitle).toBe('Remove a file');
   const entry = actions(p, uri).find((e) => e.action.type === 'session/inputNeededSet')?.action.request as {
     toolCall?: { options?: unknown };
   };
-  expect(entry?.toolCall?.options).toEqual(OFFERED);
+  expect(entry?.toolCall?.options).toEqual(ONCE);
 
   const snapshot = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { activeTurn?: { responseParts: { toolCall?: { toolCallId: string; status: string; options?: unknown } }[] } } };
   };
   const call = snapshot.snapshot.state.activeTurn?.responseParts.find((one) => one.toolCall?.toolCallId === 'call-perm')?.toolCall;
   expect(call?.status).toBe('pending-confirmation');
-  expect(call?.options).toEqual(OFFERED);
+  expect(call?.options).toEqual(ONCE);
 
   // The two frames that carry the options, as the protocol declares them.
   const check = checker();
@@ -497,27 +502,65 @@ it('offers every option the server listed, on the call and on the ask', async ()
   await endedTurn(p, chatUri, 1);
 });
 
-it('answers with the option the person picked, and says which', async () => {
-  const { client, peer: p, uri, chatUri } = await talking();
-  begin(client, chatUri, 't1', 'ask me first');
+/*
+ * What the host keeps of an answer is the host's, and the server is answered
+ * once, as VS Code's Copilot agent answers its runtime `approve-once` whatever
+ * its host kept.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8640
+ */
+it('answers the server once whatever the person picked of the host\'s options, and says which they picked', async () => {
+  const { client, peer: p, uri, chatUri } = await talking({ rules: { 'make build': true } });
+  begin(client, chatUri, 't1', 'execrun');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
 
+  // The command's grant in this session, which the host keeps.
+  const ready = actions(p, chatUri)
+    .filter((e) => e.action.type === 'chat/toolCallReady' && e.action.toolCallId === 'call-run')
+    .at(-1)?.action;
+  const grant = (ready?.options as Bag[] | undefined)?.find((one) => String(one.id).startsWith('allow-session-rules:'));
+  expect(grant).toBeDefined();
   client.handle({
     method: 'dispatchAction',
     params: {
       channel: chatUri,
       action: {
-        type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-perm',
-        approved: true, confirmed: 'user-action', selectedOptionId: 'yes-always',
+        type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-run',
+        approved: true, confirmed: 'user-action', selectedOptionId: grant?.id,
       },
     },
   });
   await endedTurn(p, chatUri, 1);
-  expect(prose(p, chatUri)).toContain('perm=yes-always');
+  expect(prose(p, chatUri)).toContain('exec=yes-once');
   const echoed = p.notes.find((n) => n.method === 'action' && (n.params as Note).channel === chatUri
     && (n.params as Note).action.type === 'chat/toolCallConfirmed');
-  expect((echoed?.params as Note | undefined)?.action.selectedOptionId).toBe('yes-always');
+  expect((echoed?.params as Note | undefined)?.action.selectedOptionId).toBe(grant?.id);
   expect(checker().frame(echoed)).toEqual([]);
+});
+
+/*
+ * A refusal the host makes itself is said to no client: the server is
+ * answered its refusal, and the failure it reports ends the call for every
+ * client, a call it held as not yet started included, as VS Code's agents
+ * report the failure their runtime gives a call their host refused.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1727-L1735
+ */
+it('refuses a call the session\'s permissions deny before anybody is asked, and the server\'s failure ends it as a denial', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, action: { type: 'session/configChanged', config: { permissions: { allow: [], deny: ['drop_branch'] } } } },
+  });
+  begin(client, chatUri, 't1', 'hold it');
+  await endedTurn(p, chatUri, 1);
+
+  expect(types(p, uri)).not.toContain('session/inputNeededSet');
+  expect(prose(p, chatUri)).toContain('perm=no-once');
+  const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  const held = ((((late as Bag).snapshot as Bag).state as Bag).turns as Bag[])
+    .flatMap((turn) => turn.responseParts as Bag[])
+    .map((part) => part.toolCall as Bag | undefined)
+    .find((one) => one?.toolCallId === 'call-hold');
+  expect(held).toMatchObject({ status: 'completed', success: false, error: { code: 'denied' } });
 });
 
 it('answers once when the option picked is not one the server offered', async () => {
@@ -631,25 +674,93 @@ it('asks for a call of kind execute with no command line', async () => {
   expect(prose(p, chatUri)).toContain('exec=yes-once');
 });
 
-it('asks when the agent offers no allow_once option', async () => {
+/*
+ * The host's chain approves the line by the window's rules, the question
+ * saying it is a bash command; a server that offers no once option is
+ * answered `cancelled`, an "always" being a decision nobody made.
+ */
+it('answers the server cancelled where the host approves a call it offers no once option for', async () => {
   const { client, peer: p, uri, chatUri } = await talking({ rules: { 'make test': true } });
   begin(client, chatUri, 't1', 'execrun alwaysonly');
-  await until(() => types(p, uri).includes('session/inputNeededSet'));
-
-  // The "always" is only selected because the person selected it: a check
-  // that approved the command still had no once option to answer with.
-  client.handle({
-    method: 'dispatchAction',
-    params: {
-      channel: chatUri,
-      action: {
-        type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-run',
-        approved: true, confirmed: 'user-action', selectedOptionId: 'yes-always',
-      },
-    },
-  });
   await endedTurn(p, chatUri, 1);
-  expect(prose(p, chatUri)).toContain('exec=yes-always');
+
+  expect(types(p, uri)).not.toContain('session/inputNeededSet');
+  expect(prose(p, chatUri)).toContain('exec=cancelled');
+});
+
+/*
+ * A question says what the host decides it by, beside its ready, as VS Code's
+ * agents raise a pending confirmation: the kind of call by its ACP kind, the
+ * path its first location names, the URL a fetch's input names, a command's
+ * line in bash, and an MCP server's tool by its name. It offers no options of
+ * its own, save a mode switch's, whose buttons a person's pick reaches the
+ * server as.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L32-L47
+ */
+it('says what the host decides a question by on its ready, and offers no options save a mode switch\'s buttons', async () => {
+  const said: Bag[] = [];
+  const opened: string[] = [];
+  const ctx = {
+    emit: (_channel: string, action: Bag) => { said.push(action); },
+    provider: 'acp',
+    start: { chatUri: 'ahp-chat:/fields', getAutoApproval: () => undefined },
+    cwd: tmpdir(),
+    seeds: [],
+    replay: [],
+    permissions: new Map(),
+    terminals: new Map(),
+    elicitations: new Map(),
+    mapping: { turnId: 't1', parts: [], calls: new Map(), opening: [] },
+    ownerOf: () => undefined,
+    openCall: (call: { toolCallId: string }) => { opened.push(call.toolCallId); },
+    options: {},
+  } as unknown as SessionContext;
+  const handlers = createHandlers(ctx);
+  const once = [
+    { optionId: 'yes', name: 'Allow', kind: 'allow_once' },
+    { optionId: 'ever', name: 'Always allow', kind: 'allow_always' },
+    { optionId: 'no', name: 'Reject', kind: 'reject_once' },
+  ];
+  const ask = (toolCall: Bag, options: Bag[] = once): Promise<unknown> =>
+    handlers.requestPermission({ sessionId: 's', toolCall, options } as never);
+  const shell = ask({ toolCallId: 'c-shell', title: 'Run', kind: 'execute', rawInput: { command: 'make test', cwd: '/work' } });
+  const read = ask({ toolCallId: 'c-read', title: 'Read', kind: 'read', locations: [{ path: '/work/a.txt' }] });
+  const edit = ask({ toolCallId: 'c-edit', title: 'Edit', kind: 'edit', locations: [{ path: '/work/b.txt', line: 3 }] });
+  const fetch = ask({ toolCallId: 'c-url', title: 'Fetch', kind: 'fetch', rawInput: { url: 'https://example.com/x' } });
+  const mcp = ask({ toolCallId: 'c-mcp', title: 'Look up', name: 'mcp__docs__lookup', kind: 'other' });
+  const plan = ask({ toolCallId: 'c-plan', title: 'Ready to code?', kind: 'switch_mode' }, [
+    { optionId: 'auto', name: 'Yes, and auto-accept edits', kind: 'allow_always' },
+    { optionId: 'manual', name: 'Yes, and manually approve edits', kind: 'allow_once' },
+    { optionId: 'keep', name: 'No, keep planning', kind: 'reject_once' },
+  ]);
+  const readyOf = (id: string): Bag | undefined => said.find((one) => one.type === 'chat/toolCallReady' && one.toolCallId === id);
+  // A command's question waits on the window's rules before it is said.
+  await until(() => readyOf('c-shell') !== undefined);
+
+  expect(readyOf('c-shell')).toMatchObject({ permissionKind: 'shell', shellCommand: 'make test', shellLanguage: 'bash' });
+  expect(readyOf('c-read')).toMatchObject({ permissionKind: 'read', permissionPath: '/work/a.txt' });
+  expect(readyOf('c-edit')).toMatchObject({ permissionKind: 'write', permissionPath: '/work/b.txt' });
+  expect(readyOf('c-url')).toMatchObject({ permissionKind: 'url', permissionUrl: 'https://example.com/x' });
+  expect(readyOf('c-mcp')).toMatchObject({ permissionKind: 'mcp' });
+  for (const id of ['c-shell', 'c-read', 'c-edit', 'c-url', 'c-mcp']) expect(readyOf(id)).not.toHaveProperty('options');
+  expect(readyOf('c-plan')).toMatchObject({ permissionKind: 'custom-tool' });
+  expect(readyOf('c-plan')?.options).toEqual([
+    { id: 'auto', label: 'Yes, and auto-accept edits', kind: 'approve', group: 1 },
+    { id: 'manual', label: 'Yes, and manually approve edits', kind: 'approve', group: 1 },
+    { id: 'keep', label: 'No, keep planning', kind: 'deny', group: 2 },
+  ]);
+
+  // The server is answered once whatever the host kept, and a mode switch's
+  // button the person picked as itself.
+  expect(handlers.confirm('c-shell', true, 'allow-session')).toBe(true);
+  expect(handlers.confirm('c-read', false, 'skip')).toBe(true);
+  expect(handlers.confirm('c-plan', true, 'auto')).toBe(true);
+  expect(await shell).toEqual({ optionId: 'yes' });
+  expect(await read).toEqual({ optionId: 'no' });
+  expect(await plan).toEqual({ optionId: 'auto' });
+  for (const id of ['c-edit', 'c-url', 'c-mcp']) handlers.confirm(id, false);
+  await Promise.all([edit, fetch, mcp]);
 });
 
 /** One question the server asked, out of the chat's own actions. */

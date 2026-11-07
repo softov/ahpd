@@ -235,11 +235,10 @@ const answer = (
   });
 };
 
-/** The fixture's three options, as the protocol offers them. */
-const OFFERED = [
-  { id: 'yes-once', label: 'Allow once', kind: 'approve', group: 1 },
-  { id: 'yes-always', label: 'Always allow', kind: 'approve', group: 1 },
-  { id: 'no-once', label: 'Reject once', kind: 'deny', group: 2 },
+/** VS Code's options for a question nothing may keep an answer to. */
+const ONCE = [
+  { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+  { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
 ];
 
 /** The call a question is about, in the shape the entry carries it. */
@@ -258,11 +257,8 @@ it('asks before a matched host tool runs, on the call the agent reported, and ru
     toolName: 'mcp__host__list_sessions',
     status: 'pending-confirmation',
   });
-  // One approval and one refusal: nothing on the card keeps an answer.
-  expect(call(entry).options).toEqual([
-    { id: 'approve', label: 'Approve', kind: 'approve', group: 1 },
-    { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
-  ]);
+  // The host's Allow Once and Skip: nothing on the card keeps an answer.
+  expect(call(entry).options).toEqual(ONCE);
   // It has not run while the question stands.
   expect(ran).toEqual([]);
 
@@ -315,23 +311,26 @@ it('runs a host tool the rule does not name without asking', async () => {
   expect(results(p, chatUri)).toEqual([{ isError: false, content: [{ type: 'text', text: 'the sessions' }] }]);
 });
 
-it('offers only the once options for a matched tool the agent asks about itself', async () => {
-  const { client, peer: p, uri, chatUri } = await talking({ rules: { remove_file: false } });
-  begin(client, chatUri, 'ask me first');
+it('offers the host\'s Allow Once and Skip alone for a matched tool the agent asks about itself', async () => {
+  const { client, peer: p, uri, chatUri } = await talking({ rules: { shell: false } });
+  begin(client, chatUri, 'execrun');
   await until(() => question(p, uri) !== undefined);
 
-  expect(call(question(p, uri)).options).toEqual([OFFERED[0], OFFERED[2]]);
+  expect(call(question(p, uri)).options).toEqual(ONCE);
   // The call's own ready carries the same choices, and no "always" among them.
   const ready = actions(p, chatUri)
-    .filter((e) => e.action.type === 'chat/toolCallReady' && e.action.toolCallId === 'call-perm')
+    .filter((e) => e.action.type === 'chat/toolCallReady' && e.action.toolCallId === 'call-run')
     .at(-1)?.action;
-  expect(ready?.options).toEqual([OFFERED[0], OFFERED[2]]);
+  expect(ready?.options).toEqual(ONCE);
 });
 
-it('offers every option for a tool the rule does not name', async () => {
+it('offers VS Code\'s grants of the command for a tool the rule does not name', async () => {
   const { client, peer: p, uri, chatUri } = await talking({ rules: { another_tool: false } });
-  begin(client, chatUri, 'ask me first');
+  begin(client, chatUri, 'execrun');
   await until(() => question(p, uri) !== undefined);
 
-  expect(call(question(p, uri)).options).toEqual(OFFERED);
+  const offered = call(question(p, uri)).options as Bag[];
+  expect(offered.at(0)).toEqual(ONCE[0]);
+  expect(offered.at(-1)).toEqual(ONCE[1]);
+  expect(offered.some((one) => String(one.id).startsWith('allow-session-rules:'))).toBe(true);
 });

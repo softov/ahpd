@@ -240,9 +240,11 @@ const ready = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag => 
     ...contributorOf(call),
   };
   // Onto the held call and into the action, from one object, so the snapshot
-  // a late client reads is the running call a client watching was sent.
+  // a late client reads is the running call a client watching was sent; a call
+  // held cancelled stays as it is, as the reducer leaves one for a ready.
+  // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L559-L567
   const held = callPartOf(turn, call.toolCallId);
-  if (held !== undefined) Object.assign(bag(held.toolCall), said, { status: 'running' });
+  if (held !== undefined && bag(held.toolCall).status !== 'cancelled') Object.assign(bag(held.toolCall), said, { status: 'running' });
   return {
     type: 'chat/toolCallReady',
     turnId: turn.turnId,

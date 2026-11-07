@@ -1083,10 +1083,12 @@ const promptScript = async (id, params) => {
     });
     const answer = await asking;
     const chosen = answer?.outcome?.outcome === 'selected' ? String(answer.outcome.optionId) : 'cancelled';
+    // A call the client refused never runs, which the server reports as the
+    // call failing, as it does for the call it asks about first.
     notify({
       sessionUpdate: 'tool_call_update',
       toolCallId: 'call-hold',
-      status: 'completed',
+      status: chosen.startsWith('yes-') ? 'completed' : 'failed',
       content: [{ type: 'content', content: { type: 'text', text: `answer=${chosen}` } }],
     });
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `perm=${chosen}` } });

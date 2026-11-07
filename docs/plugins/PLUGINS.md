@@ -399,7 +399,8 @@ The option a person picks arrives as the third argument of `Session.confirm(tool
 Claude offers none, so the host's are put, and says what each call asks for as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175) does: its kind and its path or URL by VS Code's table of the CLI's tools, a `Bash` command in `bash`, a call with `dangerouslyDisableSandbox` as `requestSandboxBypass`, and a question a policy's ask rule raised (`matchedAskRule` from `policySettings`) or one the CLI says may offer no persistent answer (`suppressAlwaysAllowRule`) as `managedApprovalRequired`.
 The CLI is given the host's answer: an approval runs the call as it was asked, and a refusal is VS Code's decline.
 Claude also hands the session's `permissions.allow` to the CLI when a query starts, and a tool it allows runs without a question.
-An ACP server's own options are offered as it listed them, approvals first, and the one picked is the `optionId` the server receives.
+An ACP server's question says its kind by the call's ACP kind (`execute` a shell's, `read` and `search` a read's, `edit`, `delete` and `move` a write's, `fetch` a URL's, a tool named `mcp__<server>__<tool>` an MCP server's, and any other a custom tool's), the path its first location names, the URL its input names, and its command's line in `bash`, and it offers none of the server's options save a mode switch's, whose buttons are the switch's own.
+The server is answered once whatever the host keeps, its `allow_once` or `reject_once`, and `cancelled` where it offered no once option of that kind; a mode switch's button the person picked is sent as itself.
 cofold offers Allow once, Allow the tool for this session, and Deny, and the session choice is sent as `alwaysApprove`, which cofold keeps for that session and tool.
 pi offers none, so the host's three are put.
 

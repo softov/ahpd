@@ -9,7 +9,6 @@ import type {
   CreateTerminalResponse,
   KillTerminalRequest,
   KillTerminalResponse,
-  PermissionOption,
   PermissionOptionKind,
   ReadTextFileRequest,
   ReadTextFileResponse,
@@ -19,13 +18,14 @@ import type {
   SessionUpdate,
   TerminalOutputRequest,
   TerminalOutputResponse,
+  ToolKind,
   WaitForTerminalExitRequest,
   WaitForTerminalExitResponse,
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
 import { hostPathOf, str, withSkillArgumentHintMeta } from '@ahpd/sdk';
-import type { Bag, BackgroundTask, BoundTool, OpenTerminal, Session } from '@ahpd/sdk';
+import type { Bag, BackgroundTask, BoundTool, OpenTerminal, PendingConfirmation, PermissionKind, Session } from '@ahpd/sdk';
 import { HOST_TOOLS, callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
 import type { AcpTurn, PermissionAnswer } from '../types.js';
 import { TOOL_USE_ID } from './clientcalls.js';
@@ -80,15 +80,23 @@ const referenceName = (toolName: string): string => {
 };
 
 /**
- * A permission request's options less the ones that would keep an answer.
- *
- * A rule that makes a tool ask every time leaves a person nothing to keep, so
- * the "always" choices a server offered are left out of what the card draws. A
- * server offering no once option of a kind then leaves that answer `cancelled`,
- * which is the rule's own answer rather than an "always" the person never gave.
+ * What each kind of call an ACP server asks about does, in VS Code's
+ * permission kinds, as VS Code's Claude table rows its tools: running a
+ * command a shell's, reading and searching a read's, editing, deleting and
+ * moving a write's, and fetching a URL's. Any other kind is an MCP server's
+ * tool by its `mcp__` name, and else a custom tool, as VS Code's
+ * `getClaudePermissionKind` falls back.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L134
  */
-const onlyOnce = (options: readonly PermissionOption[]): PermissionOption[] =>
-  options.filter((one) => one.kind === 'allow_once' || one.kind === 'reject_once');
+const PERMISSION_KINDS: Readonly<Partial<Record<ToolKind, PermissionKind>>> = {
+  execute: 'shell',
+  read: 'read',
+  search: 'read',
+  edit: 'write',
+  delete: 'write',
+  move: 'write',
+  fetch: 'url',
+};
 
 export function createHandlers(ctx: SessionContext): Handlers {
   const { emit, provider, start, cwd, seeds, replay, permissions, terminals, elicitations } = ctx;
@@ -591,19 +599,26 @@ export function createHandlers(ctx: SessionContext): Handlers {
   };
 
   /**
-   * A permission the server is blocked on, put to a person.
+   * A permission the server is blocked on, put to the host as a question.
    *
-   * Every option the server lists is offered on the call, approvals before
-   * refusals, and the one the person picks is the one the server is sent. An
-   * answer that picked none selects the server's `allow_once` or
-   * `reject_once` - never an `always`, which would change this session's
-   * policy from a single answer - and a server with no once option of that
-   * kind is answered `cancelled`, because selecting an `always` is a decision
-   * the person did not make.
+   * The question says what the call asks to do, for the host's chain to decide
+   * it by, as VS Code's agents raise a pending confirmation: its kind by the
+   * call's ACP kind, the path a read or a write names first among its
+   * locations, the URL a fetch's input names, and a command's line, read as
+   * bash, this host's reading of the line codex-acp sends as
+   * `rawInput.command`. A tool the operator's rule names is a question a
+   * managed rule asks. It offers no options of its own, so the host puts
+   * VS Code's, save a mode switch's, whose options are the switch's own
+   * buttons, as VS Code's Claude agent puts its plan's approve and deny.
    *
-   * A tool the operator's rule names is the exception: its question offers the
-   * once options alone, so the card has nothing on it that would keep an
-   * answer. ACP's `requestPermission`.
+   * The server is answered once, whatever the host keeps, as VS Code's agents
+   * answer their runtimes: its `allow_once` or `reject_once`, and `cancelled`
+   * where it offered no once option of that kind, selecting an `always` being
+   * a decision the person did not make; a mode switch's button the person
+   * picked is sent as itself. ACP's `requestPermission`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L32-L47
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8640
    */
   const requestPermission = async (request: RequestPermissionRequest): Promise<PermissionAnswer> => {
     const option = (kind: PermissionOptionKind): string | undefined =>
@@ -611,13 +626,10 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const allow = option('allow_once');
     const reject = option('reject_once');
     /*
-     * The rule, read before the server's own options.
-     *
-     * A tool the rule names is one a person answers on every call, so the
-     * "always" choices the server offered are not put to them and a remembered
-     * one never applies. Read without an await, because the question has to be
-     * on the session before an update that arrives behind this request can
-     * ready the call itself.
+     * The rule, which makes the tool's question one a person answers on every
+     * call. Read without an await, because the question has to be on the
+     * session before an update that arrives behind this request can ready the
+     * call itself.
      */
     const called = request.toolCall.name ?? request.toolCall.title ?? request.toolCall.toolCallId;
     const matched = start.getAutoApproval?.('tool', referenceName(called)) === 'ask';
@@ -652,9 +664,21 @@ export function createHandlers(ctx: SessionContext): Handlers {
       ctx.options.log?.(`${ctx.provider}: refusing a permission with no turn running: ${request.toolCall.toolCallId}`);
       return 'cancelled';
     }
-    const offered = confirmationOptions(matched ? onlyOnce(request.options) : request.options);
+    const offered = request.toolCall.kind === 'switch_mode' ? confirmationOptions(request.options) : [];
     const toolCallId = request.toolCall.toolCallId;
     const requestId = `${toolCallId}:permission`;
+    const raw = bag(request.toolCall.rawInput);
+    const permissionKind = PERMISSION_KINDS[request.toolCall.kind ?? 'other'] ?? (called.startsWith('mcp__') ? 'mcp' : 'custom-tool');
+    const path = request.toolCall.locations?.[0]?.path;
+    const url = str(raw.url);
+    const line = str(raw.command);
+    const confirmation: PendingConfirmation = {
+      permissionKind,
+      ...((permissionKind === 'read' || permissionKind === 'write') && path !== undefined ? { permissionPath: path } : {}),
+      ...(permissionKind === 'url' && url !== undefined ? { permissionUrl: url } : {}),
+      ...(permissionKind === 'shell' && line !== undefined ? { shellCommand: line, shellLanguage: 'bash' as const } : {}),
+      ...(matched ? { managedApprovalRequired: true } : {}),
+    };
 
     const answered = new Promise<PermissionAnswer>((resolve) => {
       permissions.set(toolCallId, {
@@ -662,6 +686,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
         ...(allow === undefined ? {} : { allow }),
         ...(reject === undefined ? {} : { reject }),
         offered,
+        readied: ctx.mapping?.calls.get(toolCallId)?.readied === true,
         settle: resolve,
       });
     });
@@ -742,6 +767,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       ...(call.toolInput === undefined ? {} : { toolInput: call.toolInput }),
       confirmationTitle: call.confirmationTitle,
       ...(offered.length > 0 ? { options: offered } : {}),
+      ...confirmation,
     });
     const entry: Bag = { id: requestId, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall: { ...call } };
     const held = permissions.get(toolCallId);
@@ -762,11 +788,10 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * VS Code's host asks on the agent's own call, which then runs and
    * completes: the call the request names in its `_meta`, and otherwise the
    * latest call of the running turn that names this tool as the host offers
-   * it, with one approval and one refusal and nothing to keep, and the MCP
-   * call held on the person's answer. A call a person has answered for
-   * already, on the agent's own question, runs on that answer. A call the
-   * agent never reported is one no client draws a question on, and is
-   * refused.
+   * it, put as the question the rule makes it, and the MCP call held on the
+   * answer. A call a person has answered for already, on the agent's own
+   * question, runs on that answer. A call the agent never reported is one no
+   * client draws a question on, and is refused.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1770-L1790
    */
   const askTool = async (tool: BoundTool, input: Record<string, unknown>, meta: Record<string, unknown> | undefined): Promise<boolean> => {
@@ -999,14 +1024,15 @@ export function createHandlers(ctx: SessionContext): Handlers {
   };
 
   /**
-   * A person's answer to the permission the server is waiting on.
+   * The host's answer to the permission the server is waiting on, a person's
+   * or its own.
    *
    * Found by the tool call the entry names rather than assumed to be the one
    * held, because two calls can be waiting at once and answering the wrong
-   * one is worse than answering none. The option picked is sent when the
-   * server offered it and it is of the answer's kind; otherwise the once
-   * option of that kind, and with none the request is refused instead, with
-   * the person's answer standing as the reason.
+   * one is worse than answering none. A mode switch's own button the person
+   * picked is sent when it is of the answer's kind; otherwise the once option
+   * of that kind, and with none the request is answered `cancelled`, the
+   * answer standing as the reason.
    */
   const confirm: Session['confirm'] = (toolCallId, approved, optionId) => {
     const held = permissions.get(toolCallId);
@@ -1043,10 +1069,20 @@ export function createHandlers(ctx: SessionContext): Handlers {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L133
      *
      * A refused call is kept as declined, so the failure the server reports
-     * for it completes as a denial.
+     * for it completes as a denial, and its question is over, so a call the
+     * chat held as not yet started is said running by the report that ends
+     * it. A refusal the host makes itself is said to no client, and that
+     * report is what ends the call for them, as VS Code's agents report the
+     * failure their runtime gives a refused call.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1727-L1735
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L7259-L7264
      */
     const mapped = ctx.mapping?.calls.get(toolCallId);
-    if (mapped !== undefined && !approved) mapped.declined = true;
+    if (mapped !== undefined && !approved) {
+      mapped.declined = true;
+      mapped.asked = false;
+      mapped.readied = held.readied;
+    }
     if (approved && mapped !== undefined && ctx.mapping !== undefined) {
       ctx.openCall(mapped, ctx.mapping.turnId);
     }

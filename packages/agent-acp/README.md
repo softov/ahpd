@@ -167,7 +167,7 @@ The host's own tools, and with them the tools a session's clients provide, are o
 
 A session this process never watched is loaded when a client reads it, where the server advertised `loadSession`; the read and the turn after it each load it, and what the server replays becomes the session's earlier turns. A replayed turn the server sent no user message for is kept, with no user text on it.
 
-A `session/request_permission` is a confirmation offering the server's own options, approvals first, and the one the person picks is the `optionId` the server receives. An answer that picked none selects the server's once option of that kind, never an `always`.
+A `session/request_permission` is a question the host decides, saying what the call asks to do by its ACP kind, its first location and its input, and offering none of the server's options save a mode switch's buttons. The server is answered once, its `allow_once` or `reject_once`, whatever the host keeps of the answer, and a mode switch's button the person picked as itself. A call the host refuses without asking anybody is ended by the failure the server reports for it.
 
 An `elicitation/create` is a question, and it is asked on the chat as a `chat/inputRequested` with one question per field of its form, and the `session/inputNeededSet` entry a permission raises. The person's answer arrives as `chat/inputCompleted` and reaches the server as the elicitation's content, and the kind the client sent reaches it as itself: a decline as a decline and a cancel as a cancel. A page rather than a form carries its `url` on the request and is completed by the server saying so with `elicitation/complete`.
 
