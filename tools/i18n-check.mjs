@@ -103,7 +103,7 @@ for (const dir of packages) {
         }
         return;
       }
-      if (name === 'enum') {
+      if (name === 'enum' || name === 'enumDescriptions') {
         const labels = object(value);
         if (labels === undefined) return say([...path, name], 'is not an object');
         for (const [one, leaf] of Object.entries(labels)) {
