@@ -767,7 +767,7 @@ export function createQuery(ctx: SessionContext): Query {
    * next send to start again.
    */
   const rebindForRestart = async (uri: string | undefined): Promise<string | undefined> => {
-    const name = uri === undefined ? undefined : resolveClaudeAgentName(uri);
+    const name = uri === undefined ? undefined : resolveClaudeAgentName(uri, ctx.options.parseYaml);
     if (name === ctx.appliedAgent) return undefined;
     const was = ctx.query;
     if (was !== undefined) {

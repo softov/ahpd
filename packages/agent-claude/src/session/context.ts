@@ -6,6 +6,7 @@ import type { Asked, SpawnedProcess } from '../spawn.js';
 import type { Asking } from './asking.js';
 import type { ClientTools } from './clienttools.js';
 import type { Config } from './config.js';
+import type { ParseYaml } from './disk.js';
 import type { Logins } from './logins.js';
 import type { Parts } from './parts.js';
 import type { Query } from './query.js';
@@ -87,6 +88,12 @@ export interface ClaudeSessionOptions extends SessionOptions {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
    */
   exits?: Map<string, Promise<unknown>>;
+  /**
+   * The plugin context's YAML reader, which a customization file's frontmatter
+   * is read with. Absent where the session is built outside a plugin, and a
+   * frontmatter is then read as none.
+   */
+  parseYaml?: ParseYaml;
   /** Start the CLI somewhere other than this host. */
   spawn?: (asked: Asked) => SpawnedProcess;
   /** Where the CLI is wherever `spawn` starts it. */

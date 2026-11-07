@@ -6,6 +6,7 @@ import { uriOf } from '@ahpd/sdk';
 import type { Bag, OnWire } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import { frontmatterOf, projectDirOf } from './disk.js';
+import type { ParseYaml } from './disk.js';
 import type { Disk, DiskFile, DiskKind, DiskScope } from './disk.js';
 
 /**
@@ -516,7 +517,7 @@ export const INTERNAL_AGENT = 'claude-internal:/agent/';
  * handing the CLI an agent it does not have would fail the turn over a picker.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L206-L247
  */
-export function resolveClaudeAgentName(uri: string): string | undefined {
+export function resolveClaudeAgentName(uri: string, parseYaml?: ParseYaml): string | undefined {
   if (uri.startsWith(INTERNAL_AGENT)) {
     const last = uri.slice(INTERNAL_AGENT.length).split('/').filter((one) => one !== '').pop();
     if (last === undefined) return undefined;
@@ -529,6 +530,6 @@ export function resolveClaudeAgentName(uri: string): string | undefined {
   catch { return undefined; }
   const own = basename(path).replace(/\.md$/i, '');
   // The uri is the client's, so the read is the bounded one `frontmatterOf` makes.
-  const named = frontmatterOf(path)?.name;
+  const named = frontmatterOf(path, parseYaml)?.name;
   return typeof named === 'string' && named !== '' ? named : own;
 }

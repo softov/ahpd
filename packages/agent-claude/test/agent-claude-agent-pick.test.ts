@@ -4,8 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { uriOf } from '@ahpd/sdk';
-import { resolveClaudeAgentName } from '../src/session.js';
+import { parseYaml } from '@cofold/yaml';
+import { resolveClaudeAgentName as resolveWith } from '../src/session.js';
 import type { Bag } from '@ahpd/sdk';
+
+/** An agent's name, its file's frontmatter read with the YAML the host hands a plugin. */
+const resolveClaudeAgentName = (uri: string) => resolveWith(uri, parseYaml);
 
 /*
  * The agent a message picked, and the CLI it runs on.

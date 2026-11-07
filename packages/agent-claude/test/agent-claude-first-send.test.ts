@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, expect, it, vi } from 'vitest';
+import { parseYaml } from '@cofold/yaml';
 import type { Bag } from '@ahpd/sdk';
 
 /*
@@ -118,6 +119,8 @@ const open = (extra: Record<string, unknown> = {}): { session: ReturnType<typeof
     emit: (_channel: string, action: Bag) => { said.push(action); },
     seedCustomizations: SEEDS,
     seedModels: MODELS,
+    // The YAML the host hands a plugin, which a frontmatter is read with.
+    parseYaml,
     ...extra,
   } as never);
   return { session, said, cwd };

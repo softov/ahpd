@@ -3,9 +3,14 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { uriOf } from '@ahpd/sdk';
+import { parseYaml } from '@cofold/yaml';
 import { customizationsOf } from '../src/session.js';
-import { diskOf } from '../src/session/disk.js';
+import { diskOf as readDisk } from '../src/session/disk.js';
+import type { DiskRoots } from '../src/session/disk.js';
 import type { Bag } from '../../sdk/src/types/common.js';
+
+/** The disk read with the YAML the host hands a plugin, as the daemon's context does. */
+const diskOf = (roots: DiskRoots) => readDisk(roots, parseYaml);
 
 /*
  * What a session lists as loaded, and where each entry says it came from.

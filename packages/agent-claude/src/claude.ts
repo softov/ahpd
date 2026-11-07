@@ -3,6 +3,7 @@ import { serversFor, toClaudeMcpServers } from './mcp.js';
 import { createSession } from './session.js';
 import { restoreTerminalOutputs } from './session/savedoutput.js';
 import { configDirOf } from './session/disk.js';
+import type { ParseYaml } from './session/disk.js';
 import { watchFolders } from './session/watch.js';
 import { turnsOf, subagentsBySdk, subagentsOf } from './transcript.js';
 import { catalogue, findSession, forgetSession, transcriptOf, written } from './catalog.js';
@@ -132,6 +133,13 @@ export interface ClaudeOptions {
    * backend ships with, 120 seconds, applies to every session of every variant.
    */
   handshakeTimeoutMs?: number;
+  /**
+   * The plugin context's YAML reader, which a customization file's frontmatter
+   * is read with, the probe's and every session's disk scan and an agent's name
+   * among them. The plugin hands its context's; absent, a frontmatter is read
+   * as none.
+   */
+  parseYaml?: ParseYaml;
   /**
    * The declared options this variant runs its sessions on.
    *
@@ -543,7 +551,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     probe: async () => {
       probing += 1;
       let probed: Awaited<ReturnType<typeof probe>>;
-      try { probed = await probe(dir); }
+      try { probed = await probe(dir, options.parseYaml); }
       finally { setImmediate(() => { probing -= 1; }); }
       const { setUp, ...offered } = probed;
       return { ...offered, models: setUp || credentialed() ? await offer(offered.models) : [] };
@@ -772,6 +780,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // How long the CLI has to answer its handshake, which this variant's own
       // option decides and which the backend's default answers without one.
       ...(options.handshakeTimeoutMs === undefined ? {} : { handshakeTimeoutMs: options.handshakeTimeoutMs }),
+      ...(options.parseYaml === undefined ? {} : { parseYaml: options.parseYaml }),
       ...(start.seedCustomizations ? { seedCustomizations: start.seedCustomizations } : {}),
       ...(start.seedModels ? { seedModels: start.seedModels } : {}),
       // A fork point and a rewind point each name an entry of a written

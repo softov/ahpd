@@ -80,11 +80,18 @@ export const projectDirOf = (roots: DiskRoots): string | undefined => {
   return resolve(project) === resolve(roots.configDir) ? undefined : project;
 };
 
-const unquote = (raw: string): string => {
-  const value = raw.trim();
-  return value.length >= 2 && (value[0] === '"' || value[0] === "'") && value.at(-1) === value[0]
-    ? value.slice(1, -1)
-    : value;
+/**
+ * The plugin context's YAML reader, which a frontmatter is parsed with: the
+ * host's own, the project's one YAML for a plugin's files (plan plugin/45-p1,
+ * decision 3, "A plugin gets parseYaml and stringifyYaml from the host").
+ */
+export type ParseYaml = (text: string) => unknown;
+
+/** A frontmatter value as the text a customization reads: a scalar as its text, a list as the texts of its scalars. */
+const flat = (value: unknown): string | string[] | undefined => {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((one) => typeof one === 'string' || typeof one === 'number' || typeof one === 'boolean').map(String);
 };
 
 /**
@@ -92,13 +99,16 @@ const unquote = (raw: string): string => {
  *
  * Only a regular file is read, and only its first 64 KB: a path here can be a
  * link a person made, and a device or a huge file would hold the host up for
- * a name. A file that cannot be read is `undefined`, and a file with no
- * frontmatter is an empty record.
+ * a name. A file that cannot be read is `undefined`.
  *
- * Enough of YAML for what a customization file carries: `key: value`, a
- * `key:` followed by `- item` lines, and `key: [a, b]`.
+ * The frontmatter is what lies between a `---` line opening the file and the
+ * next `---` line, as VS Code's `parseFrontMatter` splits a Markdown file, and
+ * it is parsed as YAML by `parseYaml`, the plugin context's. A file with no
+ * frontmatter, one whose frontmatter is not a mapping or does not parse, and
+ * one read with no parser to read it with are an empty record.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/yaml.ts#L33-L46
  */
-export function frontmatterOf(path: string): Record<string, string | string[]> | undefined {
+export function frontmatterOf(path: string, parseYaml?: ParseYaml): Record<string, string | string[]> | undefined {
   let text: string;
   try {
     if (!statSync(path).isFile()) return undefined;
@@ -110,26 +120,19 @@ export function frontmatterOf(path: string): Record<string, string | string[]> |
     finally { closeSync(fd); }
   }
   catch { return undefined; }
+  const opened = /^---[ \t]*\r?\n/.exec(text);
+  if (opened === null || parseYaml === undefined) return {};
+  const rest = text.slice(opened[0].length);
+  const closed = /^---[ \t]*(?:\r?\n|$)/m.exec(rest);
+  if (closed === null) return {};
+  let parsed: unknown;
+  try { parsed = parseYaml(rest.slice(0, closed.index)); }
+  catch { return {}; }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
   const out: Record<string, string | string[]> = {};
-  if (!text.startsWith('---')) return out;
-  const lines = (text.split(/^---\r?$/m)[1] ?? '').split(/\r?\n/);
-  for (let at = 0; at < lines.length; at += 1) {
-    const found = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(lines[at] as string);
-    if (found === null) continue;
-    const key = found[1] as string;
-    const raw = (found[2] as string).trim();
-    if (raw === '') {
-      const items: string[] = [];
-      while (at + 1 < lines.length && /^\s+-\s/.test(lines[at + 1] as string)) {
-        at += 1;
-        items.push(unquote((lines[at] as string).replace(/^\s+-\s/, '')));
-      }
-      if (items.length > 0) out[key] = items;
-    }
-    else if (raw.startsWith('[') && raw.endsWith(']')) {
-      out[key] = raw.slice(1, -1).split(',').map(unquote).filter((one) => one !== '');
-    }
-    else out[key] = unquote(raw);
+  for (const [key, value] of Object.entries(parsed)) {
+    const read = flat(value);
+    if (read !== undefined) out[key] = read;
   }
   return out;
 }
@@ -152,11 +155,11 @@ const isFile = (path: string): boolean => {
 const oneSegment = (name: string): boolean => name !== '' && name !== '.' && name !== '..' && !/[/\\]/.test(name);
 
 /** The skills of one folder, each in `<folder>/<skill>/SKILL.md` one level down. */
-function skillsIn(dir: string, scope: DiskScope): DiskFile[] {
+function skillsIn(dir: string, scope: DiskScope, parseYaml: ParseYaml | undefined): DiskFile[] {
   const out: DiskFile[] = [];
   for (const folder of namesIn(dir)) {
     const path = join(dir, folder, 'SKILL.md');
-    const front = frontmatterOf(path);
+    const front = frontmatterOf(path, parseYaml);
     if (front === undefined) continue;
     const description = text(front.description);
     out.push({ kind: 'skill', name: text(front.name) ?? folder, scope, path, ...(description !== undefined ? { description } : {}) });
@@ -191,12 +194,12 @@ function syncedIn(dir: string): DiskFile[] {
 }
 
 /** The `*.md` files of one folder, not of its subfolders, as commands (skills) or agents. */
-function markdownIn(dir: string, kind: 'skill' | 'agent', scope: DiskScope): DiskFile[] {
+function markdownIn(dir: string, kind: 'skill' | 'agent', scope: DiskScope, parseYaml: ParseYaml | undefined): DiskFile[] {
   const out: DiskFile[] = [];
   for (const file of namesIn(dir)) {
     if (!file.toLowerCase().endsWith('.md')) continue;
     const path = join(dir, file);
-    const front = frontmatterOf(path);
+    const front = frontmatterOf(path, parseYaml);
     if (front === undefined) continue;
     const own = file.slice(0, -3);
     const description = text(front.description);
@@ -329,10 +332,10 @@ const memory = (path: string, scope: DiskScope): DiskFile[] =>
   isFile(path) ? [{ kind: 'rule', name: basename(path), scope, path }] : [];
 
 /** The rules of a `rules` folder, each scoped to the files its `paths` names. */
-function rulesIn(dir: string, scope: DiskScope): DiskFile[] {
+function rulesIn(dir: string, scope: DiskScope, parseYaml: ParseYaml | undefined): DiskFile[] {
   const out: DiskFile[] = [];
   for (const path of markdownUnder(dir)) {
-    const front = frontmatterOf(path);
+    const front = frontmatterOf(path, parseYaml);
     if (front === undefined) continue;
     const paths = front.paths;
     const globs = (Array.isArray(paths) ? paths : typeof paths === 'string' ? [paths] : []).filter((one) => one !== '');
@@ -355,23 +358,24 @@ function rulesIn(dir: string, scope: DiskScope): DiskFile[] {
  *
  * Read from disk because the CLI reports what it loaded and never where it
  * came from. A folder that is missing or cannot be read gives nothing, and
- * nothing here throws.
+ * nothing here throws. Each file's frontmatter is read with `parseYaml`, the
+ * plugin context's.
  */
-export function filesOf(roots: DiskRoots): DiskFile[] {
+export function filesOf(roots: DiskRoots, parseYaml?: ParseYaml): DiskFile[] {
   const { configDir, cwd, managedDir } = roots;
   const project = projectDirOf(roots);
   const out: DiskFile[] = [];
   if (managedDir !== undefined) {
-    out.push(...skillsIn(join(managedDir, '.claude', 'skills'), 'managed'));
+    out.push(...skillsIn(join(managedDir, '.claude', 'skills'), 'managed', parseYaml));
     /*
      * The managed subagents, which the CLI reads from the managed settings
      * directory's `.claude/agents` and ranks over a project's and a person's.
      * https://code.claude.com/docs/en/sub-agents
      */
-    out.push(...markdownIn(join(managedDir, '.claude', 'agents'), 'agent', 'managed'));
+    out.push(...markdownIn(join(managedDir, '.claude', 'agents'), 'agent', 'managed', parseYaml));
   }
-  out.push(...skillsIn(join(configDir, 'skills'), 'user'));
-  if (project !== undefined) out.push(...skillsIn(join(project, 'skills'), 'project'));
+  out.push(...skillsIn(join(configDir, 'skills'), 'user', parseYaml));
+  if (project !== undefined) out.push(...skillsIn(join(project, 'skills'), 'project', parseYaml));
   out.push(...syncedIn(join(configDir, 'skills', 'synced')));
   /*
    * A scope's commands, as skills after its skills, so a skill of one name is
@@ -379,10 +383,10 @@ export function filesOf(roots: DiskRoots): DiskFile[] {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeAgentSkillScan.ts#L58-L74
    */
   for (const [root, scope] of [[configDir, 'user'], ...(project === undefined ? [] : [[project, 'project']])] as [string, DiskScope][]) {
-    out.push(...markdownIn(join(root, 'commands'), 'skill', scope));
-    out.push(...markdownIn(join(root, 'agents'), 'agent', scope));
+    out.push(...markdownIn(join(root, 'commands'), 'skill', scope, parseYaml));
+    out.push(...markdownIn(join(root, 'agents'), 'agent', scope, parseYaml));
   }
-  out.push(...memory(join(configDir, 'CLAUDE.md'), 'user'), ...rulesIn(join(configDir, 'rules'), 'user'));
+  out.push(...memory(join(configDir, 'CLAUDE.md'), 'user'), ...rulesIn(join(configDir, 'rules'), 'user', parseYaml));
   if (cwd !== undefined) {
     // The home folder's own memory files are the personal scope's, as its `.claude` is.
     const own: DiskScope = project === undefined ? 'user' : 'project';
@@ -390,12 +394,12 @@ export function filesOf(roots: DiskRoots): DiskFile[] {
       ...memory(join(cwd, 'CLAUDE.md'), own),
       ...(project === undefined ? [] : memory(join(project, 'CLAUDE.md'), own)),
       ...memory(join(cwd, 'CLAUDE.local.md'), own),
-      ...(project === undefined ? [] : rulesIn(join(project, 'rules'), own)),
+      ...(project === undefined ? [] : rulesIn(join(project, 'rules'), own, parseYaml)),
     );
   }
   out.push(...hooksIn(roots), ...serversIn(roots));
   return out;
 }
 
-/** The scopes, with what the disk read finds in them now. */
-export const diskOf = (roots: DiskRoots): Disk => ({ ...roots, files: filesOf(roots) });
+/** The scopes, with what the disk read finds in them now, each frontmatter read with `parseYaml`. */
+export const diskOf = (roots: DiskRoots, parseYaml?: ParseYaml): Disk => ({ ...roots, files: filesOf(roots, parseYaml) });

@@ -119,6 +119,9 @@ importers:
       '@ahpd/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@cofold/yaml':
+        specifier: ^0.3.0
+        version: 0.3.0
       '@microsoft/agent-host-protocol':
         specifier: ^1.0.0
         version: 1.0.0

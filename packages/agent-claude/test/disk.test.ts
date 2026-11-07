@@ -2,14 +2,19 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { configDirOf, filesOf, managedDirOf, projectDirOf } from '../src/session/disk.js';
+import { parseYaml } from '@cofold/yaml';
+import { configDirOf, filesOf as readFiles, frontmatterOf, managedDirOf, projectDirOf } from '../src/session/disk.js';
+import type { DiskRoots } from '../src/session/disk.js';
 
 /*
  * The disk read the customizations are laid out from.
  *
  * Each case writes the files where the CLI would read them, under a fresh
- * folder, and reads them back through `filesOf`.
+ * folder, and reads them back through `filesOf`, with the YAML the host hands
+ * a plugin, as the daemon's context does.
  */
+
+const filesOf = (roots: DiskRoots) => readFiles(roots, parseYaml);
 
 const made: string[] = [];
 afterEach(() => { for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true }); });
@@ -142,6 +147,22 @@ describe('what each file is read for', () => {
       { name: 'list.md', description: 'The api', globs: ['src/api/**', 'test/**'] },
       { name: 'one.md', description: undefined, globs: ['lib/**'] },
     ]);
+  });
+
+  /*
+   * The frontmatter between the fences VS Code's `parseFrontMatter` splits,
+   * parsed as YAML with the host's reader, the plugin context's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/yaml.ts#L33-L46
+   */
+  it('reads a frontmatter as YAML, a folded scalar and a quoted value with a colon among it', () => {
+    const root = tree({
+      'skills/review/SKILL.md': '---\nname: "review: deep"\ndescription: >-\n  Reads the change\n  and says what breaks.\n---\n\nBody.\n',
+    });
+    const path = join(root, 'skills', 'review', 'SKILL.md');
+    expect(filesOf({ configDir: root })).toEqual([
+      { kind: 'skill', name: 'review: deep', scope: 'user', path, description: 'Reads the change and says what breaks.' },
+    ]);
+    expect(frontmatterOf(path, parseYaml)).toEqual({ name: 'review: deep', description: 'Reads the change and says what breaks.' });
   });
 
   it('reads only a regular file, and only the first 64 KB of it', () => {

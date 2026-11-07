@@ -133,7 +133,7 @@ export function createServers(ctx: SessionContext): Servers {
     configDir: configDirOf(ctx.options.env),
     managedDir: managedDirOf(),
     ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
-  }));
+  }, ctx.options.parseYaml));
 
   /**
    * Lay the session's customizations out from a plugin list, and say them.

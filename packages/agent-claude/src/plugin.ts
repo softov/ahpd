@@ -67,6 +67,8 @@ const defaultsOf = (host: PluginHost, values: Record<string, unknown>) => {
   const paths = said.paths ?? host.paths;
   const shared = {
     log: (line: string) => host.log(line),
+    // The host's YAML, which a customization file's frontmatter is read with.
+    parseYaml: (text: string) => host.parseYaml(text),
     // One listing for all of them, and one load's worth of it: every record
     // below lists the same store, the projects directory of the same
     // configuration directory, so there is one pass over it for the lot.
