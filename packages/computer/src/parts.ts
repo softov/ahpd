@@ -859,8 +859,10 @@ export interface MadePart {
 }
 
 /**
- * The label a machine carries naming the parts it has, as `<id>@<version>`
- * joined by commas.
+ * The label a machine carries naming the parts it has, as JSON: an array of
+ * `{ id, version }`, as the dev container tooling writes its structured label,
+ * `devcontainer.metadata`, and VS Code reads a container's labels as JSON.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L967-L976
  *
  * Only the parts it was made with: a part whose build failed is not on it, and
  * that absence is what refuses a session needing that part. The joined image
@@ -871,16 +873,34 @@ export const MACHINE_PARTS = 'ahpd.parts';
 
 /**
  * The label value for a machine made with these parts, and with `host` mounted
- * from this host in place of parts that could not be built, each `<id>@host`.
+ * from this host in place of parts that could not be built, each of those at
+ * the version `host`.
  */
 export const partsLabel = (parts: readonly MadePart[], host: readonly string[] = []): string =>
-  [...parts.map((one) => `${one.id}@${one.version}`), ...host.map((id) => `${id}@host`)].join(',');
+  JSON.stringify([...parts.map(({ id, version }) => ({ id, version })), ...host.map((id) => ({ id, version: 'host' }))]);
 
-/** The part ids a label value names, with any version dropped. */
-export const partsSaid = (value: unknown): string[] =>
-  (typeof value === 'string'
-    ? value.split(',').map((one) => one.trim().split('@')[0] ?? '').filter((one) => one !== '')
-    : []);
+/**
+ * The part ids a label value names: the `id` of each entry in its JSON, and
+ * for a label an older daemon wrote, `<id>@<version>` joined by commas, the id
+ * before each `@`. A machine outlives the daemon that made it, and a label
+ * cannot change on a container that runs, so both are read, as VS Code reads
+ * a container's older folder label, `vsch.local.folder`, beside the current one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L977-L981
+ */
+export const partsSaid = (value: unknown): string[] => {
+  if (typeof value !== 'string') return [];
+  let said: unknown;
+  try {
+    said = JSON.parse(value);
+  }
+  catch {
+    return value.split(',').map((one) => one.trim().split('@')[0] ?? '').filter((one) => one !== '');
+  }
+  if (!Array.isArray(said)) return [];
+  return said
+    .map((one: unknown) => (typeof one === 'object' && one !== null ? (one as Record<string, unknown>)['id'] : undefined))
+    .filter((id): id is string => typeof id === 'string' && id !== '');
+};
 
 /** The `PATH` Docker gives a container whose image sets none. */
 export const IMAGE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -1001,8 +1021,8 @@ export const joinedDockerfile = (parts: Part[], tags: ReadonlyMap<string, string
   // and the bare `codex-acp` are the same command.
   `ENV PATH="${parts.map((part) => `/opt/ahpd/${part.id}/bin`).join(':')}:${'${PATH}'}"`,
   // What it holds, so a machine it was built without can be told from one built
-  // from a versions file that has since moved.
-  `LABEL ahpd.parts="${parts.map((part) => part.id).join(',')}"`,
+  // from a versions file that has since moved: the machine's own label, ids alone.
+  `LABEL ${MACHINE_PARTS}=${JSON.stringify(JSON.stringify(parts.map((part) => ({ id: part.id }))))}`,
 ].join('\n');
 
 /** The joined image: its tag, the parts it holds and the parts it does not. */

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { dockerfileOf, hashOf, readParts, tagOf, versionsPath } from '../src/parts.js';
+import { dockerfileOf, hashOf, partsLabel, partsSaid, readParts, tagOf, versionsPath } from '../src/parts.js';
 import type { AhpdSource, Part } from '../src/parts.js';
 
 /*
@@ -471,4 +471,20 @@ it('writes every Dockerfile as instructions docker would accept', () => {
       expect(known, instruction).toContain(word);
     }
   }
+});
+
+/*
+ * A machine's parts label is JSON, as the dev container tooling writes its
+ * structured label and VS Code reads a container's labels as JSON
+ * (devContainerAgentHostService.ts L967-L976 at 6b68d3fe); a label an older
+ * daemon wrote, a comma list, is read too, as VS Code reads a container's
+ * older folder label beside the current one (L977-L981).
+ */
+it('writes the parts label as JSON, and reads it and an older daemon\'s comma list back', () => {
+  const written = partsLabel([{ id: 'codex', tag: 'ahpd-part/codex:2.1.1', version: '2.1.1' }], ['claude']);
+  expect(JSON.parse(written)).toEqual([{ id: 'codex', version: '2.1.1' }, { id: 'claude', version: 'host' }]);
+  expect(partsSaid(written)).toEqual(['codex', 'claude']);
+  expect(partsSaid('codex@2.1.1,claude@host')).toEqual(['codex', 'claude']);
+  expect(partsSaid(JSON.stringify([{ id: 'node' }]))).toEqual(['node']);
+  expect(partsSaid(undefined)).toEqual([]);
 });

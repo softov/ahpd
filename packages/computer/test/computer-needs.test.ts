@@ -1293,7 +1293,9 @@ const versionOf = (one: Part): string => {
   return tag.slice(tag.lastIndexOf(':') + 1);
 };
 const PARTS = new Map(readParts().map((one) => [one.id, versionOf(one)]));
-const at = (id: string): string => `${id}@${PARTS.get(id) ?? ''}`;
+/** The `ahpd.parts` label of a machine made with these parts at their versions, and with `host` mounted from this host. */
+const label = (ids: string[], host: string[] = []): string =>
+  JSON.stringify([...ids.map((id) => ({ id, version: PARTS.get(id) ?? '' })), ...host.map((id) => ({ id, version: 'host' }))]);
 const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
 /** The plugin with parts, its log kept, over a fake Docker holding `extra` in its state. */
@@ -1330,7 +1332,7 @@ it('makes a machine with a profile\'s parts and what they require, labelled with
   const box = held.machines.find((one) => one.name === 'box');
   // Codex requires Node, so both are built and both are on the machine.
   expect(held.builds.map((one) => one.tag)).toEqual([`ahpd-part/node:${PARTS.get('node') ?? ''}`, `ahpd-part/codex:${PARTS.get('codex') ?? ''}`]);
-  expect(box?.labels?.['ahpd.parts']).toBe(`${at('codex')},${at('node')}`);
+  expect(box?.labels?.['ahpd.parts']).toBe(label(['codex', 'node']));
   // Each part's launchers ahead of the image's own PATH, so a command a preset
   // names is found inside without its path.
   expect(box?.env?.PATH).toBe(`/opt/ahpd/codex/bin:/opt/ahpd/node/bin:${DEFAULT_PATH}`);
@@ -1343,7 +1345,7 @@ it('makes a machine with the parts its agents need', async () => {
   const { options } = await loadParts(state, { agents: ['codexer'] }, [CODEXER]);
   await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' });
   const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
-  expect(held.machines.find((one) => one.name === 'box')?.labels?.['ahpd.parts']).toBe(`${at('codex')},${at('node')}`);
+  expect(held.machines.find((one) => one.name === 'box')?.labels?.['ahpd.parts']).toBe(label(['codex', 'node']));
 });
 
 it('refuses a session whose agent needs a part the machine was made without, naming the part', async () => {
@@ -1367,7 +1369,7 @@ it('makes the machine without a part whose build fails, and refuses only the ses
   const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
   const box = held.machines.find((one) => one.name === 'box');
   // The healthy part beside it is there, and the machine was made.
-  expect(box?.labels?.['ahpd.parts']).toBe(`${at('codex')},${at('node')}`);
+  expect(box?.labels?.['ahpd.parts']).toBe(label(['codex', 'node']));
   expect(held.calls.filter((one) => one[0] === 'run').flat().join(' ')).not.toContain('/opt/ahpd/gemini');
   // One line, naming the part and the build's own reason.
   const said = lines.filter((one) => one.includes('gemini'));
@@ -1429,7 +1431,7 @@ it('makes a session\'s machine when the part that fails is one its agent does no
   const id = await options.computers?.create?.({ source: 'disposable:box', session: 'codexer:/one', provider: 'codexer', owner: 'user:ada' }) as string;
   const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
   // The profile's gemini asked for node first, then the session's codex.
-  expect(held.machines.find((one) => one.name === id)?.labels?.['ahpd.parts']).toBe(`${at('node')},${at('codex')}`);
+  expect(held.machines.find((one) => one.name === id)?.labels?.['ahpd.parts']).toBe(label(['node', 'codex']));
   expect(lines.filter((one) => one.includes('without the part gemini'))).toHaveLength(1);
 });
 
@@ -1455,7 +1457,7 @@ it('makes the machine without a part that will not build and has no fallback, an
   await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' });
 
   const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
-  expect(held.machines.find((one) => one.name === 'box')?.labels?.['ahpd.parts']).toBe(at('node'));
+  expect(held.machines.find((one) => one.name === 'box')?.labels?.['ahpd.parts']).toBe(label(['node']));
   expect(lines.filter((one) => one.includes('without the part claude'))).toHaveLength(1);
   expect(await machineRefusal(options.computers, 'box', 'clauder', 'clauder:/one')).toMatch(/made without the part claude, which clauder needs/);
 });
@@ -1471,7 +1473,7 @@ it('mounts a part need\'s fallback when the part will not build, labelled as the
   const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
   const box = held.machines.find((one) => one.name === 'box');
   expect(box?.mounts).toContain(`${binary}:/usr/local/bin/claude:ro`);
-  expect(box?.labels?.['ahpd.parts']).toBe(`${at('node')},claude@host`);
+  expect(box?.labels?.['ahpd.parts']).toBe(label(['node'], ['claude']));
   const said = lines.filter((one) => one.includes('the part claude'));
   expect(said).toHaveLength(1);
   expect(said[0]).toContain(`box is made with ${binary} mounted at /usr/local/bin/claude in place of the part claude, which could not be built: `);
@@ -1489,7 +1491,7 @@ it('leaves a part need\'s fallback off a machine whose part builds', async () =>
 
   const box = (JSON.parse(readFileSync(state, 'utf8')) as Held).machines.find((one) => one.name === 'box');
   expect(box?.mounts ?? []).not.toContain(`${binary}:/usr/local/bin/claude:ro`);
-  expect(box?.labels?.['ahpd.parts']).toBe(`${at('claude')},${at('node')}`);
+  expect(box?.labels?.['ahpd.parts']).toBe(label(['claude', 'node']));
 });
 
 it('refuses a machine whose part fallback lands where another mount does, naming both', async () => {
@@ -1517,7 +1519,7 @@ it('makes a disposable machine for a session whose part falls back, and refuses 
   const { options } = await loadParts(state, { disposable: true }, [clauder(binary)], CLAUDE_FAILS);
   const id = await options.computers?.create?.({ source: 'disposable:box', session: 'clauder:/one', provider: 'clauder', owner: 'user:ada' }) as string;
   const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
-  expect(held.machines.find((one) => one.name === id)?.labels?.['ahpd.parts']).toBe(`${at('node')},claude@host`);
+  expect(held.machines.find((one) => one.name === id)?.labels?.['ahpd.parts']).toBe(label(['node'], ['claude']));
 
   const again = join(dir, 'again.json');
   const { options: strict } = await loadParts(again, { disposable: true }, [clauder()], CLAUDE_FAILS);
@@ -1533,7 +1535,7 @@ it('leaves out a profile part the versions file does not name, and keeps the res
   ]);
   await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' });
   const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
-  expect(held.machines.find((one) => one.name === 'box')?.labels?.['ahpd.parts']).toBe(`${at('codex')},${at('node')}`);
+  expect(held.machines.find((one) => one.name === 'box')?.labels?.['ahpd.parts']).toBe(label(['codex', 'node']));
 });
 
 it('refuses a mount at a part\'s target as any other shared target', async () => {

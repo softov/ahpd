@@ -1175,8 +1175,8 @@ export const apply: Plugin['apply'] = (host, options) => {
         const built = await ensureParts(asked.partsAsked, { runtime: builder });
         /*
          * A failed part whose need names a fallback has that host mount in its
-         * place, and the machine counts it as had: it is labelled `<id>@host`
-         * and no session needing it is refused.
+         * place, and the machine counts it as had: its `ahpd.parts` label names
+         * it at the version `host`, and no session needing it is refused.
          */
         const standIns = built.failed.flatMap((one) => {
           const stand = asked.partFallbacks?.find((held) => held.part === one.id);

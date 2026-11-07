@@ -71,7 +71,8 @@ it('mounts each part from its own image where Docker takes one, after the binds'
   // After the bind mounts, one read-only image mount per part.
   expect(run.indexOf('--mount')).toBeGreaterThan(run.indexOf('/srv:/srv'));
   expect(run.filter((_, at) => run[at - 1] === '--mount')).toEqual([IMAGE(CODEX), IMAGE(NODE)]);
-  expect(held(path).machines.find((one) => one.name === 'one')?.labels?.['ahpd.parts']).toBe('codex@2.1.1,node@24.21.0');
+  expect(held(path).machines.find((one) => one.name === 'one')?.labels?.['ahpd.parts'])
+    .toBe(JSON.stringify([{ id: 'codex', version: '2.1.1' }, { id: 'node', version: '24.21.0' }]));
 
   // The probe named the part being mounted, and left nothing behind.
   expect(probes(path)).toEqual([
@@ -158,7 +159,7 @@ it('makes the machine without a part whose volume cannot be filled, and without 
 
   // The healthy part beside them is mounted, and the label says so.
   const box = held(path).machines.find((one) => one.name === 'one');
-  expect(box?.labels?.['ahpd.parts']).toBe('goose@1.53.0');
+  expect(box?.labels?.['ahpd.parts']).toBe(JSON.stringify([{ id: 'goose', version: '1.53.0' }]));
   expect(box?.mounts).toEqual(['ahpd-part-goose-1.53.0:/opt/ahpd/goose:ro']);
   expect(lines).toEqual([
     expect.stringMatching(/^one is made without the part node: its volume ahpd-part-node-24\.21\.0 could not be filled: .*no space left on device$/) as unknown as string,

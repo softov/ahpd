@@ -242,7 +242,7 @@ The CLI runs with `CLAUDE_CONFIG_DIR=/ahpd/<variant>`: `/ahpd/claude` for the bu
 | Value | What happens |
 | --- | --- |
 | `refuse` | The default. The machine is made without the part, and a Claude session on it is refused with a sentence naming `claude`. A machine made for that one session is not made at all |
-| `host` | This host's binary is mounted where `computerCli: "host"` puts it, the daemon logs one line naming the part and the mount, and the machine is labelled `claude@host` in `ahpd.parts`, so the session runs |
+| `host` | This host's binary is mounted where `computerCli: "host"` puts it, the daemon logs one line naming the part and the mount, and the machine's `ahpd.parts` label names it at the version `host`, so the session runs |
 
 ```json
 { "plugins": [{ "name": "@ahpd/agent-claude", "options": { "computerCli": "part", "computerCliFallback": "host" } }] }
@@ -958,7 +958,7 @@ A part volume is filled once from its image: an empty volume mounted at the part
 
 A dev container gets its parts the same way: an image mount as a `--mount` entry in the override config's `runArgs`, or for a Compose definition an `image` volume of its service, or the volume as a read-only entry in its `mounts`, since the CLI's own `--mount` has no word for read-only.
 
-The machine is labelled `ahpd.parts=<id>@<version>,...` with the parts it was made with, and its `PATH` has each one's `bin` in front: a Docker machine's is set at `docker run` over the image's own, and a dev container's is put in front of the probed `PATH` every command is given. So a command a preset names is found inside without its path.
+The machine is labelled `ahpd.parts` with the parts it was made with, as JSON, `[{"id":"codex","version":"2.1.1"}, ...]`, as the dev container tooling writes its structured label, `devcontainer.metadata`, and [VS Code](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L967-L976) reads a container's labels as JSON. A machine an older daemon labelled `<id>@<version>,...` is read by the id before each `@`, as VS Code reads a container's [older folder label](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L977-L981) beside the current one. Its `PATH` has each one's `bin` in front: a Docker machine's is set at `docker run` over the image's own, and a dev container's is put in front of the probed `PATH` every command is given. So a command a preset names is found inside without its path.
 
 A part whose build fails, or whose requirement's build fails, is left out of the machine with one log line naming it and the build's reason, and the machine is made with the rest. A session whose agent needs a part the label does not name is refused with a sentence naming the part, and every other session on the machine runs.
 

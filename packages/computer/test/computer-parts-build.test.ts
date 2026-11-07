@@ -68,6 +68,9 @@ const parts: Part[] = [node, codex];
  */
 const tagFor = (part: Part): string => tagOf(part, undefined, dockerfileOf(part));
 
+/** The joined image's `ahpd.parts` label line for these part ids, JSON as the machine's label is. */
+const labelLine = (...ids: string[]): string => `LABEL ahpd.parts=${JSON.stringify(JSON.stringify(ids.map((id) => ({ id }))))}`;
+
 it('builds a missing part and answers its tag, and a second call builds nothing', async () => {
   const path = state();
   const docker = runtime(path);
@@ -202,7 +205,7 @@ it('copies every part into the joined image once, from its own tag, and puts the
   expect(file).toContain('ENV PATH="/opt/ahpd/node/bin:/opt/ahpd/codex/bin:/opt/ahpd/goose/bin:${PATH}"');
   // What it holds is on the image, so a machine it was built without is told
   // from one built from a file that has since moved.
-  expect(file).toContain('LABEL ahpd.parts="node,codex,goose"');
+  expect(file).toContain(labelLine('node', 'codex', 'goose'));
 });
 
 it('builds the joined image at a tag that moves with the file, and runs no second build for it', async () => {
@@ -220,7 +223,7 @@ it('builds the joined image at a tag that moves with the file, and runs no secon
   const builds = held(path).builds;
   const joined = builds.find((one_) => one_.tag === one.tag);
   expect(joined?.dockerfile).toContain('COPY --from=ahpd-part/goose:1.53.0');
-  expect(joined?.dockerfile).toContain('LABEL ahpd.parts="node,codex,goose"');
+  expect(joined?.dockerfile).toContain(labelLine('node', 'codex', 'goose'));
 
   // And a second call finds the tag.
   await ensureJoined({ runtime: docker, parts: [...parts, goose] });
@@ -243,7 +246,7 @@ it('builds the joined image without the part that failed, and says which one is 
   expect(joined.parts.map((part) => part.id)).toEqual(['node', 'codex']);
   const build = held(path).builds.find((one) => one.tag === joined.tag);
   expect(build?.dockerfile).not.toContain('goose');
-  expect(build?.dockerfile).toContain('LABEL ahpd.parts="node,codex"');
+  expect(build?.dockerfile).toContain(labelLine('node', 'codex'));
   expect(build?.dockerfile).toContain(`COPY --from=${tagFor(codex)} /opt/ahpd/codex /opt/ahpd/codex`);
 });
 
@@ -273,7 +276,7 @@ it('does not hand back an image built without a part the file now has', async ()
 
   const build = held(path).builds.find((one) => one.tag === joined.tag);
   expect(build?.dockerfile).toContain(`COPY --from=${tagFor(goose)} /opt/ahpd/goose /opt/ahpd/goose`);
-  expect(build?.dockerfile).toContain('LABEL ahpd.parts="node,codex,goose"');
+  expect(build?.dockerfile).toContain(labelLine('node', 'codex', 'goose'));
 });
 
 it('builds a part, and the joined image, again when the Dockerfile that writes them moves', async () => {

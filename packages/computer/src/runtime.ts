@@ -394,7 +394,7 @@ export interface MachineSpec {
   /**
    * The parts this machine has from this host rather than from their image,
    * each a fallback mount made in place of a part that could not be built.
-   * The `ahpd.parts` label names each as `<id>@host`.
+   * The `ahpd.parts` label names each at the version `host`.
    */
   hostParts?: string[];
   /**
