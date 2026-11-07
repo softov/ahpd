@@ -186,9 +186,13 @@ cron in a named time zone, one Markdown file per definition under
 host was down. A program that wants a clock writes its own `AutomationStore`
 over `memoryAutomations()`, with `parseCron` and `nextOccurrence` from this
 package. One that keeps the definitions somewhere passes `persist`, which is
-handed each change to a definition before the store holds it and says it, as
-VS Code's automation service persists before it publishes: a throw there fails
-the change and leaves the store as it was.
+handed each change to a definition before the store holds it and says it, and
+for a run that begins or moves every run its automation keeps, as `runsOf`
+and `runs`, as VS Code's automation service persists its runs beside its
+catalogue before it publishes: a throw there fails the change and leaves the
+store as it was. `create` takes the runs back beside the definition at a
+start, and a run that was not over when they were written is failed as
+interrupted, as VS Code's service recovers one.
 A run reads `running` while any session it started is executing or waiting on a
 person, and the host says the execution ended through `settle`: a store that
 implements it records the terminal `completed`, `failed` or `cancelled` and

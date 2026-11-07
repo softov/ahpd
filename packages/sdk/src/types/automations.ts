@@ -284,8 +284,14 @@ export interface AutomationStore {
    * and is handed in for the same reason the definition is: only the host can
    * read a client, and a store that copied a plugin would be a second thing
    * that knows what a client is. Absent means the template names none.
+   *
+   * `runs` takes back the runs a store kept beside the definition, newest
+   * first, as VS Code's automation service restores its runs beside its
+   * catalogue; like `runCount`, a store reading its own record is the only
+   * caller that passes them, and a run that was not over when they were
+   * written is failed as interrupted.
    */
-  create(resource: string, definition: Bag, owner?: Owner, runCount?: number, customizations?: CapturedPlugin[]): AutomationEntry;
+  create(resource: string, definition: Bag, owner?: Owner, runCount?: number, customizations?: CapturedPlugin[], runs?: AutomationRun[]): AutomationEntry;
   /**
    * Patch one. Absent keys are left alone, which is what a patch means.
    *

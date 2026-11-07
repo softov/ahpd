@@ -1479,6 +1479,43 @@ it('writes a definition down before it holds and says it, and a failed write cha
   expect(said).toEqual([{ automation: ONE }]);
 });
 
+/*
+ * A run's changes are written down beside the definition, every run the
+ * automation keeps, and a store reading its record back takes the runs back
+ * with the definition, a run that was not over failed as interrupted, as VS
+ * Code's automation service persists, restores and recovers its runs beside
+ * its catalogue.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L184-L201
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L779-L803
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L994-L1010
+ */
+it('writes the runs down beside the definition, and takes both back at a start', async () => {
+  const written: { runsOf?: string; runs?: AutomationRun[] }[] = [];
+  const store = memoryAutomations({ persist: (change) => { written.push(change as { runsOf?: string; runs?: AutomationRun[] }); } });
+  store.create(ONE, {});
+  const done = await store.run(ONE, { kind: 'manual' }, async () => 'ahp-session:/done');
+  await settle();
+  store.settle?.(String(done?.resource), { status: 'completed' });
+  const going = await store.run(ONE, { kind: 'manual' }, async () => 'ahp-session:/going');
+  await settle();
+
+  const last = written.filter((one) => one.runsOf === ONE).at(-1)?.runs ?? [];
+  expect(last.map((one) => [one.resource, one.lifecycle.status, one.sessions])).toEqual([
+    [going?.resource, 'running', ['ahp-session:/going']],
+    [done?.resource, 'completed', ['ahp-session:/done']],
+  ]);
+
+  // A store reading that record back holds both runs again, newest first.
+  const again = memoryAutomations();
+  again.create(ONE, {}, undefined, undefined, undefined, last);
+  expect(again.runOf(String(done?.resource))?.lifecycle.status).toBe('completed');
+  expect(again.runOf(String(going?.resource))?.lifecycle).toMatchObject({
+    status: 'failed',
+    error: { errorType: 'automationExecution', message: 'Automation execution was interrupted before its initial prompt completed.' },
+  });
+  expect((again.get(ONE)?.runs ?? []).map((one) => (one as { resource: string }).resource)).toEqual([going?.resource, done?.resource]);
+});
+
 it('keeps the newest ended runs, and only that many of them', async () => {
   const store = memoryAutomations();
   store.create(ONE, {});
