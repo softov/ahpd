@@ -349,27 +349,42 @@ export const isDeniedByPermissions = (approval: ToolApproval, subCommands: reado
 };
 
 /**
+ * A managed rule's family and argument as the managed grammar reads the rule,
+ * or nothing for a rule it refuses. The first `(` and a trailing `)` delimit
+ * the argument; the family is `Shell`, `Read`, `Write` (with its alias `Edit`)
+ * or `Domain`; and an argument is one VS Code's rule builder builds, written as
+ * it writes it. The runtime that takes a managed document parses every rule
+ * with this grammar and refuses the whole document for one it cannot read.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L58-L63
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L73-L203
+ */
+export const managedRuleOf = (rule: string): { family: ManagedRuleFamily; argument?: string } | undefined => {
+  const opening = rule.indexOf('(');
+  const named = opening === -1 ? rule : rule.slice(0, opening);
+  const spelled = named === 'Edit' ? ManagedRuleFamily.Write : named;
+  const family = Object.values(ManagedRuleFamily).find((one) => one === spelled);
+  if (family === undefined) return undefined;
+  if (opening === -1) return { family };
+  if (!rule.endsWith(')')) return undefined;
+  const built = buildManagedRule(family, rule.slice(opening + 1, -1));
+  return built === undefined ? undefined : { family, argument: built.slice(family.length + 1, -1) };
+};
+
+/**
  * A managed `Shell`, `Read` or `Write` rule as the permission rule VS Code's
- * checks read it by, for the questions of its kind, or nothing for a rule the
- * managed grammar does not express: the family alone as every request of its
- * kind, an argument as the grammar writes it, `Write` and its alias `Edit` as
- * `Edit`, and `Shell(<command>)` with no wildcard as the command with its
- * arguments too, as VS Code reads the bare form.
+ * checks read it by, for the questions of its kind, or nothing for any other
+ * rule: the family alone as every request of its kind, `Write` as `Edit`, and
+ * `Shell(<command>)` with no wildcard as the command with its arguments too,
+ * as VS Code reads the bare form.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L73-L177
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L190-L191
  */
 const asPermissionRule = (rule: string): string[] => {
-  const opening = rule.indexOf('(');
-  const named = opening === -1 ? rule : rule.slice(0, opening);
-  const family = named === 'Edit' ? ManagedRuleFamily.Write : named;
-  if (family !== ManagedRuleFamily.Shell && family !== ManagedRuleFamily.Read && family !== ManagedRuleFamily.Write) return [];
-  const tool = family === ManagedRuleFamily.Write ? 'Edit' : family;
-  if (opening === -1) return [tool];
-  if (!rule.endsWith(')')) return [];
-  const built = buildManagedRule(family, rule.slice(opening + 1, -1));
-  if (built === undefined) return [];
-  const argument = built.slice(family.length + 1, -1);
-  return [`${tool}(${family === ManagedRuleFamily.Shell && !argument.includes('*') ? `${argument} *` : argument})`];
+  const read = managedRuleOf(rule);
+  if (read === undefined || read.family === ManagedRuleFamily.Domain) return [];
+  const tool = read.family === ManagedRuleFamily.Write ? 'Edit' : read.family;
+  if (read.argument === undefined) return [tool];
+  return [`${tool}(${read.family === ManagedRuleFamily.Shell && !read.argument.includes('*') ? `${read.argument} *` : read.argument})`];
 };
 
 /**
@@ -383,10 +398,9 @@ const asPermissionRule = (rule: string): string[] => {
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/networkFilter/common/domainMatcher.ts#L208-L241
  */
 const domainRuleNames = (rule: string, domain: string | undefined): boolean => {
-  if (rule === ManagedRuleFamily.Domain) return true;
-  if (!rule.startsWith('Domain(') || !rule.endsWith(')')) return false;
-  const argument = rule.slice(7, -1);
-  return domain !== undefined && buildManagedRule(ManagedRuleFamily.Domain, argument) === rule && matchesDomainPattern(domain, argument);
+  const read = managedRuleOf(rule);
+  if (read?.family !== ManagedRuleFamily.Domain) return false;
+  return read.argument === undefined || (domain !== undefined && matchesDomainPattern(domain, read.argument));
 };
 
 /**

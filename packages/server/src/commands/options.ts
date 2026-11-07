@@ -701,7 +701,7 @@ export const serverFields = {
       limitTo: { type: 'array', items: { type: 'string' } },
     },
     additionalProperties: false,
-    description: 'The managed permissions every session on the host is held to, in VS Code\'s shape: deny and ask rules in the managed rule grammar (Shell, Read, Write, Domain), disableBypassPermissionsMode "disable" to take Allow All away, and limitTo, the Domain rules a fetch stays within, each Domain or Domain(<host>) with the host as VS Code\'s network filter normalizes it. A Domain rule names a host whatever the scheme, port or path of a URL. The host checks each rule on the tool questions of its kind beside the session\'s permissions, and hands the whole to every backend. Set in the configuration file only.',
+    description: 'The managed permissions every session on the host is held to, in VS Code\'s shape: deny and ask rules in the managed rule grammar (Shell, Read, Write, Domain), disableBypassPermissionsMode "disable" to take Allow All away, and limitTo, the Domain rules a fetch stays within, each Domain or Domain(<host>) with the host as VS Code\'s network filter normalizes it. A Domain rule names a host whatever the scheme, port or path of a URL. A rule the managed grammar refuses stops the start. The host checks each rule on the tool questions of its kind beside the session\'s permissions, and hands the whole to every backend. Set in the configuration file only.',
   },
   commandParser: {
     type: 'string',
@@ -1078,8 +1078,9 @@ export const servedPluginWriteFields = {
  * unknown key, so it stops the start the same way one does. `shellEnv` is checked the same way for
  * the same reason: its names and values are held on their own, because the
  * schema cannot say that an object is a map. `managedSettingsPermissions` is
- * too, for its `limitTo`: a `Domain` boundary rule is a host written as VS
- * Code's network filter normalizes one, which no schema pattern says.
+ * too, for its rules: a rule of the managed grammar, and a `Domain` boundary
+ * rule with its host written as VS Code's network filter normalizes one, are
+ * more than a schema pattern says.
  */
 export function checkConfig(file: object, source: (key: string) => string): string[] {
   const warnings: string[] = [];

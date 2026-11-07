@@ -426,6 +426,29 @@ describe('the managedSettingsPermissions key', () => {
   it('refuses a key VS Code\'s managed permissions do not have', () => {
     expect(refusal({ managedSettingsPermissions: { allow: ['Shell'] } })).toBe(`${config}: managedSettingsPermissions.allow is not a field`);
   });
+
+  /*
+   * The runtime that takes a managed document parses every rule with a strict
+   * grammar and refuses the whole document for a rule it cannot read, so the
+   * start refuses one, naming it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L58-L63
+   */
+  const grammar = 'which the managed rule grammar refuses: Shell, Read, Write (or Edit) or Domain, alone or with an argument holding no ")" or line break:'
+    + ' Shell(<command>) with a command before any trailing " *", Read(<glob>) and Write(<glob>) with no leading "!" and every brace closed,'
+    + ' and Domain(<host>) that reads as a URL with a host and holds no shell substitution (Domain alone is every domain),'
+    + ' such as Shell(git *), Read(src/**), Write(**/*.txt) or Domain(example.com)';
+
+  it('takes deny rules of the managed grammar, and refuses one the grammar refuses, naming it', () => {
+    const deny = ['Shell', 'Shell(git *)', 'Read(src/**)', 'Edit(**/*.txt)', 'Domain(example.com)'];
+    expect(folded({ managedSettingsPermissions: { deny } }).managedSettingsPermissions).toEqual({ deny });
+    expect(refusal({ managedSettingsPermissions: { deny: ['Shell( *)'] } })).toBe(`${config}: managedSettingsPermissions.deny holds "Shell( *)", ${grammar}`);
+  });
+
+  it('takes ask rules of the managed grammar, and refuses one the grammar refuses, naming it', () => {
+    const ask = ['Domain', 'Domain(*.example.com)', 'Write(**/.env)'];
+    expect(folded({ managedSettingsPermissions: { ask } }).managedSettingsPermissions).toEqual({ ask });
+    expect(refusal({ managedSettingsPermissions: { ask: ['Domain(*)'] } })).toBe(`${config}: managedSettingsPermissions.ask holds "Domain(*)", ${grammar}`);
+  });
 });
 
 describe('the modelProxy key', () => {

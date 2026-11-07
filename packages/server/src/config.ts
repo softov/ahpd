@@ -6,7 +6,7 @@ import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveConfig, type ResolvedConfig } from '@cofold/config';
-import { isManagedDomainBoundaryRule, isShellName, issuerKind, reason, type Icon, type IssuerVerify, type ManagedSettingsPermissions, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type ShellEnv } from '@ahpd/sdk';
+import { isManagedDomainBoundaryRule, isShellName, issuerKind, managedRuleOf, reason, type Icon, type IssuerVerify, type ManagedSettingsPermissions, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type ShellEnv } from '@ahpd/sdk';
 import type { ProxySetting } from './proxy/providers.js';
 
 /**
@@ -542,20 +542,43 @@ export const shellEnvProblems = (held: unknown): string[] => {
 
 /**
  * What is wrong with a `managedSettingsPermissions` value, one line each, or
- * nothing: its `limitTo` holds `Domain` boundary rules alone, `Domain` or
+ * nothing.
+ *
+ * Its `deny` and `ask` hold rules of the managed grammar alone. The runtime
+ * that takes a managed document parses every rule with that grammar, and a
+ * single rule it cannot read refuses the whole document; the host takes the
+ * document as that runtime does, so a rule the grammar refuses stops the
+ * start rather than leave an operator's restriction unread. VS Code's host
+ * checks the rules' types alone, because every rule it sends comes through
+ * the builder that drops what the runtime would refuse.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L58-L63
+ *
+ * Its `limitTo` holds `Domain` boundary rules alone, `Domain` or
  * `Domain(<host>)` with the host written as VS Code's network filter
  * normalizes it, which is what VS Code's host holds a boundary to before it
  * takes managed permissions. The schema checks the keys and their types.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L270-L283
  */
 export const managedPermissionsProblems = (held: unknown): string[] => {
-  const limitTo = typeof held === 'object' && held !== null ? (held as { limitTo?: unknown }).limitTo : undefined;
-  // Not a list of strings is the schema's to refuse, with the key's own name.
-  if (!Array.isArray(limitTo)) return [];
-  return limitTo.flatMap((rule) => (typeof rule !== 'string' || isManagedDomainBoundaryRule(rule) ? [] : [
-    `managedSettingsPermissions.limitTo holds ${JSON.stringify(rule)}, which is not a Domain boundary rule: Domain, or Domain(<host>) with the host written as VS Code's network filter normalizes it, such as Domain(example.com) or Domain(*.example.com)`,
-  ]));
+  if (typeof held !== 'object' || held === null) return [];
+  const checks = [
+    ['deny', (rule: string) => managedRuleOf(rule) !== undefined, MANAGED_GRAMMAR],
+    ['ask', (rule: string) => managedRuleOf(rule) !== undefined, MANAGED_GRAMMAR],
+    ['limitTo', isManagedDomainBoundaryRule, 'is not a Domain boundary rule: Domain, or Domain(<host>) with the host written as VS Code\'s network filter normalizes it, such as Domain(example.com) or Domain(*.example.com)'],
+  ] as const;
+  return checks.flatMap(([key, takes, why]) => {
+    const rules = (held as Record<string, unknown>)[key];
+    // Not a list of strings is the schema's to refuse, with the key's own name.
+    return (Array.isArray(rules) ? rules : []).flatMap((rule) => (typeof rule !== 'string' || takes(rule) ? []
+      : [`managedSettingsPermissions.${key} holds ${JSON.stringify(rule)}, which ${why}`]));
+  });
 };
+
+/** The managed rule grammar, as a refused rule is told it. */
+const MANAGED_GRAMMAR = 'the managed rule grammar refuses: Shell, Read, Write (or Edit) or Domain, alone or with an argument holding no ")" or line break:'
+  + ' Shell(<command>) with a command before any trailing " *", Read(<glob>) and Write(<glob>) with no leading "!" and every brace closed,'
+  + ' and Domain(<host>) that reads as a URL with a host and holds no shell substitution (Domain alone is every domain),'
+  + ' such as Shell(git *), Read(src/**), Write(**/*.txt) or Domain(example.com)';
 
 /**
  * Where this tool's files live.

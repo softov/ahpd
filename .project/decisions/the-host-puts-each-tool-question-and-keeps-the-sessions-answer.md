@@ -75,6 +75,8 @@ A backend that leaves those fields out is answered by its tool's name alone.
 The rules are matched with VS Code's own code, vendored: its glob, its URI and its URL approval.
 A managed `Domain` rule names a URL's host alone, as VS Code's network filter matches a domain.
 So it names that host whatever the URL's scheme, port or path.
+The daemon refuses to start on a managed rule the managed grammar refuses.
+The runtime that takes a managed document refuses the whole document for such a rule.
 The host's check of managed rules is ahpd's own.
 It carries the enforcement VS Code's policy inventory records as partial.
 The managed settings are handed to every backend as well.
