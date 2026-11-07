@@ -260,6 +260,29 @@ describe('what GitHub knows about the branch', () => {
     expect(await github(chat, 't1')).toEqual({ owner: 'softov', repo: 'ahpd' });
   });
 
+  /*
+   * Turned off with pull requests held, VS Code's restricted mode keeps each
+   * list to the session's artifacts and associated pull requests: the found
+   * one, the baseline's and the selection all go when none of them is either.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestAssociationResolver.ts#L392-L418
+   */
+  it('keeps the lists to the session\'s own pull requests once automatic attachment is off', async () => {
+    const { port } = lookup(() => [{ url: 'https://github.com/softov/ahpd/pull/4', state: 'open' }]);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/d')), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const { chat, github } = await turning(client, 'ahp-session:/restricted');
+    expect(await github(chat, 't1')).toMatchObject({
+      pullRequestUrls: ['https://github.com/softov/ahpd/pull/4'],
+      initialPullRequestUrls: ['https://github.com/softov/ahpd/pull/4'],
+    });
+    await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { autoAttachPullRequests: false } } } });
+    expect(await github(chat, 't2')).toEqual({ owner: 'softov', repo: 'ahpd', initialPullRequestUrls: [], associatedPullRequestUrls: [] });
+  });
+
   it('names the owner and repository alone when the branch has no pull request, and keeps what it held when GitHub does not answer', async () => {
     let fail = false;
     const { port } = lookup(() => { if (fail) throw new Error('offline'); return []; });

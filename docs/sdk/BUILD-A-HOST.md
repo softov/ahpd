@@ -177,7 +177,8 @@ arrives, and when a turn ends, as VS Code's host asks: with the root's
 `baseBranchName`, and until a pull request is known for the branch, the one
 found going first and the known ones kept behind it; a known one's state is
 read again each time. With `autoAttachPullRequests` off nothing is looked up,
-and the list keeps the pull requests a session recorded or associated. `githubPullRequests()` asks the REST API with a
+and each list keeps the pull requests a session recorded or associated, its
+baseline's included; where the selected one is neither, it goes with its state. `githubPullRequests()` asks the REST API with a
 lent token and `gh pr list` without one; a machine with neither answers no
 pull request rather than failing, and an answer that fails keeps what was held.
 

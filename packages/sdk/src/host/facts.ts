@@ -610,13 +610,34 @@ export function createFacts(ctx: HostContext): Facts {
     };
     const urls = Array.isArray(held.pullRequestUrls) ? held.pullRequestUrls.filter((one): one is string => typeof one === 'string') : [];
     if (ctx.rootConfig.autoAttachPullRequests === false) {
-      const candidates = new Set(inThere(dir).flatMap((uri) => [
+      /*
+       * Each list kept to the candidates, a session's pull request artifacts
+       * and the ones associated with it, as VS Code's restricted mode keeps a
+       * session's state: its baseline as well, and the selected pull request
+       * with its status gone where the list's first is no candidate.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestAssociationResolver.ts#L249-L258
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestAssociationResolver.ts#L392-L418
+       */
+      const candidatesOf = (uri: string): string[] => [
         ...artifactsIn(kept.artifacts(idOf(uri))).filter((one) => one.type === 'pullRequest').map((one) => String(one.link)),
         ...(kept.pullRequests(idOf(uri))?.associatedPullRequestUrls ?? []),
-      ]).map(urlKey));
+      ];
+      let baselineMoved = false;
+      for (const uri of inThere(dir)) {
+        const baseline = kept.pullRequests(idOf(uri));
+        if (baseline?.initialPullRequestUrls === undefined) continue;
+        const own = new Set(candidatesOf(uri).map(urlKey));
+        const initial = baseline.initialPullRequestUrls.filter((url) => own.has(urlKey(url)));
+        if (initial.length === baseline.initialPullRequestUrls.length) continue;
+        kept.setPullRequests(idOf(uri), { ...baseline, initialPullRequestUrls: initial });
+        baselineMoved = true;
+      }
+      const candidates = new Set(inThere(dir).flatMap(candidatesOf).map(urlKey));
       const restricted = urls.filter((url) => candidates.has(urlKey(url)));
       const { pullRequestUrls: _urls, pullRequestBranchName: _branch, pullRequestState: _state, pullRequestStateUrl: _stateUrl, ...rest } = held;
-      return put(restricted.length === 0 ? rest : { ...held, pullRequestUrls: restricted });
+      const keepsSelected = urls[0] !== undefined && restricted[0] !== undefined && urlKey(urls[0]) === urlKey(restricted[0]);
+      const moved = put(keepsSelected ? { ...held, pullRequestUrls: restricted } : rest);
+      return moved || baselineMoved;
     }
     const resource = String(options.github.resource.resource ?? '');
     const token = getAuthToken(resource, normalizeScopes(options.github.resource.scopes_supported));
