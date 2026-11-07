@@ -11,7 +11,7 @@ import type { Request } from '../src/types/rpc.js';
 import type { HostOptions } from '../src/types/host.js';
 import {
   claude, createHost, echo, firstMessage, flushed, machine, resetSdk, actions, emit, hello, open, peer,
-  sdk, serving, sessionQueries, settle, running, wrote,
+  sdk, serving, sessionQueries, settle, showExternal, running, wrote,
 } from './support/host.js';
 import type { Agent, Listed } from '../src/types/agent.js';
 
@@ -24,14 +24,6 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 /** A moment this long before now, as a transcript's `lastModified` is stamped. */
 const ago = (ms: number): number => Date.now() - ms;
-/**
- * The root's `showExternalSessions`, pushed as a window pushes it: which of the
- * sessions a backend lists that this host never ran a listing shows. A case
- * about a backend's own transcripts lists them by the mode it means.
- */
-const showExternal = async (client: { handle(request: Request): Promise<unknown> }, mode = 'last30Days'): Promise<void> => {
-  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { showExternalSessions: mode } } } });
-};
 
 describe('the catalogue', () => {
   it('orders it most-recently-modified first, as the protocol asks', async () => {

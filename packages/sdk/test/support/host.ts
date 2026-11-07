@@ -106,6 +106,15 @@ export async function firstMessage(client: ReturnType<ReturnType<typeof createHo
   await settle();
 }
 
+/**
+ * The root's `showExternalSessions`, pushed as a window pushes it: which of the
+ * sessions a backend lists that this host never ran a listing shows. A case
+ * about a backend's own transcripts lists them by the mode it means.
+ */
+export async function showExternal(client: ReturnType<ReturnType<typeof createHost>['accept']>, mode = 'last30Days'): Promise<void> {
+  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { showExternalSessions: mode } } } });
+}
+
 export const actions = (p: ReturnType<typeof peer>, channel?: string) => p.notes
   .filter((n) => n.method === 'action')
   .map((n) => n.params as {
