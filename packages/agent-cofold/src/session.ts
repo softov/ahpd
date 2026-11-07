@@ -349,7 +349,7 @@ export function cofoldSession(
     sendMessage: (turnId, text, from, attachments, turnOptions) => {
       const model = chosen;
       chosen = undefined;
-      ctx.beginTurn(turnId, text, model, from, attachments, turnOptions);
+      ctx.sendMessage(turnId, text, model, from, attachments, turnOptions);
     },
 
     changeModel: (model) => { chosen = model; },

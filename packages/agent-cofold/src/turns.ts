@@ -41,7 +41,8 @@ export const partsFor = async (
 
 /** What opening a turn and running the turns handed offer the other areas. */
 export interface Turns {
-  beginTurn: (
+  /** Run a message, once the run in front of it is over: VS Code's agent's `sendMessage`. */
+  sendMessage: (
     turnId: string,
     text: string,
     model?: Chosen,
@@ -553,10 +554,12 @@ export const createTurns = (ctx: SessionContext): Turns => {
 
   /**
    * A turn handed, run once the run in front of it is over, as the reference
-   * agent runs each send after the one before it. The turn it takes the place
-   * of in every client's state runs on here and ends in no history.
+   * agent runs each send after the one before it: the step VS Code's agent
+   * names `sendMessage`. The turn it takes the place of in every client's
+   * state runs on here and ends in no history.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1311
    */
-  const beginTurn = (
+  const sendMessage = (
     turnId: string,
     text: string,
     model?: Chosen,
@@ -603,7 +606,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
   };
 
   return {
-    beginTurn,
+    sendMessage,
     resumeTurn,
     sendNext,
     supportsVision: () => supportsVision,
