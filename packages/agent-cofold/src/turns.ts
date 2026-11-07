@@ -90,7 +90,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
    *
    * A model named on the turn wins over the session's, and is what the usage
    * report names, with the thinking level its own `configSchema` was answered
-   * with. The reference is the one `connectionOf` resolves: the values in
+   * with. The reference is the one `adapterOptionsOf` resolves: the values in
    * force, then the plugin option, then the harness file.
    */
   const valuesFor = (model?: Chosen): { values: Record<string, unknown>; reference: string | undefined } => {

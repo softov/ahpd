@@ -226,6 +226,32 @@ it('gives a turn the key of the provider its reference names when two share an e
   expect(seen.authorization).toBe('Bearer k-second');
 });
 
+/*
+ * An endpoint is cofold's provider options, named by the provider id a
+ * reference names, as cofold's `providersOf` names each provider of a file:
+ * two entries on one endpoint and key are two catalogues, each under its id.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/model-openai-compat/src/config.ts#L20-L30
+ */
+it('keeps a catalogue for each provider of an endpoint two share with one key', async () => {
+  put({
+    providers: [
+      { id: 'first', baseUrl: 'https://shared.example/v1', apiKey: 'k' },
+      { id: 'second', baseUrl: 'https://shared.example/v1', apiKey: 'k' },
+    ],
+  });
+  answering({ data: [{ id: 'm', name: 'M' }] });
+  const agent = cofoldAgent({});
+  await agent.probe?.();
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/shared',
+    chatUri: 'ahp-chat:/shared',
+    settings: agent.defaults(),
+    schema: () => agent.schema(),
+    emit: () => {},
+  } as unknown as Start));
+  expect(session.models().map((one) => one.id)).toEqual(['first/m', 'second/m']);
+});
+
 it('keeps the other providers listing when one fails', async () => {
   put(TWO);
   globalThis.fetch = (async (input: unknown) => {

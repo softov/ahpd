@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import { EFFORT_LEVELS, PERMISSION_MODES, PERMISSION_MODE_DESCRIPTIONS, createMemoryStore, effortOf, textOf } from '@cofold/agents';
 import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Store } from '@cofold/agents';
 import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
-import type { ProviderConfig } from '@cofold/model-openai-compat';
+import type { OpenAICompatOptions, OpenAICompatProviderOptions, ProviderConfig } from '@cofold/model-openai-compat';
 import { createFileStore, resolveHome } from '@cofold/store-file';
 import { getReasoningEffortDescription, getReasoningEffortLabel, ReasoningEffortConfigKey, titleFrom, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
@@ -211,32 +211,6 @@ const endpointOf = (
 };
 
 /**
- * Where a model is asked for, and with what.
- *
- * One resolution for both the adapter a turn runs on and the catalogue a
- * picker draws, so the two cannot disagree about which endpoint is in force:
- * a model offered by the list is selected through the same provider, base URL,
- * key and headers the list was read from.
- */
-export interface Connection {
-  /** The model as it was spelled: a reference, or a bare id. */
-  reference?: string;
-  /** The model id the endpoint is asked for, without any provider prefix. */
-  model?: string;
-  baseUrl: string;
-  apiKey?: string | (() => string | Promise<string>);
-  headers?: Record<string, string>;
-  /**
-   * The prefix a model this endpoint serves is offered under.
-   *
-   * The harness provider that owns the endpoint, so a choice selects the same
-   * provider back; this backend's own id for an endpoint no entry owns, which
-   * is an explicit `baseUrl`.
-   */
-  prefix: string;
-}
-
-/**
  * The model reference a turn runs on, where nothing here builds an adapter.
  *
  * One rule for the adapter and the reference both: the values in force name a
@@ -276,7 +250,7 @@ const keyOf = (
   credentials: Record<string, string>,
   harness: HarnessConfig,
   owner?: ProviderConfig,
-): Connection['apiKey'] => {
+): OpenAICompatProviderOptions['apiKey'] => {
   const own = owner !== undefined && owner.baseUrl === baseUrl
     ? owner.apiKey
     : harness.providers.find((one) => one.baseUrl === baseUrl)?.apiKey;
@@ -289,43 +263,42 @@ const keyOf = (
 };
 
 /**
- * Resolve the connection a model setting names, without requiring that a model
- * was chosen: a probe lists what an endpoint serves before anybody picks.
+ * The options a turn's model is built with: cofold's options for one model on
+ * one endpoint, their `name` the provider id a reference names the model by,
+ * with the reference as it was spelled.
  *
- * `strict` is the difference between asking and running. A call that builds an
- * adapter refuses a missing model and a reference naming a provider the file
- * does not carry; a call that only reads a catalogue falls back to the first
- * provider's endpoint and lists what it has. `connectionsOf` is the listing
- * case with more than one provider to ask.
+ * One resolution for the adapter a turn runs on and the endpoints a picker
+ * lists, so the two cannot disagree about which endpoint is in force: a model
+ * the list offered is selected through the provider, base URL, key and headers
+ * the list was read from. A turn refuses a missing model and a reference naming
+ * a provider the file does not carry; `providerOptionsOf` lists endpoints with
+ * no model chosen.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/model-openai-compat/src/types/options.ts#L3-L26
  */
-const connectionOf = (
+const adapterOptionsOf = (
   options: CofoldOptions,
   settings: Record<string, unknown>,
   credentials: Record<string, string>,
   harness: HarnessConfig,
-  strict: boolean,
-): Connection => {
+): OpenAICompatOptions & { reference: string } => {
   const own = options.provider ?? 'cofold';
   const reference = modelReferenceOf(options, settings, harness);
-  const named = reference === undefined ? undefined : splitModel(reference);
+  if (reference === undefined) {
+    throw new Error(`${own}: no model is configured and this backend has no default; add "model" (as "<provider>/<model>") to ${harness.path}`);
+  }
+  const named = splitModel(reference);
   const provider = endpointOf(options, harness, reference);
-  if (strict) {
-    if (reference === undefined) {
-      throw new Error(`${own}: no model is configured and this backend has no default; add "model" (as "<provider>/<model>") to ${harness.path}`);
-    }
-    /*
-     * This backend's own id is not a provider the file has to carry: it names
-     * the endpoint given outright, and any other reference has to match a file
-     * provider.
-     */
-    if (named !== undefined && provider === undefined && options.baseUrl === undefined) {
-      const known = harness.providers.map((one) => one.id);
-      if (known.length > 0 || named.provider !== own) {
-        throw new Error(`${own}: model "${reference}" names provider "${named.provider}", and ${harness.path} configures ${known.length === 0 ? 'none' : known.join(', ')}`);
-      }
+  /*
+   * This backend's own id is not a provider the file has to carry: it names
+   * the endpoint given outright, and any other reference has to match a file
+   * provider.
+   */
+  if (named !== undefined && provider === undefined && options.baseUrl === undefined) {
+    const known = harness.providers.map((one) => one.id);
+    if (known.length > 0 || named.provider !== own) {
+      throw new Error(`${own}: model "${reference}" names provider "${named.provider}", and ${harness.path} configures ${known.length === 0 ? 'none' : known.join(', ')}`);
     }
   }
-  const model = reference === undefined ? undefined : (named === undefined ? reference : named.modelId);
   const baseUrl = options.baseUrl ?? provider?.baseUrl ?? harness.providers[0]?.baseUrl;
   /*
    * A turn with no endpoint is refused as a turn with no model is: nothing
@@ -338,40 +311,50 @@ const connectionOf = (
   }
   const key = keyOf(baseUrl, options, credentials, harness, provider);
   return {
-    ...(reference === undefined ? {} : { reference }),
-    ...(model === undefined ? {} : { model }),
+    reference,
+    model: named === undefined ? reference : named.modelId,
     baseUrl,
     ...(key === undefined ? {} : { apiKey: key }),
     ...(provider?.headers === undefined ? {} : { headers: provider.headers }),
-    prefix: provider?.id ?? own,
+    name: provider?.id ?? own,
   };
 };
 
 /**
- * Every connection a catalogue is read from.
+ * Every endpoint a catalogue is read from, as the options cofold's provider
+ * takes, each named by the provider id a model it serves is offered under, as
+ * cofold's `providersOf` names each provider of a configuration by its id.
  *
  * Without an explicit endpoint, the harness configuration's providers are
  * asked one by one, each under its own id and with its own key, so every
  * provider a person wrote in the file is listed, and a file with no provider
- * names nothing to list. An explicit `baseUrl` has no provider id to be
- * offered under, so it answers the one connection `connectionOf` resolves.
+ * names nothing to list. An explicit `baseUrl` is listed under the id of the
+ * provider the configured model names, else this backend's own.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/model-openai-compat/src/config.ts#L20-L30
  */
-const connectionsOf = (
+const providerOptionsOf = (
   options: CofoldOptions,
   settings: Record<string, unknown>,
   credentials: Record<string, string>,
   harness: HarnessConfig,
-): Connection[] => {
+): OpenAICompatProviderOptions[] => {
   if (options.baseUrl !== undefined) {
-    return [connectionOf(options, settings, credentials, harness, false)];
+    const provider = endpointOf(options, harness, modelReferenceOf(options, settings, harness));
+    const key = keyOf(options.baseUrl, options, credentials, harness, provider);
+    return [{
+      name: provider?.id ?? options.provider ?? 'cofold',
+      baseUrl: options.baseUrl,
+      ...(key === undefined ? {} : { apiKey: key }),
+      ...(provider?.headers === undefined ? {} : { headers: provider.headers }),
+    }];
   }
   return harness.providers.map((provider) => {
     const key = keyOf(provider.baseUrl, options, credentials, harness, provider);
     return {
+      name: provider.id,
       baseUrl: provider.baseUrl,
       ...(key === undefined ? {} : { apiKey: key }),
       ...(provider.headers === undefined ? {} : { headers: provider.headers }),
-      prefix: provider.id,
     };
   });
 };
@@ -451,8 +434,8 @@ export const rowOf = (
  * nothing here, and `modelOf` builds an adapter of its own.
  */
 export interface Held {
-  /** The transport one endpoint is asked through, built once per endpoint and key. */
-  providerOf(connection: Connection): ModelProvider;
+  /** The transport one endpoint is asked through, built once per endpoint, name and key. */
+  providerOf(endpoint: OpenAICompatProviderOptions): ModelProvider;
   /** What the catalogue said about a model reference, read from the cache. */
   infoOf(reference: string | undefined): ModelInfo | undefined;
 }
@@ -487,7 +470,7 @@ export const modelOf = (
   held?: Held,
 ): ModelAdapter => {
   if (options.adapter !== undefined) return options.adapter;
-  const connection = connectionOf(options, settings, credentials, harness, true);
+  const { reference, ...adapter } = adapterOptionsOf(options, settings, credentials, harness);
   /*
    * The level the turn's model selection carries, its `configSchema`'s answer,
    * winning over the session's own `<provider>.reasoning`, which wins over the
@@ -508,22 +491,14 @@ export const modelOf = (
      * of a session run before the endpoint has answered, and a turn that waited
      * on a catalogue would be a turn that starts late.
      */
-    const pricing = held.infoOf(connection.reference)?.pricing;
-    // Strict resolution has answered that a model was chosen.
-    return held.providerOf(connection).model({
-      id: connection.model as string,
+    const pricing = held.infoOf(reference)?.pricing;
+    return held.providerOf(adapter).model({
+      id: adapter.model,
       ...(pricing === undefined ? {} : { pricing }),
       ...chosen,
     });
   }
-  // Strict resolution has answered that a model was chosen.
-  return openaiCompat({
-    baseUrl: connection.baseUrl,
-    model: connection.model as string,
-    ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
-    ...(connection.headers === undefined ? {} : { headers: connection.headers }),
-    ...chosen,
-  });
+  return openaiCompat({ ...adapter, ...chosen });
 };
 
 /** The store this backend keeps its sessions and runs in. */
@@ -668,7 +643,8 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   const defaults = (): Record<string, unknown> => ({});
 
   /**
-   * What each endpoint answered, by the endpoint and the key it was asked with.
+   * What each endpoint answered, by the endpoint, the provider id it is listed
+   * under and the key it was asked with.
    *
    * One `GET /models` per backend rather than per session or per turn: a picker
    * is drawn from the root channel before any session exists, and every session
@@ -682,24 +658,29 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
   const catalogues = new Map<string, ModelInfo[]>();
 
   /**
-   * The transport one endpoint is asked through, by the endpoint and the key.
+   * The transport one endpoint is asked through, by the endpoint, its provider
+   * id and the key.
    *
-   * One per endpoint and key rather than one per turn: a turn's model is built
+   * One per endpoint, which every turn on it shares: a turn's model is built
    * from the provider the catalogue was read from, so the two cannot disagree
    * about which endpoint is in force, and the price the list gave reaches
-   * `.model()` by cofold's own route.
+   * `.model()` by cofold's own route. Built as cofold's `providersOf` builds a
+   * configuration's provider, named by its provider id.
+   * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/model-openai-compat/src/config.ts#L20-L30
    */
   const providers = new Map<string, ModelProvider>();
-  const cacheKey = (connection: Connection): string => `${connection.baseUrl}\n${connection.apiKey ?? ''}`;
+  const cacheKey = (endpoint: OpenAICompatProviderOptions): string =>
+    `${endpoint.name ?? ''}\n${endpoint.baseUrl}\n${endpoint.apiKey ?? ''}`;
 
-  const providerOf = (connection: Connection): ModelProvider => {
-    const key = cacheKey(connection);
+  const providerOf = (endpoint: OpenAICompatProviderOptions): ModelProvider => {
+    const key = cacheKey(endpoint);
     const held = providers.get(key);
     if (held !== undefined) return held;
     const built = openaiCompatProvider({
-      baseUrl: connection.baseUrl,
-      ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
-      ...(connection.headers === undefined ? {} : { headers: connection.headers }),
+      ...(endpoint.name === undefined ? {} : { name: endpoint.name }),
+      baseUrl: endpoint.baseUrl,
+      ...(endpoint.apiKey === undefined ? {} : { apiKey: endpoint.apiKey }),
+      ...(endpoint.headers === undefined ? {} : { headers: endpoint.headers }),
     });
     providers.set(key, built);
     return built;
@@ -712,20 +693,22 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * it routes to and what LM Studio answers with what it has loaded. Each id is
    * offered as `<provider>/<model id>`, the spelling the harness itself writes,
    * because OpenRouter's ids contain slashes and a bare one would be read as a
-   * provider reference.
+   * provider reference. The provider id is the endpoint's `name`, and the URL's
+   * host for an endpoint given none, as cofold's provider defaults its own.
    *
    * Anything that goes wrong - a refused connection, a wrong shape, a timeout -
    * is an empty list, which `catalogueOf` answers with the last good one: an
    * endpoint never listed offers the configured model alone.
    */
-  const listModels = async (connection: Connection): Promise<ModelInfo[]> => {
+  const listModels = async (endpoint: OpenAICompatProviderOptions): Promise<ModelInfo[]> => {
     try {
-      const found = await providerOf(connection).listModels({ signal: AbortSignal.timeout(CATALOGUE_TIMEOUT_MS) });
+      const found = await providerOf(endpoint).listModels({ signal: AbortSignal.timeout(CATALOGUE_TIMEOUT_MS) });
+      const named = endpoint.name ?? new URL(endpoint.baseUrl).host;
       const models: ModelInfo[] = [];
       for (const info of found) {
         const id = text(info.id);
         if (id === undefined) continue;
-        models.push({ ...info, id: `${connection.prefix}/${id}`, name: text(info.name) ?? id });
+        models.push({ ...info, id: `${named}/${id}`, name: text(info.name) ?? id });
       }
       return models;
     }
@@ -745,9 +728,9 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentModelRefreshScheduler.ts#L106-L125
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L918-L924
    */
-  const catalogueOf = async (connection: Connection): Promise<ModelInfo[]> => {
-    const key = cacheKey(connection);
-    const listed = await listModels(connection);
+  const catalogueOf = async (endpoint: OpenAICompatProviderOptions): Promise<ModelInfo[]> => {
+    const key = cacheKey(endpoint);
+    const listed = await listModels(endpoint);
     if (listed.length > 0) catalogues.set(key, listed);
     return catalogues.get(key) ?? [];
   };
@@ -759,10 +742,10 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * asked answers nothing on this call and is asked in the background; the
    * configured model stands in until it lands.
    */
-  const knownCatalogue = (connection: Connection): ModelInfo[] => {
-    const held = catalogues.get(cacheKey(connection));
+  const knownCatalogue = (endpoint: OpenAICompatProviderOptions): ModelInfo[] => {
+    const held = catalogues.get(cacheKey(endpoint));
     if (held !== undefined) return held;
-    void catalogueOf(connection);
+    void catalogueOf(endpoint);
     return [];
   };
 
@@ -850,8 +833,8 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
         resumed,
         store,
         read,
-        (settings, credentials) => connectionsOf(options, settings, credentials, read)
-          .flatMap((connection) => knownCatalogue(connection)),
+        (settings, credentials) => providerOptionsOf(options, settings, credentials, read)
+          .flatMap((endpoint) => knownCatalogue(endpoint)),
         held,
         // Where the turns it opens with ended, for a session that carries a
         // conversation on, a fork's copy included: a fork keeps the message ids
@@ -997,9 +980,9 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
        * file's order. A provider that fails answers an empty list, so its rows
        * are absent and the others are still offered.
        */
-      const connections = connectionsOf(options, {}, {}, harness);
+      const endpoints = providerOptionsOf(options, {}, {}, harness);
       const listed = options.adapter === undefined
-        ? (await Promise.all(connections.map((connection) => catalogueOf(connection)))).flat().map((info) => rowOf(options, info))
+        ? (await Promise.all(endpoints.map((endpoint) => catalogueOf(endpoint)))).flat().map((info) => rowOf(options, info))
         : [];
       const reference = modelReferenceOf(options, {}, harness);
       const models = reference === undefined || listed.some((model) => model.id === reference)

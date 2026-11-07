@@ -10,7 +10,7 @@ refs:
   - "[code://packages/agent-cofold/src/config.ts#L57-L59](../../packages/agent-cofold/src/config.ts#L57-L59) - `harnessConfigPath`, where the harness file is found"
   - "[code://packages/agent-cofold/src/agent.ts#L113](../../packages/agent-cofold/src/agent.ts#L113) - `defaultStoreRoot`, the store at cofold's home"
   - "[code://packages/agent-cofold/src/agent.ts#L218-L222](../../packages/agent-cofold/src/agent.ts#L218-L222) - `modelReferenceOf`, the order a model reference is taken in"
-  - "[code://packages/agent-cofold/src/agent.ts#L233-L268](../../packages/agent-cofold/src/agent.ts#L233-L268) - `connectionOf`, the endpoint, key and the two errors a turn can give"
+  - "[code://packages/agent-cofold/src/agent.ts#L278-L321](../../packages/agent-cofold/src/agent.ts#L278-L321) - `adapterOptionsOf`, cofold's options for a turn's model: the endpoint, key and the two errors a turn can give"
   - "[code://packages/agent-cofold/src/agent.ts#L335-L346](../../packages/agent-cofold/src/agent.ts#L335-L346) - `modelOf`, where a chosen effort becomes a request param"
   - "[code://packages/agent-cofold/src/agent.ts#L589-L623](../../packages/agent-cofold/src/agent.ts#L589-L623) - the session schema and its `permissionMode` property"
   - "[code://packages/agent-cofold/src/agent.ts#L400-L433](../../packages/agent-cofold/src/agent.ts#L400-L433) - `rowOf`, a model's own `thinkingLevel`"
