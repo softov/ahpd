@@ -240,6 +240,26 @@ describe('a refresh says what it found', () => {
     expect(moved[0]?.changes?.title).toBe('Two, retitled');
     expect(moved[0]?.changes?.resource).toBeUndefined();
   });
+
+  /*
+   * A row's `_meta` is among the fields VS Code's host compares before it says
+   * a surfaced session moved, so a key its backend changed between two
+   * listings is said, as a pull request's state on a row is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1346-L1364
+   */
+  it('sends a row whose _meta alone moved', async () => {
+    const { here, client, notes } = await started();
+    await filled(here);
+
+    notes.length = 0;
+    here.rows = [{ ...row('one', 'One'), _meta: { 'probe.key': 'moved' } }];
+    await listed(client);
+    await until(() => said(notes, 'root/sessionSummaryChanged').length > 0);
+
+    const moved = said(notes, 'root/sessionSummaryChanged');
+    expect(moved.map((one) => one.session)).toEqual(['ahp-session:/one']);
+    expect((moved[0]?.changes as { _meta?: unknown } | undefined)?._meta).toMatchObject({ 'probe.key': 'moved' });
+  });
 });
 
 describe('a backend that refuses keeps what it had', () => {

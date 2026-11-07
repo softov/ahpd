@@ -1598,23 +1598,24 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     }
   };
   /**
-   * Whether a listed row says anything a client does not already hold.
-   *
-   * The fields a listing can change and nothing else: `resource`, `provider`
-   * and `createdAt` say who the row is, and `_meta` has the session's own
-   * channel to change it on. Everything else on a row is read off the
-   * transcript, so it is one of these or it stays as it is.
+   * Whether a listed row says anything a client does not already hold: its
+   * title, its last change, its project, its folders, its `_meta` or its
+   * origin, the fields VS Code's host compares before it says a surfaced
+   * session's metadata moved. `resource`, `provider` and `createdAt` say who
+   * the row is, and its status and its counts are said where they move.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1346-L1364
    */
   const surfacedSessionChanged = (was: Summary, now: Summary): boolean => {
-    // `changes` is a row's own field and not on `Summary`, the way `_meta` is
-    // not either: both are spread onto the row by the module that owns them.
+    // `project` and `_meta` are spread onto a row by the module that owns
+    // them, and `Summary` declares neither.
     const before = was as unknown as Bag;
     const after = now as unknown as Bag;
     return was.title !== now.title
       || was.modifiedAt !== now.modifiedAt
-      || was.status !== now.status
-      || JSON.stringify(was.workingDirectories ?? []) !== JSON.stringify(now.workingDirectories ?? [])
-      || JSON.stringify(before.changes ?? null) !== JSON.stringify(after.changes ?? null);
+      || !isDeepStrictEqual(before.project, after.project)
+      || !isDeepStrictEqual(was.workingDirectories ?? [], now.workingDirectories ?? [])
+      || !isDeepStrictEqual(before._meta, after._meta)
+      || !isDeepStrictEqual(was.origin, now.origin);
   };
 
   /**
