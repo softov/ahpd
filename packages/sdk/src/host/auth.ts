@@ -1,9 +1,53 @@
 import { ROOT } from './channels.js';
 import { hostAgent, mayUseAgent, ownershipOf } from '../agents/usable.js';
 import type { Agent } from '../types/agent.js';
-import type { Connection } from '../types/host.js';
+import type { Connection, Credential } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
+
+/**
+ * The scopes a client says a token grants, as VS Code's host keeps them: each
+ * once and sorted, and none for anything that is not a list of them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostCredentials.ts#L48-L50
+ */
+export const normalizeScopes = (scopes: unknown): string[] => (Array.isArray(scopes)
+  ? [...new Set(scopes.filter((one): one is string => typeof one === 'string'))].sort()
+  : []);
+
+/**
+ * The key a pushed token is kept under: its resource and its scopes, and the
+ * server it was aimed at when the client named one, as VS Code's host keys a
+ * stored token.
+ *
+ * Two MCP servers can share a resource and still be two consumers, so a
+ * targeted token is kept apart from a provider-level one, and a lookup by a
+ * resource never finds one aimed at a server.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L498-L501
+ */
+export const keyOf = (resource: string, scopes: readonly string[], target?: { session: string; customizationId: string }): string =>
+  (target === undefined
+    ? `${resource}\u0000${scopes.join('\u0000')}`
+    : JSON.stringify([resource, scopes, target.session, target.customizationId]));
+
+/**
+ * The token one client pushed for a resource and the scopes asked for, as VS
+ * Code's host picks one: the token pushed for exactly those scopes; with
+ * scopes asked for, the provider-level token with the fewest scopes covering
+ * them; and the one pushed with no scopes. One past its expiry is none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L456-L486
+ */
+export const storedAuthToken = (tokens: ReadonlyMap<string, Credential>, resource: string, scopes: readonly string[]): Credential | undefined => {
+  const live = (held: Credential | undefined): Credential | undefined =>
+    (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now()) ? held : undefined);
+  const asked = normalizeScopes(scopes);
+  const exact = live(tokens.get(keyOf(resource, asked)));
+  if (exact !== undefined || asked.length === 0) return exact;
+  const covering = [...tokens.values()]
+    .filter((one) => one.target === undefined && one.resource === resource && one.scopes.length > 0 && live(one) !== undefined
+      && asked.every((scope) => one.scopes.includes(scope)))
+    .sort((a, b) => a.scopes.length - b.scopes.length)[0];
+  return covering ?? live(tokens.get(keyOf(resource, [])));
+};
 
 /** What a person has to sign into, and what they have. */
 export interface Auth {
@@ -11,8 +55,8 @@ export interface Auth {
   authenticationResource(): string;
   resourcesOf(agent: Agent): Bag[];
   agentsFor(connection: Connection, list: unknown): unknown;
-  /** A token any connected client authenticated for a resource, unexpired, for the host's own work. */
-  getAuthToken(resource: string): string | undefined;
+  /** A token any connected client authenticated for a resource and the scopes asked for, unexpired, for the host's own work. */
+  getAuthToken(resource: string, scopes?: readonly string[]): string | undefined;
   advertised(): Set<string>;
   metadataFor(resource: string): Bag;
   channelAwaiting(resource: string, connection: Connection): string;
@@ -84,18 +128,19 @@ export function createAuth(ctx: HostContext): Auth {
     });
   };
   /**
-   * A token any connected client authenticated for a resource, skipping one
-   * that has run out, for the host's own work, as VS Code's host reads a token
-   * from the host-wide store any client authenticated into.
+   * A token any connected client authenticated for a resource and the scopes
+   * asked for, picked as `storedAuthToken` picks one and skipping one that has
+   * run out, for the host's own work, as VS Code's host reads a token from the
+   * host-wide store any client authenticated into.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L267-L273
    */
-  const getAuthToken = (resource: string): string | undefined => {
+  const getAuthToken = (resource: string, scopes: readonly string[] = []): string | undefined => {
     // A person's sign-in is not a credential the host spends on its own work:
     // one client's sign-in must not become another client's session.
     if (options.users !== undefined && resource === authenticationResource()) return undefined;
     for (const connection of connections) {
-      const held = connection.tokens.get(resource);
-      if (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now())) return held.token;
+      const held = storedAuthToken(connection.tokens, resource, scopes);
+      if (held !== undefined) return held.token;
     }
     return undefined;
   };

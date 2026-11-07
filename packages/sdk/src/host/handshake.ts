@@ -3,7 +3,8 @@ import { RUN_HISTORY_LIMIT } from '../automations/automations.js';
 import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../resources/fileuri.js';
 import { bag, str } from '../utils/values.js';
-import { baseOf, spaceOf } from './channels.js';
+import { keyOf, normalizeScopes, storedAuthToken } from './auth.js';
+import { baseOf, ROOT, spaceOf } from './channels.js';
 import { BANG } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -52,20 +53,6 @@ interface Target {
   session: string;
   customizationId: string;
 }
-
-/**
- * The key a pushed token is kept under: its resource, and the server it was
- * aimed at when the client named one.
- *
- * The protocol keys a provider-level token by its resource and a targeted one
- * by its target as well, because two MCP servers can share a resource and
- * still be two consumers. So `tokensFor` and `getAuthToken`, which look a
- * token up by its resource, never find one aimed at a server.
- * https://github.com/microsoft/agent-host-protocol/blob/0b7b7f9f4ceb2fbd8846557416f765ac73da647d/docs/specification/authentication.md#L151-L153
- */
-const keyOf = (resource: string, target?: Target): string => (target === undefined
-  ? resource
-  : JSON.stringify([resource, target.session, target.customizationId]));
 
 /**
  * The MCP server a session publishes under an id, at the top level or as the
@@ -166,7 +153,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
    *
    * Narrowed rather than handed over whole: a token for one resource is
    * not a token for another, and a backend has no business seeing a
-   * credential meant for something it does not speak to.
+   * credential meant for something it does not speak to. Each resource's
+   * token is the one for the scopes its record lists, as VS Code's host asks
+   * its store for a resource's token, and not one that has run out: the timer
+   * below takes it away at the moment it expires, but a session asked for in
+   * the same tick would still find it here, and would start on a credential
+   * the client was about to be told is gone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1983-L1987
    */
   const tokensFor = (provider: string): Record<string, string> => {
     const agent = agents.get(provider);
@@ -174,75 +167,64 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
     for (const one of agent?.protectedResources ?? []) {
       const id = (one as { resource?: unknown }).resource;
       if (typeof id !== 'string') continue;
-      const held = connection.tokens.get(id);
-      // Not one that has run out. The timer below takes it away at the
-      // moment it expires, but a session asked for in the same tick would
-      // still find it here, and would start on a credential the client
-      // was about to be told is gone.
-      if (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now())) out[id] = held.token;
+      const held = storedAuthToken(connection.tokens, id, normalizeScopes((one as { scopes_supported?: unknown }).scopes_supported));
+      if (held !== undefined) out[id] = held.token;
     }
     return out;
   };
   /**
-   * When each token runs out, so the client that pushed it is told.
+   * When a sign-in or a token runs out, the client that pushed it is told,
+   * with `auth/required` and `reason: 'expired'`, the moment the `expiresIn`
+   * it sent says: nothing here verifies a token, so the client's word is
+   * when it goes stale. Said to that connection and no other, because the
+   * credential was theirs.
    *
-   * The protocol has a word for this - `auth/required` with
-   * `reason: 'expired'` - and until `expiresIn` arrived on `authenticate`
-   * this host had no way to earn it: nothing here verifies a token, so it
-   * never learned that one had gone stale. Now the client says how long
-   * it has, and the moment it runs out is a fact this host holds alone.
-   * Said to that connection and no other, because the token was theirs.
-   *
-   * `setTimeout` takes at most 2^31-1 milliseconds, a little under
-   * twenty-five days; a token good for longer is checked again at that
-   * boundary rather than fired early.
+   * Each clock is kept under the key its credential is: the sign-in's under
+   * its resource, a token's under `keyOf`'s key. `setTimeout` takes at most
+   * 2^31-1 milliseconds, a little under twenty-five days; a credential good
+   * for longer is checked again at that boundary rather than fired early.
    */
   const expiring = new Map<string, ReturnType<typeof setTimeout>>();
   const LONGEST = 2 ** 31 - 1;
-  const expire = (resource: string, target?: Target): void => {
-    /*
-     * The host's own resource holds no token to expire - what it leaves is
-     * a principal - so it is the one case this path answers differently.
-     * The notification is the same either way, because what a client has
-     * to do about it is the same.
-     */
-    if (target === undefined && options.users !== undefined && resource === authenticationResource()) {
-      const until = connection.principalUntil;
-      if (until === undefined) return;
-      const left = until - Date.now();
-      if (left > 0) {
-        expiring.set(resource, setTimeout(() => expire(resource), Math.min(left, LONGEST)));
-        expiring.get(resource)?.unref?.();
-        return;
-      }
-      expiring.delete(resource);
-      delete connection.principal;
-      delete connection.principalUntil;
-      log(`${connection.clientId || 'a client'}'s sign-in expired`);
-      connection.peer.notify('auth/required', {
-        channel: channelAwaiting(resource, connection),
-        resource: metadataFor(resource),
-        reason: 'expired',
-      });
+  /*
+   * The host's own resource holds no token to expire - what it leaves is a
+   * principal - and its end is said on the root, as VS Code's host says its
+   * identity's end.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/missionControl/missionControlProtocolServer.ts#L214-L218
+   */
+  const expireSignIn = (): void => {
+    const resource = authenticationResource();
+    const until = connection.principalUntil;
+    if (until === undefined) return;
+    const left = until - Date.now();
+    if (left > 0) {
+      expiring.set(resource, setTimeout(expireSignIn, Math.min(left, LONGEST)));
+      expiring.get(resource)?.unref?.();
       return;
     }
-    const key = keyOf(resource, target);
+    expiring.delete(resource);
+    delete connection.principal;
+    delete connection.principalUntil;
+    log(`${connection.clientId || 'a client'}'s sign-in expired`);
+    connection.peer.notify('auth/required', { channel: ROOT, resource: metadataFor(resource), reason: 'expired' });
+  };
+  const expireToken = (key: string): void => {
     const held = connection.tokens.get(key);
     if (held?.expiresAt === undefined) return;
     const left = held.expiresAt - Date.now();
     if (left > 0) {
-      expiring.set(key, setTimeout(() => expire(resource, target), Math.min(left, LONGEST)));
+      expiring.set(key, setTimeout(() => expireToken(key), Math.min(left, LONGEST)));
       expiring.get(key)?.unref?.();
       return;
     }
     expiring.delete(key);
     connection.tokens.delete(key);
-    log(`${connection.clientId || 'a client'}'s token for ${resource}${target === undefined ? '' : ` at ${target.customizationId}`} expired`);
+    log(`${connection.clientId || 'a client'}'s token for ${held.resource}${held.target === undefined ? '' : ` at ${held.target.customizationId}`} expired`);
     connection.peer.notify('auth/required', {
       // An MCP server's requirement is drawn on its session, and a token
       // aimed at one names that session itself.
-      channel: target === undefined ? channelAwaiting(resource, connection) : target.session,
-      resource: metadataFor(resource),
+      channel: held.target === undefined ? channelAwaiting(held.resource, connection) : held.target.session,
+      resource: metadataFor(held.resource),
       reason: 'expired',
     });
   };
@@ -812,7 +794,11 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       if (target === undefined && waiting.length === 0 && !advertised().has(resource)) {
         throw new RpcError(INVALID_PARAMS, `${resource || 'That'} is not a resource this host advertises`);
       }
-      const key = keyOf(resource, target);
+      // Kept under its resource, the scopes the client says it grants and its
+      // target, as VS Code's host keeps one.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L134-L135
+      const scopes = normalizeScopes(params.scopes);
+      const key = keyOf(resource, scopes, target);
       /*
        * An empty token takes the credential back.
        *
@@ -926,7 +912,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         if (until === undefined) delete connection.principalUntil;
         else {
           connection.principalUntil = until;
-          expire(resource);
+          expireSignIn();
         }
         // A person's id rather than the clientId, which is the thing about
         // this connection that was actually checked.
@@ -951,10 +937,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       forgetExpiry(key);
       connection.tokens.set(key, {
         token,
+        resource,
+        scopes,
+        ...(target === undefined ? {} : { target }),
         ...(expiresIn !== undefined ? { expiresAt: Date.now() + expiresIn * 1000 } : {}),
       });
       void fire({ type: 'authenticated', client: connection.clientId || 'anonymous', resource });
-      if (expiresIn !== undefined) expire(resource, target);
+      if (expiresIn !== undefined) expireToken(key);
       const at = target === undefined ? '' : ` at ${target.customizationId} in ${target.session}`;
       log(`${connection.clientId || 'a client'} authenticated for ${resource}${at}${expiresIn !== undefined ? `, for ${expiresIn}s` : ''}`);
       // A GitHub token is a reason to ask GitHub again: a lookup that

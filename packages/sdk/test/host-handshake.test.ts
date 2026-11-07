@@ -737,6 +737,30 @@ describe('authenticating', () => {
     expect(spent()).toBe(process.env.ANTHROPIC_API_KEY);
   });
 
+  /*
+   * A token is kept under the scopes the client says it grants as well as its
+   * resource, and the one spent is the one for the scopes the resource's
+   * record lists, as VS Code's host keeps and picks one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L456-L501
+   */
+  it('keeps a token under the scopes it grants, and spends the one for the scopes its resource lists', async () => {
+    const { client } = await opened();
+    const push = (token: string, scopes?: string[]) => client.handle({
+      method: 'authenticate',
+      params: { channel: 'ahp-root://', resource: ANTHROPIC, token, ...(scopes === undefined ? {} : { scopes }) },
+    });
+    await push('sk-plain');
+    await push('sk-scoped', ['admin']);
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/scoped', provider: 'claude', workingDirectories: [`file://${DIR}`] },
+    });
+    await settle();
+    // Claude's record lists no scopes, so the token pushed with none is the
+    // one spent, and the scoped one beside it replaced nothing.
+    expect(spent()).toBe('sk-plain');
+  });
+
   it('refuses a lifetime that is not a positive integer of seconds', async () => {
     const { client } = await opened();
     for (const expiresIn of [0, -1, 1.5, '3600', null]) {

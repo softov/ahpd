@@ -1572,10 +1572,20 @@ export interface ToolCaller {
  * on a new session, and the client that pushed it is told `auth/required`
  * with `reason: 'expired'` rather than left to find out from a session that
  * failed to start.
+ *
+ * `resource` and `scopes` are what the client pushed it for: its protected
+ * resource, and the scopes it said the token grants, deduplicated and sorted,
+ * none where it said none. A token is kept under both, and under the server
+ * it was aimed at, as VS Code's host keeps one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L498-L501
  */
 export interface Credential {
   token: string;
   expiresAt?: number;
+  resource: string;
+  scopes: string[];
+  /** The one MCP server the client aimed it at: its session and its customization id. */
+  target?: { session: string; customizationId: string };
 }
 
 /** One connected client and what it is watching. */

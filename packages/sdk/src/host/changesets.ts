@@ -3,6 +3,7 @@ import { changesetReducer } from '@microsoft/agent-host-protocol';
 import type { ChangesetAction, ChangesetFile } from '@microsoft/agent-host-protocol';
 import { idOf, Status, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
+import { normalizeScopes } from './auth.js';
 import { chatOfCanvas, chatUriFor } from './channels.js';
 import { startsRead } from './chatactions.js';
 import type {
@@ -422,7 +423,10 @@ export function createChangesets(ctx: HostContext): Changesets {
     const facts = githubFacts.get(dir) as { pullRequestUrls?: string[]; pullRequestBranchName?: string } | undefined;
     const owner = git?.githubOwner;
     const repo = git?.githubRepo;
-    const token = options.github === undefined ? undefined : getAuthToken(String(options.github.resource.resource ?? ''));
+    // The repository resource's token for the scopes its record lists, as VS Code's host asks for one.
+    const token = options.github === undefined
+      ? undefined
+      : getAuthToken(String(options.github.resource.resource ?? ''), normalizeScopes(options.github.resource.scopes_supported));
     const github = options.github !== undefined && typeof owner === 'string' && typeof repo === 'string'
       ? { ask: options.github, owner, repo, ...(token === undefined ? {} : { token }) }
       : undefined;

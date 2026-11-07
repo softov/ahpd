@@ -6,6 +6,7 @@ import { idOf } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { CREATED_BY_META, MULTI_ROOT_META, REMOTE_ORIGIN_META, SPAWN_DEPTH_META, depthOf } from '../sessions/remotesession.js';
 import { reason } from '../utils/values.js';
+import { normalizeScopes } from './auth.js';
 import type { Bag } from '../types/common.js';
 import type { PullRequest } from '../types/github.js';
 import type { HostContext } from './context.js';
@@ -567,7 +568,7 @@ export function createFacts(ctx: HostContext): Facts {
     const resource = String(options.github.resource.resource ?? '');
     let found;
     try {
-      found = await options.github.forBranch({ owner, repo }, branch, getAuthToken(resource), dir);
+      found = await options.github.forBranch({ owner, repo }, branch, getAuthToken(resource, normalizeScopes(options.github.resource.scopes_supported)), dir);
     }
     catch (error) {
       log(`${dir}: GitHub did not answer for ${branch}: ${error instanceof Error ? error.message : String(error)}`);

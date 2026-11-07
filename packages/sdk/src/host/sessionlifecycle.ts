@@ -1,5 +1,6 @@
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
+import { normalizeScopes } from './auth.js';
 import { sessionFlag } from './chatactions.js';
 import type { Bag } from '../types/common.js';
 import type { Summary } from '../types/catalog.js';
@@ -127,7 +128,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
     const branch = tree?.branch ?? git?.branchName ?? facts?.pullRequestBranchName;
     if (typeof owner !== 'string' || typeof repo !== 'string' || typeof branch !== 'string') return undefined;
     const resource = String(github.resource.resource ?? '');
-    return github.forBranch({ owner, repo }, branch, getAuthToken(resource), tree?.repository ?? dir);
+    return github.forBranch({ owner, repo }, branch, getAuthToken(resource, normalizeScopes(github.resource.scopes_supported)), tree?.repository ?? dir);
   };
 
   /**
@@ -156,7 +157,7 @@ export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
     const found: PullRequest[] = [];
     const unresolved: string[] = [];
     for (const url of urls) {
-      const one = await ask.call(github, url, getAuthToken(resource), cwd);
+      const one = await ask.call(github, url, getAuthToken(resource, normalizeScopes(github.resource.scopes_supported)), cwd);
       if (one !== undefined) found.push(one);
       else unresolved.push(url);
     }
