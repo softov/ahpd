@@ -122,17 +122,27 @@ THEN no offered model has a `configSchema`.
 ### Effort is a model's own
 
 WHEN the agent's `models` declares the levels a model accepts
-THEN that model's row has a `configSchema` with a `thinkingLevel` of those levels.
+THEN that model's row has a `configSchema` with a `thinkingLevel` of those levels that cofold has.
 WHEN nothing declares them and the catalogue lists `reasoning` among the model's parameters
 THEN the `thinkingLevel` has `off`, `low`, `medium` and `high`.
 WHEN neither says
 THEN the model's row has no `configSchema`.
+The `thinkingLevel` takes its words, labels and descriptions from VS Code's shared reasoning helpers, `off` labelled "Off".
+
+### The session has its own reasoning
+
+WHEN a session opens
+THEN its schema has `<provider>.reasoning` with the levels `off`, `low`, `medium` and `high`
+AND its default is the person's harness `reasoning`, else `off`.
+The reason: cofold's app has a session-wide reasoning setting, as Codex has one in VS Code beside each model's picker.
 
 ### Effort is a request param
 
 WHEN a turn's model selection sets `thinkingLevel` to `low`, `medium` or `high`
 THEN the backend sends it as `params.reasoning.effort` on the request
 AND it does not set the reasoning feature, so a model that cannot think stays that way.
+WHEN a turn's model selection names no level
+THEN the session's `<provider>.reasoning` decides it.
 
 ### The session gets four tool groups
 

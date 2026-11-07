@@ -17,7 +17,7 @@ import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Sto
 import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
 import type { ProviderConfig } from '@cofold/model-openai-compat';
 import { createFileStore, resolveHome } from '@cofold/store-file';
-import { titleFrom, uriOf } from '@ahpd/sdk';
+import { getReasoningEffortDescription, getReasoningEffortLabel, ReasoningEffortConfigKey, titleFrom, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
 import { harnessConfig, harnessConfigPath } from './config.js';
 import type { HarnessConfig } from './config.js';
@@ -125,6 +125,21 @@ const text = (value: unknown): string | undefined =>
   (typeof value === 'string' && value.trim() !== '' ? value : undefined);
 
 /**
+ * The session control that sets how much every turn has the model reason:
+ * cofold's own session-wide setting, papo's `reasoning`, under the agent's
+ * provider id, as VS Code names Codex's `codex.modelReasoningEffort`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/codexSessionConfigKeys.ts#L15-L25
+ */
+export const reasoningKeyOf = (options: CofoldOptions): string => `${options.provider ?? 'cofold'}.reasoning`;
+
+/**
+ * The level the person's harness sets, else papo's own default, `off`.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/config.ts#L76-L81
+ */
+const harnessReasoningOf = (harness: HarnessConfig): string =>
+  (EFFORT_LEVELS as readonly string[]).includes(harness.reasoning ?? '') ? harness.reasoning as string : 'off';
+
+/**
  * The approvals modes a session may be put in, in the harness's own order.
  *
  * The list and the meanings are cofold's: `policyOf` in `@cofold/agents` is
@@ -148,17 +163,6 @@ export const PERMISSION_LABELS = [
 /** One line about what each mode does, in cofold's words, in cofold's order. */
 export const PERMISSION_DESCRIPTIONS: readonly string[] =
   PERMISSION_MODES.map((mode) => PERMISSION_MODE_DESCRIPTIONS[mode]);
-
-/** What each thinking level is called where a person reads it, in `EFFORT_LEVELS`' order. */
-const EFFORT_LABELS = ['Off', 'Low', 'Medium', 'High'] as const;
-
-/** One line about what each thinking level does, in `EFFORT_LEVELS`' order. */
-const EFFORT_DESCRIPTIONS = [
-  'Answers without extra thinking.',
-  'Thinks briefly.',
-  'Thinks before answering.',
-  'Thinks hard before answering.',
-] as const;
 
 /**
  * The protected resource a token for this backend belongs to, or none.
@@ -387,13 +391,18 @@ const CATALOGUE_TIMEOUT_MS = 5000;
  * How hard a model can be told to think is its own `configSchema`, the
  * model-specific options AHP's model info carries, under `thinkingLevel`, the
  * key the reference client's picker writes for its models: the levels the
- * agent's configuration declares for a model of its endpoint, else cofold's
- * four where the catalogue published reasoning among the model's parameters.
- * A model neither names takes none, as cofold's own default says it cannot
- * reason and as VS Code shows no picker for a model that declares no levels;
- * a caller's adapter builds its own requests, so its models take none.
+ * agent's configuration declares for a model of its endpoint, those of
+ * cofold's four it names, else cofold's four where the catalogue published
+ * reasoning among the model's parameters. A model neither names takes none,
+ * as cofold's own default says it cannot reason and as VS Code shows no picker
+ * for a model that declares no levels; a caller's adapter builds its own
+ * requests, so its models take none. The property is the one VS Code's agent
+ * host draws, its words and each level's label and description from VS Code's
+ * shared helpers, and `off`, cofold's own default, is the default where it is
+ * offered.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L858
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/extensions/copilot/src/extension/byok/vscode-node/byokModelInfo.ts#L14-L32
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L4536-L4553
  *
  * Nothing else of `ModelInfo` travels: a row is what a picker draws, and the
  * catalogue's `features` and `pricing` are what a turn is built from.
@@ -418,13 +427,13 @@ export const rowOf = (
       configSchema: {
         type: 'object',
         properties: {
-          thinkingLevel: {
+          [ReasoningEffortConfigKey]: {
             type: 'string',
             title: 'Effort Level',
-            description: 'How hard it thinks before answering.',
+            description: 'Controls how much reasoning effort the model uses.',
             enum: levels,
-            enumLabels: levels.map((level) => EFFORT_LABELS[EFFORT_LEVELS.indexOf(level)]),
-            enumDescriptions: levels.map((level) => EFFORT_DESCRIPTIONS[EFFORT_LEVELS.indexOf(level)]),
+            enumLabels: levels.map(getReasoningEffortLabel),
+            enumDescriptions: levels.map((level) => getReasoningEffortDescription(level) ?? ''),
             ...(levels.includes('off') ? { default: 'off' } : {}),
           },
         },
@@ -479,8 +488,13 @@ export const modelOf = (
 ): ModelAdapter => {
   if (options.adapter !== undefined) return options.adapter;
   const connection = connectionOf(options, settings, credentials, harness, true);
-  // The level the turn's model selection carries, its `configSchema`'s answer.
-  const effort = effortOf(settings.thinkingLevel);
+  /*
+   * The level the turn's model selection carries, its `configSchema`'s answer,
+   * winning over the session's own `<provider>.reasoning`, which wins over the
+   * person's harness, as VS Code resolves a Codex turn's effort.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1953-L1960
+   */
+  const effort = effortOf(settings[ReasoningEffortConfigKey] ?? settings[reasoningKeyOf(options)] ?? harnessReasoningOf(harness));
   /*
    * A chosen level is a request param and nothing more. The adapter turns
    * reasoning on from it, so a host that also set the feature would be saying
@@ -587,7 +601,8 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    * only where this backend can honour it: when no run-level `policy` was
    * configured, because that policy is the authority and a picker that changed
    * nothing would be a lie. How hard a model thinks is that model's own
-   * `configSchema` (`rowOf`).
+   * `configSchema` (`rowOf`), and the session's own reasoning control stands
+   * for a turn whose model selection names no level.
    */
   const schema = (): Bag => ({
     type: 'object',
@@ -596,6 +611,24 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
         type: 'string',
         title: 'Instructions',
         description: 'The system prompt this agent runs with.',
+      },
+      /*
+       * cofold's own session-wide reasoning, papo's `reasoning` setting, as VS
+       * Code keeps Codex's `codex.modelReasoningEffort` as a session control
+       * beside each model's picker: cofold's levels, the shared helpers' words,
+       * and the person's harness level for its default, else papo's `off`.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L465-L475
+       */
+      [reasoningKeyOf(options)]: {
+        type: 'string',
+        title: 'Reasoning Effort',
+        description: `Controls how much reasoning effort ${displayName} uses.`,
+        enum: [...EFFORT_LEVELS],
+        enumLabels: EFFORT_LEVELS.map(getReasoningEffortLabel),
+        enumDescriptions: EFFORT_LEVELS.map((level) => getReasoningEffortDescription(level) ?? ''),
+        default: harnessReasoningOf(harness),
+        sessionMutable: true,
+        chatMutable: true,
       },
       /*
        * The approvals mode. The names and labels are the ones the window

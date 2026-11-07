@@ -11,7 +11,7 @@
       "description": "O endpoint compatível com a OpenAI usado por um registro que não indica nenhum."
     },
     "models": {
-      "description": "O que o operador diz dos modelos de baseUrl, cada um pelo seu id nesse endpoint: supportsReasoningEffort, os níveis de raciocínio que aceita, como os modelos de Custom Endpoint do VS Code os declaram."
+      "description": "O que o operador diz dos modelos de baseUrl, cada um pelo seu id nesse endpoint: supportsReasoningEffort, os níveis de raciocínio que aceita, como os modelos de Custom Endpoint do VS Code os declaram, dos quais se oferecem os que o cofold tem."
     },
     "instructions": {
       "description": "O prompt de sistema com que é criado um registro que não indica nenhum."

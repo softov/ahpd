@@ -99,11 +99,11 @@
             "additionalProperties": false,
             "properties": {
               "id": { "type": "string" },
-              "supportsReasoningEffort": { "type": "array", "items": { "type": "string", "enum": ["off", "low", "medium", "high"] } }
+              "supportsReasoningEffort": { "type": "array", "items": { "type": "string" } }
             },
             "required": ["id"]
           },
-          "description": "What the operator says of baseUrl's models, each by its id on that endpoint: supportsReasoningEffort, the thinking levels it accepts, as VS Code's Custom Endpoint models declare it."
+          "description": "What the operator says of baseUrl's models, each by its id on that endpoint: supportsReasoningEffort, the thinking levels it accepts, as VS Code's Custom Endpoint models declare it, of which those cofold has are offered."
         },
         "instructions": { "type": "string", "description": "The system prompt a record that names none is created with." },
         "computerConfigDir": {

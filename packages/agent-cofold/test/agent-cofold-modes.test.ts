@@ -108,7 +108,7 @@ async function turn(mode: string | undefined, path = 'a.txt') {
 
 it('advertises an approvals mode in the window own names, the thinking level being each model\'s own', () => {
   const props = properties(cofoldAgent({}));
-  expect(Object.keys(props)).toEqual(['instructions', 'permissionMode']);
+  expect(Object.keys(props)).toEqual(['instructions', 'cofold.reasoning', 'permissionMode']);
   // Each chat keeps its own mode, as VS Code's Claude marks its mode.
   expect(props.permissionMode).toMatchObject({ scope: 'session', sessionMutable: true, chatMutable: true, default: 'auto' });
   expect(props.permissionMode?.enum).toEqual([...PERMISSION_MODES]);
@@ -202,12 +202,13 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-/** What the endpoint was sent for a session with these settings. */
-const sent = async (settings: Record<string, unknown>): Promise<Record<string, unknown>> => {
+/** What the endpoint was sent for a session with these settings, over a harness file with `extra` in it. */
+const sent = async (settings: Record<string, unknown>, extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
   mkdirSync(join(home, 'papo'), { recursive: true });
   writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({
     providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }],
     model: 'open_router/deepseek/deepseek-chat',
+    ...extra,
   }));
   let body: Record<string, unknown> = {};
   globalThis.fetch = (async (_input: unknown, init?: { body?: string }) => {
@@ -225,6 +226,40 @@ it('puts the chosen thinking level in the request and nothing for off', async ()
   expect((await sent({ thinkingLevel: 'high' })).reasoning_effort).toBe('high');
   expect('reasoning_effort' in await sent({ thinkingLevel: 'off' })).toBe(false);
   expect('reasoning_effort' in await sent({})).toBe(false);
+});
+
+/*
+ * cofold's own session-wide reasoning, papo's `reasoning`, as a session
+ * control under the agent's provider id, as VS Code keeps Codex's
+ * `codex.modelReasoningEffort` beside each model's picker, the turn's model
+ * selection winning over it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L465-L475
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1953-L1960
+ */
+it('offers the session its own reasoning under the agent\'s provider, the harness level its default', () => {
+  const offered = properties(cofoldAgent({ provider: 'papo' }))['papo.reasoning'];
+  expect(offered).toEqual({
+    type: 'string',
+    title: 'Reasoning Effort',
+    description: 'Controls how much reasoning effort Cofold uses.',
+    enum: ['off', 'low', 'medium', 'high'],
+    enumLabels: ['Off', 'Low', 'Medium', 'High'],
+    enumDescriptions: ['', 'Faster responses with less reasoning', 'Balanced reasoning and speed', 'Greater reasoning depth but slower'],
+    default: 'off',
+    sessionMutable: true,
+    chatMutable: true,
+  });
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({ reasoning: 'medium' }));
+  expect(properties(cofoldAgent({}))['cofold.reasoning']?.default).toBe('medium');
+});
+
+it('runs a turn on the session\'s reasoning where its model selection names no level, the selection winning', async () => {
+  expect((await sent({ 'cofold.reasoning': 'medium' })).reasoning_effort).toBe('medium');
+  expect((await sent({ 'cofold.reasoning': 'medium', thinkingLevel: 'low' })).reasoning_effort).toBe('low');
+  expect('reasoning_effort' in await sent({ 'cofold.reasoning': 'high', thinkingLevel: 'off' })).toBe(false);
+  // The person's harness level where the session set none.
+  expect((await sent({}, { reasoning: 'high' })).reasoning_effort).toBe('high');
 });
 
 /** What the provider was asked to build for a session with these settings. */

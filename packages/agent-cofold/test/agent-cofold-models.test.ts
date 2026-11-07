@@ -310,6 +310,30 @@ it('offers the limits the endpoint published and a thinking level where it lists
 });
 
 /*
+ * A model's level in the property VS Code's agent host draws, its words and
+ * each level's label and description from VS Code's shared helpers, `off`
+ * taking the helpers' label for a level they do not name, and `off`, cofold's
+ * own default, its default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L4536-L4553
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/reasoningEffort.ts#L46-L82
+ */
+it('offers a model\'s thinking level in the words of VS Code\'s shared helpers, off labelled Off', async () => {
+  put(CONFIG);
+  answering(PUBLISHED);
+  const offered = await cofoldAgent({}).probe?.();
+  const chat = offered?.models.find((one) => one.id === 'open_router/deepseek/deepseek-chat');
+  expect((chat?.configSchema?.properties as Record<string, unknown>).thinkingLevel).toEqual({
+    type: 'string',
+    title: 'Effort Level',
+    description: 'Controls how much reasoning effort the model uses.',
+    enum: ['off', 'low', 'medium', 'high'],
+    enumLabels: ['Off', 'Low', 'Medium', 'High'],
+    enumDescriptions: ['', 'Faster responses with less reasoning', 'Balanced reasoning and speed', 'Greater reasoning depth but slower'],
+    default: 'off',
+  });
+});
+
+/*
  * The levels the operator declares for a model of the agent's own endpoint, as
  * VS Code's Custom Endpoint models declare `supportsReasoningEffort`, whatever
  * the catalogue says of it; a model neither names takes none.
@@ -320,13 +344,24 @@ it('offers the levels the agent declares for a model of its endpoint, and none w
   const agent = cofoldAgent({
     baseUrl: 'https://api.deepseek.com/v1',
     model: 'deepseek-chat',
-    models: [{ id: 'deepseek-reasoner', supportsReasoningEffort: ['high', 'low'] }],
+    // A level cofold does not have is declared as VS Code's setting takes any
+    // string, and left out when the model is offered.
+    models: [{ id: 'deepseek-reasoner', supportsReasoningEffort: ['high', 'xhigh', 'low'] }],
   });
   const offered = await agent.probe?.();
 
   const reasoner = offered?.models.find((one) => one.id === 'cofold/deepseek-reasoner');
-  // In cofold's own order, and with no `off` the operator did not name.
-  expect(reasoner?.configSchema).toMatchObject({ properties: { thinkingLevel: { enum: ['low', 'high'] } } });
+  // In cofold's own order, and with no `off` the operator did not name, in
+  // the words of VS Code's shared helpers.
+  expect(reasoner?.configSchema).toMatchObject({
+    properties: {
+      thinkingLevel: {
+        enum: ['low', 'high'],
+        enumLabels: ['Low', 'High'],
+        enumDescriptions: ['Faster responses with less reasoning', 'Greater reasoning depth but slower'],
+      },
+    },
+  });
   expect((reasoner?.configSchema?.properties as Record<string, Record<string, unknown>>).thinkingLevel).not.toHaveProperty('default');
   expect(offered?.models.find((one) => one.id === 'cofold/deepseek-chat')).not.toHaveProperty('configSchema');
 });

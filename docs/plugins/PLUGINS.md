@@ -2136,6 +2136,7 @@ turn runs:
 | Session setting | |
 | --- | --- |
 | `instructions` | The system prompt for this session |
+| `<provider>.reasoning` | How much every turn has the model reason, one of `off`, `low`, `medium` and `high`, cofold's own setting under the agent's provider id (`cofold.reasoning` for the agent `cofold`). The person's harness `reasoning` by default, else `off`. Session-mutable and chat-mutable |
 | `permissionMode` | How tool approvals are handled. Session-mutable, and offered only when the plugin configured no `policy` |
 
 The approvals mode is one of six, with the meanings the harness gives them:
@@ -2150,10 +2151,13 @@ authority, so the mode control is not offered beside it.
 
 How hard a model thinks is the model's own: its row carries a `configSchema`
 with a `thinkingLevel`, which a client answers with the model it picks for a
-turn. A model has the levels the agent's `models` declares for it, else all
-four (`off`, `low`, `medium` and `high`) where the endpoint's catalogue lists
-`reasoning` among the model's parameters, else none. The level reaches the
-request as `reasoning_effort`; `off` sends no reasoning field at all.
+turn. A model has those of the four (`off`, `low`, `medium` and `high`) the
+agent's `models` declares for it, else all four where the endpoint's catalogue
+lists `reasoning` among the model's parameters, else none. The property, its
+words and each level's label are VS Code's, and `off` is its default where it
+is offered. A turn whose model selection names no level runs on the session's
+`<provider>.reasoning`. The level reaches the request as `reasoning_effort`;
+`off` sends no reasoning field at all.
 
 **A key is a credential, and it is not a config key.** The backend advertises a
 protected resource, and a client lends a token for it the way the protocol

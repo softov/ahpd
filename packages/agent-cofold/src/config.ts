@@ -32,6 +32,8 @@ export interface HarnessConfig {
   model?: string;
   /** The harness's own instructions, a default under the session's. */
   instructions?: string;
+  /** How much the harness has its model reason, papo's `reasoning`: one of cofold's `EFFORT_LEVELS`. */
+  reasoning?: string;
   /** The person's own file, where a message says a value belongs. */
   path: string;
 }
@@ -112,10 +114,12 @@ export const harnessConfig = (env: NodeJS.ProcessEnv = process.env, home: string
   const named = variable('MODEL');
   const model = named === undefined ? word(found.model) : named.includes('/') ? named : `default/${named}`;
   const instructions = word(found.instructions);
+  const reasoning = word(found.reasoning);
   return {
     providers,
     path: harnessConfigPath(env, home, cwd),
     ...(model === undefined ? {} : { model }),
     ...(instructions === undefined ? {} : { instructions }),
+    ...(reasoning === undefined ? {} : { reasoning }),
   };
 };
