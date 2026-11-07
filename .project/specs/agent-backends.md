@@ -166,13 +166,17 @@ WHEN a message waits in the queue meanwhile
 THEN it starts only after that result.
 WHEN a result names no prompt
 THEN it ends the turn.
-WHEN the turn is stopped or fails while the CLI holds the steering message
+WHEN the turn is stopped while the CLI holds the steering message, which it has not taken into the turn
 THEN a turn of its own opens at once, under the uuid the message was sent with, carrying the message
 AND it names the message in `queuedMessageId`
 AND the CLI's answer to the message is that turn's
 AND the rest of the stopped turn's answer opens no turn and joins none.
-WHEN a client sends a turn while that turn runs
-THEN the host refuses it, as it refuses any turn sent while one runs.
+WHEN the turn is stopped before the CLI was handed the steering message
+THEN the message goes with the stop.
+WHEN the turn fails while the CLI holds the steering message
+THEN the message fails with it, and the CLI's answer to it opens no turn and joins none.
+WHEN a client sends a turn while the turn of the steering message runs
+THEN the backend runs it once that turn has ended.
 WHEN that turn is stopped
 THEN the message stops with it, and the CLI's answer to the message opens no turn and joins none.
 WHEN a stopped turn's result comes while another turn runs

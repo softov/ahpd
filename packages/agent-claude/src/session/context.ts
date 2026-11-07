@@ -36,6 +36,12 @@ export interface PendingSdkMessage {
    * `started` once it took it in.
    */
   lifecycle: 'sent' | 'queued' | 'started';
+  /**
+   * Whether the CLI was handed it: the SDK read it off the input stream, and
+   * the CLI holds it whatever this session does next. Unset while it waits
+   * there, and while its blocks are built.
+   */
+  read?: boolean;
 }
 
 /**

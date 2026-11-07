@@ -305,6 +305,9 @@ export function createQuery(ctx: SessionContext): Query {
     for (;;) {
       while (mine === bound && toYield.length > 0) {
         const next = toYield.shift() as (typeof toYield)[number];
+        // The CLI holds it from here, which a stop reads for the steering the CLI runs after it.
+        const pending = next.uuid === undefined ? undefined : ctx.yielded.get(next.uuid);
+        if (pending !== undefined) pending.read = true;
         yield next;
         if (ctx.steering !== undefined) {
           const said = ctx.steering;

@@ -407,21 +407,52 @@ it('ends the turn at its one result when the CLI folds the steering message into
 
 /*
  * A stop interrupts the turn through the SDK's own `interrupt()` and keeps the
- * CLI: no turn opens for the steering message the CLI held, and the next turn
- * goes to the same CLI once it has answered what it held.
+ * CLI, which runs the steering message it held once the interrupt is through:
+ * the message is answered in a turn of its own that names it, as VS Code's
+ * agents promote a steering message their runtime runs into a protocol turn,
+ * and the next turn goes to the same CLI once that turn is over.
  * https://code.claude.com/docs/en/agent-sdk/typescript#query-object
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L2606-L2636
  */
-it('opens no turn for steering after a stop, and sends the next turn to the CLI it kept', async () => {
-  const { chat, before } = await liveStop();
+it('answers the steering message the CLI runs after a stop in a turn of its own that names it, and sends the next turn to the CLI it kept', async () => {
+  const { chat, before, steered } = await liveStop();
 
-  expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual([STOPPED, GAMMA]);
+  const starts = chat.filter((one) => one.type === 'chat/turnStarted');
+  expect(starts.map((one) => one.turnId)).toEqual([STOPPED, steered, GAMMA]);
+  expect(starts[1]).toMatchObject({ queuedMessageId: 's-stop', message: { text: BETA_TEXT, origin: { kind: 'user' } } });
   expect(sdk.started).toHaveLength(1);
   const state = replayed(before, chat);
   expect(state.activeTurn).toBeUndefined();
   expect(history(state.turns as Bag[])).toEqual([
     [STOPPED, 'cancelled', COUNT_TEXT, 'user', [STOPPED_PROSE]],
+    [steered, 'complete', BETA_TEXT, 'user', ['BETA']],
     [GAMMA, 'complete', GAMMA_TEXT, 'user', ['GAMMA']],
   ]);
+  // Live as read back: the transcript the CLI wrote gives the same turns.
+  const read = await readBack(renamed(fixture('claude-cancelled-steer-transcript.jsonl'), SURVIVOR, steered));
+  expect(history(read)).toEqual(history(state.turns as Bag[]));
+});
+
+it('lets a steering message the CLI was not handed go with the stop, and sends the next turn', async () => {
+  const { session, chat } = await opened();
+  const [first] = late();
+  session.sendMessage(FIRST, ALPHA_TEXT);
+  await settle();
+  sdk.push(...first);
+  await settle();
+  // The stop comes before the CLI was handed the message.
+  expect(session.sendSteeringMessage?.({ id: LATE, text: BETA_TEXT })).toBe(true);
+  session.abort();
+  await settle();
+
+  expect(sdk.handed.map((one) => one.uuid)).toEqual([FIRST]);
+  expect(chat.filter((one) => one.type === 'chat/turnStarted').map((one) => one.turnId)).toEqual([FIRST]);
+  // The interrupt's own result, naming the stopped prompt; nothing the stop
+  // let go of holds the next turn back.
+  sdk.push({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: [], user_message_uuids: [FIRST] });
+  session.sendMessage(GAMMA, GAMMA_TEXT);
+  await settle();
+  expect(sdk.handed.map((one) => one.uuid)).toEqual([FIRST, GAMMA]);
 });
 
 it('reads a steering message the CLI took in at a tool call back in the turn it steered, and one it ran late as the prompt it wrote', async () => {
