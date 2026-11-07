@@ -2,6 +2,7 @@ import { rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ConfigTaken, Session } from '@ahpd/sdk';
+import { withheldModesOf } from '../managed.js';
 import { bag } from './common.js';
 import type { SessionContext } from './context.js';
 
@@ -212,12 +213,15 @@ export function createConfig(ctx: SessionContext): Config {
       }
       /*
        * The schema's own property, whose values are the CLI's, `dontAsk` among
-       * them unless the record's `dontAsk` is off; a value it does not offer
-       * is refused in VS Code's sentence.
+       * them unless the record's `dontAsk` is off and the modes the operator's
+       * lock takes away left out; a value it does not offer is refused in VS
+       * Code's sentence.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L147
        */
+      const withheld = withheldModesOf(ctx.options.managedSettings);
       const modes = (['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'] as const)
-        .slice(0, ctx.values['dontAsk'] === false ? 5 : 6);
+        .slice(0, ctx.values['dontAsk'] === false ? 5 : 6)
+        .filter((one) => !withheld.has(one));
       const found = modes.find((one) => one === value);
       if (!found) return `Session configuration '${key}' does not offer '${String(value)}'.`;
       // The CLI running takes it now, and a session's first CLI starts on it.

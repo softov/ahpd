@@ -6,6 +6,7 @@ import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { env, extraArgs, optionDefaults, outputStyle, sandbox, thinking } from '../src/options.js';
 import { startedNow } from '../../sdk/test/support/started.js';
+import { bag } from '@ahpd/sdk';
 import type { Engine, AgentView, Bag, Start } from '@ahpd/sdk';
 
 /*
@@ -167,6 +168,42 @@ it('refuses a permission mode the record does not offer in VS Code\'s sentence',
   }));
   expect(await session.setConfig?.('permissionMode', 'dontAsk')).toBe('Session configuration \'permissionMode\' does not offer \'dontAsk\'.');
   expect(await session.setConfig?.('permissionMode', 'plan')).toBe(true);
+  await session.close();
+});
+
+/*
+ * The operator's bypass lock takes away the modes VS Code's window locks for
+ * Claude under its auto-approval restriction, which VS Code sets from that
+ * lock, and a session holding one runs Ask Before Edits, as VS Code's Copilot
+ * runs a mode its policy withholds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSessionPermissions.ts#L65-L94
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L165-L166
+ */
+it('offers the modes VS Code leaves open under the operator\'s bypass lock, and runs a withheld one as Ask Before Edits', async () => {
+  sdk.options = [];
+  const engine = await engineOf();
+  const agent = engine.open(viewOf('claude', () => ({})));
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/declared',
+    chatUri: 'ahp-chat:/declared',
+    settings: { permissionMode: 'bypassPermissions' },
+    clientToolTimeoutMs: 60_000,
+    schema: () => agent.schema(),
+    emit: () => {},
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
+    managedSettings: { permissions: { disableBypassPermissionsMode: 'disable' } },
+  }));
+  const config = bag(session.sessionState().config);
+  expect(bag(bag(config.schema).properties).permissionMode).toMatchObject({
+    enum: ['default', 'plan', 'dontAsk'],
+    enumLabels: ['Ask Before Edits', 'Plan Mode', 'Don\'t Ask'],
+  });
+  expect(bag(config.values).permissionMode).toBe('default');
+  expect(await session.setConfig?.('permissionMode', 'bypassPermissions'))
+    .toBe('Session configuration \'permissionMode\' does not offer \'bypassPermissions\'.');
+  session.sendMessage('t1', 'hello');
+  await settle();
+  expect(sdk.options.at(0)?.permissionMode).toBe('default');
   await session.close();
 });
 

@@ -1,8 +1,9 @@
 import { posix } from 'node:path';
 import { managedRuleOf, normalizeDomainPattern } from '@ahpd/sdk';
-import type { Start } from '@ahpd/sdk';
+import type { Bag, Start } from '@ahpd/sdk';
 import type { Settings } from '@anthropic-ai/claude-agent-sdk';
 import { CLAUDE_CLIENT_MCP_SERVER_NAME, CLAUDE_SERVER_TOOL_MCP_SERVER_NAME, isHostInjectedMcpServerName } from './session/clienttools.js';
+import { bag, list } from './session/common.js';
 
 /*
  * The operator's managed settings as the CLI's own policy tier.
@@ -182,6 +183,40 @@ const toolRulesOf = (eligible: Readonly<Record<string, boolean>>): string[] =>
     if (tool !== '*') return mcpToolRule(server, tool);
     return Object.entries(eligible).some(([other, on]) => on === true && other.startsWith(`${owner}/`)) ? [] : mcpToolRule(server, '*');
   });
+
+/**
+ * The permission modes the operator's bypass lock takes away: Edit
+ * Automatically, Auto Mode and Bypass Permissions, the modes that approve a
+ * call without asking.
+ *
+ * VS Code sets its auto-approval restriction from the managed
+ * `disableBypassPermissionsMode` and hands it to every host as
+ * `autoApprovePolicyRestricted`; under it its window locks these three of
+ * Claude's modes, leaving Ask Before Edits and Plan Mode, and its Claude host
+ * keeps an autonomous session out of `auto`. A session holding one of the
+ * three runs Ask Before Edits, as VS Code's Copilot runs a mode its policy
+ * withholds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/common/agentHostConfigPolicy.ts#L79-L81
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/browser/agentHostProtocolClient.ts#L1654-L1657
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSessionPermissions.ts#L65-L94
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2334-L2338
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L165-L166
+ */
+export const withheldModesOf = (given: Start['managedSettings']): ReadonlySet<string> =>
+  new Set(given?.permissions?.disableBypassPermissionsMode === 'disable' ? ['acceptEdits', 'auto', 'bypassPermissions'] : []);
+
+/** A session's schema with the withheld modes taken out of its permission mode, their labels and descriptions with them. */
+export const withoutModes = (schema: Bag, withheld: ReadonlySet<string>): Bag => {
+  const properties = bag(schema.properties);
+  const mode = bag(properties.permissionMode);
+  if (withheld.size === 0 || !Array.isArray(mode.enum)) return schema;
+  const kept = mode.enum.flatMap((one, at) => (withheld.has(String(one)) ? [] : [at]));
+  const narrowed: Bag = { ...mode };
+  for (const field of ['enum', 'enumLabels', 'enumDescriptions']) {
+    if (Array.isArray(mode[field])) narrowed[field] = kept.map((at) => list(mode[field])[at]);
+  }
+  return { ...schema, properties: { ...properties, permissionMode: narrowed } };
+};
 
 /**
  * The CLI's `managedSettings` for the operator's managed settings: the deny and

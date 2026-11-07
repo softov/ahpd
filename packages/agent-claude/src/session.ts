@@ -1,5 +1,6 @@
 import { rmSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { withheldModesOf, withoutModes } from './managed.js';
 import { optionDefaults, storedSandbox } from './options.js';
 import { idOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type { Bag, BoundTool, Session } from '@ahpd/sdk';
@@ -59,10 +60,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
     ...(preset['sandbox'] === 'off' ? {} : storedSandbox(options.settings)),
   });
 
+  // The permission modes the operator's lock takes away; a session holding one runs Ask Before Edits.
+  const withheld = withheldModesOf(options.managedSettings);
+
   const ctx = {
     options,
     emit,
-    config: { permissionMode: 'default', ...options.settings } as Record<string, unknown>,
+    config: {
+      permissionMode: 'default',
+      ...options.settings,
+      ...(withheld.has(String(options.settings?.permissionMode)) ? { permissionMode: 'default' } : {}),
+    } as Record<string, unknown>,
     allowed: listsOf(options.settings?.permissions) ?? { allow: [], deny: [] },
     chosen: undefined as string | undefined,
     appliedEffort: undefined as string | undefined,
@@ -236,7 +244,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * effort control, which is what it had.
        */
       config: {
-        schema: options.schema?.() ?? { type: 'object', properties: {} },
+        schema: withoutModes(options.schema?.() ?? { type: 'object', properties: {} }, withheld),
         values: { ...ctx.config, ...(ctx.chosen ? { model: ctx.chosen } : {}) },
       },
       /*
