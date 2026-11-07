@@ -9,7 +9,7 @@ import { backSessions, sessionsOf } from '../src/names.js';
 import { botStore } from '../src/store.js';
 import { botWake } from '../src/wake.js';
 import type { ChatMessage, TurnHandle } from '../src/chat.js';
-import type { BotSessions } from '../src/wake.js';
+import type { BotSessions, ContextIn } from '../src/wake.js';
 import type { BotRecord } from '../src/record.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { Start } from '../../sdk/src/types/agent.js';
@@ -98,7 +98,7 @@ const textOf = (action: Bag): string => {
  * are a map that mints a URI per start, `look` reads a chat off the same map,
  * and `send` records what it was asked to carry rather than carrying it.
  */
-async function sitting(record: BotRecord = bot()) {
+async function sitting(record: BotRecord = bot(), contextIn: ContextIn = 'text') {
   const configDir = mkdtempSync(join(tmpdir(), 'ahpd-bot-context-chat-'));
   const records = memoryRecords();
   const store = botStore(
@@ -145,7 +145,7 @@ async function sitting(record: BotRecord = bot()) {
       return undefined;
     },
     problem: () => {},
-  });
+  }, 'post', contextIn);
 
   return { wake, store, configDir, sent };
 }
@@ -206,6 +206,23 @@ it('puts the context block in front of a turn that wakes a session', async () =>
   expect(words).toBe('hello');
   expect(block).toMatch(/^<context>\nmain chat: ahp-chat:\/main\nfrom: ana\ntime: [^\n]+\n<\/context>$/);
   expect(block).toMatch(/time: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/m);
+});
+
+/*
+ * With `contextIn` at `meta`, the back session is handed the words as they
+ * were said, and the main chat they came from in the delegation `_meta` alone,
+ * as VS Code's host delegates a prompt (agentService.ts L2615-L2621 at
+ * 6b68d3fe).
+ */
+it('hands the words as said, the main chat in the delegation _meta alone, where contextIn is meta', async () => {
+  const one = await sitting(bot(), 'meta');
+  await one.wake.woken(message('t1', 'hello'), turn().handle);
+
+  expect(one.sent[0]?.action['message']).toEqual({
+    text: 'hello',
+    origin: { kind: 'agent' },
+    _meta: { 'vscode.chat.delegation': { sourceSession: CHAT, sourceChat: 'ahp-chat:/main' } },
+  });
 });
 
 it('puts the context block in front of a message the main chat steers into its open turn', async () => {

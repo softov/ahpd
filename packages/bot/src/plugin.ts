@@ -15,7 +15,7 @@ import { agentsTextOf } from './template.js';
 import { botWake, isMainTurnAbsence } from './wake.js';
 import type { InstructionsIn, Yaml } from './agents.js';
 import type { BotRecord } from './record.js';
-import type { MainTurnAbsence } from './wake.js';
+import type { ContextIn, MainTurnAbsence } from './wake.js';
 import type { Bag, Owner, Plugin, PluginPeer, RecordCollection, TurnEndEvent } from '@ahpd/sdk';
 import type { BotSessions } from './wake.js';
 
@@ -67,6 +67,7 @@ export const defaults = {
   root: '~/.bots',
   mainTurnPostMessageAbsent: 'post',
   instructionsIn: 'section',
+  contextIn: 'text',
 } as const;
 
 /** What the plugin's connection to the host calls itself, which is how it knows its own frames. */
@@ -450,6 +451,12 @@ export const apply: Plugin['apply'] = (host, options) => {
    * schema names the two, so a value outside them never reaches here.
    */
   const instructionsIn: InstructionsIn = options.instructionsIn === 'body' ? 'body' : defaults.instructionsIn;
+  /*
+   * Where a woken message's context goes: a block in front of the words, or
+   * the delegation `_meta` alone, as VS Code delegates a prompt. The schema
+   * names the two.
+   */
+  const contextIn: ContextIn = options.contextIn === 'meta' ? 'meta' : defaults.contextIn;
   const kept = host.records('templates', { body: 'text' });
   const templates = {
     // A bot file is edited by hand too, so a name is checked again here.
@@ -638,7 +645,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     send,
     mayUse,
     problem: (line) => { host.problem(`${name}: ${line}`); },
-  }, absent);
+  }, absent, contextIn);
   /*
    * A back session's connectors, which are the bot's: the host asks this at
    * each tool list and each call, so an edit to a bot reaches a session it has

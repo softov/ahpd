@@ -32,6 +32,7 @@ In the configuration file, with every option set:
 | `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>` |
 | `mainTurnPostMessageAbsent` | `post` | What a main turn does when the back session's turn ends without `post_message`: `post`, `notice`, `silence` or `postNotice` |
 | `instructionsIn` | `section` | Where a bot's instructions are in its `AGENTS.md`: its `## Instructions` section, or `body`, the whole body after the frontmatter, as VS Code reads an agent file |
+| `contextIn` | `text` | Where a woken message's context goes: `text`, a block in front of the person's words, or `meta`, the words as said with the main chat in the message's delegation `_meta` alone, as VS Code delegates a prompt |
 
 The plugin's own entry needs `session:read` and `session:write`: a message is sent to a back session as a client's chat action, and the session's state is read the same way. The write group also holds `session:trust`, which the trusted start of a back session asks for.
 
@@ -116,7 +117,7 @@ A message in a chat wakes a back session, which is an ordinary session on the bo
 
 The name comes from the bot's `session`: `work` unless the bot says otherwise, and a name holding `{turn}` takes the turn id of each message, so that bot starts a new back session per message. A message is a turn in an idle back session and a steer in a working one. The session a name is on is kept with the bot, and a name whose session is gone is started again.
 
-Each message is sent with a `<context>` block in front of the person's words, naming the main chat, the person and the time in the host's offset; the main chat keeps only the person's words. The open main turn shows the back session as a `subagent` tool call that opens its chat.
+Each message is sent with a `<context>` block in front of the person's words, naming the main chat, the person and the time in the host's offset, or, with `contextIn` at `meta`, as the words alone with the main chat in its delegation `_meta`; the main chat keeps only the person's words. The open main turn shows the back session as a `subagent` tool call that opens its chat.
 
 The back session answers with `post_message`, whose text is added to the main turn; it may post more than once, and the main turn ends when the back session's turn ends. The tool is offered only to a back session and posts only to the main chat that woke the session; it runs without asking for a confirmation. A question asked with the harness's question tool, or an approval, is shown in the main chat, and the answer given there goes back to the back session. A back session that ends its turn without posting leaves the main turn to `mainTurnPostMessageAbsent`: `post` (the default) answers with the turn's last words, `notice` with a notice, `silence` with nothing, and `postNotice` with the last words or the notice where there are none.
 

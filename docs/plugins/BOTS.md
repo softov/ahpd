@@ -162,7 +162,7 @@ time: <ISO time with the host's offset>
 <what the person said>
 ```
 
-The block says what changes from message to message; the system prompt does not. The main chat shows and keeps only the person's own words.
+The block says what changes from message to message; the system prompt does not. The main chat shows and keeps only the person's own words. With the plugin's `contextIn` at `meta`, the back session is handed the words as they were said, and the main chat they came from only in the message's `_meta['vscode.chat.delegation']`, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2615-L2621) delegates a prompt another session's agent wrote: the model reads no person or time then.
 
 ### What the back session answers with
 
@@ -296,6 +296,7 @@ An edit that asks for a provider, leaving everything else as it was:
 | `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>`. A root that is the configuration folder or under it is refused at load, with a problem line, and the default is used |
 | `mainTurnPostMessageAbsent` | `post` | What a main turn does when the back session's turn ends without `post_message`: `post`, `notice`, `silence` or `postNotice` |
 | `instructionsIn` | `section` | Where a bot's instructions are in its `AGENTS.md`: `section`, its `## Instructions` section, or `body`, the whole body after the frontmatter, as VS Code reads an agent file - [The persona](#the-persona) |
+| `contextIn` | `text` | Where a woken message's context goes: `text`, a block in front of the person's words, or `meta`, the words as said with the main chat in the message's delegation `_meta` alone, as VS Code delegates a prompt - [The name a message wakes](#the-name-a-message-wakes) |
 
 ```json
 { "plugins": [{ "name": "@ahpd/bot", "options": { "root": "/srv/bots" } }] }

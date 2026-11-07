@@ -95,6 +95,11 @@
           "type": "string",
           "enum": ["section", "body"],
           "description": "Where a bot's instructions are in its AGENTS.md: its ## Instructions section (the default), or the whole body after the frontmatter, as VS Code reads an agent file."
+        },
+        "contextIn": {
+          "type": "string",
+          "enum": ["text", "meta"],
+          "description": "Where a woken message's context goes: a block in front of the person's words naming the main chat, the person and the time (text, the default), or the words as said with the main chat in the message's delegation _meta alone, as VS Code delegates a prompt (meta)."
         }
       }
     }

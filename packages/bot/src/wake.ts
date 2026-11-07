@@ -156,6 +156,18 @@ export interface Answering {
  */
 export type MainTurnAbsence = 'post' | 'notice' | 'silence' | 'postNotice';
 
+/**
+ * Where a woken message's context goes, as the option `contextIn` says.
+ *
+ * `text` puts the context block in front of the person's words, so the back
+ * session's model reads the main chat, the person and the time with them.
+ * `meta` hands the words as they were said, with the main chat they came from
+ * in the message's delegation `_meta` alone, as VS Code's host delegates a
+ * prompt another session's agent wrote.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2615-L2621
+ */
+export type ContextIn = 'text' | 'meta';
+
 /** Every value `mainTurnPostMessageAbsent` takes, in the order the table lists them. */
 export const MAIN_TURN_ABSENCES: readonly MainTurnAbsence[] = ['post', 'notice', 'silence', 'postNotice'];
 
@@ -313,9 +325,10 @@ export const sessionFor = (bot: BotRecord, owner: Owner, createdBy?: CreatedBy):
  *
  * `absent` is the plugin's `mainTurnPostMessageAbsent`, and defaults to `post`:
  * a person asked a question, and the session's last words are the answer unless
- * the host was told otherwise.
+ * the host was told otherwise. `contextIn` is the plugin's option of that name,
+ * and defaults to `text`.
  */
-export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wake {
+export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post', contextIn: ContextIn = 'text'): Wake {
   /** The main turn each back session is answering, by that session's URI. */
   const answering = new Map<string, Answering>();
   /** The back sessions being started right now, by the name each is started for. */
@@ -516,9 +529,9 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * Agents window sends a message from one session into another: a queued
    * message, whatever the session is doing, since the host it runs on takes it
    * up in the order messages came, and the message an agent's, naming the
-   * session and the chat it came from. The text is the person's words with the
-   * context block in front of them, one blank line between: what was said, and
-   * the chat, the person and the time it was said in.
+   * session and the chat it came from. The text is what `contextIn` makes it:
+   * the person's words with the context block in front of them, one blank line
+   * between, or the words alone.
    *
    * It names no model, agent or attachments: a message with none runs on the
    * host's default model and the provider's default behavior.
@@ -526,12 +539,12 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/meta/vscode/agentRemoteSessionMeta.ts#L78-L89
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L810-L827
    */
-  const queued = (block: string, message: ChatMessage): Bag => ({
+  const queued = (text: string, message: ChatMessage): Bag => ({
     type: 'chat/pendingMessageSet',
     kind: 'queued',
     id: randomUUID(),
     message: {
-      text: `${block}\n\n${message.text}`,
+      text,
       origin: { kind: 'agent' },
       _meta: { 'vscode.chat.delegation': { sourceSession: message.session, sourceChat: message.chat } },
     },
@@ -720,17 +733,18 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
          */
         if (message.steering !== undefined && handle.steeringSent?.(message.steering) === false) return;
         /*
-         * What changes from message to message, said with the message: the main
-         * chat the person is waiting in, who they are, and when they said it. The
-         * system prompt is the bot's and never changes, so nothing of this goes
-         * there. Only the back session is given it - `message.text` stays the
-         * person's own words, which is what the main chat keeps and shows.
+         * What changes from message to message, said with the message where
+         * `contextIn` is `text`: the main chat the person is waiting in, who they
+         * are, and when they said it. The system prompt is the bot's and never
+         * changes, so nothing of this goes there. Only the back session is given
+         * it - `message.text` stays the person's own words, which is what the
+         * main chat keeps and shows.
          */
-        const block = contextBlock([
+        const said = contextIn === 'meta' ? message.text : `${contextBlock([
           ['main chat', message.chat],
           ['from', userOf(owner)],
           ['time', timeWithOffset(new Date())],
-        ]);
+        ])}\n\n${message.text}`;
         /*
          * Held before the message is sent, so a back session that answers and
          * ends inside the send still finds the turn that is waiting on it. A steer
@@ -738,7 +752,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
          * the answer after it belongs to, and keeps what was posted into that
          * turn, the messages it sent still waiting, and the ending they hold.
          */
-        const action = queued(block, message);
+        const action = queued(said, message);
         const queuedId = String(action['id']);
         const before = answering.get(session);
         const same = before !== undefined && before.handle === handle && before.turnId === message.turnId;
