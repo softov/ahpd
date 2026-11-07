@@ -336,6 +336,13 @@ interface Differs {
 
 const rootPerConnection: (Differs & Broken)[] = [{ start: ['_meta', 'config'], ...BROKEN.rootPerConnection }];
 const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROKEN.rootPerConnection }];
+/*
+ * A root opened with no config keeps none through a push, as the protocol's
+ * reducer leaves it, while each connection is served config values of its
+ * own: a client that watched holds the push it was told of, and one that
+ * subscribes after is served the values a connection opens with.
+ */
+const rootConfigPerConnection: (Differs & Broken)[] = [{ start: ['_meta', 'config'], served: ['config'], ...BROKEN.rootPerConnection }];
 
 /**
  * Where this host answers a case otherwise than the protocol.
@@ -362,7 +369,7 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '071-root-terminalschanged': rootPerConnection,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
-  '128-root-configchanged-noops-when-config-undefined': rootPerConnection,
+  '128-root-configchanged-noops-when-config-undefined': rootConfigPerConnection,
   '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
   '247-chat-workingdirectoryset-adds-to-empty-set': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
   '248-chat-workingdirectoryset-appends-to-existing-set': [{ refused: ['Unsupported action: chat/workingDirectorySet'], ...BROKEN.chatFolders }],
@@ -522,10 +529,6 @@ const REFUSALS: Record<string, {
   }],
   'root/nonExistentAction': [{ said: (action) => `Server-only action: ${String(action.type)}`, source: MAY_NOT_ORIGINATE }],
   'session/nonExistentAction': [{ said: (action) => `Server-only action: ${String(action.type)}`, source: MAY_NOT_ORIGINATE }],
-  'root/configChanged': [{
-    said: (action) => `root config does not declare ${Object.keys(action.config as object)[0] ?? ''}`,
-    source: 'host policy, host/actions.ts: a root config push writes only keys the root config schema declares',
-  }],
   'session/workingDirectorySet': [{
     said: () => 'Session working-directory actions require an Editor Window client.',
     source: 'VS Code host, agentService.ts L13634-L13640 at 6b68d3fe: a session working-directory action is taken only from an editor window',
