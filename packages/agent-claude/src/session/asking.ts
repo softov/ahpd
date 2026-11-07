@@ -26,6 +26,12 @@ interface PendingInput {
   options?: Bag[];
   /** The SDK's `suggestions` for this call, returned as `updatedPermissions` when "always" is picked. */
   suggestions?: unknown[];
+  /**
+   * A tool confirmation's tool as the CLI calls it, which a client's call is
+   * opened and refused by: the call itself names a client's tool as the
+   * client announced it.
+   */
+  tool?: string;
   settle(result: { behavior: 'allow'; updatedInput: Bag; updatedPermissions?: unknown[] } | { behavior: 'deny'; message: string }): void;
 }
 
@@ -369,7 +375,11 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // The card shows the call as the model wrote it; the CLI runs `raw`.
       const written = asked.shown ?? raw;
       const input = toolInputOf(toolName, written);
-      const displayName = asked.displayName ?? toolName;
+      // A client's own tool by the name it announced, as the stream's start
+      // names it, so the call is one name whichever of the two opens it.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
+      const shown = ctx.clientToolOf(toolName)?.name ?? toolName;
+      const displayName = asked.displayName ?? shown;
       // The card reads the row's line; the CLI's own sentence is its title.
       const invocationMessage = lineOf(toolName, written);
       ctx.pastLines.set(id, pastLineOf(toolName, written));
@@ -383,7 +393,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       const contributor = ctx.contributorOf(toolName);
       const call = held ? bag(held.toolCall) : {
         toolCallId: id,
-        toolName,
+        toolName: shown,
         displayName,
         ...(contributor ? { contributor } : {}),
         ...(input !== undefined ? { toolInput: input } : {}),
@@ -423,7 +433,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         scope.parts.set(id, part);
         ctx.holdPart(turn, part);
         ctx.emitOn(scope, {
-          type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName, displayName,
+          type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName: shown, displayName,
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
         });
@@ -448,6 +458,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         entry,
         asked: new Map(),
         answers: new Map(),
+        tool: toolName,
         ...(options !== undefined ? { options, suggestions } : {}),
         settle: (result) => done(result.behavior === 'allow'
           ? { behavior: 'allow', updatedInput: raw, ...(result.updatedPermissions === undefined ? {} : { updatedPermissions: result.updatedPermissions }) }
@@ -708,7 +719,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
        * A refused call runs nowhere, and whoever waits for it is told so.
        */
       const call = bag(held.entry.toolCall);
-      const name = str(call.toolName) ?? '';
+      const name = held.tool ?? '';
       if (approved) {
         ctx.allowCall(name, str(held.entry.turnId) ?? '', toolCallId, call.invocationMessage as StringOrMarkdown, str(call.toolInput));
       }
