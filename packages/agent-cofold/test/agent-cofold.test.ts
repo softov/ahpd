@@ -74,8 +74,9 @@ it('offers the configured model and cofold\'s own commands', async () => {
 
 it('builds an OpenAI-compatible adapter for the chosen model', () => {
   expect(modelOf({ baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' }).modelId).toBe('deepseek-chat');
-  // A session setting wins over the package's own default.
-  expect(modelOf({ model: 'falls-back' }, { model: 'chosen' }).modelId).toBe('chosen');
+  // A session setting wins over the package's own default, on the endpoint the
+  // package names: a turn nothing names an endpoint for is refused.
+  expect(modelOf({ baseUrl: 'https://api.deepseek.com/v1', model: 'falls-back' }, { model: 'chosen' }).modelId).toBe('chosen');
 });
 
 it('uses a caller-passed adapter instead of building one', () => {
