@@ -17,6 +17,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { merger, DELTA_CAP_BYTES } from '../src/host/deltas.js';
 import { chatUriFor } from '../src/host/channels.js';
+import { memorySessions } from '../src/sessions/sessions.js';
 import {
   claude, createHost, hello, machine, peer, resetSdk, actions, emit, running, sdk, settle,
 } from './support/host.js';
@@ -41,6 +42,13 @@ const said = (text: string) => ({
   type: 'stream_event',
   event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } },
 });
+
+/** A store recording the transcript the catalogue lists as a session this host ran. */
+const ranHere = () => {
+  const store = memorySessions();
+  store.setProvider('older', 'claude');
+  return store;
+};
 
 /** The length of the default window, plus enough for the timer to have run. */
 const pastWindow = async (): Promise<void> => {
@@ -156,6 +164,7 @@ describe('a streamed delta', () => {
       path: DIR,
       agents: [{ ...claude({ paths: [DIR] }), subagents: async () => await workers.waiting }],
       ...machine(),
+      sessions: ranHere(),
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
@@ -219,6 +228,7 @@ describe('a streamed delta', () => {
       path: DIR,
       agents: [{ ...claude({ paths: [DIR] }), subagents: async () => { asked += 1; return asked === 1 ? await workers.waiting : undefined; } }],
       ...machine(),
+      sessions: ranHere(),
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
