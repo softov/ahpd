@@ -137,7 +137,8 @@ it('asks for a shell command no rule matches', async () => {
     // The approval the run paused on, which no rule answers.
     { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
     { kind: 'shell', line: 'echo hi', shell: SHELL },
-    // The mapping reads the rule again as it shapes the question's choices.
+    // The mapping reads the rule again as it says what the host decides the
+    // question by.
     { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
   ]);
   expect((of(notes, 'session/inputNeededSet')[0]?.request as Bag).kind).toBe('toolConfirmation');
@@ -174,8 +175,8 @@ it('asks the check only about cofold\'s shell', async () => {
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
   // The rule is read for the call's tool name, by the hook and again as the
-  // question's choices are shaped; a file write is not a command line, and the
-  // terminal rules are about command lines.
+  // question is said; a file write is a write of a path, and the terminal
+  // rules are about command lines.
   expect(asked).toEqual([
     { kind: 'tool', line: 'write_file', shell: undefined, tool: undefined },
     { kind: 'tool', line: 'write_file', shell: undefined, tool: undefined },
@@ -185,17 +186,20 @@ it('asks the check only about cofold\'s shell', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** The ids of the choices a question, or the ready beside it, carried. */
-const ids = (list: unknown): unknown[] =>
-  (Array.isArray(list) ? list.map((one) => bag(one).id) : []);
-
 /** How many turns have ended, by any of the three endings. */
 const endings = (notes: Note[]): number =>
   notes.filter((one) => one.action.type === 'chat/turnComplete'
     || one.action.type === 'chat/turnCancelled'
     || one.action.type === 'chat/error').length;
 
-it('asks for a shell tool the rule names, and offers no session choice', async () => {
+/*
+ * A question says what the host decides it by, beside its ready, and no
+ * options of cofold's: the kind of call, its command in the shell cofold runs
+ * it through, and the operator's rule as the managed approval it asks for, as
+ * VS Code's agents raise a pending confirmation.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+ */
+it('asks for a shell tool the rule names as a question a managed rule asks, with no options of its own', async () => {
   // The command is one the terminal rules allow, so the rule is what puts the
   // question: it wins over a line that would otherwise run unasked.
   const { asked, check } = ruling(['shell_exec'], ['echo hi']);
@@ -208,14 +212,46 @@ it('asks for a shell tool the rule names, and offers no session choice', async (
     { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
     // The approval the run paused on, which the rule answers with a question.
     { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
-    // Once more as the mapping shapes the question's choices.
+    // Once more as the mapping says what the host decides the question by.
     { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
   ]);
   const entry = of(notes, 'session/inputNeededSet')[0]?.request as Bag;
-  // One approval and one refusal: nothing keeps an answer for the session.
-  expect(ids(bag(entry.toolCall).options)).toEqual(['allow-once', 'deny']);
-  expect(ids(readyFor(notes, 'c1')?.options)).toEqual(['allow-once', 'deny']);
+  expect(bag(entry.toolCall)).not.toHaveProperty('options');
+  expect(readyFor(notes, 'c1')).not.toHaveProperty('options');
+  expect(readyFor(notes, 'c1')).toMatchObject({
+    permissionKind: 'shell', shellCommand: 'echo hi', shellLanguage: SHELL, managedApprovalRequired: true,
+  });
   session.confirm('c1', true, 'allow-once');
+  await when(() => endings(notes) === 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/*
+ * The path a file tool's input names, resolved against the workspace with
+ * cofold's own resolver, and a fetch's URL, as VS Code's Claude agent reads
+ * a call's path and URL by its tool.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L187-L194
+ */
+it('says a file tool\'s path in the workspace and a fetch\'s URL on its question', async () => {
+  const { session, notes, dir } = await open({
+    script: [
+      { toolCalls: [
+        { name: 'write_file', input: { path: 'notes/b.txt', content: 'new' }, callId: 'c1' },
+        { name: 'web_fetch', input: { url: 'https://example.com/x' }, callId: 'c2' },
+      ] },
+      { text: 'done' },
+    ],
+    // The mode that asks before a write and a fetch.
+    settings: { permissionMode: 'default' },
+  });
+  session.sendMessage('t1', 'write and fetch');
+  await when(() => readyFor(notes, 'c1')?.confirmationTitle !== undefined);
+
+  expect(readyFor(notes, 'c1')).toMatchObject({ permissionKind: 'write', permissionPath: join(dir, 'notes', 'b.txt') });
+  session.confirm('c1', false);
+  await when(() => readyFor(notes, 'c2')?.confirmationTitle !== undefined);
+  expect(readyFor(notes, 'c2')).toMatchObject({ permissionKind: 'url', permissionUrl: 'https://example.com/x' });
+  session.confirm('c2', false);
   await when(() => endings(notes) === 1);
   rmSync(dir, { recursive: true, force: true });
 });
@@ -247,12 +283,13 @@ it('never lets a matched call be allowed for the session', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-it('remembers no session choice for a tool the rule named after the question was put', async () => {
-  // The card is built before the rule exists, so it offers the session choice;
-  // the rule set while it waits still keeps cofold from remembering it.
-  const named: string[] = [];
-  const check: Check = (kind, line) =>
-    (kind === 'tool' && named.includes(line) ? 'ask' as NonNullable<ReturnType<Check>> : undefined);
+/*
+ * What the host keeps of an answer is the host's: cofold is answered for the
+ * call alone, whatever option the answer names, and asks about the tool's next
+ * call again, as VS Code's Copilot agent answers its runtime `approve-once`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8640
+ */
+it('answers cofold for the call alone, whatever option the host\'s answer names', async () => {
   const { session, notes, dir } = await open({
     script: [
       { toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'c1' }] },
@@ -260,13 +297,9 @@ it('remembers no session choice for a tool the rule named after the question was
       { toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'c2' }] },
       { text: 'done' },
     ],
-    check,
   });
   session.sendMessage('t1', 'run it');
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
-  const entry = of(notes, 'session/inputNeededSet')[0]?.request as Bag;
-  expect(ids(bag(entry.toolCall).options)).toEqual(['allow-once', 'allow-session', 'deny']);
-  named.push('shell_exec');
   session.confirm('c1', true, 'allow-session');
   await when(() => endings(notes) === 1);
 
@@ -291,8 +324,8 @@ it.each(['auto', 'acceptEdits', 'bypassPermissions'] as const)(
     session.sendMessage('t1', 'read it');
     await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
-    const entry = of(notes, 'session/inputNeededSet')[0]?.request as Bag;
-    expect(ids(bag(entry.toolCall).options)).toEqual(['allow-once', 'deny']);
+    expect(readyFor(notes, 'c1')).toMatchObject({ permissionKind: 'read', managedApprovalRequired: true });
+    expect(readyFor(notes, 'c1')).not.toHaveProperty('options');
     session.confirm('c1', false);
     await when(() => endings(notes) === 1);
     rmSync(dir, { recursive: true, force: true });
@@ -308,41 +341,6 @@ it('refuses a tool the rule names in dontAsk mode, without asking', async () => 
   expect(of(notes, 'session/inputNeededSet')).toEqual([]);
   expect(of(notes, 'chat/toolCallComplete').find((action) => action.toolCallId === 'c1')?.result)
     .toMatchObject({ success: false, error: { message: 'read_file asks every time and the mode is dontAsk' } });
-  rmSync(dir, { recursive: true, force: true });
-});
-
-it('asks a tool the rule names even when a session approval was already remembered', async () => {
-  const named: string[] = [];
-  const check: Check = (kind, line) =>
-    (kind === 'tool' && named.includes(line) ? 'ask' as NonNullable<ReturnType<Check>> : undefined);
-  const { session, notes, dir } = await open({
-    script: [
-      { toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'c1' }] },
-      { text: 'done' },
-      { toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'c2' }] },
-      { text: 'done' },
-      { toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'c3' }] },
-      { text: 'done' },
-    ],
-    check,
-  });
-  session.sendMessage('t1', 'run it');
-  await when(() => of(notes, 'session/inputNeededSet').length > 0);
-  // Allowed for the session before any rule names the tool, so cofold keeps it.
-  session.confirm('c1', true, 'allow-session');
-  await when(() => endings(notes) === 1);
-
-  // The remembered approval is what answers the question, not the policy.
-  session.sendMessage('t2', 'run it again');
-  await when(() => endings(notes) === 2);
-  expect(of(notes, 'session/inputNeededSet')).toHaveLength(1);
-
-  // The rule names the tool, and the remembered approval no longer answers it.
-  named.push('shell_exec');
-  session.sendMessage('t3', 'run it once more');
-  await when(() => of(notes, 'session/inputNeededSet').length > 1);
-  session.confirm('c3', false);
-  await when(() => endings(notes) === 3);
   rmSync(dir, { recursive: true, force: true });
 });
 

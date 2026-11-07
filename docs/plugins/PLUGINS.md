@@ -401,7 +401,8 @@ The CLI is given the host's answer: an approval runs the call as it was asked, a
 Claude also hands the session's `permissions.allow` to the CLI when a query starts, and a tool it allows runs without a question.
 An ACP server's question says its kind by the call's ACP kind (`execute` a shell's, `read` and `search` a read's, `edit`, `delete` and `move` a write's, `fetch` a URL's, a tool named `mcp__<server>__<tool>` an MCP server's, and any other a custom tool's), the path its first location names, the URL its input names, and its command's line in `bash`, and it offers none of the server's options save a mode switch's, whose buttons are the switch's own.
 The server is answered once whatever the host keeps, its `allow_once` or `reject_once`, and `cancelled` where it offered no once option of that kind; a mode switch's button the person picked is sent as itself.
-cofold offers Allow once, Allow the tool for this session, and Deny, and the session choice is sent as `alwaysApprove`, which cofold keeps for that session and tool.
+cofold offers none, so the host's are put, and says what each call asks for by its tool, as VS Code's Claude table rows the CLI's: `shell_exec` a shell's, its command in PowerShell on Windows and else in bash, the `sh` cofold runs it through; `read_file`, `list_files` and `search_files` a read's, `write_file` and `edit_file` a write's, each of the path its input names resolved against the workspace; `web_fetch` a URL's, `memory_read` and `memory_write` memory's, and any other tool a custom tool's.
+cofold is answered for that call alone, whatever the host keeps of the answer.
 pi offers none, so the host's three are put.
 
 ### A contributed setting can be a question
@@ -2100,7 +2101,7 @@ The workspace check resolves symlinks with cofold's own resolver, so a write thr
 The machine's public address is not among them, and a name that answers with a different address at the connection than at the check is not caught.
 
 The daemon draws each call, asks through the approvals mode, and reports a file an edit changed to the changeset.
-An approval offers Allow once, Allow the tool for this session, and Deny; the session choice reaches cofold as `alwaysApprove`, and cofold answers that tool's next asks in the session itself.
+An approval is a question the host decides, saying what the call asks to do by cofold's tool and its input, with the host's options; cofold is answered for that call alone, whatever the host keeps of the answer.
 A shell call is drawn as a terminal with its bare command, and a call that is declined or cut short never leaves a file held as changing.
 A session opened with no working directory keeps its tools and works in the daemon's current directory.
 

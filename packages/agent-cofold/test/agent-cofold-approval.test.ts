@@ -306,7 +306,12 @@ const asked = (p: ReturnType<typeof peer>, uri: string): number => actions(p, ur
   .filter((e) => e.action.type === 'session/inputNeededSet' && (e.action.request as { kind?: string }).kind === 'toolConfirmation')
   .length;
 
-it('offers allow once, allow the tool for this session, and deny', async () => {
+/*
+ * The question carries no options of cofold's: the host puts VS Code's on it,
+ * as VS Code's agents raise a pending confirmation for their host's chain.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L67-L76
+ */
+it('offers none of its own options, the host putting VS Code\'s', async () => {
   const model = createFakeModel({ script: writeScript('call-a', 'hi'), stream: true });
   const { client, peer: p } = await talking(model, [writer([])], asksFor(['write']));
   const { uri, chatUri } = await open(client, 'one');
@@ -314,9 +319,9 @@ it('offers allow once, allow the tool for this session, and deny', async () => {
   await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
 
   const offered = [
-    { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
-    { id: 'allow-session', label: 'Allow Write a note for this session', kind: 'approve', group: 1 },
-    { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
+    { id: 'allow-session', label: 'Allow in this Session', kind: 'approve', group: 1 },
+    { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+    { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
   ];
   const ready = p.notes.find((n) => n.method === 'action' && (n.params as Note).action.type === 'chat/toolCallReady');
   expect((ready?.params as Note).action.options).toEqual(offered);
@@ -326,7 +331,14 @@ it('offers allow once, allow the tool for this session, and deny', async () => {
   expect([ready, entry].flatMap((frame) => check.frame(frame)).map((one) => `${one.def} ${one.at} ${one.what}`)).toEqual([]);
 });
 
-it('allows the tool for the rest of the session when that is picked', async () => {
+/*
+ * "Allow in this Session" is the host's to keep: the tool's name in the
+ * session's `permissions`, from which the host answers the next question
+ * cofold puts about the tool, as VS Code's host keeps one for its agents;
+ * cofold is answered for each call alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L619-L650
+ */
+it('keeps an Allow in this Session answer in the host, which answers the next question about the tool', async () => {
   const ran: string[] = [];
   const model = createFakeModel({ script: twoWrites, stream: true });
   const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
@@ -337,18 +349,23 @@ it('allows the tool for the rest of the session when that is picked', async () =
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: true, confirmed: 'user-action', selectedOptionId: 'allow-session' },
+      action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-a', approved: true, confirmed: 'user-action', selectedOptionId: 'allow-session' },
     },
   });
   await until(() => ended(p, chatUri));
   const echoed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
   expect(echoed?.action.selectedOptionId).toBe('allow-session');
+  const kept = actions(p, uri).filter((e) => e.action.type === 'session/configChanged').map((e) => e.action.config);
+  expect(kept).toEqual([{ permissions: { allow: ['write'], deny: [] } }]);
 
   begin(client, chatUri, 't2', 'write two');
   await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length >= 2);
-  // Run without a second question: cofold kept the answer for this session.
+  // cofold put the question again, which the host answered from what it kept,
+  // saying the call running on the question's own line.
   expect(ran).toEqual(['one', 'two']);
   expect(asked(p, uri)).toBe(1);
+  const second = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallReady' && e.action.toolCallId === 'call-b');
+  expect(second[0]?.action).toMatchObject({ confirmed: 'not-needed', invocationMessage: 'Run Write a note?' });
 });
 
 it('asks again next time when the approval was only for once', async () => {

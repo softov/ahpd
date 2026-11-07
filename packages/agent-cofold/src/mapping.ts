@@ -17,7 +17,7 @@
 
 import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
-import type { Bag } from '@ahpd/sdk';
+import type { Bag, PendingConfirmation } from '@ahpd/sdk';
 import { bag, str, withToolCallDuration } from '@ahpd/sdk';
 import { contributorOf, describe, intentionOf, pastTenseOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
@@ -41,8 +41,6 @@ export interface OpenRequest {
    * snapshot can repeat it; its id is what the set and the removal carry.
    */
   request: Bag;
-  /** The choices an approval offered, which the person's `selectedOptionId` names one of. */
-  options?: Bag[];
 }
 
 /** What one event means: the actions to send, and the request it opened or closed. */
@@ -86,17 +84,12 @@ export interface TurnMappingOptions {
    */
   cancelled(): boolean;
   /**
-   * Whether the operator's rule makes this tool ask every time: VS Code's
-   * managed approval, whose ask offers one-time choices alone.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1513-L1517
-   *
-   * Read when a call is put to a person, so a matched question offers no
-   * "allow for this session". cofold keeps such a choice itself, per session
-   * and tool, and would answer the next ask for that tool with it without
-   * asking anybody. A replay passes none: the rules of now do not decide what
-   * was asked then.
+   * What the host decides a question about a call by, said beside its ready:
+   * VS Code's pending confirmation fields, the operator's rule among them as
+   * the managed approval a matched tool asks for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
    */
-  managedApprovalRequired?(name: string): boolean;
+  confirmationOf?(name: string, input: unknown): PendingConfirmation;
   /**
    * Whether the turn can be run again, the store truncated back to the turn
    * before it with cofold's own `Store.sessions.truncate`.
@@ -607,8 +600,12 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          *
          * The call is moved to `pending-confirmation` and said back with a
          * ready action that carries no `confirmed`, which is the reducer's
-         * word for "waiting on somebody". The entry beside it is what a
-         * client that is not watching this chat answers from.
+         * word for "waiting on somebody", and what the host decides it by
+         * beside it, with no options of its own: the host puts VS Code's, as
+         * VS Code's agents raise a pending confirmation for their host's chain.
+         * The entry beside it is what a client that is not watching this chat
+         * answers from.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L167-L178
          */
         case 'approval.requested': {
           const displayName = options.displayNameOf(event.name);
@@ -631,24 +628,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
                 ...contributorOf(owner),
               }
             : held.part.toolCall as Bag;
-          /*
-           * Allow once, allow this tool for the rest of the session, or deny.
-           * The session choice is one cofold keeps itself, per session and
-           * tool, and answers the next ask for that tool with. A tool the
-           * operator's rule names is offered no such choice: cofold would skip
-           * a question the host cannot see.
-           */
-          const choices: Bag[] = [
-            { id: 'allow-once', label: 'Allow once', kind: 'approve', group: 1 },
-            ...(options.managedApprovalRequired?.(event.name) === true
-              ? []
-              : [{ id: 'allow-session', label: `Allow ${displayName} for this session`, kind: 'approve', group: 1 }]),
-            { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
-          ];
+          const confirmation = options.confirmationOf?.(event.name, event.input) ?? {};
           call.status = 'pending-confirmation';
           call.confirmationTitle = prompt;
           call.invocationMessage = prompt;
-          call.options = choices;
           delete call.confirmed;
           const written = toolInputOf(event.name, event.input, subject);
           if (written !== undefined) call.toolInput = written;
@@ -673,7 +656,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             confirmationTitle: prompt,
             ...contributorOf(owner),
             ...(written !== undefined ? { toolInput: written } : {}),
-            options: choices,
+            ...confirmation,
           });
 
           const request: Bag = { id: `approval:${event.requestId}`, chat: options.chatUri, kind: 'toolConfirmation', turnId, toolCall: call };
@@ -682,7 +665,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             kind: 'approval',
             callId: event.callId,
             request,
-            options: choices,
           };
           requests.set(event.requestId, opened);
           actions.push({ type: 'session/inputNeededSet', request });

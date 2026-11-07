@@ -139,9 +139,9 @@ export const createPauses = (
    * The shell cofold runs a command through.
    *
    * `shell_exec` runs one command through the platform's own shell, which is
-   * what cofold's `DEFAULT_SHELL` names: PowerShell on Windows and bash
-   * everywhere else. The check's two shells are those two, so a line is
-   * matched against the rules of the shell that will run it.
+   * what cofold's `DEFAULT_SHELL` names: PowerShell on Windows and `sh`
+   * everywhere else, read as bash. The check's two shells are those two, so a
+   * line is matched against the rules of the shell that will run it.
    */
   const shellOf = (): 'bash' | 'powershell' => (process.platform === 'win32' ? 'powershell' : 'bash');
 
@@ -155,11 +155,10 @@ export const createPauses = (
    * denied, one the input does not name and a host that says nothing all answer
    * false, and the question is opened as it would have been.
    *
-   * The approval goes back for this one command, without `alwaysApprove`:
-   * cofold keeps that for a person's session-wide choice, and the host keeps no
-   * approval of its own - the rules are read again on the next call. Nothing
-   * is said on the wire here. The run's own `tool.started` readies the row
-   * `not-needed`, as it does for a call nobody was asked about.
+   * The approval goes back for this one command, and the rules are read again
+   * on the next call. Nothing is said on the wire here. The run's own
+   * `tool.started` readies the row `not-needed`, as it does for a call nobody
+   * was asked about.
    */
   const autoApprove = async (requestId: string, name: string, input: unknown): Promise<boolean> => {
     // Only a command line has a terminal rule that could answer it.
@@ -177,28 +176,20 @@ export const createPauses = (
     autoApprove,
     methods: {
       /**
-       * Answer a tool call the run is waiting on.
+       * Answer a tool call the run is waiting on, with the host's answer, a
+       * person's or its own.
        *
        * Found by the call's own id rather than assumed to be the only request:
        * with two open, comparing against whichever was held last is a person
        * pressing Approve and nothing at all happening. The host has said the
        * client's confirmation; the entry leaves by the same id it arrived with,
-       * and the answer goes into the run. An approval that picked
-       * `allow-session` is sent with `alwaysApprove`, which cofold keeps for
-       * this session and tool - unless the operator's rule names the tool,
-       * because a matched call asks every time.
+       * and the answer goes into the run, for this call alone whatever the
+       * host keeps of it, as VS Code's agents answer their runtimes once.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8640
        */
-      confirm: (toolCallId, approved, optionId) => {
+      confirm: (toolCallId, approved) => {
         const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
         if (held === undefined) return false;
-        const selectedOption = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
-        /*
-         * The tool's name as the request was built with it. A question rebuilt
-         * by a replay may still carry the session choice, so the rule is read
-         * here rather than assumed from the options.
-         */
-        const called = bag(held.request.toolCall).toolName;
-        const matched = typeof called === 'string' && start.getAutoApproval?.('tool', ruleName(ctx.offered, called)) === 'ask';
         /*
          * A decline ends the call without a result, so the file it announced as
          * changing is settled here, where the call id is still known: the run's
@@ -227,8 +218,6 @@ export const createPauses = (
           call.status = approved ? 'running' : 'cancelled';
           if (approved) call.confirmed = 'user-action';
           else call.reason = 'denied';
-          delete call.options;
-          if (selectedOption !== undefined) call.selectedOption = selectedOption;
           part.toolCall = call;
         }
         /*
@@ -238,9 +227,7 @@ export const createPauses = (
          * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/chat.ts#L544
          * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/agents/src/run/turn.ts#L405
          */
-        route(approved
-          ? { type: 'approve', requestId: held.requestId, ...(selectedOption?.id === 'allow-session' && !matched ? { alwaysApprove: true } : {}) }
-          : { type: 'deny', requestId: held.requestId });
+        route(approved ? { type: 'approve', requestId: held.requestId } : { type: 'deny', requestId: held.requestId });
         return true;
       },
 

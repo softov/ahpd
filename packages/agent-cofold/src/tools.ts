@@ -11,8 +11,9 @@
 
 import { createTool } from '@cofold/agents';
 import type { Tool } from '@cofold/agents';
+import { resolveWithin } from '@cofold/tools';
 import { appendEscapedMarkdownInlineCode, truncate } from '@ahpd/sdk';
-import type { Bag, BoundTool } from '@ahpd/sdk';
+import type { Bag, BoundTool, PendingConfirmation, PermissionKind } from '@ahpd/sdk';
 
 /**
  * cofold's own input-schema type, read off its factory.
@@ -34,6 +35,51 @@ type CofoldInput = Parameters<typeof createTool>[0]['input'];
  */
 export const ruleName = (offered: readonly BoundTool[], name: string): string =>
   offered.some((one) => one.definition.name === name) ? `host/${name}` : name;
+
+/**
+ * What each of cofold's own tools asks to do, and the field of its input
+ * naming the path or the URL it acts on, as VS Code's Claude table rows the
+ * CLI's tools: cofold's standard tools at ee481964 (packages/tools/src
+ * files.ts, shell.ts, web.ts, memory.ts). Any other tool, a host's or a
+ * client's among them, is a custom tool, as VS Code's table falls back.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L134
+ */
+const PERMISSION_ROWS: Readonly<Record<string, { kind: PermissionKind; field?: string }>> = {
+  shell_exec: { kind: 'shell' },
+  read_file: { kind: 'read', field: 'path' },
+  list_files: { kind: 'read', field: 'cwd' },
+  search_files: { kind: 'read', field: 'path' },
+  write_file: { kind: 'write', field: 'path' },
+  edit_file: { kind: 'write', field: 'path' },
+  web_fetch: { kind: 'url', field: 'url' },
+  memory_read: { kind: 'memory' },
+  memory_write: { kind: 'memory' },
+};
+
+/**
+ * What the host decides a question about a call by, from the call's tool and
+ * input, as VS Code's agents raise a pending confirmation: its kind by the
+ * table above, the path its input names resolved against the workspace with
+ * cofold's own resolver, the URL a fetch is of, and a shell call's command in
+ * the language of the shell cofold runs it through, its `DEFAULT_SHELL`:
+ * PowerShell on Windows and `sh` everywhere else, read as bash.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175
+ */
+export const confirmationOf = (name: string, input: unknown, workspace: string): PendingConfirmation => {
+  const row = PERMISSION_ROWS[name];
+  const permissionKind = row?.kind ?? 'custom-tool';
+  const given = typeof input === 'object' && input !== null ? input as Bag : {};
+  const named = row?.field === undefined ? undefined : given[row.field];
+  const target = typeof named === 'string' && named !== '' ? named : undefined;
+  const command = given.command;
+  return {
+    permissionKind,
+    ...(target === undefined ? {} : permissionKind === 'url' ? { permissionUrl: target } : { permissionPath: resolveWithin(workspace, target).absolute }),
+    ...(permissionKind === 'shell' && typeof command === 'string'
+      ? { shellCommand: command, shellLanguage: process.platform === 'win32' ? 'powershell' as const : 'bash' as const }
+      : {}),
+  };
+};
 
 /** The keys of a schema whose values are one schema each. */
 const ONE_SCHEMA = ['items', 'additionalProperties'] as const;
