@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { parseYaml } from '@cofold/yaml';
+import { uriOf } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 
 /*
@@ -89,12 +90,12 @@ const settle = async (times = 30): Promise<void> => {
 
 const SESSION = '11111111-2222-3333-4444-555555555555';
 
-/** The agent's own lists, as the host seeds a session with them. */
+/** The agent's own lists, as the host seeds a session with them, each named by its uri. */
 const SEEDS: Bag[] = [
-  { type: 'plugin', id: 'plugin:helper', uri: '/plugins/helper', name: 'helper', children: [] },
+  { type: 'plugin', id: '/plugins/helper', uri: '/plugins/helper', name: 'helper', children: [] },
   {
-    type: 'directory', id: 'directory:builtin:skills', uri: 'agent-builtin:/skills', name: 'builtin', writable: false, contents: 'skill', enabled: true,
-    children: [{ type: 'skill', id: 'skill:compact', name: 'compact', uri: 'agent-builtin:/skill/compact', enabled: true }],
+    type: 'directory', id: 'agent-builtin:/skills', uri: 'agent-builtin:/skills', name: 'builtin', writable: false, contents: 'skill', enabled: true,
+    children: [{ type: 'skill', id: 'agent-builtin:/skill/compact', name: 'compact', uri: 'agent-builtin:/skill/compact', enabled: true }],
   },
   { type: 'mcpServer', id: 'claude-internal:/mcp/seeded#mcp=seeded', name: 'seeded', uri: 'claude-internal:/mcp/seeded', enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } },
 ];
@@ -162,8 +163,9 @@ it("lists the agent's own and its disk scan until its first CLI answers", async 
   const { session, cwd } = open();
   expect(session.models()).toEqual(MODELS);
   const ids = listed(session).map((one) => one.id);
-  expect(ids).toEqual(expect.arrayContaining(['plugin:helper', 'directory:builtin:skills', 'directory:project:skills']));
-  const skills = listed(session).find((one) => one.id === 'directory:project:skills');
+  const projectSkills = uriOf(join(cwd, '.claude', 'skills'));
+  expect(ids).toEqual(expect.arrayContaining(['/plugins/helper', 'agent-builtin:/skills', projectSkills]));
+  const skills = listed(session).find((one) => one.id === projectSkills);
   expect(skills?.children).toEqual([expect.objectContaining({ name: 'review', description: 'Reviews a change' })]);
   // The scan's servers, each declared and not started; the seeds' are another CLI's.
   expect(listed(session).filter((one) => one.type === 'mcpServer').map((one) => one.name)).toEqual(['docs']);
@@ -192,12 +194,12 @@ it('lists no models once its first CLI answers signed in to nothing', async () =
 
 it('keeps its lists when its first CLI does not answer what it has', async () => {
   sdk.answers = false;
-  const { session } = open();
+  const { session, cwd } = open();
   session.sendMessage('t1', 'hello');
   await settle();
   expect(sdk.built).toHaveLength(1);
   expect(session.models()).toEqual(MODELS);
-  expect(listed(session).map((one) => one.id)).toContain('directory:project:skills');
+  expect(listed(session).map((one) => one.id)).toContain(uriOf(join(cwd, '.claude', 'skills')));
   await session.close();
 });
 
@@ -207,13 +209,13 @@ it('keeps a switch made before its first send for its first CLI, before its prom
   const docs = String(serverOf(session, 'docs')?.id);
 
   expect(await session.setCustomizationEnabled(docs, false)).toBe(true);
-  expect(await session.setCustomizationEnabled('plugin:helper', false)).toBe(true);
+  expect(await session.setCustomizationEnabled('/plugins/helper', false)).toBe(true);
   expect(sdk.built).toHaveLength(0);
   expect(sdk.calls).toEqual([]);
   const updated = said.filter((one) => one.type === 'session/customizationUpdated').map((one) => one.customization as Bag);
   expect(updated).toEqual([
     expect.objectContaining({ id: docs, enablement: [{ kind: 'session', enabled: false }] }),
-    expect.objectContaining({ id: 'plugin:helper', enablement: [{ kind: 'session', enabled: false }] }),
+    expect.objectContaining({ id: '/plugins/helper', enablement: [{ kind: 'session', enabled: false }] }),
   ]);
 
   session.sendMessage('t1', 'hello');
@@ -247,7 +249,7 @@ it('lists a file written before its first send', async () => {
   for (const change of watched.changes) change();
   await settle();
   const last = said.filter((one) => one.type === 'session/customizationsChanged').at(-1)?.customizations as Bag[] | undefined;
-  const agents = last?.find((one) => one.id === 'directory:project:agents');
+  const agents = last?.find((one) => one.id === uriOf(join(cwd, '.claude', 'agents')));
   expect(agents?.children).toEqual([expect.objectContaining({ name: 'scout', description: 'Looks around' })]);
   expect(sdk.built).toHaveLength(0);
   await session.close();

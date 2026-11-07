@@ -115,8 +115,9 @@ const lastList = (said: Bag[]): Bag[] => {
   return (changes.at(-1)?.customizations ?? []) as Bag[];
 };
 
+/** A built-in plugin's container, by its id: its uri, the source the CLI keys it under. */
 const containerOf = (list: Bag[], name: string): Bag | undefined =>
-  list.find((one) => one.id === `plugin:${name}`);
+  list.find((one) => one.id === `${name}@builtin`);
 
 beforeEach(() => { sdk.reset(); });
 
@@ -125,7 +126,7 @@ it('sends the plugin as a flag setting and reloads, in that order, and answers t
   expect(containerOf(session.customizations(), 'cc-plugin-agents-md')).toBeDefined();
   expect(said.filter((one) => one.type === 'session/customizationsChanged')).toHaveLength(1);
 
-  expect(await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false)).toBe(true);
+  expect(await session.setCustomizationEnabled('cc-plugin-agents-md@builtin',false)).toBe(true);
 
   expect(sdk.order).toEqual(['applyFlagSettings', 'reloadPlugins']);
   expect(sdk.settings[0]).toEqual({
@@ -137,7 +138,7 @@ it('sends the plugin as a flag setting and reloads, in that order, and answers t
 
 it('keeps the plugin in the list with the session switched off, and says the list again', async () => {
   const { session, said } = await opened();
-  expect(await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false)).toBe(true);
+  expect(await session.setCustomizationEnabled('cc-plugin-agents-md@builtin',false)).toBe(true);
 
   // The CLI stopped reporting it - `loading` is what its reload lists - and
   // the row is still there, because a switch is the session's own answer.
@@ -154,9 +155,9 @@ it('keeps the plugin in the list with the session switched off, and says the lis
 
 it('answers true for switching it back on, and the row carries no decision again', async () => {
   const { session, said } = await opened();
-  await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false);
+  await session.setCustomizationEnabled('cc-plugin-agents-md@builtin',false);
 
-  expect(await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', true)).toBe(true);
+  expect(await session.setCustomizationEnabled('cc-plugin-agents-md@builtin',true)).toBe(true);
   expect(sdk.settings.at(-1)).toEqual({
     outputStyle: 'Concise',
     enabledPlugins: { 'cc-plugin-agents-md@builtin': true },
@@ -167,8 +168,8 @@ it('answers true for switching it back on, and the row carries no decision again
 
 it('sends what the session decided before beside the plugin it is moving', async () => {
   const { session } = await opened();
-  await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false);
-  await session.setCustomizationEnabled('plugin:cc-plugin-telemetry', false);
+  await session.setCustomizationEnabled('cc-plugin-agents-md@builtin',false);
+  await session.setCustomizationEnabled('cc-plugin-telemetry@builtin', false);
 
   // `applyFlagSettings` merges at the top level, so the second switch replaces
   // the whole `enabledPlugins` key: the first plugin's decision has to be in it
@@ -188,7 +189,7 @@ it('answers false when the CLI did not take the switch', async () => {
   const before = said.filter((one) => one.type === 'session/customizationsChanged').length;
   sdk.deaf = true;
 
-  expect(await session.setCustomizationEnabled('plugin:cc-plugin-agents-md', false)).toBe(false);
+  expect(await session.setCustomizationEnabled('cc-plugin-agents-md@builtin',false)).toBe(false);
   // Nothing is published again: the list says what the CLI says, and the CLI
   // says it is still loading the plugin.
   expect(containerOf(lastList(said), 'cc-plugin-agents-md')).not.toHaveProperty('enablement');
@@ -199,8 +200,8 @@ it('answers false when the CLI did not take the switch', async () => {
 it('answers false for a skill and for a plugin nobody reported, and asks the CLI nothing', async () => {
   const { session } = await opened();
 
-  expect(await session.setCustomizationEnabled('skill:review', false)).toBe(false);
-  expect(await session.setCustomizationEnabled('plugin:not-a-plugin', false)).toBe(false);
+  expect(await session.setCustomizationEnabled('agent-builtin:/skill/review', false)).toBe(false);
+  expect(await session.setCustomizationEnabled('not-a-plugin@builtin', false)).toBe(false);
   expect(sdk.order).toEqual([]);
   await session.close();
 });

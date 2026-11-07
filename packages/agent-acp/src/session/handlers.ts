@@ -24,7 +24,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import { hostPathOf, str } from '@ahpd/sdk';
+import { hostPathOf, str, withSkillArgumentHintMeta } from '@ahpd/sdk';
 import type { Bag, BackgroundTask, BoundTool, OpenTerminal, Session } from '@ahpd/sdk';
 import { HOST_TOOLS, callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
 import type { PermissionAnswer } from '../types.js';
@@ -100,20 +100,22 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * the commands its runtime reports and as the spec classes a slash command:
    * a skill whose URI is the `agent-builtin:` one VS Code mints for a skill no
    * file stands behind, its id that URI. The input hint is carried as an
-   * argument hint, which is what a composer puts beside the name, under
-   * `_meta['ahpd.argumentHint']`: `SkillCustomization` declares `description`
-   * and no argument hint.
+   * argument hint, which is what a composer puts beside the name, under the
+   * `_meta` key VS Code's host publishes a skill's hint under:
+   * `SkillCustomization` declares `description` and no argument hint.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeBuiltinCommands.ts#L90-L123
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/skillCustomizationMeta.ts#L8-L26
    */
   const commandLeaf = (command: AvailableCommand): Bag => {
     const uri = `agent-builtin:/skill/${encodeURIComponent(command.name)}`;
+    const meta = withSkillArgumentHintMeta(undefined, command.input?.hint);
     return {
       type: 'skill',
       id: uri,
       uri,
       name: command.name,
       ...(command.description === '' ? {} : { description: command.description }),
-      ...(command.input === null || command.input === undefined ? {} : { _meta: { 'ahpd.argumentHint': command.input.hint } }),
+      ...(meta === undefined ? {} : { _meta: meta }),
     };
   };
 

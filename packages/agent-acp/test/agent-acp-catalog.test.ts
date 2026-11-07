@@ -821,7 +821,7 @@ it('reports a command the server advertises as a built-in skill', async () => {
     uri: 'agent-builtin:/skill/plan',
     name: 'plan',
     description: 'Draft a plan',
-    _meta: { 'ahpd.argumentHint': 'What to plan' },
+    _meta: { 'vscode.skill.argumentHint': 'What to plan' },
   }]);
   expect(watch.actions.some((one) => one.channel === 'session'
     && one.action.type === 'session/customizationsChanged')).toBe(true);

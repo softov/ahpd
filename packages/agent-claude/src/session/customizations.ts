@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { McpServerState } from '@microsoft/agent-host-protocol';
-import { uriOf } from '@ahpd/sdk';
+import { uriOf, withSkillArgumentHintMeta } from '@ahpd/sdk';
 import type { Bag, OnWire } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import { frontmatterOf, projectDirOf } from './disk.js';
@@ -103,20 +103,37 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     return disk.managedDir === undefined ? undefined : { uri: uriOf(join(disk.managedDir, '.claude', folder)), name: 'managed', writable: false };
   };
   const directories = new Map<string, Bag>();
-  /** The container for one scope and kind, made the first time it is asked for. */
+  /**
+   * The container for one scope and kind, made the first time it is asked for.
+   *
+   * Every customization's id is its uri, as VS Code's agents mint one with
+   * `customizationId`, each here a whole file or a uri of its own and none a
+   * span inside a file.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L470-L487
+   */
   const directoryOf = (scope: Placed, kind: Contents): Bag | undefined => {
     const key = `${scope}:${folderOf[kind]}`;
     const held = directories.get(key);
     if (held !== undefined) return held;
     const where = whereOf(scope, kind);
     if (where === undefined) return undefined;
-    const made: Bag = { type: 'directory', id: `directory:${key}`, ...where, contents: kind, enabled: true, children: [] };
+    const made: Bag = { type: 'directory', id: where.uri, ...where, contents: kind, enabled: true, children: [] };
     directories.set(key, made);
     return made;
   };
+  /**
+   * Put one leaf among a container's children, once by its id, as VS Code's
+   * Claude discovery dedupes a container's children: two names the CLI runs
+   * one file by are one customization.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L64-L72
+   */
+  const into = (container: Bag | undefined, leaf: Bag): void => {
+    const children = container?.children as Bag[] | undefined;
+    if (children !== undefined && !children.some((one) => one.id === leaf.id)) children.push(leaf);
+  };
   /** Put one leaf in the directory of its scope. */
   const place = (scope: Placed, kind: Contents, leaf: Bag): void => {
-    (directoryOf(scope, kind)?.children as Bag[] | undefined)?.push(leaf);
+    into(directoryOf(scope, kind), leaf);
   };
   /** The writable directories, in the order they are sent, those sent empty too made before anything is put in them. */
   const writable: Placed[] = disk === undefined ? [] : projectDirOf(disk) !== undefined ? ['project', 'user'] : ['user'];
@@ -140,7 +157,12 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   const skillFileOf = (name: string): DiskFile | undefined => (name.startsWith(SYNCED)
     ? fileOf('skill', name.slice(SYNCED.length), ['synced'])
     : fileOf('skill', name, ['managed', 'user', 'project', 'synced']));
-  /** The uri of a leaf with no file. The name is encoded: it is a path segment here and a URI segment there. */
+  /**
+   * The uri of a leaf with no file, by the name the CLI runs it by, a plugin's
+   * namespace among it, as VS Code's Claude names one with `nonEditableUri`.
+   * The name is encoded: it is a path segment here and a URI segment there.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L179-L181
+   */
   const internal = (kind: string, name: string): string => `claude-internal:/${kind}/${encodeURIComponent(name)}`;
   /** The uri of a skill or command the CLI ships, as VS Code's built-in skills are named. */
   const builtin = (name: string): string => `agent-builtin:/skill/${encodeURIComponent(name)}`;
@@ -203,7 +225,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     if (pluginContainers.has(name)) continue;
     pluginContainers.set(name, {
       type: 'plugin',
-      id: `plugin:${name}`,
+      id: rootOf(plugin),
       uri: rootOf(plugin),
       name,
       ...(str(plugin.version) !== undefined ? { version: str(plugin.version) as string } : {}),
@@ -221,8 +243,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   }
   /** Put one attributed child under the plugin that namespaced it. */
   const under = (plugin: Bag, child: Bag): void => {
-    const held = pluginContainers.get(str(plugin.name) as string);
-    if (held !== undefined) (held.children as Bag[]).push(child);
+    into(pluginContainers.get(str(plugin.name) as string), child);
   };
 
   /*
@@ -261,22 +282,26 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const hint = str(skill.argumentHint) ?? str(bag(command).argumentHint);
     const own = plugin === undefined ? name : bare(plugin, name);
     const inPlugin = plugin === undefined ? '' : `${str(plugin.path) ?? ''}/skills/${own}/SKILL.md`;
+    // Its `SKILL.md`, which is what a client opens, and not the folder it is in.
+    const uri = plugin !== undefined
+      ? (existsSync(inPlugin) ? inPlugin : internal('skill', name))
+      : (file !== undefined ? uriOf(file.path) : builtin(name));
+    /*
+     * The argument hint under `_meta`, in the key VS Code's host publishes it
+     * under and its window reads: `SkillCustomization` declares `description`
+     * and the two `disable*` flags and no hint.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/skillCustomizationMeta.ts#L8-L26
+     */
+    const meta = withSkillArgumentHintMeta(undefined, hint);
     const leaf: Bag = {
       type: 'skill',
-      id: `skill:${name}`,
+      id: uri,
       name: own,
-      // Its `SKILL.md`, which is what a client opens, and not the folder it is in.
-      uri: plugin !== undefined
-        ? (existsSync(inPlugin) ? inPlugin : internal('skill', own))
-        : (file !== undefined ? uriOf(file.path) : builtin(name)),
+      uri,
       enabled: true,
       ...(command ? {} : { disableUserInvocation: true }),
       ...(described ? { description: described } : {}),
-      // Under `_meta` for the reason the session's model is: `SkillCustomization`
-      // declares `description` and the two `disable*` flags and nothing else,
-      // so an argument hint sent beside them is this host's own extension,
-      // and named as one.
-      ...(hint ? { _meta: { 'ahpd.argumentHint': hint } } : {}),
+      ...(meta === undefined ? {} : { _meta: meta }),
     };
     if (plugin === undefined) place(file?.scope ?? 'builtin', 'skill', leaf);
     else under(plugin, leaf);
@@ -292,16 +317,18 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const file = plugin === undefined ? skillFileOf(name) : undefined;
     const own = plugin === undefined ? name : bare(plugin, name);
     const described = str(command.description) ?? file?.description;
+    const uri = plugin !== undefined
+      ? `${str(plugin.path) ?? ''}/commands/${own}.md`
+      : (file !== undefined ? uriOf(file.path) : builtin(name));
+    const meta = withSkillArgumentHintMeta(undefined, str(command.argumentHint));
     const leaf: Bag = {
       type: 'skill',
-      id: `skill:${name}`,
+      id: uri,
       name: own,
-      uri: plugin !== undefined
-        ? `${str(plugin.path) ?? ''}/commands/${own}.md`
-        : (file !== undefined ? uriOf(file.path) : builtin(name)),
+      uri,
       enabled: true,
       ...(described ? { description: described } : {}),
-      ...(str(command.argumentHint) ? { _meta: { 'ahpd.argumentHint': str(command.argumentHint) as string } } : {}),
+      ...(meta === undefined ? {} : { _meta: meta }),
     };
     if (plugin === undefined) place(file?.scope ?? 'builtin', 'skill', leaf);
     else under(plugin, leaf);
@@ -332,21 +359,23 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
       : inPlugin !== undefined && existsSync(inPlugin) ? inPlugin
         : undefined;
     const described = str(found.description) ?? file?.description;
+    /*
+     * Where the file is, or that there is none.
+     *
+     * The CLI reports an agent's name and never where it came from, and a
+     * built-in the CLI ships has no file of its own: a `file:` uri would name a
+     * path nobody has, and a client that read what it names would get nothing
+     * back. Those get the internal uri, which says the agent exists without
+     * claiming a file for it, under the name the CLI runs it by, which
+     * `resolveClaudeAgentName` reads back. The name is encoded, because it is a
+     * path segment here and a URI segment there.
+     */
+    const uri = at ?? `${INTERNAL_AGENT}${encodeURIComponent(name)}`;
     const leaf: Bag = {
       type: 'agent',
-      id: `agent:${name}`,
+      id: uri,
       name: own,
-      /*
-       * Where the file is, or that there is none.
-       *
-       * The CLI reports an agent's name and never where it came from, and a
-       * built-in the CLI ships has no file of its own - so a `file:` uri would
-       * name a path nobody has, and a client that read what it names would get
-       * nothing back. Those get the internal uri instead, which says the agent
-       * exists without claiming a file for it. The name is encoded, because it
-       * is a path segment here and a URI segment there.
-       */
-      uri: at ?? `${INTERNAL_AGENT}${encodeURIComponent(own)}`,
+      uri,
       enabled: true,
       ...(described ? { description: described } : {}),
     };
@@ -365,7 +394,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    * itself and reports none, so every one the disk read found is listed.
    */
   for (const hook of files.filter((one) => one.kind === 'hook')) {
-    place(hook.scope, 'hook', { type: 'hook', id: `hook:${hook.scope}:${hook.path}`, uri: uriOf(hook.path), name: hook.name, enabled: true });
+    place(hook.scope, 'hook', { type: 'hook', id: uriOf(hook.path), uri: uriOf(hook.path), name: hook.name, enabled: true });
   }
 
   /*
@@ -377,7 +406,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   for (const rule of files.filter((one) => one.kind === 'rule')) {
     place(rule.scope, 'rule', {
       type: 'rule',
-      id: `rule:${rule.scope}:${rule.path}`,
+      id: uriOf(rule.path),
       uri: uriOf(rule.path),
       name: rule.name,
       enabled: true,

@@ -15,6 +15,7 @@ import { needsAsyncRewrite } from './attachments.js';
 import { fileCompletions } from './filecompletions.js';
 import { SEEDS } from './sessionconfig.js';
 import { gapLine, schemaGaps } from '../plugins/schemagaps.js';
+import { readSkillArgumentHint } from '../vscode/skillcustomizationmeta.js';
 import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import type { ChatOrigin, ChatSummary, SubscribeView } from '@microsoft/agent-host-protocol';
 import type { Bag } from '../types/common.js';
@@ -786,17 +787,15 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // offering it.
         .filter((entry) => (entry.type === 'prompt' || entry.type === 'skill')
           && entry.disableUserInvocation !== true)
-        .map((entry) => {
-          // Under `_meta`, which is where a leaf's argument hint travels:
-          // neither `PromptCustomization` nor `SkillCustomization` declares one.
-          const hint = (entry._meta as Bag | undefined)?.['ahpd.argumentHint'];
-          return {
-            name: String(entry.name),
-            description: typeof entry.description === 'string' ? entry.description : undefined,
-            argumentHint: typeof hint === 'string' ? hint : undefined,
-            isSkill: entry.type === 'skill',
-          };
-        });
+        .map((entry) => ({
+          name: String(entry.name),
+          description: typeof entry.description === 'string' ? entry.description : undefined,
+          // Under `_meta`, in the key VS Code's host publishes a skill's hint
+          // under: neither `PromptCustomization` nor `SkillCustomization`
+          // declares one.
+          argumentHint: readSkillArgumentHint(entry as { _meta?: Record<string, unknown> }),
+          isSkill: entry.type === 'skill',
+        }));
       /*
        * Which of the backend-wide commands are skills.
        *

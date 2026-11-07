@@ -52,9 +52,10 @@ describe('what the harness offers', () => {
     expect(kinds).toContain('agent');
     expect(before.map((c) => c.type)).not.toContain('mcpServer');
 
-    // A command is a skill, as VS Code's Claude discovery lists one.
-    const command = leaves.find((c) => c.id === 'skill:advisor');
+    // A command is a skill, as VS Code's Claude discovery lists one, named by its uri.
+    const command = leaves.find((c) => c.type === 'skill' && c.name === 'advisor');
     expect(command).toMatchObject({ type: 'skill', name: 'advisor', description: 'Read support tickets', enabled: true });
+    expect(command?.id).toBe(command?.uri);
 
     await sendAnswered(client, uri);
     expect((await listed()).map((c) => c.type)).toContain('mcpServer');
@@ -357,7 +358,7 @@ describe('what the harness offers', () => {
     const { client } = await running();
 
     const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
-      snapshot: { state: { agents: { customizations?: { id: string; type: string; children?: { id: string }[] }[] }[] } };
+      snapshot: { state: { agents: { customizations?: { id: string; type: string; name: string; uri: string; children?: { id: string }[] }[] }[] } };
     }).snapshot.state;
     // The protocol's own place for them: `AgentInfo.customizations`, which it
     // says are propagated into a session's list when one is created with this
@@ -365,15 +366,14 @@ describe('what the harness offers', () => {
     // a session, which is the thing somebody is deciding about.
     const offered = root.agents[0]?.customizations ?? [];
     // The personal folders are there to write in, empty or not, and a skill
-    // no folder has is the CLI's own.
-    expect(offered.map((one) => one.id).sort()).toEqual([
-      serverId('gmail'), 'directory:builtin:skills', 'directory:user:agents',
-      'directory:user:rules', 'directory:user:skills',
-    ]);
-    expect(offered.find((one) => one.id === serverId('gmail'))?.type).toBe('mcpServer');
+    // no folder has is the CLI's own. Each directory's id is its uri.
+    const directories = offered.filter((one) => one.type === 'directory');
+    expect(directories.map((one) => one.name).sort()).toEqual(['agents', 'builtin', 'rules', 'skills']);
+    expect(directories.every((one) => one.id === one.uri)).toBe(true);
+    expect(offered.filter((one) => one.type !== 'directory').map((one) => [one.type, one.id])).toEqual([['mcpServer', serverId('gmail')]]);
     // And the skill is inside the directory, which is where a leaf goes.
-    const held = offered.find((one) => one.id === 'directory:builtin:skills') as { children?: { id: string }[] } | undefined;
-    expect(held?.children?.map((one) => one.id)).toEqual(['skill:review']);
+    const held = offered.find((one) => one.id === 'agent-builtin:/skills');
+    expect(held?.children?.map((one) => one.id)).toEqual(['agent-builtin:/skill/review']);
   });
 
   it('says an MCP server\'s state in the protocol\'s words, not the SDK\'s', async () => {
@@ -471,15 +471,15 @@ describe('what the harness offers', () => {
     const { client, uri, chatUri } = await running();
     await settle(8);
 
-    // The skill keeps its hint under this host's own key, because
-    // `SkillCustomization` declares none.
+    // The skill keeps its hint under the key VS Code's host publishes one under,
+    // because `SkillCustomization` declares none.
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
     }).snapshot.state;
     const skill = state.customizations
       .flatMap((c) => (c.children as Record<string, unknown>[] | undefined) ?? [c])
-      .find((c) => c.id === 'skill:writing');
-    expect(skill?._meta).toEqual({ 'ahpd.argumentHint': '<topic>' });
+      .find((c) => c.type === 'skill' && c.name === 'writing');
+    expect(skill?._meta).toEqual({ 'vscode.skill.argumentHint': '<topic>' });
 
     // The completion item carries it under the reference client's own key.
     const found = await client.handle({
@@ -943,7 +943,7 @@ describe('turning a customization on and off', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'session/customizationToggled', id: 'plugin:cc-plugin-agents-md', enablement: [{ kind: 'session', enabled: false }] } },
+      params: { channel: 'ahp-session:/live', action: { type: 'session/customizationToggled', id: 'cc-plugin-agents-md@builtin', enablement: [{ kind: 'session', enabled: false }] } },
     });
     await settle(8);
 
@@ -963,7 +963,7 @@ describe('turning a customization on and off', () => {
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
     }).snapshot.state;
-    const container = state.customizations.find((one) => one.id === 'plugin:cc-plugin-agents-md');
+    const container = state.customizations.find((one) => one.id === 'cc-plugin-agents-md@builtin');
     expect(container?.enablement).toEqual([{ kind: 'session', enabled: false }]);
   });
 
@@ -1273,7 +1273,8 @@ describe('a command is a skill', () => {
   it('calls a command that was loaded as a skill a skill', async () => {
     const { items } = await offering();
     const review = items.find((entry) => entry.name === 'review');
-    expect(review).toMatchObject({ type: 'skill', id: 'skill:review' });
+    expect(review).toMatchObject({ type: 'skill' });
+    expect(review?.id).toBe(review?.uri);
     // And keeps the description, whichever of the two lists carried it.
     expect(review?.description).toBe('Read the diff');
     // Once, not twice: it is in both lists and it is one thing.
@@ -1282,7 +1283,7 @@ describe('a command is a skill', () => {
 
   it('lists a command the skills do not as a built-in skill', async () => {
     const { items } = await offering();
-    expect(items.find((entry) => entry.name === 'deploy')).toMatchObject({ type: 'skill', id: 'skill:deploy', uri: 'agent-builtin:/skill/deploy' });
+    expect(items.find((entry) => entry.name === 'deploy')).toMatchObject({ type: 'skill', id: 'agent-builtin:/skill/deploy', uri: 'agent-builtin:/skill/deploy' });
   });
 
   it('marks a skill the CLI will not put behind a slash as the agent\'s', async () => {
