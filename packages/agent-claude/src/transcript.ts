@@ -187,9 +187,10 @@ export function agentIdIn(turns: WireTurn<Turn>[], agentId: string): string | un
  * spawning call's result is the fallback for a harness that writes no meta or
  * leaves the id out of it. A worker with neither is skipped rather than
  * guessed at: a chat linked to the wrong call is worse than one that is not
- * there, and a session with an orphaned file on disk still opens.
+ * there, and a session with an orphaned file on disk still opens. `titleMax`
+ * is the record's `subagentTitleMax`, which a title is cut to as a live one is.
  */
-export function subagentsOf(sessionId: string, mainTurns: WireTurn<Turn>[]): RestoredSubagent[] {
+export function subagentsOf(sessionId: string, mainTurns: WireTurn<Turn>[], titleMax?: unknown): RestoredSubagent[] {
   const files = sessionFiles(sessionId);
   if (files === undefined) return [];
   const folder = join(files.project, files.session, 'subagents');
@@ -223,7 +224,7 @@ export function subagentsOf(sessionId: string, mainTurns: WireTurn<Turn>[]): Res
        * one turn are six tabs saying the same thing - and the task the call
        * described is in the meta file either way.
        */
-      title: titleOf(description, agentType),
+      title: titleOf(description, agentType, titleMax),
       ...(agentType !== undefined ? { agentName: agentType } : {}),
       ...(description !== undefined ? { description } : {}),
       turns: buildTurns(readJsonl(join(folder, name))) as unknown as Bag[],
@@ -284,8 +285,9 @@ function lastAssistantText(messages: unknown[]): string | undefined {
  * answered question is read from the worker's own file, as the session's is.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentResolver.ts#L384-L396
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentRegistry.ts#L232-L271
+ * `titleMax` is the record's `subagentTitleMax`, as for `subagentsOf`.
  */
-export async function subagentsBySdk(sessionId: string, mainTurns: WireTurn<Turn>[]): Promise<RestoredSubagent[]> {
+export async function subagentsBySdk(sessionId: string, mainTurns: WireTurn<Turn>[], titleMax?: unknown): Promise<RestoredSubagent[]> {
   let agentIds: string[];
   try { agentIds = await listSubagents(sessionId); }
   catch { return []; }
@@ -335,7 +337,7 @@ export async function subagentsBySdk(sessionId: string, mainTurns: WireTurn<Turn
         const description = str(input.description);
         out.push({
           toolCallId,
-          title: titleOf(description, agentType),
+          title: titleOf(description, agentType, titleMax),
           ...(agentType !== undefined ? { agentName: agentType } : {}),
           ...(description !== undefined ? { description } : {}),
           turns,

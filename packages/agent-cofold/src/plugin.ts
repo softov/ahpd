@@ -159,6 +159,8 @@ const RECORD_FIELDS = [
   'apiKey',
   'resource',
   'autoCompactTokens',
+  'autoCompactAt',
+  'catalogueTimeoutMs',
 ] as const;
 
 /** A non-blank string, or nothing for a blank or missing one. */

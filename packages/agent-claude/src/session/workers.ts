@@ -6,7 +6,11 @@ import { pollTaskOutput } from './taskoutput.js';
 import type { TaskOutputPoll, TaskOutputReader } from './taskoutput.js';
 import { titleOf } from '../input.js';
 
-/** How long a worker's frames are held for its spawn, VS Code's host's `SUBAGENT_START_TIMEOUT`. */
+/**
+ * How long a worker's frames are held for its spawn, VS Code's host's
+ * `SUBAGENT_START_TIMEOUT`, unless the record's `subagentStartTimeoutMs` says
+ * otherwise.
+ */
 const SUBAGENT_START_TIMEOUT_MS = 30_000;
 
 export type { Scope } from './context.js';
@@ -257,7 +261,7 @@ export function createWorkers(ctx: SessionContext): Workers {
         if (held.chat !== undefined || held.waiting === undefined) return;
         held.waiting.length = 0;
         held.failed = true;
-      }, SUBAGENT_START_TIMEOUT_MS).unref?.();
+      }, typeof ctx.values['subagentStartTimeoutMs'] === 'number' ? ctx.values['subagentStartTimeoutMs'] : SUBAGENT_START_TIMEOUT_MS).unref?.();
       scopes.set(parent, held);
       return held;
     }
@@ -277,7 +281,7 @@ export function createWorkers(ctx: SessionContext): Workers {
   const openWorker = (parent: string, info: Spawning | undefined, open: NonNullable<ClaudeSessionOptions['subagent']>): Scope => {
     const subagentType = info?.subagentType;
     const chat = open(parent, {
-      title: titleOf(info?.description, subagentType),
+      title: titleOf(info?.description, subagentType, ctx.values['subagentTitleMax']),
       ...(subagentType !== undefined ? { agentName: subagentType } : {}),
       ...(info?.description !== undefined ? { description: info.description } : {}),
       ...(info?.prompt !== undefined ? { prompt: info.prompt } : {}),
@@ -426,6 +430,7 @@ export function createWorkers(ctx: SessionContext): Workers {
         read: (id) => (ctx.query as unknown as TaskOutputReader).getTaskOutput(id),
         ...(typeof ctx.values['taskOutputFirstWaitMs'] === 'number' ? { firstWaitMs: ctx.values['taskOutputFirstWaitMs'] } : {}),
         ...(typeof ctx.values['taskOutputLongestWaitMs'] === 'number' ? { longestWaitMs: ctx.values['taskOutputLongestWaitMs'] } : {}),
+        ...(typeof ctx.values['taskOutputQuietReads'] === 'number' ? { quietReads: ctx.values['taskOutputQuietReads'] } : {}),
       }),
     });
     return terminal.uri;
@@ -681,7 +686,7 @@ export function createWorkers(ctx: SessionContext): Workers {
   const subagentBlock = (callId: string): Bag | undefined => {
     const info = spawning.get(callId);
     if (info?.chat === undefined) return undefined;
-    const title = titleOf(info.description, info.subagentType);
+    const title = titleOf(info.description, info.subagentType, ctx.values['subagentTitleMax']);
     return {
       type: 'subagent',
       resource: info.chat,

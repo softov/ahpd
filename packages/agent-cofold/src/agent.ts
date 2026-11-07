@@ -86,12 +86,24 @@ export interface CofoldOptions {
   /**
    * The estimated history size at which a session folds itself into a summary.
    *
-   * Never above 80% of the model's listed `contextTokens`, or of 32000 when the
-   * list gave none, and that 80% is what an absent value means: a point at the
-   * window itself would make the summary step ask for more than the model can
-   * take.
+   * Never above the `autoCompactAt` share of the model's listed
+   * `contextTokens`, or of 32000 when the list gave none, and that share is
+   * what an absent value means: a point at the window itself would make the
+   * summary step ask for more than the model can take.
    */
   autoCompactTokens?: number;
+  /**
+   * The share of a model's window a session folds its history at, and the
+   * most `autoCompactTokens` may name; 0.8 by default, the share papo keeps.
+   * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/agent.ts#L11
+   */
+  autoCompactAt?: number;
+  /**
+   * How long the endpoint is given to publish its catalogue, in milliseconds;
+   * 15000 by default, the time VS Code gives a runtime's model catalogue.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L293
+   */
+  catalogueTimeoutMs?: number;
   /**
    * The run-level policy an approval decision comes from.
    *
@@ -359,8 +371,13 @@ const providerOptionsOf = (
   });
 };
 
-/** How long the endpoint is given to publish its catalogue before the configured model stands alone. */
-const CATALOGUE_TIMEOUT_MS = 5000;
+/**
+ * How long the endpoint is given to publish its catalogue before the configured
+ * model stands alone, unless the record's `catalogueTimeoutMs` says otherwise:
+ * the 15 seconds VS Code gives a runtime's model catalogue.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L293
+ */
+const CATALOGUE_TIMEOUT_MS = 15_000;
 
 /**
  * One catalogue entry as a client is offered it.
@@ -702,7 +719,7 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
    */
   const listModels = async (endpoint: OpenAICompatProviderOptions): Promise<ModelInfo[]> => {
     try {
-      const found = await providerOf(endpoint).listModels({ signal: AbortSignal.timeout(CATALOGUE_TIMEOUT_MS) });
+      const found = await providerOf(endpoint).listModels({ signal: AbortSignal.timeout(options.catalogueTimeoutMs ?? CATALOGUE_TIMEOUT_MS) });
       const named = endpoint.name ?? new URL(endpoint.baseUrl).host;
       const models: ModelInfo[] = [];
       for (const info of found) {

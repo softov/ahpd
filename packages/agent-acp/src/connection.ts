@@ -62,7 +62,8 @@ const REFUSED: RequestPermissionResponse = { outcome: { outcome: 'cancelled' } }
 const CLIENT_INFO = { name: 'ahpd', version: sdkVersion() };
 
 /**
- * How long a call that failed because the stream closed waits to hear why.
+ * How long a call that failed because the stream closed waits to hear why,
+ * unless the record's `exitGraceMs` says otherwise.
  *
  * The child's stdout can end a moment before its `exit` arrives, and the exit
  * code is the sentence a person needs; a server that closed its stdout and
@@ -71,7 +72,8 @@ const CLIENT_INFO = { name: 'ahpd', version: sdkVersion() };
 const EXIT_GRACE_MS = 1000;
 
 /**
- * How much of the child's stderr is kept.
+ * How much of the child's stderr is kept, unless the record's `stderrBytes`
+ * says otherwise.
  *
  * Enough for the stack trace a server prints before it dies, and bounded so a
  * server that talks all day costs a fixed amount per session.
@@ -79,7 +81,8 @@ const EXIT_GRACE_MS = 1000;
 const STDERR_BYTES = 8 * 1024;
 
 /**
- * How long a server has to act on the SIGTERM before it is killed outright.
+ * How long a server has to act on the SIGTERM before it is killed outright,
+ * unless the record's `killGraceMs` says otherwise.
  *
  * A server that flushes what it wrote and unwinds its own work needs a moment;
  * one that took none of the SIGTERM must not hold the daemon's close open for
@@ -205,6 +208,8 @@ const exited = (command: string, code: number | null, signal: NodeJS.Signals | n
  * token does not have to be repeated in a configuration.
  */
 export function connectAcp(options: AcpConnectionOptions): AcpConnection {
+  const exitGraceMs = options.exitGraceMs ?? EXIT_GRACE_MS;
+  const stderrBytes = options.stderrBytes ?? STDERR_BYTES;
   // A second early, as a process's own start time is read back to the
   // millisecond and the two clocks need not agree on the last one.
   const spawnedAt = Date.now() - 1000;
@@ -241,8 +246,8 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk: string) => {
     const held = Buffer.concat([stderr, Buffer.from(chunk, 'utf8')]);
-    stderrCut ||= held.length > STDERR_BYTES;
-    stderr = held.length > STDERR_BYTES ? held.subarray(held.length - STDERR_BYTES) : held;
+    stderrCut ||= held.length > stderrBytes;
+    stderr = held.length > stderrBytes ? held.subarray(held.length - stderrBytes) : held;
     const lines = `${partial}${chunk}`.split('\n');
     partial = lines.pop() ?? '';
     for (const line of lines) if (line.trim() !== '') options.log?.(`${options.command} stderr: ${line}`);
@@ -413,7 +418,7 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     if (death !== undefined) return Promise.reject(death);
     const answered = call().catch(async (why: unknown) => {
       if (death === undefined && connection.signal.aborted) {
-        await Promise.race([ended, new Promise((resolve) => { setTimeout(resolve, EXIT_GRACE_MS).unref(); })]);
+        await Promise.race([ended, new Promise((resolve) => { setTimeout(resolve, exitGraceMs).unref(); })]);
       }
       throw death ?? why;
     });
@@ -463,7 +468,7 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
     if (death !== undefined) {
       await Promise.race([
         drained,
-        new Promise((resolve) => { setTimeout(resolve, EXIT_GRACE_MS).unref(); }),
+        new Promise((resolve) => { setTimeout(resolve, exitGraceMs).unref(); }),
       ]);
     }
     const held = stderr.toString('utf8');
@@ -542,7 +547,7 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
       // a process id that has since been reused.
       const kill = setTimeout(() => {
         if (death === undefined) signal('SIGKILL');
-      }, KILL_GRACE_MS);
+      }, options.killGraceMs ?? KILL_GRACE_MS);
       kill.unref();
       try {
         await ended;

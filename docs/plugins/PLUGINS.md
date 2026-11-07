@@ -2077,7 +2077,9 @@ per record with that record's values over these defaults.
 | `apiKey` | The daemon's own key, for a record that names none: `{ "$secret": "host:<name>" }` is read from the vault, or a function asked once per request so an expired one is not cached |
 | `resource` | The protected resource a client authenticates against; the endpoint's origin when it is `https`, a constant otherwise |
 | `adapter` | A cofold `ModelAdapter` used instead of the HTTP one, for an embedder or a test |
-| `autoCompactTokens` | The estimated history size at which a session compacts, never above 80% of the model's listed context, or of 32000 when the list gave none. That 80% when absent |
+| `autoCompactTokens` | The estimated history size at which a session compacts, never above the `autoCompactAt` share of the model's listed context, or of 32000 when the list gave none. That share when absent |
+| `autoCompactAt` | The share of the model's listed context, or of 32000, a session compacts at when `autoCompactTokens` names no lower point: `0.8` by default, papo's |
+| `catalogueTimeoutMs` | How long, in milliseconds, the endpoint is given to publish its catalogue before the configured model stands alone: `15000` by default, the time VS Code gives a runtime's model catalogue |
 | `policy` | The run-level policy a pause comes from, cofold's own default when absent |
 
 `adapter` and `strictTools` are the plugin's alone: neither is a field of a
@@ -2296,6 +2298,12 @@ A record of the engine, as `x-ahpd/agents/put` takes it:
 | `modes` | Where this agent's modes come from: `refreshed`, the default, lists the row's until a session hears its server's, then the modes the last session's server named, and `preset` keeps the row's as declared, as VS Code's agents do |
 | `unreportedClientCalls` | What a request for a client's tool that no reported call matched gets: `row`, the default, holds it in a row of its own and asks its owner, and `error` answers it with an error result, as VS Code's client tool server does |
 | `findFreshMs` | How long, in milliseconds, the listing a find made answers the finds after it, a failed one included: `2000` by default, and `0` joins only the listing in flight, as VS Code's agents share a listing |
+| `listingIdleMs` | How long, in milliseconds, the server a listing spawned stays after its last read: `0` by default, closed once the read is done, as VS Code's Codex closes the connection it opens for an action |
+| `sessionListMaxPages` | How many pages of `session/list` one listing reads at most: `50` by default, as VS Code's Codex stops its own paged listing |
+| `exitGraceMs` | How long, in milliseconds, a call that failed because the server closed its stream waits for the exit code that says why: `1000` by default |
+| `stderrBytes` | How much of the server's stderr, in bytes, a failure carries: `8192` by default, as VS Code keeps the last 8192 of a helper's stderr |
+| `killGraceMs` | How long, in milliseconds, the server's process group has between SIGTERM and SIGKILL: `5000` by default, VS Code's grace for ending a process tree |
+| `closeGraceMs` | How long, in milliseconds, a session waits for the server to answer `session/close` before the connection goes: `1000` by default |
 | `stderrTail` | Where the last of a failed server's stderr goes: `sentence`, the default, puts it under the failure in the error a client is shown, and `log` leaves it to the daemon's log, as VS Code's agents do; each line is logged either way |
 | `install` | How to install this agent, by system, as the vendor's own docs give it. **Host records only** |
 | `page` | The vendor's install page, for a system the install lines do not cover |

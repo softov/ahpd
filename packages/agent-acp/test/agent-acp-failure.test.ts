@@ -207,6 +207,49 @@ it('keeps the last 8 KB of stderr, cut at a line boundary', async () => {
   await connection.close();
 });
 
+it('keeps as much of the stderr as the record\'s stderrBytes names', async () => {
+  const lines = Array.from({ length: 2000 }, (_one, at) => `line ${String(at)}`);
+  const connection = connectAcp({
+    command: process.execPath,
+    args: ['-e', `process.stderr.write(${JSON.stringify(lines.join('\n'))}, () => { process.exit(5); });`],
+    handlers: { update: () => {} },
+    stderrBytes: 1024,
+  });
+  await expect(connection.initialize()).rejects.toThrow('exited with code 5');
+  const tail = await connection.stderrTail();
+  expect(tail.length).toBeLessThanOrEqual(1024);
+  expect(tail.endsWith('line 1999')).toBe(true);
+  await connection.close();
+});
+
+it('waits the record\'s exitGraceMs for the exit of a server that closed its stream', async () => {
+  const connection = connectAcp({
+    command: process.execPath,
+    args: ['-e', 'process.stdout.end(); setInterval(() => {}, 1000);'],
+    handlers: { update: () => {} },
+    exitGraceMs: 50,
+  });
+  const began = Date.now();
+  await expect(connection.initialize()).rejects.toThrow();
+  // Well inside the 1000 ms a record that names none waits.
+  expect(Date.now() - began).toBeLessThan(800);
+  await connection.close();
+});
+
+it('kills a server that takes no SIGTERM once the record\'s killGraceMs has passed', async () => {
+  const connection = connectAcp({
+    command: process.execPath,
+    args: ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+    handlers: { update: () => {} },
+    killGraceMs: 100,
+  });
+  await new Promise((resolve) => { setTimeout(resolve, 200); });
+  const began = Date.now();
+  await connection.close();
+  // Well inside the 5000 ms a record that names none grants.
+  expect(Date.now() - began).toBeLessThan(2_000);
+});
+
 it('settles a close once the server process has gone, and never rejects', async () => {
   const connection = connectAcp({
     command: process.execPath,

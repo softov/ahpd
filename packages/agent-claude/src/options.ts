@@ -175,6 +175,91 @@ export const taskOutputLongestWaitMs: Declaration = {
 };
 
 /**
+ * How many reads in a row of a background shell's output that find nothing
+ * new count it quiet, so its next output brings the wait back to the first:
+ * VS Code's output monitor's `MinIdleEvents`, 2, by default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/terminalContrib/chatAgentTools/browser/tools/monitoring/types.ts#L45-L51
+ */
+export const taskOutputQuietReads: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: "How many reads in a row of a background shell's output that find nothing new count it quiet, so its next output brings the wait back to the first. 2 by default, as VS Code's output monitor." },
+  default: 2,
+};
+
+/**
+ * The longest title a worker chat takes from its task before it is cut, in
+ * characters: VS Code's `SUBAGENT_CHAT_TITLE_MAX_LENGTH`, 60, by default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1192
+ */
+export const subagentTitleMax: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: "The longest title, in characters, a worker chat takes from its task before it is cut. 60 by default, as VS Code's." },
+  default: 60,
+};
+
+/**
+ * How long a worker's start is waited for before its frames go unparented, in
+ * milliseconds: VS Code's `SUBAGENT_START_TIMEOUT`, 30 s, by default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L146
+ */
+export const subagentStartTimeoutMs: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: "How long, in milliseconds, a worker's frames are held for its spawn to be recorded. 30000 by default, as VS Code's." },
+  default: 30_000,
+};
+
+/**
+ * The longest shell init script a client may send, in characters: VS Code's
+ * `MAX_SHELL_INIT_SCRIPT_LENGTH`, 64 KiB, by default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/shellInitScript.ts#L111
+ */
+export const maxShellInitScript: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: "The longest shell init script, in characters, a client may send. 65536 by default, as VS Code's." },
+  default: 64 * 1024,
+};
+
+/**
+ * The largest saved shell output a call names a terminal for, in bytes: VS
+ * Code's limit on a kept terminal output, 10 MiB, by default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionDataService.ts#L19
+ */
+export const maxTerminalOutputBytes: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: "The largest saved shell output, in bytes, a call names a terminal for. 10485760 by default, as VS Code's." },
+  default: 10 * 1024 * 1024,
+};
+
+/** How many call ids framed for a late handler are kept, 64 by default, as upstream planned it. */
+export const keepFramed: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: "How many ids of the client tool calls the CLI framed are kept for a handler that runs late. 64 by default." },
+  default: 64,
+};
+
+/**
+ * The quiet before the customization folders' watch calls, in milliseconds:
+ * VS Code's Claude customization watcher's 300 ms by default.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L474
+ */
+export const watchWaitMs: Declaration = {
+  schema: { type: 'integer', minimum: 0, description: "How long, in milliseconds, the customization folders' watch waits after a change before it reads them again. 300 by default, as VS Code's Claude watcher." },
+  default: 300,
+};
+
+/** The most of a customization file read for its frontmatter, in bytes, 64 KiB by default, as upstream planned it. */
+export const fileMostBytes: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: "The most of a customization file, in bytes, read for its frontmatter. 65536 by default." },
+  default: 64 * 1024,
+};
+
+/** How deep the rules folders are walked, 32 by default, as upstream planned it. */
+export const ruleDepth: Declaration = {
+  schema: { type: 'integer', minimum: 0, description: 'How many folders deep a rules folder is walked. 32 by default.' },
+  default: 32,
+};
+
+/** The most rule files read from one folder, 1000 by default, as upstream planned it. */
+export const ruleMost: Declaration = {
+  schema: { type: 'integer', minimum: 1, description: 'The most rule files read from one rules folder. 1000 by default.' },
+  default: 1000,
+};
+
+/**
  * What a stop ends.
  *
  * `turn`, the default, interrupts the turn through the SDK's `interrupt()`
@@ -349,7 +434,9 @@ export const extraArgs: Declaration = {
 /** Every declared option, by the name a record gives it. */
 export const DECLARED: Record<string, Declaration> = {
   sandbox, thinking, hostTasks, enableTasks, stopEnds, dontAsk, portFailures, subagentsFrom,
-  taskOutputFirstWaitMs, taskOutputLongestWaitMs, outputStyle, env, logins, extraArgs,
+  taskOutputFirstWaitMs, taskOutputLongestWaitMs, taskOutputQuietReads, subagentTitleMax, subagentStartTimeoutMs,
+  maxShellInitScript, maxTerminalOutputBytes, keepFramed, watchWaitMs, fileMostBytes, ruleDepth, ruleMost,
+  outputStyle, env, logins, extraArgs,
 };
 
 /** One model a record writes out: an id, and the name the picker draws. */

@@ -317,8 +317,8 @@ export function createClientTools(ctx: SessionContext): ClientTools {
    * and either can be read first, so there is something to wait for: a handler
    * that arrives before the frame waits in `asked`, and one that arrives after
    * is answered from `framed`. Only ids no handler has come for yet are kept
-   * there, and past the cap the oldest goes, so an aborted call of a long
-   * session does not pile up for ever.
+   * there, and past the cap, the record's `keepFramed`, the oldest goes, so an
+   * aborted call of a long session does not pile up for ever.
    */
   const framed = new Set<string>();
   const asked = new Map<string, { tool: string; go: (joined: Joined) => void }[]>();
@@ -346,7 +346,8 @@ export function createClientTools(ctx: SessionContext): ClientTools {
       return;
     }
     framed.add(id);
-    if (framed.size > KEEP_FRAMED) framed.delete(framed.values().next().value as string);
+    const kept = ctx.values['keepFramed'];
+    if (framed.size > (typeof kept === 'number' ? kept : KEEP_FRAMED)) framed.delete(framed.values().next().value as string);
   };
 
   /**

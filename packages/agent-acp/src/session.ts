@@ -38,7 +38,7 @@ import type { AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, Watched
 
 /**
  * How long a server is given to answer `session/close` before the connection
- * goes anyway.
+ * goes anyway, unless the record's `closeGraceMs` says otherwise.
  *
  * The answer is what says the server let go of the session, so a close that did
  * not wait would kill a process half way through releasing it.
@@ -427,7 +427,7 @@ export function acpSession(
       const saying = connection !== undefined && ctx.closes && ctx.acpSessionId !== undefined
         ? Promise.race([
             connection.closeSession(ctx.acpSessionId).catch(() => {}),
-            new Promise((resolve) => { setTimeout(resolve, CLOSE_GRACE_MS).unref(); }),
+            new Promise((resolve) => { setTimeout(resolve, ctx.options.closeGraceMs ?? CLOSE_GRACE_MS).unref(); }),
           ])
         : undefined;
       // The catalogue's record is deliberately kept: the server still holds the

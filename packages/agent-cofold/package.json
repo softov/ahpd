@@ -146,7 +146,18 @@
         "autoCompactTokens": {
           "type": "integer",
           "minimum": 1,
-          "description": "The estimated history size at which a session compacts, never above 80% of the model's listed context, or of 32000. That 80% by default."
+          "description": "The estimated history size at which a session compacts, never above the autoCompactAt share of the model's listed context, or of 32000. That share by default."
+        },
+        "autoCompactAt": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "The share of the model's listed context, or of 32000, a session compacts at when autoCompactTokens names no lower point, papo's 0.8 by default."
+        },
+        "catalogueTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How long, in milliseconds, the endpoint is given to publish its catalogue before the configured model stands alone, the time VS Code gives a runtime's model catalogue. 15000 by default."
         }
       }
     }

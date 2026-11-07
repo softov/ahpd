@@ -70,6 +70,16 @@ An agent is a record on `x-ahpd-agents`: `{ id, engine, owner, name, description
 | `dontAsk` | `true` | Whether the Approvals control offers the SDK's `dontAsk` beside VS Code's five modes; off offers VS Code's five alone |
 | `taskOutputFirstWaitMs` | `500` | The first wait between the reads that follow a background shell's output, in milliseconds, as VS Code's output monitor waits |
 | `taskOutputLongestWaitMs` | `10000` | The longest wait between those reads, in milliseconds, each wait twice the last until it |
+| `taskOutputQuietReads` | `2` | How many reads in a row that find nothing new count the shell quiet, so its next output brings the wait back to the first, as VS Code's output monitor counts |
+| `subagentTitleMax` | `60` | The longest title, in characters, a worker chat takes from its task before it is cut, as VS Code's |
+| `subagentStartTimeoutMs` | `30000` | How long, in milliseconds, a worker's frames are held for its spawn to be recorded, as VS Code's |
+| `maxShellInitScript` | `65536` | The longest shell init script, in characters, a client may send, as VS Code's |
+| `maxTerminalOutputBytes` | `10485760` | The largest saved shell output, in bytes, a call names a terminal for, as VS Code's |
+| `keepFramed` | `64` | How many ids of the client tool calls the CLI framed are kept for a handler that runs late |
+| `watchWaitMs` | `300` | How long, in milliseconds, the customization folders' watch waits after a change before it reads them again, as VS Code's Claude watcher |
+| `fileMostBytes` | `65536` | The most of a customization file, in bytes, read for its frontmatter |
+| `ruleDepth` | `32` | How many folders deep a rules folder is walked |
+| `ruleMost` | `1000` | The most rule files read from one rules folder |
 | `stopEnds` | `turn` | What a stop ends: `turn` interrupts the turn through the SDK and keeps the CLI, ending only the workers the stopped turn spawned, and a steering message the CLI holds is answered after the stop in a turn of its own; `query` aborts the query as VS Code's agent does, its workers, its tasks and the steering it holds with it |
 | `portFailures` | `spawn` | How a machine's port that could not start the CLI is said: `spawn` files it as a failure to start, so the turn fails in the SDK's one sentence for that, with no host path; `message` passes on the failure's own message, as VS Code's host shows a failed send's |
 | `subagentsFrom` | `meta` | Where a restored session's worker chats are read from: `meta` reads the CLI's worker files and links each by the call its meta file names, which tells two identical delegations apart; `sdk` reads them through the SDK's `listSubagents` and `getSubagentMessages` and links each as VS Code's agent does, by the `agentId` line of its call's result, else its prompt, else its last answer |

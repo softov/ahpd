@@ -54,6 +54,7 @@ const session = (owned = [toolOf('openFile')], others: BoundTool[] = []) => {
     query: { setMcpServers: async () => {} },
     // The session's own chat holds every call here: no worker opened one.
     scopeOfCall: () => undefined,
+    values: {} as Bag,
   };
   const tools = createClientTools(ctx as never);
   // The model reaches a client's tool through this handler, the one the SDK
@@ -129,4 +130,25 @@ it('leaves another client\'s waits alone when this one leaves', async () => {
   tools.calls.complete('call-2', 'other', { ok: true, text: 'opened', content: [{ type: 'text', text: 'opened' }] });
   const answer = await answering as { content: { text: string }[] };
   expect(answer.content[0]?.text).toBe('opened');
+});
+
+it('keeps as many framed calls for a late handler as the record\'s keepFramed names', async () => {
+  const { tools, ctx } = session();
+  ctx.values = { keepFramed: 1 };
+  await new Promise((r) => { setTimeout(r, 0); });
+  // Two calls the CLI framed before either handler ran: only the later is kept.
+  tools.openCall('mcp__client__probe__openFile', 't1', 'call-1', 'Open it', '{"path":"/a.txt"}');
+  tools.openCall('mcp__client__probe__openFile', 't1', 'call-2', 'Open it', '{"path":"/b.txt"}');
+  const handler = handlerFor('probe__openFile');
+  let first = false;
+  void handler({ path: '/a.txt' }, { _meta: { 'claudecode/toolUseId': 'call-1' } }).then(() => { first = true; });
+  const second = handler({ path: '/b.txt' }, { _meta: { 'claudecode/toolUseId': 'call-2' } });
+  await new Promise((r) => { setTimeout(r, 0); });
+  tools.calls.complete('call-1', 'probe', { ok: true, text: 'a', content: [{ type: 'text', text: 'a' }] });
+  tools.calls.complete('call-2', 'probe', { ok: true, text: 'b', content: [{ type: 'text', text: 'b' }] });
+  expect(((await second) as { content: { text: string }[] }).content[0]?.text).toBe('b');
+  await new Promise((r) => { setTimeout(r, 0); });
+  // The first handler's call went past the kept one, so it waits for a frame.
+  expect(first).toBe(false);
+  tools.methods.clientGone('probe');
 });

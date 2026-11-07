@@ -30,7 +30,8 @@ import type { SessionContext } from './context.js';
 const CLAUDE_SHELL_TOOL_NAME = 'Bash';
 
 /**
- * The largest file read, in bytes.
+ * The largest file read, in bytes, unless the record's `maxTerminalOutputBytes`
+ * says otherwise.
  *
  * The reference's limit on a terminal's output, which its agent host sets at
  * 10 MB, and the host's limit on an output it keeps. A larger file leaves the
@@ -91,7 +92,7 @@ const getText = (content: unknown): string | undefined => {
 };
 
 /**
- * The whole output, from a regular file of at most `MAX_TERMINAL_OUTPUT_BYTES`.
+ * The whole output, from a regular file of at most `most` bytes.
  *
  * Node's own `stat` and `readFile`, with the same check `customizations.ts`
  * makes before it reads an agent's file: a device or a pipe would hold the read
@@ -99,10 +100,10 @@ const getText = (content: unknown): string | undefined => {
  * failed: a file Claude has since removed is a call that keeps its notice, and
  * the turn goes on.
  */
-const readOutput = async (path: string): Promise<string | undefined> => {
+const readOutput = async (path: string, most: number): Promise<string | undefined> => {
   try {
     const file = await stat(path);
-    if (!file.isFile() || file.size > MAX_TERMINAL_OUTPUT_BYTES) return undefined;
+    if (!file.isFile() || file.size > most) return undefined;
     return await readFile(path, 'utf8');
   }
   catch {
@@ -217,8 +218,9 @@ export function createClaudeTerminalOutputs(ctx: SessionContext): ClaudeTerminal
     // nothing for one of those.
     const turn = ctx.mainScope.turn;
     if (turn === undefined || !list(turn.responseParts).includes(part)) return undefined;
+    const most = ctx.values['maxTerminalOutputBytes'];
     return (async () => {
-      const output = await readOutput(path);
+      const output = await readOutput(path, typeof most === 'number' ? most : MAX_TERMINAL_OUTPUT_BYTES);
       // A turn stopped while the file was read publishes nothing, and nor
       // does a session that closed: neither has a result left to carry it.
       if (output === undefined || ctx.disposed || ctx.mainScope.turn !== turn) return;

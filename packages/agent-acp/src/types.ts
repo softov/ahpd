@@ -207,6 +207,45 @@ export interface AcpOptions {
    */
   findFreshMs?: number;
   /**
+   * How long the connection a listing opened stays after its last read, in
+   * milliseconds.
+   *
+   * 0, the default: closed once the read is done, as VS Code's Codex disposes
+   * of the connection it opens for an action when the action ends.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2521-L2550
+   */
+  listingIdleMs?: number;
+  /**
+   * How many pages of `session/list` one listing reads at most.
+   *
+   * 50, the default, VS Code's Codex's stop for its own paged listing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L15-L16
+   */
+  sessionListMaxPages?: number;
+  /**
+   * How long a call that failed because the server's stream closed waits for
+   * the server's exit, whose code is its sentence, in milliseconds; 1000 by
+   * default, as upstream planned it.
+   */
+  exitGraceMs?: number;
+  /**
+   * How much of the server's stderr a failure carries, in bytes; 8192 by
+   * default, as VS Code keeps the last 8192 of a helper's stderr.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sshProxyCommand.ts#L80
+   */
+  stderrBytes?: number;
+  /**
+   * How long the server's process group has between SIGTERM and SIGKILL, in
+   * milliseconds; 5000 by default, VS Code's grace for ending a process tree.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/localModelBridge/shim/processRunner.ts#L344-L352
+   */
+  killGraceMs?: number;
+  /**
+   * How long a session's `session/close` is waited for, in milliseconds; 1000
+   * by default, as upstream planned it.
+   */
+  closeGraceMs?: number;
+  /**
    * Where a session says what it left out or had to invent.
    *
    * A server left out of its MCP list, and a `tools/call` the agent reported no
@@ -325,6 +364,10 @@ export interface AcpConnectionOptions {
   handlers: AcpHandlers;
   /** Where each line the server writes on stderr goes. */
   log?: (line: string) => void;
+  /** The record's `exitGraceMs`, `stderrBytes` and `killGraceMs`. */
+  exitGraceMs?: number;
+  stderrBytes?: number;
+  killGraceMs?: number;
 }
 
 /** One open ACP connection over a server's stdio. */

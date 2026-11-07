@@ -62,11 +62,13 @@ const editPathOf = (workspace: string, tool: Tool<any, any>, input: unknown): st
 };
 
 /**
- * The share of a model's window a session folds its history at.
+ * The share of a model's window a session folds its history at, unless the
+ * record's `autoCompactAt` says otherwise.
  *
  * The same 80% papo keeps. A summary is written by asking the model, so the
  * step that writes it needs room of its own, and a point at the window itself
  * would fold a history the summary step could not fit either.
+ * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/agent.ts#L11
  */
 export const AUTO_COMPACT_AT = 0.8;
 
@@ -339,14 +341,14 @@ export const createTurnAgent = (
      * How much a step may carry, and when cofold folds the history instead.
      *
      * The window is what the endpoint published for the model in force. The
-     * point is the configured one, never above `AUTO_COMPACT_AT` of that
-     * window: a session that folded at the window itself would write a summary
-     * whose own step no longer fits. Unset, the point is that share, so a
-     * session nobody configured still folds its history rather than running
-     * into the model's ceiling part-way through a turn.
+     * point is the configured one, never above the record's `autoCompactAt`
+     * share of that window: a session that folded at the window itself would
+     * write a summary whose own step no longer fits. Unset, the point is that
+     * share, so a session nobody configured still folds its history before it
+     * runs into the model's ceiling part-way through a turn.
      */
     const maxTokens = windowOf(options, values, harness, ctx.held);
-    const cap = Math.floor(maxTokens * AUTO_COMPACT_AT);
+    const cap = Math.floor(maxTokens * (options.autoCompactAt ?? AUTO_COMPACT_AT));
     const autoCompactTokens = options.autoCompactTokens === undefined
       ? cap
       : Math.min(options.autoCompactTokens, cap);

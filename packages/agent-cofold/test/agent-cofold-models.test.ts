@@ -424,14 +424,16 @@ it('lists the endpoint again at each probe, and keeps the last good list when a 
   expect((await agent.probe?.())?.models.map((one) => one.id)).toEqual(every);
 });
 
-it('offers the configured model alone when the endpoint never answers', async () => {
+it('offers the configured model alone once the record\'s catalogueTimeoutMs has passed with no answer', async () => {
   put(CONFIG);
   const hung = hanging();
-  const offered = await cofoldAgent({}).probe?.();
+  const began = Date.now();
+  const offered = await cofoldAgent({ catalogueTimeoutMs: 100 }).probe?.();
   expect(offered?.models).toEqual([{ id: 'open_router/deepseek/deepseek-chat', name: 'open_router/deepseek/deepseek-chat' }]);
   expect(hung.calls()).toBe(1);
-  // The catalogue limit is five seconds, and this case waits for it.
-}, 20000);
+  // Well inside the 15 s a record that names none gives the endpoint.
+  expect(Date.now() - began).toBeLessThan(2_000);
+});
 
 it('offers ids that resolve back to the endpoint they were read from', async () => {
   // The file names a provider but no model, so the prefix is the provider the

@@ -51,6 +51,7 @@ const LIVE_KEYS = [
   'command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model',
   'authenticate', 'authenticateInMachine', 'hostTools', 'honoursTrust', 'toolsChanged', 'machine', 'variant',
   'cutTurns', 'stderrTail', 'modesFrom', 'unreportedClientCalls', 'findFreshMs',
+  'listingIdleMs', 'sessionListMaxPages', 'exitGraceMs', 'stderrBytes', 'killGraceMs', 'closeGraceMs',
 ] as const;
 
 /** What a spawned server is built from, as one string to compare an edit by. */
@@ -442,6 +443,9 @@ export function createOpening(ctx: SessionContext): Opening {
               }),
         },
         ...(options.log === undefined ? {} : { log: options.log }),
+        ...(options.exitGraceMs === undefined ? {} : { exitGraceMs: options.exitGraceMs }),
+        ...(options.stderrBytes === undefined ? {} : { stderrBytes: options.stderrBytes }),
+        ...(options.killGraceMs === undefined ? {} : { killGraceMs: options.killGraceMs }),
       });
       ctx.live = connection;
       made = connection;

@@ -377,6 +377,11 @@ it('hands the CLI the session\'s own init script as its session environment file
   expect(readFileSync(String(env?.CLAUDE_ENV_FILE), 'utf8')).toBe('echo init');
 });
 
+it('takes no script longer than the record\'s maxShellInitScript', async () => {
+  const env = (await builtWith({ shellEnv: { SAY: 'b' }, settings: SCRIPT, preset: { maxShellInitScript: 4 } })).settings?.env;
+  expect(env).toEqual({ SAY: 'b' });
+});
+
 it('hands a CLI in a machine no session environment file, the script being this host\'s', async () => {
   const inMachine = { settings: SCRIPT, spawn: () => { throw new Error('nothing is spawned here'); } };
   expect((await builtWith(inMachine)).settings?.env?.CLAUDE_ENV_FILE).toBeUndefined();

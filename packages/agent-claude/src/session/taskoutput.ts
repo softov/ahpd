@@ -71,6 +71,8 @@ export interface TaskOutputOptions {
   firstWaitMs?: number;
   /** The longest wait between reads, in milliseconds; `LONGEST_WAIT_MS` when absent. */
   longestWaitMs?: number;
+  /** The reads in a row that find nothing that count the task quiet; `QUIET_READS` when absent. */
+  quietReads?: number;
   /** What to do about a read that failed, which is not the same as a task ending. */
   onError?(error: unknown): void;
 }
@@ -114,7 +116,7 @@ export const pollTaskOutput = (options: TaskOutputOptions): TaskOutputPoll => {
       quiet += 1;
       return;
     }
-    if (quiet >= QUIET_READS) wait = first;
+    if (quiet >= (options.quietReads ?? QUIET_READS)) wait = first;
     quiet = 0;
     if (grown > utf8(output)) options.terminal.replace(output);
     else options.terminal.append(tailText(output, grown));

@@ -232,6 +232,29 @@ describe('the poll', () => {
     // 100 first, then 200, then 300 and no longer.
     expect(at.slice(0, 5)).toEqual([0, 100, 300, 600, 900]);
   });
+
+  it('counts a shell quiet after the reads the record\'s taskOutputQuietReads names', async () => {
+    const terminal = fakeTerminal();
+    const start = Date.now();
+    const at: number[] = [];
+    // Five bytes, nothing more for one read, then four more.
+    const sizes = [5, 5, 9];
+    const poll = pollTaskOutput({
+      taskId: 't-sleep',
+      terminal,
+      quietReads: 1,
+      read: async () => {
+        const size = sizes[Math.min(at.length, sizes.length - 1)] ?? 0;
+        at.push(Date.now() - start);
+        return { output: 'x'.repeat(size), total_bytes: size, truncated: false };
+      },
+    });
+    await vi.advanceTimersByTimeAsync(3000);
+    poll.cancel();
+
+    // One quiet read is a quiet spell, so the output after it brings 500 ms back.
+    expect(at).toEqual([0, 500, 1500, 2000, 3000]);
+  });
 });
 
 it('cuts a tail on a character boundary, never inside one', () => {

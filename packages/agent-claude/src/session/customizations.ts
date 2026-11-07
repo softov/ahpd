@@ -544,9 +544,10 @@ export const INTERNAL_AGENT = 'claude-internal:/agent/';
  *
  * Nothing for a uri that is neither, so the turn runs on the default agent:
  * handing the CLI an agent it does not have would fail the turn over a picker.
+ * `most` is the record's `fileMostBytes`, the read's bound.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L206-L247
  */
-export function resolveClaudeAgentName(uri: string, parseYaml?: ParseYaml): string | undefined {
+export function resolveClaudeAgentName(uri: string, parseYaml?: ParseYaml, most?: unknown): string | undefined {
   if (uri.startsWith(INTERNAL_AGENT)) {
     const last = uri.slice(INTERNAL_AGENT.length).split('/').filter((one) => one !== '').pop();
     if (last === undefined) return undefined;
@@ -559,6 +560,6 @@ export function resolveClaudeAgentName(uri: string, parseYaml?: ParseYaml): stri
   catch { return undefined; }
   const own = basename(path).replace(/\.md$/i, '');
   // The uri is the client's, so the read is the bounded one `frontmatterOf` makes.
-  const named = frontmatterOf(path, parseYaml)?.name;
+  const named = (typeof most === 'number' ? frontmatterOf(path, parseYaml, most) : frontmatterOf(path, parseYaml))?.name;
   return typeof named === 'string' && named !== '' ? named : own;
 }

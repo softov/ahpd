@@ -9,9 +9,15 @@ export interface WatchRoots {
   configDir: string;
   /** The session's working directory, whose `.claude` is the project scope. */
   cwd?: string;
+  /** The record's `watchWaitMs`. */
+  waitMs?: number;
 }
 
-/** How long after the last change of a burst the list is read again. */
+/**
+ * How long after the last change of a burst the list is read again, unless
+ * the record's `watchWaitMs` says otherwise: VS Code's Claude watcher's quiet.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L474
+ */
 const WAIT_MS = 300;
 
 /** The folders of a scope a customization is read from, each watched with its subfolders. */
@@ -61,8 +67,9 @@ const MEMORY = new Set(['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']);
  * The personal folder and `<cwd>/.claude` are watched where a customization
  * is read from, and `cwd` itself only for its `CLAUDE.md` files and its
  * `.mcp.json`. A
- * burst of changes is one call, `WAIT_MS` after its last change. A folder that
- * is not there yet is watched for from its parent, and from when it appears.
+ * burst of changes is one call, the roots' `waitMs` after its last change. A
+ * folder that is not there yet is watched for from its parent, and from when
+ * it appears.
  *
  * A watcher is an extra rather than the answer: a folder that cannot be
  * watched is left out, and nothing here throws. The function it returns
@@ -82,7 +89,7 @@ export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: ()
     timer = setTimeout(() => {
       timer = undefined;
       if (!closed) onChange();
-    }, WAIT_MS);
+    }, roots.waitMs ?? WAIT_MS);
   };
 
   /** One folder watched through the shared wait, or nothing when it cannot be. */

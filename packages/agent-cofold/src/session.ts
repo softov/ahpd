@@ -52,7 +52,7 @@ export const sessionIdOf = (uri: string): string => idOf(uri);
  * under a running session would lose the conversation it is writing, and a
  * policy is what the session's controls were drawn from. These are the rest.
  */
-const LIVE_KEYS = ['model', 'baseUrl', 'models', 'apiKey', 'instructions', 'resource', 'autoCompactTokens', 'tools'] as const;
+const LIVE_KEYS = ['model', 'baseUrl', 'models', 'apiKey', 'instructions', 'resource', 'autoCompactTokens', 'autoCompactAt', 'tools'] as const;
 
 /**
  * One conversation over a cofold agent.

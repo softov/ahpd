@@ -36,7 +36,10 @@ export function getClaudeToolInputString(toolName: string, input: unknown): stri
   }
 }
 
-/** VS Code's `SUBAGENT_CHAT_TITLE_MAX_LENGTH`: a worker chat's title, before it is cut. */
+/**
+ * VS Code's `SUBAGENT_CHAT_TITLE_MAX_LENGTH`: a worker chat's title, before it
+ * is cut, unless the record's `subagentTitleMax` says otherwise.
+ */
 const TITLE_MAX = 60;
 
 /**
@@ -44,17 +47,17 @@ const TITLE_MAX = 60;
  *
  * VS Code's `subagentChatTitle`: the task description, which is the sentence
  * somebody actually wrote and the one thing that tells two workers apart, cut
- * to sixty characters; failing that the kind of agent it is, which says what
- * it is rather than what it was for; failing that `Subagent`, which says only
- * that there is one.
+ * to `most` characters, sixty unless the record says otherwise; failing that
+ * the kind of agent it is, which says what it is rather than what it was for;
+ * failing that `Subagent`, which says only that there is one.
  *
  * One rule for a live chat, one restored from a transcript and the `subagent`
  * block that links the two, so a worker's name does not change when the daemon
  * does - and so six workers spawned by one turn do not all read `Explore`.
  */
-export function titleOf(description: string | undefined, agentType: string | undefined): string {
+export function titleOf(description: string | undefined, agentType: string | undefined, most?: unknown): string {
   const task = description?.trim();
-  if (task) return truncate(task, TITLE_MAX);
+  if (task) return truncate(task, typeof most === 'number' ? most : TITLE_MAX);
   return agentType?.trim() || 'Subagent';
 }
 

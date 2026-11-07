@@ -43,19 +43,28 @@ export interface DiskRoots {
   cwd?: string;
   /** The managed directory, whose `.claude/skills` and `.claude/agents` an administrator writes. */
   managedDir?: string;
+  /** The record's `fileMostBytes`, `ruleDepth` and `ruleMost`. */
+  fileMostBytes?: number;
+  ruleDepth?: number;
+  ruleMost?: number;
 }
 
 /** What a session's customizations are laid out from: the scopes and what was found in them. */
 export type Disk = DiskRoots & { files: DiskFile[] };
 
-/** The most of a file read for its frontmatter. */
+/** The most of a file read for its frontmatter, unless the record's `fileMostBytes` says otherwise. */
 const FILE_MOST = 64 * 1024;
 
-/** How deep the rules folders are walked, which a link back up stops at. */
+/** How deep the rules folders are walked, which a link back up stops at, unless the record's `ruleDepth` says otherwise. */
 const RULE_DEPTH = 32;
 
-/** The most rule files read from one folder, so a huge tree is not a walk per switch. */
+/** The most rule files read from one folder, so a huge tree is not a walk per switch, unless the record's `ruleMost` says otherwise. */
 const RULE_MOST = 1000;
+
+/** A record's bounds on a disk read, the ones its values name. */
+export const diskBoundsOf = (values: Record<string, unknown>): Pick<DiskRoots, 'fileMostBytes' | 'ruleDepth' | 'ruleMost'> =>
+  Object.fromEntries((['fileMostBytes', 'ruleDepth', 'ruleMost'] as const)
+    .flatMap((key) => (typeof values[key] === 'number' ? [[key, values[key]]] : [])));
 
 /** The personal scope for an environment: its `CLAUDE_CONFIG_DIR`, or `~/.claude`. */
 export const configDirOf = (env?: Record<string, unknown>): string => {
@@ -97,9 +106,10 @@ const flat = (value: unknown): string | string[] | undefined => {
 /**
  * The frontmatter of a file, as flat keys with a value or a list of values.
  *
- * Only a regular file is read, and only its first 64 KB: a path here can be a
- * link a person made, and a device or a huge file would hold the host up for
- * a name. A file that cannot be read is `undefined`.
+ * Only a regular file is read, and only its first `most` bytes, 64 KiB unless
+ * the record says otherwise: a path here can be a link a person made, and a
+ * device or a huge file would hold the host up for a name. A file that cannot
+ * be read is `undefined`.
  *
  * The frontmatter is what lies between a `---` line opening the file and the
  * next `---` line, as VS Code's `parseFrontMatter` splits a Markdown file, and
@@ -108,14 +118,14 @@ const flat = (value: unknown): string | string[] | undefined => {
  * one read with no parser to read it with are an empty record.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/yaml.ts#L33-L46
  */
-export function frontmatterOf(path: string, parseYaml?: ParseYaml): Record<string, string | string[]> | undefined {
+export function frontmatterOf(path: string, parseYaml?: ParseYaml, most = FILE_MOST): Record<string, string | string[]> | undefined {
   let text: string;
   try {
     if (!statSync(path).isFile()) return undefined;
     const fd = openSync(path, 'r');
     try {
-      const buffer = Buffer.alloc(FILE_MOST);
-      text = buffer.subarray(0, readSync(fd, buffer, 0, FILE_MOST, 0)).toString('utf8');
+      const buffer = Buffer.alloc(most);
+      text = buffer.subarray(0, readSync(fd, buffer, 0, most, 0)).toString('utf8');
     }
     finally { closeSync(fd); }
   }
@@ -155,11 +165,11 @@ const isFile = (path: string): boolean => {
 const oneSegment = (name: string): boolean => name !== '' && name !== '.' && name !== '..' && !/[/\\]/.test(name);
 
 /** The skills of one folder, each in `<folder>/<skill>/SKILL.md` one level down. */
-function skillsIn(dir: string, scope: DiskScope, parseYaml: ParseYaml | undefined): DiskFile[] {
+function skillsIn(dir: string, scope: DiskScope, parseYaml: ParseYaml | undefined, most: number): DiskFile[] {
   const out: DiskFile[] = [];
   for (const folder of namesIn(dir)) {
     const path = join(dir, folder, 'SKILL.md');
-    const front = frontmatterOf(path, parseYaml);
+    const front = frontmatterOf(path, parseYaml, most);
     if (front === undefined) continue;
     const description = text(front.description);
     out.push({ kind: 'skill', name: text(front.name) ?? folder, scope, path, ...(description !== undefined ? { description } : {}) });
@@ -169,16 +179,17 @@ function skillsIn(dir: string, scope: DiskScope, parseYaml: ParseYaml | undefine
 
 /**
  * The synced skills, listed by the `manifest.json` of each folder under
- * `skills/synced`. A skill whose `SKILL.md` is not there is left out.
+ * `skills/synced`. A skill whose `SKILL.md` is not there is left out, and so
+ * is a manifest larger than sixteen times `most`.
  */
-function syncedIn(dir: string): DiskFile[] {
+function syncedIn(dir: string, most: number): DiskFile[] {
   const out: DiskFile[] = [];
   for (const id of namesIn(dir)) {
     const manifest = join(dir, id, 'manifest.json');
     let skills: unknown;
     try {
       const held = statSync(manifest);
-      if (!held.isFile() || held.size > FILE_MOST * 16) continue;
+      if (!held.isFile() || held.size > most * 16) continue;
       skills = (JSON.parse(readFileSync(manifest, 'utf8')) as { skills?: unknown }).skills;
     }
     catch { continue; }
@@ -194,12 +205,12 @@ function syncedIn(dir: string): DiskFile[] {
 }
 
 /** The `*.md` files of one folder, not of its subfolders, as commands (skills) or agents. */
-function markdownIn(dir: string, kind: 'skill' | 'agent', scope: DiskScope, parseYaml: ParseYaml | undefined): DiskFile[] {
+function markdownIn(dir: string, kind: 'skill' | 'agent', scope: DiskScope, parseYaml: ParseYaml | undefined, most: number): DiskFile[] {
   const out: DiskFile[] = [];
   for (const file of namesIn(dir)) {
     if (!file.toLowerCase().endsWith('.md')) continue;
     const path = join(dir, file);
-    const front = frontmatterOf(path, parseYaml);
+    const front = frontmatterOf(path, parseYaml, most);
     if (front === undefined) continue;
     const own = file.slice(0, -3);
     const description = text(front.description);
@@ -209,26 +220,26 @@ function markdownIn(dir: string, kind: 'skill' | 'agent', scope: DiskScope, pars
   return out;
 }
 
-/** Every `*.md` under a folder, in path order, as far down as `RULE_DEPTH`. */
-function markdownUnder(dir: string, depth = 0, found: string[] = []): string[] {
-  if (depth > RULE_DEPTH) return found;
+/** Every `*.md` under a folder, in path order, as far down as `deepest` and at most `most` of them. */
+function markdownUnder(dir: string, deepest: number, most: number, depth = 0, found: string[] = []): string[] {
+  if (depth > deepest) return found;
   for (const name of namesIn(dir)) {
-    if (found.length >= RULE_MOST) break;
+    if (found.length >= most) break;
     const path = join(dir, name);
     let held;
     try { held = statSync(path); }
     catch { continue; }
-    if (held.isDirectory()) markdownUnder(path, depth + 1, found);
+    if (held.isDirectory()) markdownUnder(path, deepest, most, depth + 1, found);
     else if (held.isFile() && name.toLowerCase().endsWith('.md')) found.push(path);
   }
   return found;
 }
 
-/** A JSON file's object, or nothing when it is missing, too large, not a regular file or not an object. */
-const objectIn = (path: string): Record<string, unknown> | undefined => {
+/** A JSON file's object, or nothing when it is missing, larger than sixteen times `most`, not a regular file or not an object. */
+const objectIn = (path: string, most: number): Record<string, unknown> | undefined => {
   try {
     const held = statSync(path);
-    if (!held.isFile() || held.size > FILE_MOST * 16) return undefined;
+    if (!held.isFile() || held.size > most * 16) return undefined;
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
   }
@@ -256,7 +267,7 @@ function serversIn(roots: DiskRoots): DiskFile[] {
   ];
   const out: DiskFile[] = [];
   for (const [path, scope] of sources) {
-    const object = objectIn(path);
+    const object = objectIn(path, roots.fileMostBytes ?? FILE_MOST);
     if (object === undefined) continue;
     const block = Object.hasOwn(object, 'mcpServers') ? object.mcpServers : path.endsWith('.mcp.json') ? object : undefined;
     if (typeof block !== 'object' || block === null || Array.isArray(block)) continue;
@@ -321,7 +332,7 @@ function hooksIn(roots: DiskRoots): DiskFile[] {
   const out: DiskFile[] = [];
   for (const [path, scope] of sources) {
     if (out.some((one) => resolve(one.path) === resolve(path))) continue;
-    const object = objectIn(path);
+    const object = objectIn(path, roots.fileMostBytes ?? FILE_MOST);
     if (object !== undefined && declaresHooks(object)) out.push({ kind: 'hook', name: basename(path), scope, path });
   }
   return out;
@@ -331,11 +342,11 @@ function hooksIn(roots: DiskRoots): DiskFile[] {
 const memory = (path: string, scope: DiskScope): DiskFile[] =>
   isFile(path) ? [{ kind: 'rule', name: basename(path), scope, path }] : [];
 
-/** The rules of a `rules` folder, each scoped to the files its `paths` names. */
-function rulesIn(dir: string, scope: DiskScope, parseYaml: ParseYaml | undefined): DiskFile[] {
+/** The rules of a `rules` folder, each scoped to the files its `paths` names, walked as the roots bound it. */
+function rulesIn(dir: string, scope: DiskScope, parseYaml: ParseYaml | undefined, roots: DiskRoots): DiskFile[] {
   const out: DiskFile[] = [];
-  for (const path of markdownUnder(dir)) {
-    const front = frontmatterOf(path, parseYaml);
+  for (const path of markdownUnder(dir, roots.ruleDepth ?? RULE_DEPTH, roots.ruleMost ?? RULE_MOST)) {
+    const front = frontmatterOf(path, parseYaml, roots.fileMostBytes ?? FILE_MOST);
     if (front === undefined) continue;
     const paths = front.paths;
     const globs = (Array.isArray(paths) ? paths : typeof paths === 'string' ? [paths] : []).filter((one) => one !== '');
@@ -363,30 +374,31 @@ function rulesIn(dir: string, scope: DiskScope, parseYaml: ParseYaml | undefined
  */
 export function filesOf(roots: DiskRoots, parseYaml?: ParseYaml): DiskFile[] {
   const { configDir, cwd, managedDir } = roots;
+  const most = roots.fileMostBytes ?? FILE_MOST;
   const project = projectDirOf(roots);
   const out: DiskFile[] = [];
   if (managedDir !== undefined) {
-    out.push(...skillsIn(join(managedDir, '.claude', 'skills'), 'managed', parseYaml));
+    out.push(...skillsIn(join(managedDir, '.claude', 'skills'), 'managed', parseYaml, most));
     /*
      * The managed subagents, which the CLI reads from the managed settings
      * directory's `.claude/agents` and ranks over a project's and a person's.
      * https://code.claude.com/docs/en/sub-agents
      */
-    out.push(...markdownIn(join(managedDir, '.claude', 'agents'), 'agent', 'managed', parseYaml));
+    out.push(...markdownIn(join(managedDir, '.claude', 'agents'), 'agent', 'managed', parseYaml, most));
   }
-  out.push(...skillsIn(join(configDir, 'skills'), 'user', parseYaml));
-  if (project !== undefined) out.push(...skillsIn(join(project, 'skills'), 'project', parseYaml));
-  out.push(...syncedIn(join(configDir, 'skills', 'synced')));
+  out.push(...skillsIn(join(configDir, 'skills'), 'user', parseYaml, most));
+  if (project !== undefined) out.push(...skillsIn(join(project, 'skills'), 'project', parseYaml, most));
+  out.push(...syncedIn(join(configDir, 'skills', 'synced'), most));
   /*
    * A scope's commands, as skills after its skills, so a skill of one name is
    * the one found, as VS Code's Claude scan folds them.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeAgentSkillScan.ts#L58-L74
    */
   for (const [root, scope] of [[configDir, 'user'], ...(project === undefined ? [] : [[project, 'project']])] as [string, DiskScope][]) {
-    out.push(...markdownIn(join(root, 'commands'), 'skill', scope, parseYaml));
-    out.push(...markdownIn(join(root, 'agents'), 'agent', scope, parseYaml));
+    out.push(...markdownIn(join(root, 'commands'), 'skill', scope, parseYaml, most));
+    out.push(...markdownIn(join(root, 'agents'), 'agent', scope, parseYaml, most));
   }
-  out.push(...memory(join(configDir, 'CLAUDE.md'), 'user'), ...rulesIn(join(configDir, 'rules'), 'user', parseYaml));
+  out.push(...memory(join(configDir, 'CLAUDE.md'), 'user'), ...rulesIn(join(configDir, 'rules'), 'user', parseYaml, roots));
   if (cwd !== undefined) {
     // The home folder's own memory files are the personal scope's, as its `.claude` is.
     const own: DiskScope = project === undefined ? 'user' : 'project';
@@ -394,7 +406,7 @@ export function filesOf(roots: DiskRoots, parseYaml?: ParseYaml): DiskFile[] {
       ...memory(join(cwd, 'CLAUDE.md'), own),
       ...(project === undefined ? [] : memory(join(project, 'CLAUDE.md'), own)),
       ...memory(join(cwd, 'CLAUDE.local.md'), own),
-      ...(project === undefined ? [] : rulesIn(join(project, 'rules'), own, parseYaml)),
+      ...(project === undefined ? [] : rulesIn(join(project, 'rules'), own, parseYaml, roots)),
     );
   }
   out.push(...hooksIn(roots), ...serversIn(roots));

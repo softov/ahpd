@@ -63,7 +63,9 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `strictTools` | `true` | `false` holds `tools` to the loose check, so a key cofold does not know is dropped rather than refused |
 | `apiKey` | the cofold file's | The daemon's own key, for a record that names none. `{ "$secret": "host:<name>" }` reads it from the vault; an embedder may pass a function asked once per request |
 | `resource` | the endpoint's origin when it is `https` | The protected resource a client authenticates against |
-| `autoCompactTokens` | 80% of the model's listed context, or of 32000 | The estimated history size at which a session compacts, never above that 80% |
+| `autoCompactTokens` | the `autoCompactAt` share of the model's listed context, or of 32000 | The estimated history size at which a session compacts, never above that share |
+| `autoCompactAt` | `0.8`, papo's | The share of the model's listed context, or of 32000, a session compacts at when `autoCompactTokens` names no lower point |
+| `catalogueTimeoutMs` | `15000` | How long, in milliseconds, the endpoint is given to publish its catalogue before the configured model stands alone, the time VS Code gives a runtime's model catalogue |
 
 `ahpd vault set host:<name>` keeps a key that `apiKey` or a search provider's `apiKey` reads with `{ "$secret": "host:<name>" }`, from standard input. See [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/PLUGINS.md#naming-a-secret-instead-of-holding-one) for a `$secret`.
 

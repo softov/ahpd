@@ -147,6 +147,36 @@ const RECORD_FIELDS: Record<string, Record<string, unknown>> = {
     minimum: 0,
     description: "How long, in milliseconds, the listing a find made answers the finds after it, a failed one included, so a server that did not start is not spawned again for each id; 0 joins only the listing in flight, as VS Code's agents share a listing. Defaults to 2000.",
   },
+  listingIdleMs: {
+    type: 'integer',
+    minimum: 0,
+    description: "How long, in milliseconds, the server a listing spawned stays after its last read; 0 closes it once the read is done, as VS Code's Codex closes the connection it opens for an action. Defaults to 0.",
+  },
+  sessionListMaxPages: {
+    type: 'integer',
+    minimum: 1,
+    description: "How many pages of session/list one listing reads at most, as VS Code's Codex stops its own paged listing. Defaults to 50.",
+  },
+  exitGraceMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long, in milliseconds, a call that failed because the server closed its stream waits for the exit code that says why. Defaults to 1000.',
+  },
+  stderrBytes: {
+    type: 'integer',
+    minimum: 0,
+    description: "How much of the server's stderr, in bytes, a failure carries, as VS Code keeps the last 8192 of a helper's stderr. Defaults to 8192.",
+  },
+  killGraceMs: {
+    type: 'integer',
+    minimum: 0,
+    description: "How long, in milliseconds, the server's process group has between SIGTERM and SIGKILL, VS Code's grace for ending a process tree. Defaults to 5000.",
+  },
+  closeGraceMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long, in milliseconds, a session waits for the server to answer session/close before the connection goes. Defaults to 1000.',
+  },
   // Read by `machineOf` as well as described here, so a wrongly written block
   // is refused with a line naming the field and never a value. A variable's
   // value is read where the machine is made, so a `$secret` reaches this
@@ -383,8 +413,13 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
   const modesFrom = config['modes'] === 'refreshed' || config['modes'] === 'preset' ? config['modes'] : undefined;
   const unreported = config['unreportedClientCalls'];
   const unreportedClientCalls = unreported === 'row' || unreported === 'error' ? unreported : undefined;
-  const fresh = config['findFreshMs'];
-  const findFreshMs = typeof fresh === 'number' && Number.isInteger(fresh) && fresh >= 0 ? fresh : undefined;
+  // The record's bounds, each a whole number at or above its field's minimum.
+  const bounds: Partial<Record<'findFreshMs' | 'listingIdleMs' | 'sessionListMaxPages' | 'exitGraceMs' | 'stderrBytes' | 'killGraceMs' | 'closeGraceMs', number>> =
+    Object.fromEntries((['findFreshMs', 'listingIdleMs', 'sessionListMaxPages', 'exitGraceMs', 'stderrBytes', 'killGraceMs', 'closeGraceMs'] as const)
+      .flatMap((key) => {
+        const value = config[key];
+        return typeof value === 'number' && Number.isInteger(value) && value >= Number(RECORD_FIELDS[key]?.['minimum'] ?? 0) ? [[key, value]] : [];
+      }));
   const machine = machineUnder(row?.machine, config['machine'] === undefined ? undefined : machineOf(config['machine'], record.id));
   // A machine also has the block's variables, so a row's variable written
   // there signs a session in that machine in. Only the name is looked for.
@@ -410,7 +445,7 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
     ...(stderrTail === undefined ? {} : { stderrTail }),
     ...(modesFrom === undefined ? {} : { modesFrom }),
     ...(unreportedClientCalls === undefined ? {} : { unreportedClientCalls }),
-    ...(findFreshMs === undefined ? {} : { findFreshMs }),
+    ...bounds,
     // The row's known modes, copied so each agent holds a list of its own.
     ...(row?.modes === undefined ? {} : { modes: row.modes.map((one) => ({ ...one })) }),
     ...(machine === undefined ? {} : { machine }),

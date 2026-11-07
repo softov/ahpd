@@ -2,7 +2,7 @@ import { probe } from './probe.js';
 import { serversFor, toClaudeMcpServers } from './mcp.js';
 import { createSession } from './session.js';
 import { restore } from './session/savedoutput.js';
-import { configDirOf } from './session/disk.js';
+import { configDirOf, diskBoundsOf } from './session/disk.js';
 import type { ParseYaml } from './session/disk.js';
 import { createClaudeCustomizationWatcher } from './session/watch.js';
 import { turnsOf, subagentsBySdk, subagentsOf } from './transcript.js';
@@ -551,7 +551,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     probe: async () => {
       probing += 1;
       let probed: Awaited<ReturnType<typeof probe>>;
-      try { probed = await probe(dir, options.parseYaml); }
+      try { probed = await probe(dir, options.parseYaml, diskBoundsOf(options.presetOf?.() ?? options.preset ?? {})); }
       finally { setImmediate(() => { probing -= 1; }); }
       const { setUp, ...offered } = probed;
       return { ...offered, models: setUp || credentialed() ? await offer(offered.models) : [] };
@@ -565,7 +565,11 @@ export function claude(options: ClaudeOptions): Agent<Session> {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L878-L884
      */
     probeChanged: (onChange) => {
-      const stop = createClaudeCustomizationWatcher({ configDir: configDirOf() }, onChange, () => probing > 0);
+      const waitMs = (options.presetOf?.() ?? options.preset ?? {})['watchWaitMs'];
+      const stop = createClaudeCustomizationWatcher({
+        configDir: configDirOf(),
+        ...(typeof waitMs === 'number' ? { waitMs } : {}),
+      }, onChange, () => probing > 0);
       const logins = options.logins;
       if (logins === undefined) return stop;
       const told = (id: string): void => {
@@ -648,7 +652,10 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     subagents: async (id, turns) => {
       if (await findSession(id) === undefined) return undefined;
       const main = turns ?? await turnsOf(id);
-      return (options.presetOf?.() ?? options.preset ?? {})['subagentsFrom'] === 'sdk' ? subagentsBySdk(id, main) : subagentsOf(id, main);
+      const record = options.presetOf?.() ?? options.preset ?? {};
+      return record['subagentsFrom'] === 'sdk'
+        ? subagentsBySdk(id, main, record['subagentTitleMax'])
+        : subagentsOf(id, main, record['subagentTitleMax']);
     },
 
     /*

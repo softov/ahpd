@@ -60,20 +60,20 @@ const listings = new WeakMap<AcpOptions, Listing>();
 
 /**
  * How long a provider's listing connection waits after its last read before it
- * goes.
- *
- * A daemon is asked for the catalogue on every subscribe and on every
- * reconnect, so the connection is worth keeping between reads; a minute of
- * silence is a provider nobody is watching, and a server that outlives the
- * interest in it is a subprocess with nothing to do.
+ * goes, unless the record's `listingIdleMs` says otherwise: no time at all,
+ * the connection closed once the read is done, as VS Code's Codex disposes of
+ * the connection it opens for an action when the action ends.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2521-L2550
  */
-const IDLE_MS = 60_000;
+const IDLE_MS = 0;
 
 /** One provider's held connection to the server that lists its sessions. */
 interface Listing {
   connection: AcpConnection;
-  /** Armed once the last read settles, and disarmed by the next one. */
-  idle?: NodeJS.Timeout;
+  /** The reads in flight on it. */
+  reads: number;
+  /** Armed once the last read in flight settles, and disarmed by the next one. */
+  idle?: NodeJS.Timeout | undefined;
 }
 
 /**
@@ -352,6 +352,9 @@ const server = (options: AcpOptions, handlers: AcpHandlers): AcpConnection => co
   ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   handlers,
   ...(options.log === undefined ? {} : { log: options.log }),
+  ...(options.exitGraceMs === undefined ? {} : { exitGraceMs: options.exitGraceMs }),
+  ...(options.stderrBytes === undefined ? {} : { stderrBytes: options.stderrBytes }),
+  ...(options.killGraceMs === undefined ? {} : { killGraceMs: options.killGraceMs }),
 });
 
 /**
@@ -409,7 +412,8 @@ export async function loadedSession(
 }
 
 /**
- * The listing connection this provider holds, or a new one.
+ * The listing connection this provider holds, or a new one, for one read,
+ * which `idleClose` ends.
  *
  * Keyed by the options rather than by the provider, because one process can
  * register the same provider twice with two different commands and each is its
@@ -418,8 +422,13 @@ export async function loadedSession(
  */
 const listingFor = (options: AcpOptions): Listing => {
   const known = listings.get(options);
-  if (known !== undefined) return known;
-  const held: Listing = { connection: server(options, { update: () => {} }) };
+  if (known !== undefined) {
+    known.reads += 1;
+    if (known.idle !== undefined) clearTimeout(known.idle);
+    known.idle = undefined;
+    return known;
+  }
+  const held: Listing = { connection: server(options, { update: () => {} }), reads: 1 };
   listings.set(options, held);
   // A server that is gone cannot answer the next read, so it is not kept.
   void held.connection.ended.then(() => { dropListing(options, held); });
@@ -435,18 +444,25 @@ const dropListing = (options: AcpOptions, held: Listing): void => {
 };
 
 /**
- * How many pages of `session/list` one listing reads at most, so a server that
- * never stops handing back cursors cannot hold a listing for ever: VS Code's
- * Codex agent's stop for its own paged listing.
+ * How many pages of `session/list` one listing reads at most, unless the
+ * record's `sessionListMaxPages` says otherwise, so a server that never stops
+ * handing back cursors cannot hold a listing for ever: VS Code's Codex agent's
+ * stop for its own paged listing.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L15-L16
  */
 const SESSION_LIST_MAX_PAGES = 50;
 
-/** Arm the close of a connection nobody has read from in a minute. */
+/** End one read, and arm the close of a connection no read is in flight on. */
 const idleClose = (options: AcpOptions, held: Listing): void => {
-  if (listings.get(options) !== held) return;
+  held.reads -= 1;
+  if (listings.get(options) !== held || held.reads > 0) return;
+  const idle = options.listingIdleMs ?? IDLE_MS;
+  if (idle === 0) {
+    dropListing(options, held);
+    return;
+  }
   if (held.idle !== undefined) clearTimeout(held.idle);
-  const timer = setTimeout(() => { dropListing(options, held); }, IDLE_MS);
+  const timer = setTimeout(() => { dropListing(options, held); }, idle);
   timer.unref();
   held.idle = timer;
 };
@@ -454,11 +470,11 @@ const idleClose = (options: AcpOptions, held: Listing): void => {
 /**
  * The sessions the server lists, or this process's own record when it cannot.
  *
- * One connection for the whole catalogue rather than one per read: a client
- * subscribes to a chat by asking for the list, and spawning a server for each
- * of those is a subprocess per subscribe for a catalogue that has not changed.
- * It goes a minute after the last read, so a provider nobody is watching costs
- * nothing, and it is dropped at once when the server behind it dies.
+ * The listing's connection serves every read made while it is held. It goes
+ * once the read is done, as VS Code's Codex disposes of the connection it opens
+ * for an action, or the record's `listingIdleMs` after the last read, and at
+ * once when the server behind it dies.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2521-L2550
  *
  * Every session the server holds is asked for, with no folder named, as VS
  * Code's Codex agent lists every thread it holds: a conversation this host ran
@@ -468,9 +484,9 @@ const idleClose = (options: AcpOptions, held: Listing): void => {
  * The pages are followed to the end, because `session/list` is paged and a
  * server holding more than one page of conversations is otherwise a bridge that
  * reports a list of only the ones it happened to be shown. The cursors handed
- * back are kept, and a cursor handed back a second time, or a page past
- * `SESSION_LIST_MAX_PAGES`, ends the listing with what it read and a line in
- * the log, as VS Code's Codex agent stops its own.
+ * back are kept, and a cursor handed back a second time, or a page past the
+ * record's `sessionListMaxPages`, ends the listing with what it read and a line
+ * in the log, as VS Code's Codex agent stops its own.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L42-L69
  *
  * A server that cannot be reached, or one whose listing fails, rejects with the
@@ -492,14 +508,15 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
     if (!listsSessions(handshake.agentCapabilities)) return watchedRows(provider);
     const sessions: SessionInfo[] = [];
     const seenCursors = new Set<string>();
+    const pagesMost = options.sessionListMaxPages ?? SESSION_LIST_MAX_PAGES;
     let cursor: string | undefined;
     for (let pages = 1; ; pages += 1) {
       const page = await held.connection.listSessions(cursor === undefined ? {} : { cursor });
       sessions.push(...page.sessions);
       const nextCursor = page.nextCursor ?? undefined;
       if (nextCursor === undefined) break;
-      if (seenCursors.has(nextCursor) || pages === SESSION_LIST_MAX_PAGES) {
-        options.log?.(`${provider}: session/list stopped before the end of the catalogue after ${sessions.length} sessions (at most ${SESSION_LIST_MAX_PAGES} pages); some sessions may be missing`);
+      if (seenCursors.has(nextCursor) || pages >= pagesMost) {
+        options.log?.(`${provider}: session/list stopped before the end of the catalogue after ${sessions.length} sessions (at most ${pagesMost} pages); some sessions may be missing`);
         break;
       }
       seenCursors.add(nextCursor);

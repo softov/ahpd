@@ -175,6 +175,26 @@ describe('what each file is read for', () => {
     expect(filesOf({ configDir: root }).map((one) => one.name)).toEqual(['far', 'inside']);
   });
 
+  it('reads as much of a file as the record\'s fileMostBytes names', () => {
+    const root = tree({ 'skills/far/SKILL.md': `---\npad: ${'x'.repeat(200)}\nname: beyond\n---\n` });
+    // Past 100 bytes the frontmatter is not closed, so the skill keeps its folder's name.
+    expect(filesOf({ configDir: root, fileMostBytes: 100 }).map((one) => one.name)).toEqual(['far']);
+    expect(filesOf({ configDir: root }).map((one) => one.name)).toEqual(['beyond']);
+  });
+
+  it('walks the rules folders as deep and as far as the record\'s ruleDepth and ruleMost name', () => {
+    const root = tree({
+      'rules/a.md': '# A\n',
+      'rules/b.md': '# B\n',
+      'rules/deep/c.md': '# C\n',
+    });
+    const rules = (bounds: Pick<DiskRoots, 'ruleDepth' | 'ruleMost'>): string[] =>
+      filesOf({ configDir: root, ...bounds }).filter((one) => one.kind === 'rule').map((one) => one.name);
+    expect(rules({})).toEqual(['a.md', 'b.md', 'c.md']);
+    expect(rules({ ruleDepth: 0 })).toEqual(['a.md', 'b.md']);
+    expect(rules({ ruleMost: 1 })).toEqual(['a.md']);
+  });
+
   it('returns nothing, and throws nothing, for a missing folder or one the read fails on', () => {
     // A file where a folder should be fails the read of that folder.
     const root = tree({ skills: 'not a folder', agents: 'not a folder' });

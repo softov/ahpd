@@ -77,24 +77,28 @@ export const thinkingFor = (efforts: string[]): { configSchema?: Record<string, 
 /** One client-generated script, sourced before every shell command. */
 interface ShellInitScript { shell: 'bash' | 'powershell'; script: string }
 
-/** A generated script is a few hundred bytes; anything near this is not one. */
+/**
+ * A generated script is a few hundred bytes; anything near this is not one.
+ * VS Code's `MAX_SHELL_INIT_SCRIPT_LENGTH`, unless the record's
+ * `maxShellInitScript` says otherwise.
+ */
 const MAX_SHELL_INIT_SCRIPT = 64 * 1024;
 
 /**
  * The `shellInitScripts` value, checked to VS Code's `isShellInitScriptList`.
  *
  * A list of at most one `{ shell, script }`, its script non-empty and no
- * longer than a generated one could be. `undefined` for anything else, which
- * is what keeps it off the disk.
+ * longer than `most`. `undefined` for anything else, which is what keeps it
+ * off the disk.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/shellInitScript.ts#L110-L126
  */
-const shellInitScripts = (value: unknown): ShellInitScript[] | undefined => {
+const shellInitScripts = (value: unknown, most: number): ShellInitScript[] | undefined => {
   if (!Array.isArray(value) || value.length > 1) return undefined;
   const list: ShellInitScript[] = [];
   for (const entry of value) {
     const one = bag(entry);
     if ((one.shell !== 'bash' && one.shell !== 'powershell') || typeof one.script !== 'string') return undefined;
-    if (one.script.length === 0 || one.script.length > MAX_SHELL_INIT_SCRIPT) return undefined;
+    if (one.script.length === 0 || one.script.length > most) return undefined;
     list.push({ shell: one.shell, script: one.script });
   }
   return list;
@@ -151,7 +155,8 @@ export function createConfig(ctx: SessionContext): Config {
   const initScript = join(tmpdir(), `ahpd-shell-init-${crypto.randomUUID()}.sh`);
   let inForce: string | undefined;
   const setShellInit = (value: unknown): true | string => {
-    const list = shellInitScripts(value);
+    const most = ctx.values['maxShellInitScript'];
+    const list = shellInitScripts(value, typeof most === 'number' ? most : MAX_SHELL_INIT_SCRIPT);
     /*
      * A malformed value is held as it was set and the last valid script stays
      * in force, as VS Code's Copilot ignores one and keeps the script it had.

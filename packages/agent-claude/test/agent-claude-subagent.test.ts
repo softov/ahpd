@@ -101,7 +101,7 @@ interface Worker {
 }
 
 /** Replay one fixture through a real session with a recording host seam. */
-async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), tools: BoundTool[] = []) {
+async function replay(name: string, frames: Record<string, unknown>[] = fixture(name), tools: BoundTool[] = [], preset?: Bag) {
   sdk.reset();
   const main: { channel: string; action: Bag }[] = [];
   const workers = new Map<string, Worker>();
@@ -129,6 +129,7 @@ async function replay(name: string, frames: Record<string, unknown>[] = fixture(
     emit: (channel, action) => { main.push({ channel, action: action as Bag }); },
     subagent,
     ...(tools.length > 0 ? { tools } : {}),
+    ...(preset === undefined ? {} : { preset }),
   });
   await settle();
   // The turn the frames answer.
@@ -243,6 +244,26 @@ it('drops a worker whose spawning call never came within the hold\'s 30 s', asyn
     ]);
     expect(asked).toEqual([]);
     vi.advanceTimersByTime(30_000);
+
+    sdk.push(...[lines[1], lines[2], lines[3], ...lines.slice(5)] as Record<string, unknown>[]);
+    await settle();
+    expect(asked).toEqual([]);
+  }
+  finally {
+    vi.useRealTimers();
+  }
+});
+
+it('drops a worker whose spawning call never came within the record\'s subagentStartTimeoutMs', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    const lines = fixture('claude-subagent.jsonl');
+    const { asked } = await replay('none', [
+      lines[0] as Record<string, unknown>,
+      lines[4] as Record<string, unknown>,
+    ], [], { subagentStartTimeoutMs: 1000 });
+    expect(asked).toEqual([]);
+    vi.advanceTimersByTime(1000);
 
     sdk.push(...[lines[1], lines[2], lines[3], ...lines.slice(5)] as Record<string, unknown>[]);
     await settle();
@@ -381,6 +402,10 @@ it('names a worker chat by its task, cut to sixty characters', () => {
   expect(titleOf(`  ${'y'.repeat(80)}  `, undefined)).toBe(`${'y'.repeat(60)}…`);
   expect(titleOf(undefined, undefined)).toBe('Subagent');
   expect(titleOf('Rewrite refs: host 49, 50', 'Explore')).toBe('Rewrite refs: host 49, 50');
+});
+
+it('cuts a worker chat\'s title to the record\'s subagentTitleMax', () => {
+  expect(titleOf('x'.repeat(80), 'Explore', 20)).toBe(`${'x'.repeat(20)}…`);
 });
 
 it('says nothing for a subagent when the host has no seam', async () => {

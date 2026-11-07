@@ -155,7 +155,7 @@
  * conversation, `--no-resume` stops it advertising
  * `sessionCapabilities.resume`, which is a server a conversation cannot be
  * taken back from without a replay, and `--no-close` stops it advertising
- * `session/close`.
+ * `session/close`. `--close-silent` advertises it and never answers it.
  *
  * `--no-delete` stops the handshake advertising `sessionCapabilities.delete`,
  * which is a server that keeps every conversation it has been given, and
@@ -221,7 +221,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 /** The file every request is recorded in, when a test named one. */
@@ -363,6 +363,22 @@ const LISTED = [
   { sessionId: 'listed-1', cwd: '/tmp/one', title: 'One', updatedAt: '2026-01-01T00:00:00.000Z' },
   { sessionId: 'listed-2', cwd: '/tmp/two', additionalDirectories: ['/tmp/two-b'] },
 ];
+
+/*
+ * The sessions an earlier server of the same log was asked to delete, which
+ * this one does not hold either, as a server keeps its conversations in a store
+ * every process of it reads: each listing spawns a server of its own. A server
+ * whose deletes fail keeps them all.
+ */
+if (LOG !== undefined && existsSync(LOG) && !process.argv.includes('--delete-fails')) {
+  for (const line of readFileSync(LOG, 'utf8').split('\n')) {
+    if (line === '') continue;
+    const logged = JSON.parse(line);
+    if (logged.method !== 'session/delete') continue;
+    const at = LISTED.findIndex((one) => one.sessionId === logged.params?.sessionId);
+    if (at >= 0) LISTED.splice(at, 1);
+  }
+}
 
 /**
  * The sessions asked about as two pages, for a server whose catalogue does not
@@ -1873,7 +1889,7 @@ const onLine = (line) => {
       return;
 
     case 'session/close':
-      respond(message.id, {});
+      if (!process.argv.includes('--close-silent')) respond(message.id, {});
       return;
 
     case 'session/delete': {

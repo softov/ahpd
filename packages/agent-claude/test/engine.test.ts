@@ -171,7 +171,10 @@ it('registers the claude engine, its template and host-only field', async () => 
   // record's config is what this engine runs and nothing a second engine spells.
   const fields = Object.keys((engine?.schema.properties ?? {}) as Bag).sort();
   expect(fields).toEqual([
-    'dontAsk', 'enableTasks', 'env', 'extraArgs', 'hostTasks', 'keepCliModels', 'logins', 'modelSources', 'models', 'outputStyle', 'portFailures', 'sandbox', 'stopEnds', 'subagentsFrom', 'taskOutputFirstWaitMs', 'taskOutputLongestWaitMs', 'thinking',
+    'dontAsk', 'enableTasks', 'env', 'extraArgs', 'fileMostBytes', 'hostTasks', 'keepCliModels', 'keepFramed', 'logins', 'maxShellInitScript',
+    'maxTerminalOutputBytes', 'modelSources', 'models', 'outputStyle', 'portFailures', 'ruleDepth', 'ruleMost', 'sandbox', 'stopEnds',
+    'subagentStartTimeoutMs', 'subagentTitleMax', 'subagentsFrom', 'taskOutputFirstWaitMs', 'taskOutputLongestWaitMs', 'taskOutputQuietReads',
+    'thinking', 'watchWaitMs',
   ]);
   for (const owned of ['name', 'description', 'icon', 'model']) expect(fields).not.toContain(owned);
 

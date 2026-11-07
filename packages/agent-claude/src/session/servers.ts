@@ -7,7 +7,7 @@ import { flagSettingsOf } from '../options.js';
 import { SDK_DEFAULT_MODEL_VALUE, thinkingFor } from './config.js';
 import { isHostInjectedMcpServerName } from './clienttools.js';
 import { customizationsOf, rootOf } from './customizations.js';
-import { configDirOf, diskOf, managedDirOf } from './disk.js';
+import { configDirOf, diskBoundsOf, diskOf, managedDirOf } from './disk.js';
 import { createClaudeCustomizationWatcher } from './watch.js';
 import type { Published } from './customizations.js';
 import type { Disk, DiskKind } from './disk.js';
@@ -133,6 +133,7 @@ export function createServers(ctx: SessionContext): Servers {
     configDir: configDirOf(ctx.options.env),
     managedDir: managedDirOf(),
     ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
+    ...diskBoundsOf(ctx.values),
   }, ctx.options.parseYaml));
 
   /**
@@ -537,6 +538,7 @@ export function createServers(ctx: SessionContext): Servers {
   let unwatch = ctx.options.spawn !== undefined ? undefined : createClaudeCustomizationWatcher({
     configDir: configDirOf(ctx.options.env),
     ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
+    ...(typeof ctx.values['watchWaitMs'] === 'number' ? { waitMs: ctx.values['watchWaitMs'] } : {}),
   }, () => {
     if (described) {
       void reloadPlugins();

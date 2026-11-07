@@ -938,18 +938,36 @@ it('stops listing after fifty pages of a server that hands back a new cursor eve
   expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(50);
 });
 
-it('lists a second time on the connection the first one left open', async () => {
+it('stops listing after the pages the record\'s sessionListMaxPages names', async () => {
+  const log = join(scratch(), 'requests.jsonl');
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE, '--cursors=endless'], env: { ACP_LOG: log }, provider: 'acp', sessionListMaxPages: 3 });
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(3);
+});
+
+/*
+ * A listing's server goes once the read is done, as VS Code's Codex disposes
+ * of the connection it opens for an action, and stays the record's
+ * `listingIdleMs` after its last read. The log names the process each request
+ * reached.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2521-L2550
+ */
+it('lists on a server closed once the read is done, and on one server for the record\'s listingIdleMs', async () => {
   const { agent, log } = backend();
   expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
   expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  const each = [...new Set(requests(log).map((one) => Number(one.pid)))];
+  expect(each).toHaveLength(2);
+  await until(() => each.every((pid) => !running(pid)), CLOSES_MS - 3_000);
 
-  // A subscribe is a list, and a client that reconnects is another: spawning a
-  // server for each is a subprocess per subscribe for a catalogue that has not
-  // changed. The log names the process each request reached.
-  const pids = new Set(requests(log).map((one) => one.pid));
-  expect(pids.size).toBe(1);
-  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
-});
+  const kept = join(scratch(), 'kept.jsonl');
+  const idle = acpAgent({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: kept }, provider: 'acp', listingIdleMs: 1_000 });
+  await idle.list?.();
+  await idle.list?.();
+  const one = [...new Set(requests(kept).map((request) => Number(request.pid)))];
+  expect(one).toHaveLength(1);
+  await until(() => one.every((pid) => !running(pid)), CLOSES_MS - 3_000);
+}, CLOSES_MS);
 
 it('finds a listed session by listing its own server, and loads nothing', async () => {
   const { agent, log } = backend();
@@ -1905,6 +1923,18 @@ it('tells a server that advertised session/close to close, and one that did not 
   await runTurn(other.session, other.watch, 't1', 'hi');
   await other.session.close?.();
   expect(requests(silent.log).some((one) => one.method === 'session/close')).toBe(false);
+});
+
+it('lets a session go once the record\'s closeGraceMs has passed with no answer to session/close', async () => {
+  const log = join(scratch(), 'requests.jsonl');
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE, '--close-silent'], env: { ACP_LOG: log }, provider: 'acp-close-silent', closeGraceMs: 50 });
+  const { session, watch } = await start(agent, 'close-silent');
+  await runTurn(session, watch, 't1', 'hi');
+  const began = Date.now();
+  await session.close?.();
+  // Well inside the 1000 ms a record that names none waits.
+  expect(Date.now() - began).toBeLessThan(800);
+  expect(requests(log).some((one) => one.method === 'session/close')).toBe(true);
 });
 
 it('leaves no process behind when a session closes', async () => {

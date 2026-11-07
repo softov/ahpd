@@ -33,7 +33,7 @@ async function until(count: () => number, want: number): Promise<void> {
 }
 
 /** Watch `roots`, counting the calls, after the watch had time to start. */
-async function watched(roots: { configDir: string; cwd?: string }): Promise<{ calls: () => number; stop: () => void }> {
+async function watched(roots: { configDir: string; cwd?: string; waitMs?: number }): Promise<{ calls: () => number; stop: () => void }> {
   let calls = 0;
   const stop = createClaudeCustomizationWatcher(roots, () => { calls += 1; });
   stops.push(stop);
@@ -144,6 +144,19 @@ describe('the watcher of the Claude folders', () => {
     await until(calls, 1);
     await pause(700);
     expect(calls()).toBe(1);
+  });
+
+  it('calls after the quiet the record\'s watchWaitMs names', async () => {
+    const root = fresh();
+    mkdirSync(join(root, 'commands'));
+    const { calls } = await watched({ configDir: root, waitMs: 20 });
+    writeFileSync(join(root, 'commands', 'a.md'), '# a\n');
+    await pause(200);
+    writeFileSync(join(root, 'commands', 'b.md'), '# b\n');
+    await until(calls, 2);
+    await pause(400);
+    // Two changes 200 ms apart are two bursts after a 20 ms quiet, where 300 ms makes them one.
+    expect(calls()).toBe(2);
   });
 
   it('starts to watch a folder when it appears', async () => {

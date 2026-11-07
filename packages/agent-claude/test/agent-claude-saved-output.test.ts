@@ -334,6 +334,11 @@ const none: {
     },
   },
   {
+    name: 'a file over the record\'s maxTerminalOutputBytes, which is not read',
+    frames: (path) => [called('Bash'), answered(noticeFor(path), structuredFor(path))],
+    options: { preset: { maxTerminalOutputBytes: 1 } },
+  },
+  {
     name: 'a message with two results',
     frames: (path) => {
       const two = answered(noticeFor(path), structuredFor(path));

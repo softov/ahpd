@@ -19,9 +19,10 @@ import { AUTO_COMPACT_AT, DEFAULT_CONTEXT_TOKENS, createTurnAgent } from '../src
  * No network and no real model: the adapter is a script, the store is in
  * memory, and the catalogue is a hand-made `Held` that says what one model's
  * window is. What this checks is the point a turn is built with - the
- * configured `autoCompactTokens`, never above 80% of the window the endpoint
- * listed - and that crossing it makes cofold write a summary into the
- * conversation rather than sending a history the model cannot take.
+ * configured `autoCompactTokens`, never above the `autoCompactAt` share of the
+ * window the endpoint listed, 80% by default - and that crossing it makes
+ * cofold write a summary into the conversation rather than sending a history
+ * the model cannot take.
  */
 
 let home: string;
@@ -193,6 +194,17 @@ it('caps a configured point at 80% of the window', async () => {
     holding(createFakeModel({ script: [{ text: 'hi' }] }), WINDOW),
   );
   expect(agent.context.autoCompactTokens).toBe(8000);
+});
+
+it('compacts at the share the record\'s autoCompactAt names, and caps a configured point there', async () => {
+  put(CONFIG);
+  const shared = agentOn({ ...CONFIG, memory: true, autoCompactAt: 0.5 }, holding(createFakeModel({ script: [{ text: 'hi' }] }), WINDOW));
+  expect(shared.context.autoCompactTokens).toBe(Math.floor(WINDOW * 0.5));
+  const capped = agentOn(
+    { ...CONFIG, memory: true, autoCompactAt: 0.5, autoCompactTokens: 9000 },
+    holding(createFakeModel({ script: [{ text: 'hi' }] }), WINDOW),
+  );
+  expect(capped.context.autoCompactTokens).toBe(Math.floor(WINDOW * 0.5));
 });
 
 it('holds a session with no catalogue at cofold\'s own default, capped', async () => {
