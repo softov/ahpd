@@ -20,6 +20,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
+import { chatReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { shellTerminals } from '../src/machines/terminals.js';
@@ -211,7 +212,7 @@ async function serving(knobs: Knobs, options: Options = {}) {
 
   const root = async (): Promise<Bag> =>
     ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } })) as { snapshot: { state: Bag } }).snapshot.state;
-  /** The sessions the root says are not disposed. */
+  /** The sessions the root says are running a turn. */
   const active = async (): Promise<number> => Number((await root()).activeSessions);
   /** The sessions whose agent runs now: every start less every close. */
   const awake = (): number => (knobs.starts ?? 0) - knobs.closes.length;
@@ -360,7 +361,8 @@ it('keeps the state of a session asleep while it is resident, and replays a clie
   await client.handle({ method: 'unsubscribe', params: { channel: one.chatUri } });
   client.close();
 
-  // The record moves, which a state let go would be read again from.
+  // The record moves, which a state let go would be read again from: the
+  // state held is what the client comes back to.
   knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
   const back = host.accept(peer());
   const answer = await back.handle({
@@ -368,15 +370,17 @@ it('keeps the state of a session asleep while it is resident, and replays a clie
     params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.channel, one.chatUri] },
   }) as { type: string };
   expect(answer.type).toBe('replay');
+  const held = await back.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  expect(((held.snapshot.state.turns ?? []) as Bag[]).map((turn) => turn.state)).not.toContain('cancelled');
 });
 
-it('answers a client back from a drop with the state read again once the residency let it go', async () => {
+it('replays to a client back from a drop onto what it holds, its session let go and opened again meanwhile', async () => {
   /*
-   * A client whose state came from the earlier opening cannot be replayed
-   * onto the one held now: the actions since apply to a state it never had.
-   * The reference answers a client that holds no baseline from the state the
-   * host holds with the state itself.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
+   * A baseline is owed only for a channel a client holds with no snapshot from
+   * this process: a session the residency let go is opened again from its
+   * record and replayed onto what the client holds, as VS Code's host replays
+   * onto a session it evicted and restored.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L692-L704
    */
   const knobs: Knobs = { closes: [], closed: [] };
   const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
@@ -389,16 +393,249 @@ it('answers a client back from a drop with the state read again once the residen
   await until(() => knobs.closes.length > 0);
   expect(knobs.closed).toEqual(['one']);
 
-  // The record says the turn was stopped, which the client never held.
-  knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
   const back = host.accept(peer());
   const answer = await back.handle({
     method: 'reconnect',
     params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.channel, one.chatUri] },
-  }) as { type: string; snapshots?: { resource: string; state: Bag }[] };
-  expect(answer.type).toBe('snapshot');
-  const chat = answer.snapshots?.find((one_) => one_.resource === one.chatUri);
-  expect(((chat?.state.turns ?? []) as Bag[]).map((turn) => turn.state)).toEqual(['cancelled']);
+  });
+  expect(answer).toMatchObject({ type: 'replay', missing: [] });
+});
+
+it('refuses a chat on a session whose state it let go, in VS Code\'s words', async () => {
+  /*
+   * A session the residency let go has no state here, and VS Code's host
+   * refuses a chat on a session it has no state for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2260-L2264
+   */
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  await one.leave();
+  await open('two');
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+  await expect(client.handle({ method: 'createChat', params: { channel: one.channel, chat: 'ahp-chat:/another' } }))
+    .rejects.toMatchObject({ code: -32001, message: `Session not found: ${one.channel}` });
+});
+
+it('subscribes a client at initialize to a session whose state it does not hold with no snapshot, owing it the baseline its reconnect is answered with', async () => {
+  /*
+   * A state channel with nothing held for it is subscribed at initialize
+   * with no snapshot and owes its client a baseline: the client's cursor says
+   * it saw every action, and nothing about the state it applied them to, so
+   * a reconnect naming the channel is answered with snapshots, and one after
+   * the baseline is given is replayed, as VS Code's host owes it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1204-L1241
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1385-L1391
+   */
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  await one.leave();
+  await open('two');
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  const fresh = host.accept(peer());
+  const said = await fresh.handle({
+    method: 'initialize',
+    params: { clientId: 'fresh', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://', one.channel] },
+  }) as { serverSeq: number; snapshots: { resource: string; fromSeq: number }[] };
+  expect(said.snapshots.map((one_) => one_.resource)).toEqual(['ahp-root://']);
+  fresh.close();
+
+  const back = host.accept(peer());
+  const owed = await back.handle({
+    method: 'reconnect',
+    params: { clientId: 'fresh', lastSeenServerSeq: said.serverSeq, subscriptions: ['ahp-root://', one.channel] },
+  }) as { type: string; snapshots: { resource: string; fromSeq: number }[] };
+  expect(owed.type).toBe('snapshot');
+  expect(owed.snapshots.map((one_) => one_.resource)).toEqual(['ahp-root://', one.channel]);
+  back.close();
+
+  const again = await host.accept(peer()).handle({
+    method: 'reconnect',
+    params: { clientId: 'fresh', lastSeenServerSeq: Math.max(...owed.snapshots.map((one_) => one_.fromSeq)), subscriptions: ['ahp-root://', one.channel] },
+  });
+  expect(again).toMatchObject({ type: 'replay', missing: [] });
+});
+
+/*
+ * The replay onto a released session holds: a client that held the chat from
+ * before the release, replayed what landed after the chat was read back from
+ * its record, holds what a client subscribing now is served. The actions since
+ * the release apply to the state read back, so this is the condition that
+ * replay rests on.
+ */
+it('leaves a client replayed onto a chat read back after its release with what a new subscriber is served', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const seen = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as {
+    snapshot: { state: Bag; fromSeq: number };
+  };
+  await open('two');
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  // Read back from its record by another window, and something said after.
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  await other.handle({ method: 'subscribe', params: { channel: one.chatUri } });
+  await other.handle({
+    method: 'dispatchAction',
+    params: { channel: one.chatUri, action: { type: 'chat/draftChanged', draft: { text: 'after the release', origin: { kind: 'user' } } } },
+  });
+  await settle(4);
+
+  const back = host.accept(peer());
+  const answer = await back.handle({
+    method: 'reconnect',
+    params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.chatUri] },
+  }) as { type: string; actions: { channel: string; action: Bag }[] };
+  expect(answer.type).toBe('replay');
+  const replayed = answer.actions
+    .filter((one_) => one_.channel === one.chatUri)
+    .reduce((state, one_) => chatReducer(state as never, one_.action as never) as unknown as Bag, seen.snapshot.state);
+  const newcomer = host.accept(peer());
+  await newcomer.handle({ method: 'initialize', params: { clientId: 'newcomer', protocolVersions: ['0.9.0'] } });
+  const fresh = await newcomer.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as {
+    snapshot: { state: Bag };
+  };
+  /*
+   * Compared with each turn's start and the chat's last change taken off,
+   * which VS Code's own restore reads from the agent's record: a restored turn
+   * starts at its SDK message's time, and a restored default chat last changed
+   * at the agent's modified time, so its replay onto a restored session holds
+   * the record's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L287
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L354
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14773
+   */
+  const untimed = ({ modifiedAt: _at, ...state }: Bag): Bag => ({
+    ...state,
+    turns: ((state.turns ?? []) as Bag[]).map(({ startedAt: _started, ...turn }) => turn),
+  });
+  expect(untimed(replayed)).toEqual(untimed(fresh.snapshot.state));
+});
+
+/*
+ * A chat read back from its record holds no queue where nothing is queued, as
+ * it held none live: the protocol's reducer clears an emptied queue to
+ * nothing, and VS Code's host opens a chat's state with none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L660-L676
+ */
+it('reads a chat back after its release with no queue where nothing is queued, as it held live', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const live = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  await open('two');
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  const back = await other.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  expect(live.snapshot.state).not.toHaveProperty('queuedMessages');
+  expect(back.snapshot.state).not.toHaveProperty('queuedMessages');
+});
+
+/*
+ * A finished turn reads back after its release as the chat held it, complete:
+ * the protocol's `Turn` says how each turn ended, and a read after a release
+ * serves the turns the backend kept.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L710-L730
+ */
+it('reads a finished turn back after its release as complete, as the chat held it', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const live = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  await open('two');
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  const back = await other.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { state: Bag } };
+  const ended = (state: Bag): unknown[] => ((state.turns ?? []) as Bag[]).map((turn) => turn.state);
+  expect(ended(live.snapshot.state)).toEqual(['complete']);
+  expect(ended(back.snapshot.state)).toEqual(['complete']);
+});
+
+/*
+ * A session's default chat holds no title of its own until it is given one,
+ * and reads as its session's, live and read back: the backend titles the
+ * session from its first message, and the chat goes on reading as the session,
+ * as VS Code's host keeps a default chat's title empty while it inherits its
+ * session's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1733-L1738
+ */
+it('holds a default chat with no title of its own as its session\'s, live and read back after its release', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const subscribed = async (to: typeof client, channel: string): Promise<Bag> =>
+    ((await to.handle({ method: 'subscribe', params: { channel } })) as { snapshot: { state: Bag } }).snapshot.state;
+  const live = { session: await subscribed(client, one.channel), chat: await subscribed(client, one.chatUri) };
+  await open('two');
+  client.close();
+  await until(() => knobs.closes.length > 0);
+  expect(knobs.closed).toEqual(['one']);
+
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  const back = { session: await subscribed(other, one.channel), chat: await subscribed(other, one.chatUri) };
+  for (const held of [live, back]) {
+    expect(held.session.title).toBe('hello');
+    expect((held.session.chats as Bag[])[0]).toMatchObject({ resource: one.chatUri, title: '' });
+    expect(held.chat.title).toBe('');
+  }
+});
+
+/*
+ * A default chat takes its session's title as its own once the session has
+ * another chat, and keeps it through a rename of the session, live and read
+ * back after its release: the store keeps it beside the session's own, as VS
+ * Code's host snapshots a default chat's title when a chat is added and
+ * restores it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1855-L1862
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
+ */
+it('keeps a default chat\'s own title from when its session gained a chat, through a rename, live and read back', async () => {
+  const knobs: Knobs = { closes: [], closed: [] };
+  const { host, client, open } = await serving(knobs, { sessionResidencyLimit: 1 });
+  const one = await open('one');
+  const subscribed = async (to: typeof client, channel: string): Promise<Bag> =>
+    ((await to.handle({ method: 'subscribe', params: { channel } })) as { snapshot: { state: Bag } }).snapshot.state;
+  const peerChat = 'ahp-chat:/peer';
+  await client.handle({ method: 'createChat', params: { channel: one.channel, chat: peerChat } });
+  // Something said in it, so the session sleeps with both chats.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: peerChat, action: { type: 'chat/turnStarted', turnId: 'peer-0', startedAt: new Date().toISOString(), message: { text: 'second', origin: { kind: 'user' } } } },
+  });
+  for (let i = 0; i < 200 && ((await subscribed(client, peerChat)).turns as Bag[]).length === 0; i++) await settle(1);
+  await client.handle({ method: 'dispatchAction', params: { channel: one.channel, action: { type: 'session/titleChanged', title: 'Renamed' } } });
+  await settle(4);
+  const live = { session: await subscribed(client, one.channel), chat: await subscribed(client, one.chatUri) };
+  await open('two');
+  client.close();
+  await until(() => knobs.closed?.includes('one') === true);
+
+  const other = host.accept(peer());
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  const back = { session: await subscribed(other, one.channel), chat: await subscribed(other, one.chatUri) };
+  expect(live.session.title).toBe('Renamed');
+  for (const held of [live, back]) {
+    expect((held.session.chats as Bag[]).find((row) => row.resource === one.chatUri)).toMatchObject({ title: 'hello' });
+    expect(held.chat.title).toBe('hello');
+  }
 });
 
 it('lets an archived session go once nobody watches it, whatever the count', async () => {
@@ -417,13 +654,13 @@ it('lets an archived session go once nobody watches it, whatever the count', asy
 
   client.close();
   await until(() => knobs.closes.length > 0);
-  knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
+  // Opened again from its record when its client comes back, and replayed onto what that client holds.
   const back = host.accept(peer());
   const answer = await back.handle({
     method: 'reconnect',
     params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.chatUri] },
-  }) as { type: string };
-  expect(answer.type).toBe('snapshot');
+  });
+  expect(answer).toMatchObject({ type: 'replay', missing: [] });
 });
 
 it('sleeps the least recently used quiet session over the count limit', async () => {
@@ -507,6 +744,36 @@ it('wakes nothing for an archive of a sleeping session\'s default chat, and arch
   expect((rows.items.find((row) => row.resource === one.resource)?.status ?? 0) & 64).toBe(0);
 });
 
+/*
+ * VS Code's host takes a chat's read on a session it has not restored into
+ * the session's record without restoring it, the session's read bit
+ * following, and says the client's action.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12557-L12577
+ */
+it('marks a sleeping session\'s chat read and unread without waking it, and the session follows', async () => {
+  const knobs: Knobs = { closes: [] };
+  const { client, time, open, awake } = await serving(knobs);
+  const one = await open('one');
+  await one.leave();
+  time.pass(31);
+  await until(() => knobs.closes.length > 0);
+  expect(awake()).toBe(0);
+  const starts = knobs.starts;
+  const status = async (): Promise<number> => ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+    items: { resource: string; status: number }[];
+  }).items.find((row) => row.resource === one.resource)?.status ?? 0;
+  for (const isRead of [false, true, false]) {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: one.chatUri, clientSeq: 1, action: { type: 'chat/isReadChanged', isRead } },
+    });
+    await settle();
+    // `SessionStatus.IsRead` is 32.
+    expect((await status()) & 32).toBe(isRead ? 32 : 0);
+  }
+  expect(knobs.starts).toBe(starts);
+});
+
 it('closes each chat with close(\'stopping\'), and keeps its terminals and rule state', async () => {
   const knobs: Knobs = { closes: [] };
   const shells = shellTerminals();
@@ -535,7 +802,7 @@ it('closes each chat with close(\'stopping\'), and keeps its terminals and rule 
   opened[0]?.close();
 });
 
-it('lists a sleeping session in the catalogue, and counts it among the sessions not disposed', async () => {
+it('lists a sleeping session in the catalogue, and counts it among no sessions running a turn, as VS Code\'s host', async () => {
   const knobs: Knobs = { closes: [] };
   const { time, open, active, awake, listed } = await serving(knobs);
   const one = await open('one');
@@ -543,8 +810,8 @@ it('lists a sleeping session in the catalogue, and counts it among the sessions 
   time.pass(31);
   await until(() => knobs.closes.length > 0);
   expect(awake()).toBe(0);
-  // Asleep is not disposed, and the protocol counts the non-disposed.
-  expect(await active()).toBe(1);
+  // Asleep is not disposed, and a session asleep runs no turn.
+  expect(await active()).toBe(0);
   expect(await listed()).toContain(one.resource);
 });
 

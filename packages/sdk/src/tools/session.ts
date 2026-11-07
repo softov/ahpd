@@ -505,8 +505,8 @@ export const sessionTools = (): HostTool[] => [
           worktree: { type: 'boolean', description: 'Override isolation for the new independent session. Set true only when the user explicitly asks to create a worktree, or false only when the user explicitly asks to work without one. Omit to preserve the existing isolation behavior: inherit the creating session\'s isolation for the same project, otherwise use worktree isolation. Only valid with relationship `independent`; omit for `currentSession`.' },
           title: { type: 'string', maxLength: 200, description: 'Short title for the new chat or independent session.' },
           model: { type: 'string', description: 'Optional model ID or display name. Defaults to the current chat\'s model. For `currentSession`, the model must belong to the current session\'s provider; for `independent`, the model selects the new session\'s provider.' },
-          agent: { type: 'string', description: 'Optional provider id of the agent to run, such as one `list_sessions` shows. Defaults to the model\'s provider, then the current session\'s.' },
-          config: { type: 'object', description: 'Optional settings for the new session, as the agent\'s config schema names them.' },
+          agent: { type: 'string', description: 'Optional provider id of the agent to run, such as one `list_sessions` shows. Defaults to the model\'s provider, then the current chat\'s.' },
+          config: { type: 'object', description: 'Optional settings for the new session, as the agent\'s config schema names them. Defaults to what the current chat\'s agent says a new chat inherits.' },
         },
         required: ['relationship', 'prompt', 'title'],
       },
@@ -628,12 +628,11 @@ export const sessionTools = (): HostTool[] => [
      * strategy offers it without `automatic`, since the host is the one naming
      * fresh chats.
      */
+    isEnabledForSession: ({ titleStrategy }) => titleStrategy !== 'utility',
     forSession: ({ titleStrategy }) => {
-      if (titleStrategy === 'utility') return { offered: false };
       if (titleStrategy !== 'deferred') return undefined;
       const { automatic: _automatic, ...properties } = RENAME_CHAT_PROPERTIES;
       return {
-        offered: true,
         definition: {
           description: DEFERRED_RENAME_CHAT_DESCRIPTION,
           inputSchema: { type: 'object', properties, required: ['title'] },

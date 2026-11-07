@@ -166,8 +166,17 @@ export const chatIdFor = (session: string, chatUri: string): string | undefined 
 export const subagentChatUri = (session: string, toolCallId: string): string =>
   `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent(toolCallId)}`;
 
-/** The client actions a worker's chat takes: answers to what it asked, drafts of them, and a stop. */
-export const WORKER_ACTIONS = new Set(['chat/toolCallConfirmed', 'chat/inputAnswerChanged', 'chat/inputCompleted', 'chat/turnCancelled']);
+/**
+ * The client actions a worker's chat takes: answers to what it asked, drafts
+ * of them, a stop, and a client's run of a tool the worker called and the
+ * confirmation of its result, as VS Code's host serves a subagent chat's
+ * calls.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1621-L1645
+ */
+export const WORKER_ACTIONS = new Set([
+  'chat/toolCallConfirmed', 'chat/inputAnswerChanged', 'chat/inputCompleted', 'chat/turnCancelled',
+  'chat/toolCallComplete', 'chat/toolCallResultConfirmed',
+]);
 
 /**
  * The client actions a session another host runs takes there, through its
@@ -259,6 +268,55 @@ export const retainedTerminalOf = (uri: string): { chat: string; key: string } |
   catch { return undefined; }
 };
 
+/** What a resource watch is: its root, whether it reaches below it, and the globs it leaves out and keeps. */
+export interface WatchDescriptor {
+  root: string;
+  recursive: boolean;
+  excludes?: { items: string[] };
+  includes?: { items: string[] };
+}
+
+/**
+ * How this host names a resource watch: the reference host's shape, the
+ * descriptor serialised into the channel's path under
+ * `ahp-resource-watch://r/`, so a subscribe reads back what to watch with no
+ * record kept between the two and a reconnecting client resumes its watch by
+ * the name it holds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L374-L399
+ */
+export const buildResourceWatchChannelUri = (descriptor: WatchDescriptor): string => {
+  const payload: Record<string, unknown> = { root: descriptor.root };
+  if (descriptor.recursive) payload.recursive = true;
+  if (descriptor.excludes !== undefined && descriptor.excludes.items.length > 0) payload.excludes = [...descriptor.excludes.items];
+  if (descriptor.includes !== undefined && descriptor.includes.items.length > 0) payload.includes = [...descriptor.includes.items];
+  return `ahp-resource-watch://r/${Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')}`;
+};
+
+/**
+ * The descriptor a resource watch channel names, read from the path of any
+ * `ahp-resource-watch:` URI, or nothing for a name that is not one, as the
+ * reference host reads one back.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L401-L440
+ */
+export const parseResourceWatchChannelUri = (uri: string): WatchDescriptor | undefined => {
+  if (!URL.canParse(uri)) return undefined;
+  const { protocol, pathname } = new URL(uri);
+  if (protocol !== 'ahp-resource-watch:') return undefined;
+  const encoded = pathname.startsWith('/') ? pathname.slice(1) : pathname;
+  if (encoded === '') return undefined;
+  try {
+    const payload = bag(JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')));
+    if (typeof payload.root !== 'string') return undefined;
+    return {
+      root: payload.root,
+      recursive: payload.recursive === true,
+      ...(Array.isArray(payload.excludes) ? { excludes: { items: payload.excludes.filter((one): one is string => typeof one === 'string') } } : {}),
+      ...(Array.isArray(payload.includes) ? { includes: { items: payload.includes.filter((one): one is string => typeof one === 'string') } } : {}),
+    };
+  }
+  catch { return undefined; }
+};
+
 /**
  * Whether a URI names the automations catalogue, under any spelling.
  *
@@ -267,8 +325,9 @@ export const retainedTerminalOf = (uri: string): { chat: string; key: string } |
  * an authority added so the URI survived a round trip through its own URI
  * class - and Insiders builds from that window still subscribe under it,
  * and were refused `-32001` here about a session nobody had named. The
- * reference host now takes anything on the scheme, and so does this one:
- * a client is answered under the spelling it used, the way the root is.
+ * reference host takes anything on the scheme, and so does this one: a
+ * subscribe is answered under the spelling it used, and every action goes
+ * under the host's own channel, which VS Code's client matches by scheme.
  */
 export const isAutomations = (channel: string): boolean => channel.startsWith('ahp-automations:');
 

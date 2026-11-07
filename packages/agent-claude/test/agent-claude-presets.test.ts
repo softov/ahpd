@@ -142,6 +142,15 @@ it('opens the template with nothing set on the CLI\'s own models', async () => {
   expect(await modelsOf(agent)).toEqual([]);
 });
 
+it('lists the plugins a session\'s clients handed it before what the CLI loaded', async () => {
+  const engine = await engineOf();
+  const agent = engine.open(viewOf('claude', () => ({})));
+  const loaded = { type: 'skill', id: 'from-the-cli' };
+  const handed = { type: 'plugin', id: 'from-a-client', clientId: 'window' };
+  // The client-pushed tier first, as VS Code's Claude agent projects it.
+  expect(agent.sessionCustomizations?.([loaded], [handed])).toEqual([handed, loaded]);
+});
+
 it('opens one backend per record, each with its own name and models', async () => {
   const engine = await engineOf();
   const builtIn = engine.open(viewOf('claude', () => ({}), 'Claude Code'));

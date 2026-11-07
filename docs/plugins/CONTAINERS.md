@@ -118,6 +118,11 @@ A client that does not know `_meta['vscode.devContainers']` ignores all of it, a
 | `vscode/devContainers/stop` | `{ workspaceFolder }`: end this connection's relay, then stop the container the folder is | `container:stop`, `computer:write` |
 | `vscode/devContainers/remove` | `{ workspaceFolder }`: the same, and the container's record goes with it | `container:remove`, `computer:write` |
 
+A `workspaceFolder` is an absolute path on this host; on Windows a host URI's path, `/c:/work`, is read as the file it names.
+A connect whose folder is not one, or whose name is empty, is refused `-32602` "workspaceFolder must be an absolute host path and name must be non-empty", and a stop or a removal "workspaceFolder must be an absolute host path", as [VS Code's protocol](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L88-L149) checks them.
+
+Before a container is started, stopped or removed, the window asking vouches for the folder (`vscode/requestWorkspaceTrust`, unless the host's `workspaceTrust` already trusts it), and a folder it does not vouch for is refused `-32009` "Workspace trust is required to start a Dev Container" (or "to manage", for a stop or a removal), as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L103-L108) asks.
+
 | notification | |
 | --- | --- |
 | `vscode/devContainers/relayMessage` | `{ connectionId, data }`: one frame from the host inside |

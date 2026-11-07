@@ -7,6 +7,7 @@ import { checkEndpoint } from '../src/record.js';
 import type { AddressInfo } from 'node:net';
 import type { ServerResponse } from 'node:http';
 import type { PluginPeer } from '../../sdk/src/types/plugin.js';
+import type { TurnEndEvent, TurnEndReason } from '../../sdk/src/types/events.js';
 import type { BotChat, BotSeams, TurnEnd } from '../src/bot.js';
 import type { Call } from '../src/call.js';
 import type { Endpoint } from '../src/record.js';
@@ -319,12 +320,15 @@ describe('a turn the host refused', () => {
   });
 });
 
+/** A `turn_end` of the turn `t1` on the chat `c1`, as the host raises it, ended for `reason`. */
+const endOf = (reason: TurnEndReason): TurnEndEvent => ({ type: 'turn_end', session: 'ahp-session:/s1', channel: 'ahp-chat:/c1', turnId: 't1', reason });
+
 it('forgets the wait for a turn the host refused', async () => {
   const ends = turnEnds();
   let settled = false;
   void ends.wait('ahp-chat:/c1', 't1').then(() => { settled = true; });
   ends.forget('ahp-chat:/c1', 't1');
-  ends.heard({ chat: 'ahp-chat:/c1', turn: 't1', status: 'complete' });
+  ends.heard(endOf({ kind: 'success' }));
   await settle();
   expect(settled).toBe(false);
 });
@@ -332,8 +336,30 @@ it('forgets the wait for a turn the host refused', async () => {
 it('hears a turn that ended in an error, with its message', async () => {
   const ends = turnEnds();
   const waited = ends.wait('ahp-chat:/c1', 't1');
-  ends.heard({ chat: 'ahp-chat:/c1', turn: 't1', status: 'error', error: 'the model refused' });
+  ends.heard(endOf({ kind: 'error', error: { errorType: 'turnFailed', message: 'the model refused' }, resumable: false }));
   expect(await waited).toEqual({ status: 'error', error: 'the model refused' });
+});
+
+/*
+ * VS Code's reasons in a reply's three words: a refused start is a turn that
+ * failed, in the refusal's words, a `!` command the host ran is a turn that
+ * completed, and a stopped one is cancelled.
+ */
+it('hears a refused start as an error in its words, a command as complete, and a stop as cancelled', async () => {
+  const refused = turnEnds();
+  const waitedRefused = refused.wait('ahp-chat:/c1', 't1');
+  refused.heard(endOf({ kind: 'rejected', error: { errorType: 'archived', message: 'This chat is archived.' }, recoverable: true }));
+  expect(await waitedRefused).toEqual({ status: 'error', error: 'This chat is archived.' });
+
+  const command = turnEnds();
+  const waitedCommand = command.wait('ahp-chat:/c1', 't1');
+  command.heard(endOf({ kind: 'localCommand' }));
+  expect(await waitedCommand).toEqual({ status: 'complete' });
+
+  const stopped = turnEnds();
+  const waitedStopped = stopped.wait('ahp-chat:/c1', 't1');
+  stopped.heard(endOf({ kind: 'cancelled' }));
+  expect(await waitedStopped).toEqual({ status: 'cancelled' });
 });
 
 it('gives the plugin option syncTimeoutSeconds a default of 60', async () => {

@@ -167,9 +167,15 @@ function serving({
       asked.push({ method, params });
       return answer(method, params);
     }));
+    // A VS Code editor window, which is the client a session's folders are
+    // changed from.
     await client.handle({
       method: 'initialize',
-      params: { clientId: token ?? 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
+      params: {
+        clientId: token ?? 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT],
+        clientInfo: { name: 'vscode-editor-window', version: '1.0.0' },
+        _meta: { 'vscode.ahpSessionUris': true, 'vscode.ahpChatUris': true },
+      },
     });
     if (token !== undefined && people) {
       await client.handle({ method: 'authenticate', params: { channel: ROOT, resource: RESOURCE, token } });
@@ -193,14 +199,32 @@ const trusting = (client: Client, folders: string[]) => client.handle({
   },
 });
 
-/** A session somebody asked for, in one folder, watched by the client that made it. */
+/**
+ * A session somebody asked for, in one folder, watched by the client that made
+ * it, from a multi-root workspace so a window may change its folders.
+ */
 const opening = async (client: Client, name: string, folder: string): Promise<void> => {
   const uri = `ahp-session:/${name}`;
   await client.handle({
     method: 'createSession',
-    params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(folder)] },
+    params: {
+      channel: uri, provider: 'echo', workingDirectories: [uriOf(folder)],
+      _meta: { multiRoot: { workspaceFile: uriOf(join(DIR, 'work.code-workspace')) } },
+    },
   });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
+};
+
+/** One turn in a session's default chat, which the echo backend answers and ends. */
+const saying = async (client: Client, name: string, turnId: string): Promise<void> => {
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUriFor(`ahp-session:/${name}`),
+      action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } },
+    },
+  });
+  await settle(60);
 };
 
 it('tells a backend the folders the last trust push names, whichever window pushed it', async () => {
@@ -393,6 +417,11 @@ const inWorktree = async (vouching: string[]) => {
       workingDirectories: [uriOf(A)],
     },
   });
+  // Its first message, at which a worktree session's tree is made.
+  await ana.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/tree'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
   await settle(60);
   return { tree: made[0] as string, told };
 };
@@ -422,7 +451,7 @@ it('tells the backend restarted in a folder the window said yes to that it is tr
   const ana = await signedIn('ana');
   await trusting(ana, [A]);
   await opening(ana, 'ana-one', A);
-  await settle();
+  await saying(ana, 'ana-one', 't1');
   expect(about(told(), B)).toBe(false);
 
   await ana.handle({
@@ -433,12 +462,14 @@ it('tells the backend restarted in a folder the window said yes to that it is tr
 
   // Asked, because B is not a folder this window pushed.
   expect(questions()).toEqual([{ method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(B) } }]);
-  // And the backend started again in B is told B is trusted, on the window's
-  // own answer rather than on anything it pushed.
+  // And the backend started again in B at the next turn is told B is trusted,
+  // on the window's own answer rather than on anything it pushed.
+  await saying(ana, 'ana-one', 't2');
   expect(about(told(), B)).toBe(true);
 
-  // A new push is the window answering for every folder at once.
-  await trusting(ana, [A]);
+  // A new push is the window answering for every folder at once, a push of
+  // what the root holds already being no push at all.
+  await trusting(ana, []);
   await settle();
   await opening(ana, 'ana-two', B);
   await settle();
@@ -450,12 +481,12 @@ it('asks about a folder that only begins like one the window trusted', async () 
   const ana = await signedIn('ana');
   await trusting(ana, [A]);
   await opening(ana, 'ana-one', A);
-  await settle();
+  await saying(ana, 'ana-one', 't1');
 
-  // Written by hand rather than with `join`, which resolves `..` itself: this
-  // is a path a client can send, and reading it as the folder it names is the
-  // host's job.
-  const outOfA = `${A}/../../etc`;
+  // Written by hand rather than with `join` or `uriOf`, which resolve `..`
+  // themselves: this is a URI a client can send, and reading it as the folder
+  // it names is the host's job.
+  const outOfA = `file://${A}/../../etc`;
   await ana.handle({
     method: 'dispatchAction',
     params: { channel: 'ahp-session:/ana-one', action: { type: 'session/workingDirectorySet', directory: outOfA } },
@@ -508,21 +539,27 @@ describe('the folders a window vouched for, read as the folders they name', () =
     expect(trusted(`${inside}x`, vouching([inside]))).toBe(false);
   });
 
-  // Windows reads a folder's name without regard to case, so a window's URI
-  // in another case still names the folder.
-  it.runIf(process.platform === 'win32')('trusts a folder vouched for in another case, on Windows', () => {
+  // Windows and macOS read a folder's name without regard to case, so a
+  // window's URI in another case still names the folder there, as VS Code
+  // ignores a path's case on both.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostWorkspaceTrust.ts#L14-L33
+  it.runIf(process.platform === 'win32' || process.platform === 'darwin')('trusts a folder vouched for in another case, on Windows and macOS', () => {
     expect(trusted(inside, { enabled: true, trustedUris: [uriOf(inside.toUpperCase())] })).toBe(true);
   });
 
-  it('trusts nothing for an entry that names no folder on this machine', () => {
+  /*
+   * VS Code compares a trusted URI's authority as part of the URI, so an entry
+   * naming any authority, `localhost` among them, is not a folder here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostWorkspaceTrust.ts#L14-L33
+   */
+  it('trusts nothing for an entry that names no folder on this machine, or names an authority', () => {
     expect(trusted(inside, { enabled: true, trustedUris: [''] })).toBe(false);
     expect(trusted(inside, { enabled: true, trustedUris: ['file://'] })).toBe(false);
     // Built from the URI rather than the path, so a Windows path's drive is
     // where a URI puts it.
     const named = (host: string): string => uriOf(inside).replace('file://', `file://${host}`);
     expect(trusted(inside, { enabled: true, trustedUris: [named('elsewhere')] })).toBe(false);
-    // The same folder said with this machine's own name is this machine's.
-    expect(trusted(inside, { enabled: true, trustedUris: [named('localhost')] })).toBe(true);
+    expect(trusted(inside, { enabled: true, trustedUris: [named('localhost')] })).toBe(false);
     // And one bad entry beside a good one does not take the good one with it.
     expect(trusted(inside, { enabled: true, trustedUris: ['file://elsewhere/a', uriOf(inside)] })).toBe(true);
   });

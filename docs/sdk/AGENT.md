@@ -75,6 +75,7 @@ const host = createHost({ path, agents: [shout()] });
 | `provider`, `displayName` | Who you are. `provider` is what a client names in `createSession`, so it must be unique among a host's agents | required |
 | `schema()`, `defaults()` | What a session can be told to do differently | required |
 | `completions` | Answers for a key of your own `schema()`, drawn as a picker | optional |
+| `inheritedChatConfig(config)` | The settings a chat or session a session tool makes takes from the chat that made it, picked out of that chat's config, as VS Code's `getInheritedChatConfig` (Claude's: its permission mode and permissions) | optional |
 | `create(start)` | Start one. Returns a `Session`, or a promise of one where a step comes first (a fork's copy or a truncation's cut of the conversation it resumes, the earlier turns of a resumed conversation read from the backend's own record, or the server opened whose offers the session's first state carries): the request that asked is answered when it settles, and a rejection is that request's failure | required |
 | `description` | One line about what this backend is | optional |
 | `probe()` | What you offer, asked once at startup: the models, the commands, and the account your harness bills to | optional |
@@ -118,6 +119,18 @@ host publishes it on its root config for the connections that hold
 backend that cannot say who is billed says, and what one that learns it later
 says - an ACP server reports its own when a session opens, with
 `Start.onAccount`, which takes the place of what this answered.
+
+**`Start.storeToolResultResource` keeps content a part would carry inline.** An
+image with no source, audio, or an embedded resource's text or blob that a
+tool result or your message carries is handed to the host with the call's id
+(for a part of your message, the part's own id), the content's place among the
+contents, a name and its type. The host keeps it in the session's folder and
+answers the `ContentRef` your part names it by: a `session-db-resource:` URI a
+client reads back through `resourceRead`, as VS Code's host keeps a tool
+result's embedded resources in its session's database. Nothing back is content
+kept nowhere - over the host's `toolResultResourceLimitBytes`, 8 MiB unless
+set, or in a session whose store keeps no folder - which you leave out, as VS
+Code leaves out a resource over its bound - [RESOURCES.md](RESOURCES.md#schemes).
 
 **`find(id)` is how a row the host is not holding is opened.** A link from
 another machine, or a session written to disk after the last listing, is asked
@@ -165,18 +178,20 @@ whose transcript names turns its own way says what it wrote a turn down as with
 CLI's uuid and pi by its prompt's entry. One that keeps the id it was given, as
 cofold stores a prompt under the turn's id, says nothing.
 
-**A turn is read back as it began.** The host records, in the session's folder
-under the chat, the transcript id each turn began under: its own id as it
-starts, whether a client sent it, the host took it up from the chat's queue, or
-your backend opened it itself, and what `onTurnRecorded` says. A read puts a turn your
-transcript holds and the record does not inside the turn before it, and so does
-a turn recorded as the same turn as the one before, which is that turn written
-down again: Claude's CLI writes a steering message it runs after the turn's last
-answer as a prompt of its own, and a retried turn's prompt a second time. The
-joined turn keeps the first one's id and message, takes both answers, ends as
-the later one ended, and spent what both spent. Turns before the first one the
-record holds stay as they are, so a chat from before the record, or one on a
-store with no session folder, reads as your transcript gives it.
+**A turn is read back as it began.** Each turn your transcript holds reads back
+as a turn of its own, as VS Code's replay starts a turn at every prompt a
+transcript holds: a steering message Claude's CLI runs after the turn's last
+answer, which it writes as a prompt of its own, reads back as its own turn. The
+host records, in the session's folder under the chat, the transcript id each
+turn began under: its own id as it starts, whether a client sent it, the host
+took it up from the chat's queue, or your backend opened it itself, and what
+`onTurnRecorded` says. A turn recorded as the same turn as the one before it is
+that turn run again and written down a second time, as Claude's CLI writes a
+resumed turn's prompt, and the two read back as one turn, as VS Code's host
+keeps a resumed turn: the first one's id and message, both answers, the later
+one's end, both durations added, and the later one's counts and model with the
+cost of both. A chat with no record, or one on a store with no session folder,
+reads as your transcript gives it.
 
 ## `Session`
 
@@ -281,10 +296,14 @@ setConfig: (key, value) => {
 Two things stop a turn and wait for a person, and they are answered by different
 methods:
 
-| | `Session` method | announced by |
+| | `Session` method | said on the chat as |
 | --- | --- | --- |
-| a tool call waiting to be allowed | `confirm(toolCallId, approved, optionId?)` | `session/inputNeededSet` with `kind: 'toolConfirmation'` |
-| a question that is not about a tool | `answer(requestId, accepted, answers)` | `session/inputNeededSet` with `kind: 'chatInput'` |
+| a tool call waiting to be allowed | `confirm(toolCallId, approved, optionId?)` | `chat/toolCallReady` with no `confirmed` |
+| a question that is not about a tool | `answer(requestId, accepted, answers)` | `chat/inputRequested` |
+
+The session's `inputNeeded` list is the host's, an entry raised for each from
+the chat's state and taken down once answered; a backend leaves the list to the
+host.
 
 A confirmation may offer the agent's own choices as `options` on the call's `chat/toolCallReady` and on the entry's `toolCall`.
 `optionId` is the `id` of the one the person picked, from the client's `selectedOptionId`, and is absent when none was.
@@ -318,7 +337,12 @@ Everything a session emits is the host's own action, said with no origin, as
 [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679)
 says a client's action and then runs the side effect that reaches its agent. A
 start a session says of a turn the chat holds already is not said again, since
-a second start would open the turn again in every client's state.
+a second start would open the turn again in every client's state. Of the rest,
+an action of another turn while one runs is dropped, and with none running, a
+completion of a turn a stop ended, as
+[VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L900-L963)
+drops its agents' stale actions; anything else goes out, and the protocol's
+reducer leaves what no longer applies as it was.
 
 ## The rules that fail silently
 
@@ -335,6 +359,7 @@ this repository a bug.
 | **`duration` is required and required in earnest** | on `turnComplete`, `turnCancelled` and `error`. A client clamps it with `Math.max(0, duration)`, so an absent one is `NaN` rather than a missing number, and the reducer throws building a timestamp out of it - which stops that client reading the channel at all |
 | **`chat/toolCallStart` creates its own part** | Do not also send `chat/responsePart` for a tool call, or it appears twice. `chat/inputRequested` does the same for a question |
 | **A tool call that is not asking says `confirmed`** | `chat/toolCallReady` with `confirmed: 'not-needed'` runs; the same action without it waits. Leave it off and a record of things that already ran is drawn as a queue of questions nobody put |
+| **A question says what the call asks for** | A `chat/toolCallReady` with a `confirmationTitle` carries `PendingConfirmation`'s host-only fields beside it: `permissionKind`, `permissionPath`, `permissionUrl`, `shellCommand`, `shellLanguage`, `requestSandboxBypass` and `managedApprovalRequired`. The host decides the question from them and takes them off before any client is sent it. A question without them is decided by its tool's name alone - [PLUGINS.md](../plugins/PLUGINS.md#a-question-about-a-tool-call). `Start.managedSettings` hands the operator's managed permissions to a runtime that enforces them on the calls it never asks the host about |
 | **The result is one object** | `chat/toolCallComplete` carries `result: { success, pastTenseMessage, content?, error? }`. A client spreads `action.result` over the call and reads nothing else, so a `content` beside it is dropped without a word |
 | **A failed tool is `completed`** | `ToolCallStatus` has no `failed`. What went wrong is `result.success` and `result.error` |
 

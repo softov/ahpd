@@ -126,15 +126,14 @@ const tick = (): Promise<void> => new Promise((done) => { setTimeout(done, 20); 
 
 it('does not let a connection that is nobody stop the daemon', async () => {
   /*
-   * `shutdown` was served and classified nowhere, so any connection that had
-   * completed a handshake could stop the daemon - and in the daemon it is
-   * `SIGTERM`, so it takes every session on the machine with it. It has a
-   * grant now.
+   * `shutdown` closes the host, every session on the machine with it, so it
+   * takes a grant, and a connection that is nobody is refused it. A plugin's
+   * close is what counts a close here.
    */
   let stopped = 0;
   const made = host({
     users: directory({ m: ['file:read'] }),
-    diagnostics: { shutdown: () => { stopped += 1; } },
+    closers: [{ by: 'probe', close: () => { stopped += 1; } }],
   });
   const client = made.accept(peer());
   await hello(client);
@@ -166,7 +165,7 @@ it('refuses a served method nobody classified, rather than serving it to anybody
   let stopped = 0;
   const made = host({
     users: directory({ m: ['file:read'] }),
-    diagnostics: { shutdown: () => { stopped += 1; } },
+    closers: [{ by: 'probe', close: () => { stopped += 1; } }],
   });
   const client = made.accept(peer());
   await hello(client, 'm'); await signIn(client, 'm');
@@ -188,14 +187,14 @@ it('refuses a served method nobody classified, rather than serving it to anybody
 
 it('gates shutdown on config:change and the managed-settings read on diagnostics:network', async () => {
   /*
-   * Both were served and classified nowhere, so every connection that had
-   * completed a handshake reached them: `shutdown` is `SIGTERM` to the daemon,
-   * and the managed settings are the window's own troubleshooting pane.
+   * `shutdown` closes the host, and the managed settings are the window's own
+   * troubleshooting pane: each takes its grant. A plugin's close counts the
+   * host's close, which runs once however many shutdowns arrive.
    */
   let stopped = 0;
   const made = host({
     users: directory({ m: ['file:read'], g: ['session:read'] }),
-    diagnostics: { shutdown: () => { stopped += 1; } },
+    closers: [{ by: 'probe', close: () => { stopped += 1; } }],
   });
 
   // A member may not stop the daemon, and is told which grant it lacks rather
@@ -213,12 +212,13 @@ it('gates shutdown on config:change and the managed-settings read on diagnostics
   await tick();
   expect(stopped).toBe(1);
 
-  // And the door's own connection always may, as it may everything.
+  // And the door's own connection always may, as it may everything: answered,
+  // with the host already closed.
   const door = made.accept(peer(), undefined, true);
   await hello(door);
   expect(await call(door, 'shutdown', {})).toEqual({ result: {} });
   await tick();
-  expect(stopped).toBe(2);
+  expect(stopped).toBe(1);
 
   // The managed-settings read is asked beside `getNetworkDiagnosticsInfo`, for
   // the same pane, so it needs what that one needs.

@@ -1004,20 +1004,6 @@ it('lets the host make a bot for a team it holds no membership of', async () => 
  * somebody says something.
  */
 
-/**
- * The row a client reads for one session, or the failure of it not being there.
- *
- * A session is in the listing when this host has it, so an empty listing is
- * what a host that started nothing answers with.
- */
-const row = async (client: Client, uri: string): Promise<Bag> => {
-  const answer = got(await call(client, 'listSessions', { channel: ROOT }));
-  const items = (answer['items'] ?? []) as Bag[];
-  const found = items.find((one) => one['resource'] === uri);
-  if (found === undefined) throw new Error(`${uri} is in no listing`);
-  return found;
-};
-
 /** Every session this host holds, by URI. */
 const allSessions = async (client: Client): Promise<string[]> => {
   const answer = got(await call(client, 'listSessions', { channel: ROOT }));
@@ -1199,13 +1185,23 @@ it('tells a watch on one bot about that bot and nothing else', async () => {
   expect(soft.heard(channel)).toEqual(['updated bot://motion']);
 });
 
+/*
+ * A bot that is not there is refused when the watch is asked for, as the host
+ * checks a watch's root first. A person's chat under a bot is there, and its
+ * watcher, which the provider will not start, is refused at the subscribe
+ * that would attach it, as VS Code's host refuses a watcher it could not attach.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2152-L2156
+ */
 it('refuses a watch on a bot that does not exist, or on a path under one', async () => {
   const { host } = made({ soft: ['bot:*', 'session:create'] });
   const soft = await listening(host, 'soft');
   await write(soft.client, 'bot://motion', { name: 'Motion' }, { createOnly: true });
 
-  expect(await call(soft.client, 'createResourceWatch', { channel: ROOT, uri: 'bot://nobody' })).toMatchObject({ code: expect.any(Number) });
-  expect(await call(soft.client, 'createResourceWatch', { channel: ROOT, uri: 'bot://motion/leaf' })).toMatchObject({ code: expect.any(Number) });
+  expect(await call(soft.client, 'createResourceWatch', { channel: ROOT, uri: 'bot://nobody' }))
+    .toMatchObject({ code: -32008, message: 'Resource not found: bot://nobody' });
+  const { channel } = got(await call(soft.client, 'createResourceWatch', { channel: ROOT, uri: 'bot://motion/leaf' })) as { channel: string };
+  expect(await call(soft.client, 'subscribe', { channel }))
+    .toMatchObject({ code: -32001, message: `Resource watch not found: ${channel}` });
 });
 
 it('tells a watcher only about the bots it may read', async () => {
@@ -1270,8 +1266,10 @@ it('answers a read with the reader\'s own chat, and the same chat again', async 
   const chat = String(first['chat']);
   expect(chat).toMatch(/^ahp-session:\//);
   // A session of the plugin's own provider, in the bot's folder, named after
-  // the bot, and hers: it is the same session she would have started herself.
-  expect(await row(ana, chat)).toMatchObject({
+  // the bot, and hers: it is the same session she would have started herself,
+  // and listed from its first message as hers would be.
+  const opened = got(await call(ana, 'subscribe', { channel: chat }))['snapshot'] as { state: Bag };
+  expect(opened.state).toMatchObject({
     title: 'Motion',
     workingDirectories: [uriOf(join(bots, 'motion'))],
   });

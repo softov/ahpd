@@ -17,6 +17,7 @@ import type { AutomationTriggerDefinition, CanvasState, ChatOrigin, ChatSummary,
 import type { Agent } from './agent.js';
 import type { Engine, AgentOwner, ServedEngine } from './agents.js';
 import type { StartSession } from './automations.js';
+import type { ChangesetOperationContribution } from './changes.js';
 import type { SessionConfigAnswerer } from './completions.js';
 import type { Adapter, ConnectorOwner, ServedAdapter } from './connectors.js';
 import type { EventHandler, EventName, HostHandlers } from './events.js';
@@ -480,7 +481,7 @@ export interface ServedCanvases {
   /** The plugin that opened them. */
   by: string;
   /** Where an open goes, set by the host once it exists. */
-  open?: (chat: string, state: CanvasState) => string;
+  open?: (chat: string, state: CanvasState) => Promise<string>;
   /** Where an update goes, set by the host once it exists. */
   update?: (resource: string, state: CanvasState) => void;
   /** Where a close goes, set by the host once it exists. */
@@ -1193,6 +1194,28 @@ export interface PluginHost extends PluginContext {
     schema: Record<string, unknown>,
     completions?: SessionConfigAnswerer,
   ): void;
+  /**
+   * Declare a provider's settings at the top of the root config, as VS Code
+   * registers a provider's configuration: each of `properties` joins the root
+   * config's schema, its `default` held where nothing is set, so a client
+   * pushes, reads and draws it as any root setting; and the rest of the
+   * registration is the entry a client draws the provider's settings page
+   * from, in the root's `_meta['vscode.agentCustomizationSettings']`. A key the
+   * host or another plugin already declares is a collision, reported, and the
+   * provider is named in `contracts.providerConfigurations`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1340
+   */
+  registerProviderConfiguration(registration: ProviderConfiguration): void;
+  /**
+   * Offer changeset operations beside the changes source's own, one feature
+   * area's, as VS Code registers a changeset operation contribution: every
+   * changeset a session holds advertises what `operations` answers after the
+   * source's, and an invocation of one runs the handler registered for its id.
+   * Each handler's id is named in `contracts.changesetOperations`, and an id
+   * another plugin's contribution handles is a collision, reported.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChangesetOperationService.ts#L140-L157
+   */
+  registerChangesetOperations(contribution: ChangesetOperationContribution): void;
   /** Set `HostOptions.resources`, or take the daemon's over with `'replace'`. */
   registerResources(store: PortOf<'resources'>, when?: 'replace'): void;
   /**
@@ -1297,18 +1320,21 @@ export interface PluginHost extends PluginContext {
    */
   sessionMetaChanged(uri: string): void;
   /**
-   * Show a canvas on a live chat, and answer the channel it is served on.
+   * Show a canvas on a chat, and answer the channel it is served on.
    *
-   * `state` is the whole `CanvasState`, with this plugin's own `instanceId` and
-   * `extensionId`. Its `url` is an absolute http(s) URL that the plugin itself
-   * answers, and the host never writes it to a log. A canvas already open on
-   * the chat under the same `instanceId` is drawn again and keeps its channel,
-   * and one this plugin opened is its own to change or close.
+   * A chat whose session sleeps is brought back first, with the session, as
+   * VS Code restores a session's chat before a canvas operation, and a chat no
+   * session holds is refused in VS Code's words. `state` is the whole
+   * `CanvasState`, with this plugin's own `instanceId` and `extensionId`. Its
+   * `url` is an absolute http(s) URL that the plugin itself answers, and the
+   * host never writes it to a log. A canvas already open on the chat under the
+   * same `instanceId` keeps its channel and is drawn again where its state
+   * moved, and one this plugin opened is its own to change or close.
    *
    * Refused until a host is built over the plugin, and while this host has
    * canvases turned off, which is `canvasesEnabled`'s default.
    */
-  openCanvas(chat: string, state: CanvasState): string;
+  openCanvas(chat: string, state: CanvasState): Promise<string>;
   /**
    * Replace the state of a canvas this plugin opened, whole.
    *
@@ -1535,6 +1561,34 @@ export interface PluginLink {
 export type PluginContracts = Record<string, string[]>;
 
 /**
+ * A provider's settings in the root config, VS Code's registration: who they
+ * are for and how a client groups them on a settings page, the file they live
+ * in where a client may open it, and the root config properties they are.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentCustomizationSettings.ts#L10-L34
+ */
+export interface ProviderConfiguration {
+  /** The provider the settings are for, which names the entry. */
+  provider: string;
+  /** The page's title. */
+  title: string;
+  /** One line under it. */
+  description: string;
+  /** Each setting the page draws, by its root config key, in the group it is drawn under. */
+  settings: { key: string; group: string; kind?: 'multiline'; saveLabel?: string }[];
+  /** The file the settings are kept in, where a client may offer to open it. */
+  configurationFile?: {
+    resource: string;
+    title: string;
+    description: string;
+    openLabel: string;
+    documentationUrl?: string;
+    documentationLabel?: string;
+  };
+  /** The root config properties, by key, each one property of a JSON Schema object. */
+  properties: Record<string, Record<string, unknown>>;
+}
+
+/**
  * What a plugin says about itself before a person uses it.
  *
  * The fields a client draws: a description, the categories it files the plugin
@@ -1674,6 +1728,10 @@ export interface Contribution {
   sessionConfig: Record<string, Record<string, unknown>>;
   /** Who answers the picker for a contributed key, by key. */
   sessionCompletions: Record<string, SessionConfigAnswerer>;
+  /** The provider configurations this plugin registered, each with the root config properties it declares. */
+  providerConfigurations: ProviderConfiguration[];
+  /** The changeset operation contributions this plugin registered. */
+  changesetOperations: ChangesetOperationContribution[];
   /** The singleton ports this plugin set, and whether each took one over. */
   ports: Partial<Record<PortKey, PortContribution>>;
   /**

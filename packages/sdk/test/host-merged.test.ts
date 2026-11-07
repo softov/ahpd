@@ -4,7 +4,8 @@
  * A window pushes `autoArchiveMergedSessionsAfterDays` and
  * `autoDeleteArchivedMergedSessionsAfterDays`. An hourly pass archives an
  * inactive session whose related pull requests are merged, stores the time,
- * and later deletes a session it archived that way once its tree is gone.
+ * and later deletes a session it archived that way once each of its trees is
+ * gone or synced with its remote.
  *
  * The clock is the host's `now` and `timer`: a case moves the clock by days
  * and fires the hourly pass by hand. GitHub is a fake port that records what
@@ -188,21 +189,30 @@ const hosting = async (setup: Setup = {}) => {
     }
     throw new Error(`never logged "${text}" ${times} times in:\n${lines.join('\n')}`);
   };
-  /** Open a session in the served folder, or in a tree of its own. */
+  /**
+   * Open a session in the served folder, or in a tree of its own, and run its
+   * first turn to its end: a session made fresh is provisional until its first
+   * message, and a pass looks at the sessions this host has announced.
+   */
   const open = async (name: string, config: Record<string, unknown> = {}, where = dir) => {
     const channel = `ahp-session:/${name}`;
     await client.handle({
       method: 'createSession',
       params: { channel, provider: 'echo', workingDirectories: [fileUriOf(where)], config },
     });
+    await (await say(channel)).done;
     return channel;
   };
-  /** Start a turn on a session's default chat, answering once it is over. */
-  const say = async (channel: string): Promise<{ where: string; chat: string; done: Promise<void> }> => {
-    const state = (await client.handle({ method: 'subscribe', params: { channel } }) as {
+  /**
+   * Start a turn on a session's default chat. `done` answers once the turn is
+   * over, with the folder the session works in then: a worktree session's
+   * tree is made at its first send.
+   */
+  const say = async (channel: string): Promise<{ chat: string; done: Promise<string> }> => {
+    const state = async () => (await client.handle({ method: 'subscribe', params: { channel } }) as {
       snapshot: { state: { defaultChat: string; workingDirectories: string[] } };
     }).snapshot.state;
-    const chat = state.defaultChat;
+    const chat = (await state()).defaultChat;
     const turns = async (): Promise<number> => ((await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
       snapshot: { state: { turns: unknown[] } };
     }).snapshot.state.turns.length);
@@ -213,10 +223,12 @@ const hosting = async (setup: Setup = {}) => {
     });
     const done = (async () => {
       for (let tries = 0; tries < 400 && await turns() === before; tries++) await pause();
+      const where = localPath((await state()).workingDirectories[0] ?? '');
       await client.handle({ method: 'unsubscribe', params: { channel: chat } });
       await client.handle({ method: 'unsubscribe', params: { channel } });
+      return where;
     })();
-    return { where: localPath(state.workingDirectories[0] ?? ''), chat, done };
+    return { chat, done };
   };
   /** Archive or unarchive a session, as a person does. */
   const archive = (channel: string, isArchived: boolean) => client.handle({
@@ -394,12 +406,11 @@ describe('the tree of a session the host archived', () => {
     const pulls = github();
     const h = await hosting({ dir: root, agent: echo({ path: project, pace: 0 }), worktrees: gitWorktrees(), port: pulls.port, ...setup });
     const one = await h.open('treed', { isolation: 'worktree', branch: 'main' }, project);
-    const turn = await h.say(one);
-    await turn.done;
+    const where = await (await h.say(one)).done;
     h.owns(one, [PR1]);
     pulls.states.set(PR1, 'merged');
-    const branch = git(turn.where, 'rev-parse', '--abbrev-ref', 'HEAD');
-    return { h, one, where: turn.where, branch, project };
+    const branch = git(where, 'rev-parse', '--abbrev-ref', 'HEAD');
+    return { h, one, where, branch, project };
   };
 
   /** Archive it by the pass. */
@@ -455,6 +466,19 @@ describe('the tree of a session the host archived', () => {
     await h.logged('merged sessions: looked at 1, archived 0, deleted 0');
     expect(h.removed(h.first)).toEqual([]);
     expect(h.archived(one)).toBe(true);
+  });
+
+  it('deletes a session whose tree was pushed after the archive, past the delete days, taking the tree and keeping the branch', async () => {
+    const { h, one, where, branch, project } = await treed();
+    await pass(h);
+    await h.logged(`kept ${where}: its branch has no upstream or has commits nobody pushed`);
+    git(where, 'push', '-q', '-u', 'origin', branch);
+    h.days(31);
+    await h.push({ [DELETE]: 30 });
+    await h.logged('merged sessions: looked at 1, archived 0, deleted 1');
+    expect(h.removed(h.first)).toEqual([h.uriOf(one)]);
+    expect(existsSync(where)).toBe(false);
+    expect(git(project, 'branch', '--list', branch)).toContain(branch);
   });
 });
 
@@ -541,6 +565,23 @@ describe('how the pass looks a pull request up', () => {
     await h.push({ [ARCHIVE]: 7 });
     await h.logged('merged sessions: looked at 1, archived 1');
     expect(pulls.asked).toEqual([`url ${PR1}`, `url ${PR2}`]);
+  });
+
+  /*
+   * VS Code's lifecycle reads a related pull request it cannot resolve as one
+   * that keeps the session from being archived.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L229-L241
+   */
+  it('keeps a session one of whose related pull requests GitHub answers nothing for', async () => {
+    const pulls = github();
+    const h = await hosting({ port: pulls.port });
+    const one = await h.open('unresolved');
+    h.owns(one, [PR1, PR2]);
+    pulls.states.set(PR1, 'merged');
+    h.days(8);
+    await h.push({ [ARCHIVE]: 7 });
+    await h.logged('merged sessions: looked at 1, archived 0');
+    expect(h.archived(one)).toBe(false);
   });
 
   it('asks forBranch under branch, and archives when the related ones are merged', async () => {

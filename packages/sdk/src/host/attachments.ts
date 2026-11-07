@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, stat, writeFile } from 'node:fs/promises';
-import { basename, extname, join, sep } from 'node:path';
+import { extname, join, sep } from 'node:path';
 import { SNAPSHOT_TAG as TAG } from '../resources/attachments.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { ROOT } from './channels.js';
@@ -18,15 +18,20 @@ import type { SessionStore } from '../types/sessions.js';
  * action is applied, and what the message carries from then on is the path to
  * the file.
  *
+ * A resource this host has no copy of, on any scheme, is read through the
+ * client that sent it and written the same way, as VS Code's host snapshots
+ * any attachment it lacks through the sending client.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13703-L13720
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13791-L13866
+ *
  * Four things are left exactly as the client sent them, each for the same
  * reason - this host cannot make a better one:
  *
- * - an attachment that is neither inline bytes nor a `file:` URI, because
- *   there is nothing here to fetch: a scheme this host does not serve is the
- *   client's, and the client is not the thing that called this.
  * - a `file:` URI this host already has a file for outside the session's own
  *   folder, which is the user's own file and is readable where it stands.
  * - a directory, which has no bytes to write.
+ * - a resource whose size hint is over the limit this host fetches to, since
+ *   its answer would arrive as one message past what one may carry.
  * - anything whose write failed, including a client that did not answer. The
  *   message is then no worse than it would have been without this, and the
  *   line about it is in the log rather than in a refusal, because a message
@@ -38,7 +43,8 @@ import type { SessionStore } from '../types/sessions.js';
  */
 
 /**
- * The largest file a client is asked for, in bytes.
+ * The largest file a client is asked for, in bytes, where the host was given
+ * no `attachmentFetchLimitBytes`.
  *
  * The answer arrives as one JSON-RPC message, and this is below what a message
  * may carry: a client-only file larger than this is left where it is rather
@@ -69,32 +75,34 @@ const EXTENSIONS: Record<string, string> = {
  * A settled message is applied by handing it back to the host as this
  * connection's own dispatch, and the second pass over it is not a second
  * message: the attachment this host wrote is named by a tagged `resource`
- * that `needsWriting` says no to, and the one it left as sent would be looked
+ * that `needsAsyncRewrite` says no to, and the one it left as sent would be looked
  * for on disk all over again.
  */
 const handled = new WeakSet<object>();
 
 /**
- * Whether a message has an attachment still to be written or tagged.
+ * Whether a message has an attachment still to be written or tagged, as VS
+ * Code's host asks whether an action needs an async rewrite.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13695-L13701
  *
  * Asked before a dispatch is applied, and the answer is what decides whether
  * the action is applied in the tick it arrived in or waits for a file. Every
  * message with no attachments answers no, which is the ordinary case and the
  * one that keeps the actions of a turn in the order they were written in.
  */
-export function needsWriting(message: unknown, store: SessionStore, id: string): boolean {
+export function needsAsyncRewrite(message: unknown, store: SessionStore, id: string): boolean {
   if (store.attachmentsDir?.(id) === undefined) return false;
   const one = (typeof message === 'object' && message !== null ? message : {}) as Bag;
   if (handled.has(one) || !Array.isArray(one.attachments)) return false;
-  return (one.attachments as unknown[]).some(wouldWrite);
+  return (one.attachments as unknown[]).some(isRewritableAttachment);
 }
 
-/** Whether one attachment is one this host would write a file for. */
-function wouldWrite(value: unknown): boolean {
+/** Whether one attachment is one this host would write a file for: rewritable, in VS Code's word. */
+function isRewritableAttachment(value: unknown): boolean {
   const one = (typeof value === 'object' && value !== null ? value : {}) as Bag;
   if (one.type === 'embeddedResource') return true;
   if (one.type !== 'resource') return false;
-  return typeof one.uri === 'string' && one.uri.startsWith('file://') && !heldSnapshot(one);
+  return typeof one.uri === 'string' && one.uri !== '' && one.displayKind !== 'directory' && !heldSnapshot(one);
 }
 
 /**
@@ -128,6 +136,8 @@ export interface SnapshotAsked {
   store: SessionStore;
   /** The connection the message arrived on, and the only reader of a file only it has. */
   connection?: Connection;
+  /** The largest file the client is asked for, in bytes: unset is 32 MiB, and 0 is any size. */
+  limit?: number;
   /** Somewhere to say that one attachment was left as it was sent. */
   onProblem?(line: string): void;
 }
@@ -140,7 +150,8 @@ export async function snapshot(asked: SnapshotAsked): Promise<Record<string, unk
   const arrived = message.attachments as unknown[];
   if (arrived.length === 0) return message;
   const told = asked.onProblem ?? ((): void => {});
-  const settled = await Promise.all(arrived.map((one) => written(one, dir, connection, told)));
+  const limit = asked.limit ?? FETCH_LIMIT;
+  const settled = await Promise.all(arrived.map((one) => written(one, dir, connection, limit, told)));
   // The ones that could not be settled come back as themselves, so the
   // message that arrived unchanged is the message that goes on.
   if (settled.every((one, at) => one === arrived[at])) {
@@ -162,6 +173,7 @@ async function written(
   value: unknown,
   dir: string,
   connection: Connection | undefined,
+  limit: number,
   told: (line: string) => void,
 ): Promise<unknown> {
   const one = (typeof value === 'object' && value !== null ? value : {}) as Bag;
@@ -170,31 +182,34 @@ async function written(
       const contentType = typeOf(one.contentType);
       const bytes = Buffer.from(typeof one.data === 'string' ? one.data : '', 'base64');
       const path = await put(dir, labelOf(one), contentType, bytes);
-      return tagged(value, one, path, bytes.length, contentType);
+      return tagged(one, path, contentType);
     }
-    if (one.type !== 'resource') return value;
+    if (one.type !== 'resource' || one.displayKind === 'directory') return value;
     const uri = typeof one.uri === 'string' ? one.uri : '';
-    // Only a file is a file. Nothing else names something this host could
-    // write, and a scheme it does not serve is the client's own business.
-    if (!uri.startsWith('file://')) return value;
-    const path = localPath(uri);
-    const found = await stat(path).catch(() => undefined);
-    if (found !== undefined) {
-      // A folder this session's own, holding a file this host wrote and a
-      // client sent back: the file is already there and only the tag is
-      // missing. Anything else is somebody's own file, and stays theirs.
-      if (!found.isFile() || !inside(dir, path)) return value;
-      return tagged(value, one, path, found.size, typeOf(one.contentType));
+    if (uri === '') return value;
+    if (uri.startsWith('file://')) {
+      const path = localPath(uri);
+      const found = await stat(path).catch(() => undefined);
+      if (found !== undefined) {
+        // A folder this session's own, holding a file this host wrote and a
+        // client sent back: the file is already there, so an attachment
+        // missing the tag is given it and one carrying it is left as it is.
+        // Anything else is somebody's own file, and stays theirs.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13825-L13830
+        if (!found.isFile() || !inside(dir, path) || heldSnapshot(one)) return value;
+        const meta = (typeof one._meta === 'object' && one._meta !== null ? one._meta : {}) as Bag;
+        return { ...one, _meta: { ...meta, [TAG]: { isSnapshot: true, contentType: typeOf(one.contentType) } } };
+      }
     }
-    // A file this host has no copy of: the client that sent it is the only
-    // thing that can read it, and only where it is small enough to answer
-    // with.
+    // A resource this host has no copy of, on any scheme: the client that
+    // sent it is the only thing that can read it, and only where it is small
+    // enough to answer with.
     const hinted = typeof one.sizeHint === 'number' ? one.sizeHint : 0;
-    if (connection === undefined || hinted > FETCH_LIMIT) return value;
+    if (connection === undefined || (limit > 0 && hinted > limit)) return value;
     const contentType = typeOf(one.contentType);
     const bytes = await fromClient(connection, uri);
     const held = await put(dir, labelOf(one), contentType, bytes);
-    return tagged(value, one, held, bytes.length, contentType);
+    return tagged(one, held, contentType);
   } catch (error) {
     told(`could not write an attachment: ${error instanceof Error ? error.message : String(error)}`);
     return value;
@@ -204,68 +219,56 @@ async function written(
 /**
  * The attachment, naming the file that holds its bytes.
  *
- * The tag is merged into whatever `_meta` the attachment already carried,
- * because the client that sent it may have put something there that this host
- * knows nothing about.
+ * It carries what VS Code's host gives the attachment it rewrites: the label,
+ * the range, the display kind, a resource's selection, and the tag, which
+ * holds the type the bytes are in. The tag is merged into whatever `_meta`
+ * the attachment already carried, because the client that sent it may have
+ * put something there that this host knows nothing about.
+ *
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13869-L13893
  */
-function tagged(
-  value: unknown,
-  one: Bag,
-  path: string,
-  size: number,
-  contentType: string,
-): unknown {
-  const uri = uriOf(path);
-  const tag = { isSnapshot: true, contentType };
+function tagged(one: Bag, path: string, contentType: string): Record<string, unknown> {
   const meta = (typeof one._meta === 'object' && one._meta !== null ? one._meta : {}) as Bag;
-  const held = (typeof meta[TAG] === 'object' && meta[TAG] !== null ? meta[TAG] : {}) as Bag;
-  // Already this file, already tagged: the attachment a client sent back is
-  // the one that arrived, and nothing about it moved.
-  if (one.type === 'resource' && one.uri === uri && one.contentType === contentType
-    && heldSnapshot(one) && held.contentType === contentType) {
-    return value;
-  }
   return {
     label: labelOf(one),
     ...(one.range === undefined ? {} : { range: one.range }),
     ...(one.displayKind === undefined ? {} : { displayKind: one.displayKind }),
-    ...(one.selection === undefined ? {} : { selection: one.selection }),
+    ...(one.type === 'resource' && one.selection !== undefined ? { selection: one.selection } : {}),
     type: 'resource',
-    uri,
-    sizeHint: size,
-    contentType,
-    _meta: { ...meta, [TAG]: tag },
+    uri: uriOf(path),
+    _meta: { ...meta, [TAG]: { isSnapshot: true, contentType } },
   };
 }
 
 /**
- * The bytes, written read-only under a name of this host's own.
+ * The bytes, written read-only in a folder of their own.
  *
- * The name is this host's rather than the client's: the label is a display
- * string, and a label is not a path. Its basename is kept so a person reading
- * the folder can tell the files apart, the unique prefix is what keeps two
- * pastes of the same name apart, and the extension comes from the content type
- * that the file is actually in.
+ * As VS Code's host writes a snapshot: a fresh folder named by a UUID, which
+ * is what keeps two pastes of the same name apart, holding the file under
+ * the label with the characters no path segment carries replaced, and the
+ * content type's extension where the label has none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13868-L13907
  */
 async function put(dir: string, label: string, contentType: string, bytes: Buffer): Promise<string> {
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const path = join(dir, nameOf(label, contentType));
+  const folder = join(dir, randomUUID());
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const path = join(folder, nameOf(label, contentType));
   await writeFile(path, bytes, { mode: 0o400 });
   return path;
 }
 
-/** A file's name: a unique prefix, the label's basename, the type's extension. */
+/** A file's name: the label as one path segment, with the type's extension where it has none. */
 function nameOf(label: string, contentType: string): string {
   const base = safe(label);
-  const own = extname(base);
-  const wanted = extensionOf(contentType);
-  const stem = base.slice(0, base.length - own.length);
-  return `${randomUUID().slice(0, 8)}-${stem}${wanted === '' ? own : wanted}`;
+  return extname(base) !== '' ? base : `${base}${extensionOf(contentType)}`;
 }
 
-/** The label as one path segment, and as nothing at all when it is not one. */
+/**
+ * The label as one path segment, as VS Code replaces what a segment cannot
+ * hold; `.` and `..`, which would name a folder, are this host's own guard.
+ */
 function safe(label: string): string {
-  const base = basename(label).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  const base = label.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_');
   return base === '' || base === '.' || base === '..' ? 'attachment' : base;
 }
 

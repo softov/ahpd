@@ -66,13 +66,16 @@ const ports = {
   },
   sessions: {
     flags: () => {}, setFlags: () => {}, config: () => {}, setConfig: () => {},
+    scope: () => {}, setScope: () => {}, owner: () => {}, setOwner: () => {},
+    sender: () => {}, setSender: () => {}, provider: () => {}, setProvider: () => {},
+    changes: () => {}, setChanges: () => {},
     artifacts: () => {}, setArtifacts: () => {}, pullRequests: () => {}, setPullRequests: () => {},
     chatTitle: () => {}, setChatTitle: () => {}, chats: () => {}, setChats: () => {}, forget: () => {},
-    chatFlags: () => {}, setChatFlags: () => {},
+    chatFlags: () => {}, setChatFlags: () => {}, moveChat: () => {},
     sessions: () => {},
   },
   diagnostics: {},
-  usage: { record: () => {}, total: () => {} },
+  usage: { record: () => {}, total: () => {}, pools: () => {}, records: () => {}, groups: () => {} },
 };
 
 const sessionsWithoutChatTitle = (): Record<string, unknown> => {
@@ -179,6 +182,23 @@ describe('pluginHost', () => {
     expect(() => host.registerSessions(sessionsWithoutASessionList() as never)).toThrow(/registerSessions.*sessions/);
   });
 
+  /*
+   * Every member a port's type requires is checked, so a store lacking one is
+   * refused naming it rather than accepted and failing at its first use.
+   */
+  it('refuses a sessions or usage store lacking any member its type requires, naming it', () => {
+    const lacking = (store: Record<string, unknown>, member: string): Record<string, unknown> =>
+      Object.fromEntries(Object.entries(store).filter(([key]) => key !== member));
+    for (const member of ['scope', 'setScope', 'owner', 'setOwner', 'sender', 'setSender', 'provider', 'setProvider', 'changes', 'setChanges', 'moveChat']) {
+      const { host } = pluginHost('alpha', context());
+      expect(() => host.registerSessions(lacking(ports.sessions, member) as never)).toThrow(new RegExp(`alpha.*registerSessions.*\\b${member}\\b`));
+    }
+    for (const member of ['pools', 'records', 'groups']) {
+      const { host } = pluginHost('alpha', context());
+      expect(() => host.registerUsage(lacking(ports.usage, member) as never)).toThrow(new RegExp(`alpha.*registerUsage.*\\b${member}\\b`));
+    }
+  });
+
   it('accepts empty diagnostics and an agent with no probe, because both are optional', () => {
     const { host } = pluginHost('alpha', context());
     host.registerDiagnostics({} as never);
@@ -240,6 +260,40 @@ describe('pluginHost', () => {
     const { options, problems } = foldHostOptions(base(), [contribution]);
     expect(problems).toEqual([]);
     expect(options.methods?.['x-alpha/echo']?.method).toBe(method);
+  });
+
+  it('accepts a complete provider configuration, and refuses an empty one or one missing a member', () => {
+    const { host, contribution } = pluginHost('alpha', context());
+    const named = { provider: 'notes', title: 'Notes', description: 'Notes the agent keeps.' };
+    const registration = {
+      ...named,
+      settings: [{ key: 'notes.enabled', group: 'Notes' }],
+      properties: { 'notes.enabled': { type: 'boolean', title: 'Notes', default: false } },
+    };
+    expect(() => host.registerProviderConfiguration(registration as never)).not.toThrow();
+    expect(() => host.registerProviderConfiguration({} as never)).toThrow(/alpha.*registerProviderConfiguration.*a non-empty provider/);
+    expect(() => host.registerProviderConfiguration({ provider: 'other' } as never)).toThrow(/a title and a description/);
+    expect(() => host.registerProviderConfiguration({ ...named, provider: 'other', settings: [{ key: 'other.enabled' }], properties: {} } as never))
+      .toThrow(/settings, each with a key and a group/);
+    expect(() => host.registerProviderConfiguration({ ...named, provider: 'other', settings: [], properties: { 'other.enabled': true } } as never))
+      .toThrow(/properties, each a JSON Schema property object/);
+    expect(() => host.registerProviderConfiguration(registration as never)).toThrow(/alpha.*registerProviderConfiguration.*notes/);
+    const { options, problems } = foldHostOptions(base(), [contribution]);
+    expect(problems).toEqual([]);
+    expect(options.providerConfigurations?.map((one) => one.provider)).toEqual(['notes']);
+  });
+
+  it('accepts a complete changeset operation contribution, and refuses an empty one or a handler that is not a function', () => {
+    const { host, contribution } = pluginHost('alpha', context());
+    const offered = { operations: () => [], handlers: { 'merge-request': async () => ({}) } };
+    expect(() => host.registerChangesetOperations(offered as never)).not.toThrow();
+    expect(() => host.registerChangesetOperations({} as never)).toThrow(/alpha.*registerChangesetOperations.*an operations function/);
+    expect(() => host.registerChangesetOperations({ operations: () => [], handlers: { 'merge-request': 'merge' } } as never))
+      .toThrow(/handlers, each a function by operation id/);
+    expect(() => host.registerChangesetOperations(offered as never)).toThrow(/alpha.*registerChangesetOperations.*merge-request/);
+    const { options, problems } = foldHostOptions(base(), [contribution]);
+    expect(problems).toEqual([]);
+    expect(options.changesetOperations?.map((one) => one.operations)).toEqual([offered.operations]);
   });
 
   it('refuses a scheme that is not one, and the schemes the host already owns', () => {

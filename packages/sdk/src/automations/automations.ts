@@ -80,6 +80,16 @@ export interface AutomationsOptions {
    * host's agents and not a person's or a team's.
    */
   hasUsers?: () => boolean;
+  /**
+   * Write a change to a definition down before the store holds it and says
+   * it, as VS Code's automation service persists a mutation before it
+   * publishes it: a create, an update or a met condition hands the entry it
+   * would hold, and a removal the resource it takes away. A throw fails the
+   * change and leaves the store as it was, so nothing is announced that was
+   * not written.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L346-L350
+   */
+  persist?: (change: { automation: AutomationEntry } | { removed: string }) => void;
 }
 
 /** How many runs a summary list carries before it needs a cursor. */
@@ -631,8 +641,11 @@ export function memoryAutomations(options: AutomationsOptions = {}): AutomationS
    */
   const stop = (automation: Automation): void => {
     if (automation.definition.enabled === false) return;
-    automation.definition = { ...automation.definition, enabled: false };
-    automation.modifiedAt = now();
+    const definition = { ...automation.definition, enabled: false };
+    const modifiedAt = now();
+    options.persist?.({ automation: entry({ ...automation, definition, modifiedAt }) });
+    automation.definition = definition;
+    automation.modifiedAt = modifiedAt;
     said({ automation: automation.resource });
   };
 
@@ -672,6 +685,7 @@ export function memoryAutomations(options: AutomationsOptions = {}): AutomationS
         createdAt: at,
         modifiedAt: at,
       };
+      options.persist?.({ automation: entry(made) });
       held.set(resource, made);
       said({ automation: resource });
       return entry(made);
@@ -726,13 +740,16 @@ export function memoryAutomations(options: AutomationsOptions = {}): AutomationS
         ...(customizations === undefined ? {} : { customizations }),
         modifiedAt: now(),
       };
+      options.persist?.({ automation: entry(after) });
       held.set(resource, after);
       said({ automation: resource });
       return entry(after);
     },
 
     remove: (resource) => {
-      if (!held.delete(resource)) return false;
+      if (!held.has(resource)) return false;
+      options.persist?.({ removed: resource });
+      held.delete(resource);
       for (const run of history.get(resource) ?? []) byRun.delete(run.resource);
       history.delete(resource);
       loaded.delete(resource);
@@ -841,28 +858,39 @@ export function memoryAutomations(options: AutomationsOptions = {}): AutomationS
        * resolving cannot reopen it.
        */
       run.lifecycle = { ...run.lifecycle, status: 'running', startedAt: now() };
-      try {
-        const session = await start(options);
-        run.sessions = [session];
-        run.primarySession = session;
-      }
-      catch (error) {
-        // Failed, and why. A run that vanished would be indistinguishable from
-        // one that never started. The protocol's failed lifecycle calls the
-        // final timestamp `completedAt`, not `endedAt` - and no execution
-        // began, so this carries no `startedAt`.
-        run.lifecycle = {
-          status: 'failed',
-          createdAt: run.lifecycle.createdAt,
-          completedAt: now(),
-          error: { message: error instanceof Error ? error.message : String(error) },
-        };
-        // End here rather than never starting, so this run counts against the
-        // window the moment it is over - which a run that is still `pending`
-        // does not, because nothing has happened to it yet.
-        trim(resource);
-      }
-      said({ automation: resource, run: run.resource });
+      /*
+       * The run answered as recorded, and its session made after.
+       *
+       * VS Code's host answers `runAutomation` with the run it has recorded and
+       * starts that run in the background, so whoever asked is answered at once
+       * whatever making the session takes: a worktree, a machine, the plugins
+       * it copies. What the start comes to is said on the run.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L707-L713
+       */
+      void (async () => {
+        try {
+          const session = await start(options);
+          run.sessions = [session];
+          run.primarySession = session;
+        }
+        catch (error) {
+          // Failed, and why. A run that vanished would be indistinguishable
+          // from one that never started. The protocol's failed lifecycle calls
+          // the final timestamp `completedAt`, not `endedAt` - and no execution
+          // began, so this carries no `startedAt`.
+          run.lifecycle = {
+            status: 'failed',
+            createdAt: run.lifecycle.createdAt,
+            completedAt: now(),
+            error: { message: error instanceof Error ? error.message : String(error) },
+          };
+          // End here rather than never starting, so this run counts against
+          // the window the moment it is over - which a run that is still
+          // `pending` does not, because nothing has happened to it yet.
+          trim(resource);
+        }
+        said({ automation: resource, run: run.resource });
+      })();
       return run;
     },
 

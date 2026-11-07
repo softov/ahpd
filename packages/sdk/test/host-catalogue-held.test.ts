@@ -350,7 +350,8 @@ describe('a refresh and a session this host is running', () => {
       method: 'dispatchAction',
       params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
     });
-    await settle(8);
+    // Said once the session's moves are quiet, past the catalogue's debounce.
+    await until(() => said(notes, 'root/sessionSummaryChanged').length > 0);
     expect(said(notes, 'root/sessionSummaryChanged').map((one) => one.session)).toContain('ahp-session:/one');
   });
 

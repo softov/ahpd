@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { customizationsOf, EFFORT_DESCRIPTIONS, EFFORT_LABELS, EFFORTS, SDK_DEFAULT_MODEL_VALUE } from './session.js';
+import { customizationsOf, SDK_DEFAULT_MODEL_VALUE } from './session.js';
+import { thinkingFor } from './session/config.js';
 import { configDirOf, diskOf, managedDirOf } from './session/disk.js';
 import { isClaudeAccountSetUp } from './logins.js';
 import type { Account, Offered } from '@ahpd/sdk';
@@ -15,40 +16,6 @@ import { bag, isRecord, str } from '@ahpd/sdk';
  */
 
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
-
-/**
- * How hard *this* model can be told to think, as its own config schema.
- *
- * Per model: the CLI reports a different `supportedEffortLevels` for each -
- * some take all five, some take one, and some take none - and a control lists
- * what its model has. A model that supports none gets no schema and a client
- * draws no control, which is the honest form of "this one does not think
- * harder on request".
- *
- * `thinkingLevel` is the key, because that is the one the reference client's
- * picker writes into `ModelSelection.config` for both of its providers, and
- * the property is VS Code's Claude schema for it.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L107-L126
- */
-const thinkingFor = (efforts: string[]): { configSchema?: Record<string, unknown> } => {
-  if (efforts.length === 0) return {};
-  return {
-    configSchema: {
-      type: 'object',
-      properties: {
-        thinkingLevel: {
-          type: 'string',
-          title: 'Effort Level',
-          description: 'Controls how much reasoning effort Claude uses.',
-          enum: [...efforts],
-          enumLabels: efforts.map((one) => EFFORT_LABELS[one as typeof EFFORTS[number]] ?? one),
-          enumDescriptions: efforts.map((one) => EFFORT_DESCRIPTIONS[one as typeof EFFORTS[number]] ?? ''),
-          ...(efforts.includes('high') ? { default: 'high' } : {}),
-        },
-      },
-    },
-  };
-};
 
 /**
  * The account the CLI is signed in as, as `Offered.account`.

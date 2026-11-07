@@ -9,7 +9,7 @@ covers:
   - packages/sdk/src/types/terminals.ts
 decisions:
   - decisions/claude-approvals-keeps-dont-ask.md
-  - decisions/each-backend-offers-its-options-unless-a-rule-asks.md
+  - decisions/the-host-puts-each-tool-question-and-keeps-the-sessions-answer.md
   - decisions/pi-is-embedded-not-spawned.md
   - decisions/subagent-chats-are-restored-from-the-cli-meta-file.md
   - decisions/the-daemon-bundles-no-agent-and-starts-without-one.md
@@ -179,7 +179,7 @@ WHEN a stopped turn's result comes while another turn runs
 THEN it ends no turn.
 WHEN the steered turn moves to another login
 THEN the new CLI gets the turn's prompt again under a new uuid that `onTurnRecorded` tells the host
-AND the turn's steering messages behind it, each under a new uuid that began no turn, so the host reads them back inside the turn
+AND the turn's steering messages behind it, each under a new uuid, which the host reads back as a turn of its own
 AND a turn opened for a steering message sends the message again as its prompt, under a new uuid that `onTurnRecorded` tells the host.
 WHEN the turn ends with the refusal because its conversation could not start over
 THEN the new CLI gets the steering messages the old one never took in
@@ -187,13 +187,13 @@ AND each is answered in a turn of its own.
 WHEN the transcript is read back
 THEN a message the SDK's reader marks `isQueuedCommand` joins the open turn
 AND the CLI's stop text opens no turn and ends the open turn as cancelled
-AND the host reads a steering message the CLI ran late back inside the turn it steered, because the message began no turn
-AND a steering message answered in a turn of its own reads back as that turn, which began.
-WHEN a session resumes a conversation the host read back so
-THEN a turn ends where the last prompt read back inside it ends, up to a rewind's point.
+AND the host reads a steering message the CLI ran late back as a turn of its own
+AND a steering message answered in a turn of its own reads back as that turn.
+WHEN a session resumes a conversation whose turn the host read back as one turn run twice
+THEN that turn ends where its later run ends, up to a rewind's point.
 The reason: the CLI folds a steering message into a turn at its next tool call.
-One that arrives after the last tool call runs as a turn of its own.
-The CLI writes nothing else that ties that message to the turn it steered.
+One that arrives after the last tool call runs as a turn of its own, which the CLI writes as a prompt.
+VS Code's replay starts a turn at every prompt a transcript holds.
 A prompt that reaches the CLI while such a message waits there runs with it, as one turn with one answer.
 *A turn is read back as it began* in the sessions spec says how the host reads such a turn back.
 See [`code://packages/agent-claude/src/session/query.ts`](../../packages/agent-claude/src/session/query.ts) and [`code://packages/agent-claude/src/transcript.ts`](../../packages/agent-claude/src/transcript.ts).
@@ -215,7 +215,7 @@ THEN its prompt goes to the CLI once the CLI has answered that change
 AND a turn with no change in hand starts at once.
 The reason: the protocol applies a session's actions in one order.
 So a turn a client sends after announcing its tools is a turn of a session that has them.
-And the host hands the tools over without waiting for them to land.
+The host hands the tools over without waiting for them to land.
 
 ### pi models come from the pi runtime
 

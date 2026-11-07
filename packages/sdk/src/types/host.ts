@@ -1,18 +1,18 @@
 /** The protocol server: channels, subscriptions and requests. */
 
-import type { ToolDefinition } from '@microsoft/agent-host-protocol';
+import type { ProjectInfo, ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
 import type { ToolsServers } from '../tools/server.js';
 import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
 import type { Grant, Principal, Users } from './users.js';
 import type { TerminalStore } from './terminals.js';
-import type { ChangesetSource } from './changes.js';
+import type { ChangesetOperationContribution, ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
 import type { EnablementStore } from '../plugins/enablement.js';
-import type { ChatPreamble, GrantEntry, PluginConnects, PluginStarts, PluginTriggers, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta } from './plugin.js';
+import type { ChatPreamble, GrantEntry, PluginConnects, PluginStarts, PluginTriggers, ProviderConfiguration, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta } from './plugin.js';
 import type { ConnectorRef, ServedAdapter } from './connectors.js';
 import type { AgentOwner, ServedEngine } from './agents.js';
 import type { ServedTunnelKind } from './tunnels.js';
@@ -28,6 +28,7 @@ import type { PayOrder } from '../usage/charge.js';
 import type { RecordStore } from './records.js';
 import type { Vault } from './vault.js';
 import type { Peer, Request } from './rpc.js';
+import type { ManagedSettingsPermissions } from './permissions.js';
 import type { Opened } from './listen.js';
 import type { Summary } from './catalog.js';
 import type { Bag } from './common.js';
@@ -39,11 +40,12 @@ import type { Catalogs } from '../i18n.js';
 /**
  * What a host can say about a directory beyond its path.
  *
- * Injected rather than built in. The interesting answers come from outside the
- * protocol - a branch is a `git` subprocess, and `git` is a binary that may
- * not be installed - and a host embedded in something that already knows them
- * should not have them read a second time. A host given none says only what a
- * path alone can tell it, which is the project's name.
+ * Injected rather than built in. The answers come from outside the protocol -
+ * a project and a branch are `git` subprocesses, and `git` is a binary that
+ * may not be installed - and a host embedded in something that already knows
+ * them should not have them read a second time. A host given none says
+ * nothing past the path: no project, as VS Code's agents report none where
+ * git cannot place a folder.
  */
 export interface DirectoryFacts {
   /**
@@ -58,6 +60,25 @@ export interface DirectoryFacts {
    */
   meta(dir: string): Record<string, unknown> | undefined;
   /**
+   * The project a directory's sessions are in, as a session's `project`: the
+   * repository it is in, named as VS Code's agents name it, or nothing where
+   * there is none.
+   *
+   * Synchronous for the reason `meta` is, and read from what `refresh` or
+   * `refreshProject` found.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotGitProject.ts#L18-L30
+   */
+  project?(dir: string): ProjectInfo | undefined;
+  /**
+   * Read the project alone of a directory not read yet, answering whether it
+   * moved; one read already keeps its project until `refresh`.
+   *
+   * Asked when a session is made in a directory, so it is announced with its
+   * project, as VS Code's host resolves a new session's project and nothing
+   * else of its folder before announcing it.
+   */
+  refreshProject?(dir: string): Promise<boolean>;
+  /**
    * Look again, answering whether anything actually moved.
    *
    * Asked once per served directory at startup and again whenever a turn
@@ -65,6 +86,30 @@ export interface DirectoryFacts {
    * changed costs nothing but the look.
    */
   refresh?(dir: string): Promise<boolean>;
+}
+
+/** The files under a working directory, as a listing answers them. */
+export interface WorkspaceFilesResult {
+  /** Every file listed, as an absolute path. */
+  files: string[];
+  /** Whether the listing stopped short of every file there is. */
+  isTruncated: boolean;
+}
+
+/**
+ * The files under a session's working directories, which `@` and a `#` on its
+ * way to a file complete against.
+ *
+ * Injected rather than built in, for the reason `DirectoryFacts` is: VS Code's
+ * agent host lists them with ripgrep, a binary that may not be installed. A
+ * host given none offers no file in its completions.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostWorkspaceFiles.ts
+ */
+export interface WorkspaceFiles {
+  /** The files under `dir`; concurrent calls for one directory share one listing. */
+  getFiles(dir: string): Promise<WorkspaceFilesResult>;
+  /** Stop every listing still running, as the host closes. */
+  close?(): void;
 }
 
 /*
@@ -143,8 +188,8 @@ export interface ConnectedClient {
   locale?: string;
   /** The person this connection signed in as, when it did. */
   principal?: Principal;
-  /** Channel URIs this client subscribed to. */
-  watching: string[];
+  /** The channels this client subscribed to, each by the host's own channel. */
+  subscriptions: string[];
   /** When the connection was accepted, as a wall-clock millisecond. */
   connectedAt: number;
 }
@@ -375,12 +420,28 @@ export interface HostOptions {
    */
   changes?: ChangesetSource;
   /**
+   * Changeset operations beside the source's own, one feature area each, as
+   * VS Code registers a changeset operation contribution: every changeset a
+   * session holds advertises the operations each offers after the source's,
+   * and an invocation of one runs its handler. The fold fills this from
+   * `registerChangesetOperations`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L88-L118
+   */
+  changesetOperations?: ChangesetOperationContribution[];
+  /**
    * What this host can say about the directories it serves.
    *
-   * Left out, sessions carry their project and nothing more. `gitBranches()`
-   * is the one that ships with this package, and the daemon uses it.
+   * Left out, sessions carry no project and no git facts. `gitBranches()` is
+   * the one that ships with this package, and the daemon uses it.
    */
   directories?: DirectoryFacts;
+  /**
+   * The files a session's working directories hold, which `@` completes.
+   *
+   * Left out, no completion offers a file. `ripgrepFiles()` is the one that
+   * ships with this package, and the daemon uses it.
+   */
+  workspaceFiles?: WorkspaceFiles;
   /**
    * Whether a session can be given a working tree of its own.
    *
@@ -658,6 +719,17 @@ export interface HostOptions {
    */
   sessionConfig?: Record<string, Record<string, unknown>>;
   /**
+   * Providers' settings at the top of the root config, as VS Code registers a
+   * provider's configuration: each registration's `properties` join the root
+   * config's schema, a default held where nothing is set, and the rest is an
+   * entry of the root's `_meta['vscode.agentCustomizationSettings']`.
+   *
+   * The fold fills this from `registerProviderConfiguration`; a host that sets
+   * it itself declares the settings without a plugin.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1340
+   */
+  providerConfigurations?: ProviderConfiguration[];
+  /**
    * Who answers `sessionConfigCompletions` for a contributed key.
    *
    * A key with no answerer is a fact a client fills in by hand, which is how
@@ -704,6 +776,43 @@ export interface HostOptions {
    */
   closedChats?: 'hidden' | 'delete';
   /**
+   * What a turn naming a model its chat's agent does not offer does.
+   *
+   * `fail`, the default, ends the turn in a `modelSelectionFailed` error
+   * saying so. `keep` is VS Code's: a chat whose agent is not its session's
+   * keeps the model it has, the choice logged, and any other chat's agent is
+   * handed the model as it is. An agent that has said nothing of its models is
+   * handed it either way.
+   */
+  unofferedModel?: 'fail' | 'keep';
+  /**
+   * Whether a turn's sender is said on what clients read.
+   *
+   * `said`, the default, puts who sent each turn under `_meta['ahpd.sender']`
+   * on its start and its message, live and in every turn read back. `kept` is
+   * VS Code's: the host keeps each turn's sender, for its store, its events
+   * and its usage, and says it in no action and no turn a client reads.
+   */
+  turnSenders?: 'said' | 'kept';
+  /**
+   * What a backend's own `chat/backgroundWorkSet` and
+   * `chat/backgroundWorkRemoved` come to.
+   *
+   * `drop`, the default, drops them with a line in the log, the host drawing
+   * every background row from `backgroundTasks`. `say` is VS Code's: the
+   * backend's action is said as the host's own.
+   */
+  backendBackgroundWork?: 'drop' | 'say';
+  /**
+   * What the session tools' counts of sessions and chats made and messages
+   * sent are kept per, over their sliding hour.
+   *
+   * `sessionTree`, the default, keeps one count for a session somebody started
+   * and every session the tools grew from it. `session` is VS Code's: each
+   * session's own count.
+   */
+  agentOrchestrationLimitsScope?: 'sessionTree' | 'session';
+  /**
    * What archiving a session does with a working tree that has changes
    * nobody committed.
    *
@@ -734,6 +843,17 @@ export interface HostOptions {
    */
   clientToolTimeoutMs?: number;
   /**
+   * How long a client whose connections have all closed keeps its place in a
+   * session, and the tool calls it owes there, in milliseconds, as VS Code's
+   * `CLIENT_TOOL_CALL_DISCONNECT_TIMEOUT`.
+   *
+   * A client that connects again inside it has never left. Once it runs out,
+   * each call the client still owes fails in VS Code's words, the client's
+   * entry leaves the session, and its tools with it. Unset is thirty seconds;
+   * zero releases a client as soon as it goes.
+   */
+  clientToolCallDisconnectTimeoutMs?: number;
+  /**
    * The environment the operator names for the shells this host starts.
    *
    * A daemon that runs with an environment of its own - a service unit with a
@@ -760,6 +880,19 @@ export interface HostOptions {
    * nothing.
    */
   terminalAutoApproveDefaults?: 'vscode' | 'none';
+  /**
+   * The managed permissions the operator sets for every session on the host,
+   * in VS Code's shape: managed `ask` and `deny` rules, the Allow All lock,
+   * and the domains a fetch stays within.
+   *
+   * The host checks the rules of `deny` and `ask`, and `limitTo`, on every
+   * tool question of their kind, beside the session's permissions, and the
+   * lock takes the host's Allow All away from every session. Handed to every
+   * backend on `Start.managedSettings` as well, as VS Code hands its runtime
+   * `managedSettings: { permissions }`, for a runtime that enforces them on
+   * the calls it never asks the host about.
+   */
+  managedSettingsPermissions?: ManagedSettingsPermissions;
   /**
    * How a session's shell commands are read before their rules are matched.
    *
@@ -813,6 +946,23 @@ export interface HostOptions {
    * 10; zero is no limit.
    */
   sessionResidencyLimit?: number;
+  /**
+   * The largest file this host asks a client for, in bytes: an attachment
+   * this host has no copy of is read through the client that sent it, and one
+   * whose `sizeHint` is over this is left as it was sent. The answer arrives as
+   * one message, so this stays below what one may carry. Unset is 33554432
+   * (32 MiB); zero fetches any size, as VS Code's host does.
+   */
+  attachmentFetchLimitBytes?: number;
+  /**
+   * The most bytes this host keeps of one content a tool result or an agent's
+   * message carries inline, which a backend hands it through
+   * `Start.storeToolResultResource`: larger content is kept nowhere and left
+   * out, as VS Code keeps nothing over its bound. Unset is 8388608 (8 MiB),
+   * VS Code's `MAX_TOOL_RESULT_RESOURCE_BYTES`; zero sets no limit.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionDataService.ts#L21
+   */
+  toolResultResourceLimitBytes?: number;
   /** The clock sleep and wakes read. A test supplies its own so a timeout can be reached without waiting for it. */
   now?(): Date;
   /**
@@ -839,9 +989,9 @@ export interface HostOptions {
    * What this host says about itself when a window asks.
    *
    * The reference window has requests of its own for the host's version, its
-   * logs, its network and its shutdown, and this is where a host answers
-   * them from. All optional: a host embedded in something else has its own
-   * answers to most of these, and the daemon fills in its own.
+   * logs and its network, and this is what a host answers them from. All
+   * optional: a host embedded in something else has its own answers to most
+   * of these, and the daemon fills in its own.
    */
   diagnostics?: Diagnostics;
   /** Called with one line per notable event, for a log. */
@@ -962,7 +1112,11 @@ export interface Diagnostics {
    * error.
    */
   logs?(): string[];
-  /** What the window's `shutdown` request runs, once it has been answered. */
+  /**
+   * What the window's `shutdown` request runs once every backend has been shut
+   * down and the request answered: the embedder's own end, which in the
+   * daemon is the way `ahpd stop` takes it down. A host given none stays up.
+   */
   shutdown?(): void | Promise<void>;
 }
 
@@ -974,6 +1128,22 @@ export interface Diagnostics {
  * host naming them and the tool offered only for an explicit rename.
  */
 export type TitleStrategy = 'activeAgent' | 'utility' | 'deferred';
+
+/**
+ * What a session brings to a tool asking about it.
+ *
+ * `config` is the session's config as it was kept, and `bindings` is the
+ * aliases it may name a connector by - the plugin readers' maps with the
+ * session's own key over them. Both are read live, so a binding that moved
+ * reaches the next list the host builds.
+ */
+export interface ToolSession {
+  titleStrategy: TitleStrategy;
+  /** The session's config, or nothing where it has none. */
+  config?: Record<string, unknown> | undefined;
+  /** The connectors this session may use, by alias. */
+  bindings?: Record<string, string> | undefined;
+}
 
 /**
  * What every host tool carries, whichever place it runs from.
@@ -1035,27 +1205,25 @@ interface HostToolCommon {
    */
   instruction?: string;
   /**
-   * The shape one session's title strategy asks for, and what that session
-   * brings to it.
-   *
-   * `undefined` leaves the tool as it is, `{ offered: false }` takes it out
-   * of the list for that session, and `definition` is merged over the tool's
-   * own. It is how a strategy that does not rename chats withholds the tool
-   * rather than offering one it would refuse, and how a tool offered only to
-   * a session that binds a connector withholds itself from the rest.
-   *
-   * `config` is the session's config as it was kept, and `bindings` is the
-   * aliases it may name a connector by - the plugin readers' maps with the
-   * session's own key over them. Both are read live, so a binding that moved
-   * reaches the next list the host builds.
+   * Whether one session supports this tool, as VS Code's
+   * `isEnabledForSession`: a tool that answers false is neither offered to
+   * that session nor bound for it, and one that says nothing is offered to
+   * every session. Asked beside the host's own switches - `advancedPermission`,
+   * `optIn` and the session tools' keys - each time a session's list is built,
+   * so a session that came to support the tool is offered it at its next one.
+   * It is how a strategy that does not rename chats withholds the tool rather
+   * than offering one it would refuse, and how a tool offered only to a
+   * session that binds a connector withholds itself from the rest.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L95
    */
-  forSession?: (session: {
-    titleStrategy: TitleStrategy;
-    /** The session's config, or nothing where it has none. */
-    config?: Record<string, unknown> | undefined;
-    /** The connectors this session may use, by alias. */
-    bindings?: Record<string, string> | undefined;
-  }) => { offered: boolean; definition?: Partial<ToolDefinition> } | undefined;
+  isEnabledForSession?: (session: ToolSession) => boolean;
+  /**
+   * The shape one session asks for, as VS Code's `getDefinitionForSession`
+   * tailors a tool's wording to a session: `undefined` leaves the tool as it
+   * is, and `definition` is merged over the tool's own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L90-L93
+   */
+  forSession?: (session: ToolSession) => { definition?: Partial<ToolDefinition> } | undefined;
   /**
    * A host-side hint that the harness may hide this tool behind tool search.
    *
@@ -1418,10 +1586,20 @@ export interface ToolCaller {
  * on a new session, and the client that pushed it is told `auth/required`
  * with `reason: 'expired'` rather than left to find out from a session that
  * failed to start.
+ *
+ * `resource` and `scopes` are what the client pushed it for: its protected
+ * resource, and the scopes it said the token grants, deduplicated and sorted,
+ * none where it said none. A token is kept under both, and under the server
+ * it was aimed at, as VS Code's host keeps one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L498-L501
  */
 export interface Credential {
   token: string;
   expiresAt?: number;
+  resource: string;
+  scopes: string[];
+  /** The one MCP server the client aimed it at: its session and its customization id. */
+  target?: { session: string; customizationId: string };
 }
 
 /** One connected client and what it is watching. */
@@ -1464,12 +1642,16 @@ export interface Connection {
    */
   locale?: string;
   /**
-   * Channel URIs this client subscribed to.
+   * The channels this client is subscribed to, each by the host's own channel
+   * whatever spelling the client used: the subscriptions whose actions it is
+   * sent, as VS Code's host sends a channel's actions only to a client whose
+   * subscription to it is active.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4577-L4578
    *
-   * Per connection: two clients can watch one channel, and dropping one must
-   * not stop the other's stream.
+   * Per connection: two clients can subscribe to one channel, and dropping
+   * one must not stop the other's stream.
    */
-  watching: Set<string>;
+  activeSubscriptions: Set<string>;
   /**
    * The person this connection signed in as, when it did.
    *
@@ -1519,7 +1701,7 @@ export interface Connection {
    * lookup by the resource alone never finds it: the protocol has such a token
    * reach that server and never a backend's own resource.
    *
-   * Per connection for the same reason `watching` is, and the specification says
+   * Per connection for the same reason `activeSubscriptions` is, and the specification says
    * so outright: authentication status is per connection, each client
    * authenticating independently. A token one client offered is theirs, spent
    * only on sessions they ask for, and gone when they hang up.
@@ -1529,14 +1711,6 @@ export interface Connection {
    * the credentials the daemon was started with.
    */
   tokens: Map<string, Credential>;
-  /**
-   * Host channels this client named in another spelling, by the channel they
-   * mean: `ahp-root:` for `ahp-root://`, and the automations catalogue with an
-   * authority. Its subscription is keyed by the string it sent, so every
-   * notification on such a channel is addressed back that way. A session and a
-   * chat have one URI each, and are never here.
-   */
-  aliases: Map<string, string>;
   /**
    * Whether this client is a VS Code window that cannot address an
    * `ahp-session:` session: it names itself `vscode-editor-window` or
@@ -1563,23 +1737,21 @@ export interface Connection {
  * calls on a host are the ten a host may call on a client, with the same
  * params and the same results, and the receiver decides whether to allow the
  * operation whichever way round it went. What that is *for* is a client that
- * publishes something the host has no way to reach - a plugin's virtual
- * files, an editor's unsaved buffers, a filesystem provider - and addresses
- * it as `<scheme>://<clientId>/…`.
+ * serves something the host has no way to reach - a plugin's virtual files,
+ * an editor's unsaved buffers, a filesystem provider - which the host
+ * addresses as `vscode-agent-client://<clientId>/<scheme>/<authority>/<path>`,
+ * as the reference host does.
  *
  * So this is not a port handed in: it is built out of the connections a host
- * already has, and a URI naming one of them is answered by that client rather
- * than by the host's own filesystem.
+ * already has. Each method names the client it asks, and the URI is the one
+ * that client knows.
  */
 export interface Clients {
   /** Every client currently connected, by the id it gave at `initialize`. */
   ids(): string[];
   /**
-   * The client a URI belongs to, if a connected one publishes it.
-   *
-   * `<scheme>://<clientId>/…`, which is how the reference host addresses one.
-   * `file:` is never a client's, and neither is any `ahp-` channel scheme -
-   * those are this protocol's own and their authority is not a client id.
+   * The connected client a URI under the client scheme names, or nothing for
+   * any other URI.
    */
   owner(uri: string): string | undefined;
 
@@ -1591,8 +1763,8 @@ export interface Clients {
   resolve(client: string, uri: string): Promise<unknown>;
   /** Write a file the client serves. */
   write(client: string, uri: string, content: { data: string; encoding?: string; create?: boolean; overwrite?: boolean }): Promise<unknown>;
-  /** Remove one. */
-  remove(client: string, uri: string, recursive?: boolean): Promise<unknown>;
+  /** Delete one: the protocol's `resourceDelete`. */
+  delete(client: string, uri: string, recursive?: boolean): Promise<unknown>;
   /** Move one. Both URIs must be the same client's. */
   move(client: string, source: string, destination: string, failIfExists?: boolean): Promise<unknown>;
   /** Copy one. Both URIs must be the same client's. */
@@ -1744,15 +1916,16 @@ export interface Host {
    */
   markRestartNeeded(): void;
   /**
-   * Say each daemon config value that moved under the root.
+   * Say each daemon config value that changed under the root.
    *
    * For a write to the daemon's file that no client's `root/configChanged`
    * made: a plugin command over the plugins channel or at the terminal, which
    * asks the daemon to apply what it wrote, or a paths command the daemon
-   * serves. Each moved value goes to the root as the host's own
-   * `root/configChanged`, and a key the file no longer holds as `null`.
+   * serves. Each changed value goes to the root as the host's own
+   * `root/configChanged`, and a key the file no longer holds as `null`, as
+   * VS Code says a host-side root value change.
    */
-  daemonValuesMoved(): Promise<void>;
+  daemonValuesChanged(): Promise<void>;
   /**
    * Stop what this host runs, once, while the process stays up.
    *

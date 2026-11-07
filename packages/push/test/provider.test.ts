@@ -161,7 +161,7 @@ it('serves the host public key at push://vapid, and refuses to write or delete i
   expect((await provider.resolve('push://vapid')).type).toBe('file');
 
   await expect(provider.write('push://vapid', body({ platform: 'web' }))).rejects.toMatchObject({ code: -32602 });
-  await expect(provider.remove('push://vapid')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.delete('push://vapid')).rejects.toMatchObject({ code: -32602 });
 });
 
 it('serves no push://vapid when the host has no pair', async () => {
@@ -217,11 +217,11 @@ it('refuses a write that names no device, and one to a device already there', as
 it('removes a device, and answers nothing is there the second time', async () => {
   const provider = over();
   await provider.write('push://devices/phone-1', body({ token: TOKEN, platform: 'ios' }), undefined, 'phone');
-  await provider.remove('push://devices/phone-1');
+  await provider.delete('push://devices/phone-1');
   expect(await provider.list('push://devices')).toEqual([]);
   await expect(provider.read('push://devices/phone-1')).rejects.toMatchObject({ code: -32008 });
-  await expect(provider.remove('push://devices/phone-1')).rejects.toMatchObject({ code: -32008 });
-  await expect(provider.remove('push://devices')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.delete('push://devices/phone-1')).rejects.toMatchObject({ code: -32008 });
+  await expect(provider.delete('push://devices')).rejects.toMatchObject({ code: -32602 });
 });
 
 it('keeps a device whose writer named no client, and it belongs to none', async () => {

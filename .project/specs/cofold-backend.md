@@ -5,7 +5,7 @@ covers:
   - packages/agent-cofold/src/**
 decisions:
   - decisions/cofold-config-reaches-a-machine-by-a-path-variable.md
-  - decisions/each-backend-offers-its-options-unless-a-rule-asks.md
+  - decisions/the-host-puts-each-tool-question-and-keeps-the-sessions-answer.md
 refs:
   - "[code://packages/agent-cofold/src/config.ts#L57-L59](../../packages/agent-cofold/src/config.ts#L57-L59) - `harnessConfigPath`, where the harness file is found"
   - "[code://packages/agent-cofold/src/agent.ts#L113](../../packages/agent-cofold/src/agent.ts#L113) - `defaultStoreRoot`, the store at cofold's home"

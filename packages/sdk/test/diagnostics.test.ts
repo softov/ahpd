@@ -83,7 +83,7 @@ describe('collecting logs', () => {
     const got = await logs.collect([
       { path: 'agenthost/daemon.log', from: join(dir, 'daemon.log') },
       { path: 'agenthost/gone.log', from: join(dir, 'gone.log') },
-      { path: 'events.jsonl', from: join(dir, 'events.jsonl'), provider: true },
+      { path: 'events.jsonl', from: join(dir, 'events.jsonl'), provider: 'echo' },
     ], 'archive');
     expect(got.kind).toBe('archive');
     expect(got.providerLogsIncluded).toBe(true);
@@ -151,6 +151,24 @@ describe('what the window asks', () => {
     expect(await join_.client.handle({ method: 'vscode/getAgentHostSessionStateFile', params: { session: 'ahp-session:/none' } })).toEqual({});
   });
 
+  /*
+   * VS Code checks a named chat against its recorded owner, so a chat of a
+   * session nobody runs passes.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4326-L4331
+   */
+  it('says where the file is for a chat of a session nobody runs, its owner read from the record', async () => {
+    const dir = scratch();
+    const stamp = new Date().toISOString();
+    const { client } = await serving(dir, {
+      list: async () => [{ id: 'one', title: 'one', createdAt: stamp, modifiedAt: stamp, workingDirectories: [uriOf(dir)] }],
+      stateFile: (id) => join(dir, `${id}.jsonl`),
+    })();
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    const chat = `ahp-chat://default/${Buffer.from('ahp-session:/one', 'utf8').toString('base64url')}`;
+    expect(await client.handle({ method: 'vscode/getAgentHostSessionStateFile', params: { session: 'ahp-session:/one', chat } }))
+      .toEqual({ resource: uriOf(join(dir, 'one.jsonl')) });
+  });
+
   it('answers no file for a backend that keeps none', async () => {
     const dir = scratch();
     const { client } = await serving(dir)();
@@ -167,7 +185,7 @@ describe('what the window asks', () => {
     const got = await client.handle({ method: 'vscode/collectAgentHostDebugLogs', params: { session: 'ahp-session:/one', kind: 'archive' } }) as {
       entries: { path: string }[]; providerLogsIncluded: boolean; resource: string;
     };
-    expect(got.entries.map((one) => one.path)).toEqual(['agenthost/daemon.log', 'events.jsonl']);
+    expect(got.entries.map((one) => one.path)).toEqual(['events.jsonl', 'agenthost/daemon.log']);
     expect(got.providerLogsIncluded).toBe(true);
     const chunk = await client.handle({ method: 'vscode/readAgentHostDebugLogsChunk', params: { resource: got.resource, position: 0 } }) as { data: string; eof: boolean };
     expect(chunk.eof).toBe(true);
@@ -179,7 +197,115 @@ describe('what the window asks', () => {
     expect(own.providerLogsIncluded).toBe(false);
     rmSync(localPath(own.resource), { recursive: true, force: true });
     await expect(client.handle({ method: 'vscode/collectAgentHostDebugLogs', params: { kind: 'tarball' } })).rejects.toMatchObject({ code: -32602 });
-    await expect(client.handle({ method: 'vscode/readAgentHostDebugLogsChunk', params: { resource: uriOf(join(dir, 'daemon.log')), position: 0 } })).rejects.toMatchObject({ code: -32602 });
+  });
+
+  /*
+   * VS Code's chunk read: the params refused in its words, a failure of the
+   * read itself left as it is, which the wire answers as an internal error.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4160-L4184
+   */
+  it('refuses a chunk read\'s params in VS Code\'s words, and leaves a failed read as it is', async () => {
+    const dir = scratch();
+    writeFileSync(join(dir, 'daemon.log'), 'up\n');
+    const { client } = await serving(dir)();
+    const read = (params: Record<string, unknown>) => client.handle({ method: 'vscode/readAgentHostDebugLogsChunk', params });
+    await expect(read({ resource: 1, position: 0 })).rejects.toMatchObject({ code: -32602, message: 'resource must be a URI string' });
+    await expect(read({ resource: 'not a uri', position: 0 })).rejects.toMatchObject({ code: -32602, message: 'resource must be a valid URI string' });
+    await expect(read({ resource: uriOf(join(dir, 'daemon.log')), position: -1 })).rejects.toMatchObject({ code: -32602, message: 'position must be a non-negative integer' });
+    await expect(read({ resource: uriOf(join(dir, 'daemon.log')), position: 0 }))
+      .rejects.toMatchObject({ message: 'Unknown or expired Agent Host debug-log artifact' });
+    await expect(read({ resource: uriOf(join(dir, 'daemon.log')), position: 0 })).rejects.not.toHaveProperty('code', -32602);
+  });
+
+  /*
+   * VS Code follows a collection under its progress token: root/progress as
+   * it goes and once at the end, marked as the debug logs', a token already
+   * in use refused, and its client's cancel calling it off.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4086-L4159
+   */
+  it('says a followed collection\'s progress, refuses its token twice, and calls it off at its client\'s cancel', async () => {
+    const dir = scratch();
+    writeFileSync(join(dir, 'daemon.log'), 'up\n');
+    const host = createHost({ path: dir, agents: [echo({ path: dir, pace: 0 })], diagnostics: { logs: () => [join(dir, 'daemon.log')] } });
+    const p = peer();
+    const client = host.accept(p);
+    const said = await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } }) as { _meta?: Record<string, unknown> };
+    expect(said._meta?.['vscode.debugLogsCancellation']).toBe(true);
+    const got = await client.handle({ method: 'vscode/collectAgentHostDebugLogs', params: { kind: 'archive', progressToken: 'p1' } }) as { resource: string };
+    rmSync(localPath(got.resource), { force: true });
+    const progress = p.notes.filter((one) => one.method === 'root/progress').map((one) => one.params as Record<string, unknown>);
+    expect(progress[0]).toEqual({ channel: 'ahp-root://', progressToken: 'p1', progress: 0, message: 'Collecting Agent Host process and transport logs...', _meta: { 'vscode.debugLogs': true } });
+    expect(progress.at(-1)).toEqual({ channel: 'ahp-root://', progressToken: 'p1', progress: 3, total: 3, _meta: { 'vscode.debugLogs': true } });
+
+    // A token nobody follows, and a cancel that names none, refused in VS Code's words.
+    await expect(client.handle({ method: 'vscode/cancelAgentHostDebugLogs', params: { progressToken: 'p1' } }))
+      .rejects.toMatchObject({ code: -32602, message: 'Unknown debug-log collection' });
+    await expect(client.handle({ method: 'vscode/cancelAgentHostDebugLogs', params: {} }))
+      .rejects.toMatchObject({ code: -32602, message: 'progressToken must be a string' });
+
+    // The collector itself: a token in use refused, a collection called off by
+    // the client that follows it and by nobody else, and one whose client went.
+    const logs = debugLogs({ tmp: dir, lease: 60_000 });
+    const files = [{ path: 'agenthost/daemon.log', from: join(dir, 'daemon.log') }];
+    const follow = (token: string, owner: string) => ({ token, owner, report: () => {} });
+    const going = logs.collect(files, 'archive', follow('p2', 'window'));
+    await expect(logs.collect(files, 'archive', follow('p2', 'window'))).rejects.toMatchObject({ code: -32602, message: 'progressToken is already in use' });
+    expect(logs.cancel('p2', 'another')).toBe(false);
+    expect(logs.cancel('p2', 'window')).toBe(true);
+    await expect(going).rejects.toMatchObject({ message: 'Canceled' });
+    expect(logs.cancel('p2', 'window')).toBe(false);
+    const left = logs.collect(files, 'archive', follow('p3', 'window'));
+    logs.abandon('window');
+    await expect(left).rejects.toMatchObject({ message: 'Canceled' });
+    await logs.close();
+  });
+
+  /*
+   * VS Code's report: the first account a provider is signed in as, each
+   * endpoint once by URL, and the version its product has, none made up.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostProviderService.ts#L199-L233
+   */
+  it('reports the account a backend is signed in as, each endpoint once, and no version it was not given', async () => {
+    const dir = scratch();
+    const { client } = await serving(dir, {
+      endpoints: () => [{ name: 'Echo', url: 'http://127.0.0.1:1/' }, { name: 'Echo again', url: 'http://127.0.0.1:1' }],
+      probe: async () => ({ models: [], commands: [], customizations: [], account: { status: 'signedIn', email: 'me@example.com' } }),
+    })();
+    await new Promise((r) => { setTimeout(r, 20); });
+    const info = await client.handle({ method: 'getNetworkDiagnosticsInfo', params: {} }) as Record<string, unknown>;
+    expect(info).not.toHaveProperty('version');
+    expect(info.account).toBe('me@example.com');
+    expect(info.endpoints).toEqual([{ name: 'Echo', url: 'http://127.0.0.1:1/' }]);
+  });
+
+  /*
+   * VS Code's probe reports the proxy it goes through, and a URL that does not
+   * parse fails the request.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/networkDiagnosticsService.ts#L106-L155
+   */
+  it('reports the proxy a probe goes through, none for a host NO_PROXY names, and fails a URL that does not parse', async () => {
+    const dir = scratch();
+    const { client } = await serving(dir)();
+    const kept = { use: process.env.NODE_USE_ENV_PROXY, http: process.env.http_proxy, no: process.env.no_proxy };
+    process.env.NODE_USE_ENV_PROXY = '1';
+    process.env.http_proxy = 'http://127.0.0.1:2';
+    process.env.no_proxy = 'localhost,.internal:8080';
+    try {
+      const through = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://127.0.0.1:1/' } }) as Record<string, unknown>;
+      expect(through.proxyUrl).toBe('http://127.0.0.1:2');
+      const direct = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://localhost:1/' } }) as Record<string, unknown>;
+      expect(direct).not.toHaveProperty('proxyUrl');
+      const named = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://a.internal:8080/' } }) as Record<string, unknown>;
+      expect(named).not.toHaveProperty('proxyUrl');
+    }
+    finally {
+      for (const [key, value] of [['NODE_USE_ENV_PROXY', kept.use], ['http_proxy', kept.http], ['no_proxy', kept.no]] as const) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+    // Thrown as it is, which the wire answers as an internal error.
+    await expect(client.handle({ method: 'diagnosticsFetch', params: { url: 'not a url' } })).rejects.toMatchObject({ name: 'TypeError', message: 'Invalid URL' });
   });
 
   it('describes the network from here, and probes one endpoint', async () => {
@@ -200,20 +326,40 @@ describe('what the window asks', () => {
     expect(typeof probe.error).toBe('string');
     expect(typeof probe.durationMs).toBe('number');
     expect(probe.statusCode).toBeUndefined();
-    await expect(client.handle({ method: 'diagnosticsFetch', params: { url: 'not a url' } })).rejects.toMatchObject({ code: -32602 });
   });
 
-  it('stops when told, and only where the host was given a way to', async () => {
+  /*
+   * VS Code's order: the providers shut down, then the answer.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16018-L16051
+   * Then the embedder's own end, which in the daemon stops it the way `ahpd
+   * stop` does, as upstream decided; a host given none stays up, its
+   * connection answering and starting nothing new.
+   */
+  it('stops its backends when told, answers once they have stopped, and then ends what it was given to', async () => {
     const dir = scratch();
-    const { client: cannot } = await serving(dir)();
-    await expect(cannot.handle({ method: 'shutdown', params: {} })).rejects.toMatchObject({ code: -32601 });
-    let stopped = 0;
-    const { client } = await serving(dir, {}, { shutdown: () => { stopped += 1; } })();
-    // Answered before it stops, so the window hears yes rather than a dropped socket.
+    const stopped: string[] = [];
+    const backend = {
+      create: (start: Parameters<Agent['create']>[0]) => {
+        const session = echo({ path: dir, pace: 0 }).create(start);
+        return { ...session, close: (why: Parameters<typeof session.close>[0]) => { stopped.push(String(why)); return session.close(why); } };
+      },
+    };
+    let ended = 0;
+    const { client } = await serving(dir, backend, { shutdown: () => { ended += 1; } })();
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
     expect(await client.handle({ method: 'shutdown', params: {} })).toEqual({});
-    expect(stopped).toBe(0);
+    expect(stopped).toEqual(['stopping']);
+    // Answered before it ends, so the window hears yes rather than a dropped socket.
+    expect(ended).toBe(0);
     await new Promise((r) => { setTimeout(r, 20); });
-    expect(stopped).toBe(1);
+    expect(ended).toBe(1);
+
+    const { client: kept } = await serving(scratch(), {})();
+    expect(await kept.handle({ method: 'shutdown', params: {} })).toEqual({});
+    // The connection still answers, and the closed host starts nothing new.
+    expect(await kept.handle({ method: 'getManagedSettingsDiagnostics', params: {} })).toEqual([]);
+    await expect(kept.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'echo' } }))
+      .rejects.toMatchObject({ message: 'This host is closing, so nothing new starts on it' });
   });
 });
 

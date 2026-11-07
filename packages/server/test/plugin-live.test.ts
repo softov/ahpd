@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { check } from '@cofold/commands';
 import type { JsonSchema } from '@cofold/commands';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { connectorsChannel } from '../../sdk/src/connectors/channel.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { applyPlugins, eventFailed, type Applied } from '../src/applyplugins.js';
@@ -246,6 +247,18 @@ const root = async (host: Host): Promise<{ agents?: { provider?: string }[]; act
 };
 
 /** Whether the root told a client the live session is gone. */
+/**
+ * The session's first message, which announces it, so its end is said: a
+ * session made fresh is provisional until then.
+ */
+const first = async (client: ReturnType<Host['accept']>): Promise<void> => {
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
+  for (let i = 0; i < 4; i++) await new Promise((r) => { setTimeout(r, 0); });
+};
+
 const ended = (said: ReturnType<typeof peer>): boolean => said.notes
   .some((note) => note.method === 'root/sessionRemoved' && (note.params as { session?: string }).session === 'ahp-session:/live');
 
@@ -380,7 +393,8 @@ it('ends the sessions of a plugin agent when the plugin unloads, and drops the a
   expect(loaded.restart).toBe(false);
   expect((await root(host)).agents?.map((one) => one.provider)).toContain('live');
 
-  const { said } = await session(host, 'live');
+  const { said, client } = await session(host, 'live');
+  await first(client);
   expect(ended(said)).toBe(false);
 
   configured({ name: file, options, enabled: false });
@@ -399,7 +413,8 @@ it('ends an agent plugin its sessions before a reload runs its closers', async (
   const echo = pathToFileURL(join(REPO, 'examples/echo/agent.ts')).href;
   configured({ name: file, options: { echo, dir: home, tag: 'one' } });
   expect((await apply()).restart).toBe(false);
-  const { said } = await session(host, 'live');
+  const { said, client } = await session(host, 'live');
+  await first(client);
   expect(ended(said)).toBe(false);
 
   configured({ name: file, options: { echo, dir: home, tag: 'two' } });

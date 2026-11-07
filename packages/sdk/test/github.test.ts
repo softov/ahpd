@@ -43,15 +43,16 @@ describe('the pull requests of a branch', () => {
         status: 200,
         json: async () => [
           { html_url: 'https://github.com/softov/ahpd/pull/9', state: 'closed', merged_at: '2026-09-13T10:00:00Z' },
-          { html_url: 'https://github.com/softov/ahpd/pull/7', state: 'open', merged_at: null, title: 'Port the kqueue build' },
+          { html_url: 'https://github.com/softov/ahpd/pull/7', state: 'open', merged_at: null, title: 'Port the kqueue build', created_at: '2026-09-01T08:00:00Z' },
           { html_url: 'https://github.com/softov/ahpd/pull/2', state: 'closed', merged_at: null },
         ],
       };
     });
     const found = await githubPullRequests().forBranch({ owner: 'softov', repo: 'ahpd' }, 'fix/kqueue', 'gho_x', '/tmp');
+    // When each was opened too, which a session's baseline is read by.
     expect(found).toEqual([
       { url: 'https://github.com/softov/ahpd/pull/9', state: 'merged' },
-      { url: 'https://github.com/softov/ahpd/pull/7', state: 'open', title: 'Port the kqueue build' },
+      { url: 'https://github.com/softov/ahpd/pull/7', state: 'open', title: 'Port the kqueue build', createdAt: '2026-09-01T08:00:00Z' },
       { url: 'https://github.com/softov/ahpd/pull/2', state: 'closed' },
     ]);
     // The reference host's route: head as owner:branch, every state, newest update first.
@@ -68,17 +69,17 @@ describe('the pull requests of a branch', () => {
   // a POSIX shell outside a terminal, which Windows has not.
   it.skipIf(!posix)('asks gh without a token, and reads its spelling of a state', async () => {
     const dir = fakeGh(JSON.stringify([
-      { url: 'https://github.com/softov/ahpd/pull/7', state: 'OPEN', title: 'The fix', updatedAt: '2026-09-12T00:00:00Z' },
+      { url: 'https://github.com/softov/ahpd/pull/7', state: 'OPEN', title: 'The fix', updatedAt: '2026-09-12T00:00:00Z', createdAt: '2026-09-01T08:00:00Z' },
       { url: 'https://github.com/softov/ahpd/pull/9', state: 'MERGED', updatedAt: '2026-09-13T00:00:00Z' },
     ]));
     const found = await githubPullRequests().forBranch({ owner: 'softov', repo: 'ahpd' }, 'fix/kqueue', undefined, dir);
     expect(found).toEqual([
       { url: 'https://github.com/softov/ahpd/pull/9', state: 'merged' },
-      { url: 'https://github.com/softov/ahpd/pull/7', state: 'open', title: 'The fix' },
+      { url: 'https://github.com/softov/ahpd/pull/7', state: 'open', title: 'The fix', createdAt: '2026-09-01T08:00:00Z' },
     ]);
     const { readFileSync } = await import('node:fs');
     expect(readFileSync(join(dir, 'asked'), 'utf8').trim())
-      .toBe('pr list --repo softov/ahpd --head fix/kqueue --state all --limit 10 --json url,state,title,updatedAt');
+      .toBe('pr list --repo softov/ahpd --head fix/kqueue --state all --limit 10 --json url,state,title,updatedAt,createdAt');
   });
 
   // `fakeGh` puts a `#!/bin/sh` script first on `PATH`, and the host runs it:

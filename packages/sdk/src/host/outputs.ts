@@ -45,7 +45,7 @@ export interface Outputs {
    * to any other channel takes its snapshot in the tick it arrived in, so what
    * a client dispatches straight after it is replayed after the snapshot.
    */
-  retainedState(channel: string): Promise<(OnWire<TerminalState> & { exitCode?: number }) | undefined> | undefined;
+  retainedState(channel: string): Promise<OnWire<TerminalState> | undefined> | undefined;
   /** Forget the outputs that some dropped turns of a chat name. */
   forgetTurnOutputs(session: string, chat: string, turns: readonly Bag[]): void;
   /** Forget every output a chat kept. */
@@ -190,35 +190,37 @@ export function createOutputs(ctx: HostContext): Outputs {
   /**
    * A chat's turns and the session that holds it, read the way its snapshot is.
    *
-   * A live chat's are its session's, the running turn included. Otherwise the
-   * session is the record's for a recorded chat and the one a first chat's
-   * name carries, and the turns are a transcript: the session's own for its
-   * first chat, and a recorded chat's own for any other.
+   * A live chat's are its session's, its local turns among them and the
+   * running turn included. Otherwise the session is the record's for a
+   * recorded chat and the one a first chat's name carries, and the turns are a
+   * transcript: the session's own for its first chat, and a recorded chat's own
+   * for any other.
    * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L10647-L10685
    */
   const turnsOf = async (chat: string): Promise<{ session: string; turns: Bag[] } | undefined> => {
     const live = ctx.byChat.get(chat);
     if (live !== undefined) {
       const active = bag(live.chat.chatState()).activeTurn;
-      return { session: live.uri, turns: [...live.chat.allTurns() as Bag[], ...(isRecord(active) ? [active] : [])] };
+      const turns = ctx.liveTurnsOf(live.uri, chat, live.chat.allTurns() as Bag[]);
+      return { session: live.uri, turns: [...turns, ...(isRecord(active) ? [active] : [])] };
     }
     const owning = ctx.homeId(chat) === undefined ? ctx.sessionOfChat(chat) : ctx.sessionFor(chat);
     if (owning === undefined || !ctx.sessionChannel(owning)) return undefined;
     const id = idOf(owning);
-    if (ctx.waitingFor(id) !== undefined) return undefined;
+    if (ctx.unavailableProvider(id) !== undefined) return undefined;
     // A chat a client closed is gone, whatever its backend still holds of it.
     if (ctx.heldChats(id).some((one) => one.uri === chat && one.closed === true)) return undefined;
-    const own = await ctx.past(id);
+    const own = await ctx.restoreSession(id);
     if (own === undefined) return undefined;
     const session = ctx.nameOf(id);
     const opened = ctx.kept.nested?.(id) === undefined ? ctx.recordedChat(id, chat) : undefined;
     if (opened === undefined || opened.uri === chatUriFor(session)) return { session, turns: own };
     const owner = ctx.owners.get(session) ?? ctx.first;
-    const turns = owner === undefined ? undefined : await ctx.transcriptOf(owner, opened.backendId, ctx.sessionAt(id), session, chat);
+    const turns = owner === undefined ? undefined : await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), session, chat);
     return turns === undefined ? undefined : { session, turns: turns as unknown as Bag[] };
   };
 
-  const retainedState = (channel: string): Promise<(OnWire<TerminalState> & { exitCode?: number }) | undefined> | undefined => {
+  const retainedState = (channel: string): Promise<OnWire<TerminalState> | undefined> | undefined => {
     const named = retainedTerminalOf(channel);
     return named === undefined ? undefined : rebuilt(channel, named);
   };
@@ -226,7 +228,7 @@ export function createOutputs(ctx: HostContext): Outputs {
   const rebuilt = async (
     channel: string,
     named: { chat: string; key: string },
-  ): Promise<(OnWire<TerminalState> & { exitCode?: number }) | undefined> => {
+  ): Promise<OnWire<TerminalState> | undefined> => {
     const held = await turnsOf(named.chat);
     if (held === undefined) return undefined;
     const found = callNaming(held.turns, named);
@@ -241,23 +243,22 @@ export function createOutputs(ctx: HostContext): Outputs {
     // with the output for a call that carries none: an ACP call's content names
     // its terminal and nothing about how it ended.
     const exitCode = typeof result?.exitCode === 'number' ? result.exitCode : kept?.exitCode;
+    /*
+     * The five fields VS Code's host rebuilds a retained terminal with, its
+     * `isPty` the one kept with the output.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L273-L284
+     */
     return {
       title: str(found.content.title) ?? 'Terminal',
-      // The size, the detection and the flat code every terminal state of this
-      // host carries, so a rebuilt one reads as a live one that exited.
-      cols: 80,
-      rows: 24,
       content: output === '' ? [] : [{ type: 'unclassified', value: output }],
+      lifecycle: { status: 'exited', ...(exitCode === undefined ? {} : { exitCode }) },
       claim: {
         kind: 'session',
         session: held.session,
         chat: named.chat,
         ...(found.toolCallId === undefined ? {} : { toolCallId: found.toolCallId }),
       },
-      supportsCommandDetection: false,
       isPty: kept?.isPty ?? found.content.isPty === true,
-      lifecycle: { status: 'exited', ...(exitCode === undefined ? {} : { exitCode }) },
-      ...(exitCode === undefined ? {} : { exitCode }),
     };
   };
 

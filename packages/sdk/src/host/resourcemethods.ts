@@ -1,17 +1,21 @@
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { notServed } from '../resources/resources.js';
 import { Status } from '../sessions/catalog.js';
-import { need } from './common.js';
-import { schemeOf } from './channels.js';
+import { need, served } from './common.js';
+import { buildResourceWatchChannelUri, schemeOf } from './channels.js';
+import { AGENT_CLIENT_SCHEME } from './clienturi.js';
+import { TOOL_RESULT_RESOURCE_SCHEME } from '../resources/toolresults.js';
 import type { WriteMode } from '../types/resources.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
 /**
  * Which store serves a URI, and the methods a client calls to reach one.
  *
- * `file:` is the store the host was given and anything else is a scheme a
- * plugin registered, so every `resource*` method asks `storeFor` first and a
- * scheme nobody serves is refused rather than read.
+ * `file:` is the store the host was given, the client scheme the connected
+ * clients' resources, and anything else a scheme a plugin registered, so every
+ * `resource*` method asks `storeFor` first and a scheme nobody serves is
+ * refused.
  */
 export interface ResourceMethods {
   /** Which store serves a URI, read by the gate and by every method here. */
@@ -23,8 +27,8 @@ export interface ResourceMethods {
 export function createResourceMethods(ctx: HostContext, conn: ConnectionContext): ResourceMethods {
   const { connection } = conn;
   const {
-    bringBackOf, followOf, changesetAt, contentMoved, dispatch, fire, inFlight, lastError, log, operationContext, opKey,
-    options, ownerFor, recordPullRequest, refreshFacts, statusOf, watches, wroteThrough,
+    bringBackOf, clientResources, followOf, changesetAt, contentMoved, dispatch, fire, log, operationContext,
+    opKey, options, ownerFor, recordPullRequest, refreshFacts, statusOf, wroteThrough,
   } = ctx;
 
 /**
@@ -49,19 +53,20 @@ const CONFLICT = -32011;
   /**
    * Which store serves a URI.
    *
-   * `file:` is the store the host was given, and anything else is a scheme
-   * a plugin registered under `resourceProviders`. A scheme nobody serves
-   * falls through to that same store, which is where the sentence about a
-   * foreign scheme is written - so an unserved URI reads as somebody
-   * else's rather than as a host that forgot it.
-   *
-   * A URI a connected client published never reaches here: the relay in
-   * `handle` answers it before any handler, which is the order that keeps
-   * a plugin from shadowing a client's own resources.
+   * `file:` is the store the host was given, the client scheme is the
+   * connected clients' resources, as VS Code's host serves that scheme with a
+   * filesystem that asks the client, `session-db-resource:` the content a
+   * backend handed this host to keep, as VS Code's host registers a provider
+   * for it, and anything else is a scheme a plugin registered under
+   * `resourceProviders`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostServerMain.ts#L330
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1396
    */
   const storeFor = (uri: string) => {
     const scheme = schemeOf(uri);
     if (scheme === '' || scheme === 'file') return options.resources;
+    if (scheme === AGENT_CLIENT_SCHEME) return clientResources;
+    if (scheme === TOOL_RESULT_RESOURCE_SCHEME) return ctx.toolResults.provider;
     const provider = options.resourceProviders?.[scheme];
     // A scheme nobody serves is not the file store's to read, and it is
     // not a permission answer either: the host has nothing for it, which
@@ -74,7 +79,7 @@ const CONFLICT = -32011;
     resourceList: async (params) => {
       const uri = String(params.uri ?? '');
       const store = storeFor(uri);
-      return { entries: await need(need(store, 'resourceList').list, 'resourceList')(uri, connection.principal) };
+      return { entries: await served(need(store, 'resourceList').list, 'list', uri)(uri, connection.principal) };
     },
     resourceRead: async (params) => {
       const uri = String(params.uri ?? '');
@@ -84,7 +89,7 @@ const CONFLICT = -32011;
       // plugin registered is asked after it.
       const own = await options.changes?.read?.(uri);
       if (own) return own;
-      return await need(need(storeFor(uri), 'resourceRead').read, 'resourceRead')(
+      return await served(need(storeFor(uri), 'resourceRead').read, 'read', uri)(
         uri,
         typeof params.encoding === 'string' ? params.encoding : undefined,
         connection.principal,
@@ -93,43 +98,40 @@ const CONFLICT = -32011;
     /**
      * Tell me when that changes.
      *
-     * The client gets a channel back and subscribes to it; there is no
-     * dispose command, and the last `unsubscribe` is what releases the
-     * watcher. Gated the way `resourceRead` is rather than the way a write
-     * is: watching is a read, and a client already able to read a
-     * directory learns nothing new by being told when it moved.
+     * The root is checked first, and the channel answered names the watch
+     * itself, as the reference host mints it: nothing runs until the
+     * channel's first subscribe attaches the watcher, there is no dispose
+     * command, and the last `unsubscribe` begins the watcher's release. A
+     * root that is not there is refused `Resource not found: <root>`, and one
+     * this host may not read `Permission denied: <root>`, in VS Code's words.
+     * Gated the way `resourceRead` is: watching is a read, and a client
+     * already able to read a directory learns nothing new by being told when
+     * it moved.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L15884-L15910
      */
     createResourceWatch: async (params) => {
       const uri = String(params.uri ?? '');
       const store = need(storeFor(uri), 'createResourceWatch');
-      const start = need(store.watch, 'createResourceWatch');
+      need(store.watch, 'createResourceWatch');
       const items = (value: unknown): string[] => {
         const held = (typeof value === 'object' && value !== null ? value : {}) as { items?: unknown };
         return Array.isArray(held.items) ? held.items.filter((one): one is string => typeof one === 'string') : [];
       };
-      const recursive = params.recursive === true;
+      await store.resolve?.(uri).catch((error: unknown) => {
+        if ((error as { code?: unknown }).code === AhpErrorCodes.PermissionDenied) {
+          throw new RpcError(AhpErrorCodes.PermissionDenied, `Permission denied: ${uri}`);
+        }
+        throw new RpcError(AhpErrorCodes.NotFound, `Resource not found: ${uri}`);
+      });
       const excludes = items(params.excludes);
       const includes = items(params.includes);
-      const channel = `ahp-resource-watch:/${crypto.randomUUID()}`;
-      const watcher = await start.call(store, uri, { recursive, excludes, includes }, (changes) => {
-        // Only if it still exists: a batch can be in flight when the last
-        // subscriber leaves, and dispatching to a released channel is a
-        // client being told about a watch it has forgotten.
-        if (!watches.has(channel)) return;
-        dispatch(channel, { type: 'resourceWatch/changed', changes: { items: changes } });
-      }, connection.principal);
-      watches.set(channel, {
-        watcher,
-        owner: connection,
-        opened: false,
-        state: {
-          root: uri,
-          recursive,
-          ...(excludes.length > 0 ? { excludes: { items: excludes } } : {}),
-          ...(includes.length > 0 ? { includes: { items: includes } } : {}),
-        },
+      const channel = buildResourceWatchChannelUri({
+        root: uri,
+        recursive: params.recursive === true,
+        ...(excludes.length > 0 ? { excludes: { items: excludes } } : {}),
+        ...(includes.length > 0 ? { includes: { items: includes } } : {}),
       });
-      log(`${connection.clientId} is watching ${uri}${recursive ? ' and under it' : ''}`);
+      log(`${connection.clientId} may watch ${uri}${params.recursive === true ? ' and under it' : ''} on ${channel}`);
       return { channel };
     },
     /*
@@ -167,7 +169,7 @@ const CONFLICT = -32011;
        */
       const owner = ownerFor(connection);
       const writer = connection.clientId;
-      await need(need(storeFor(uri), 'resourceWrite').write, 'resourceWrite')(uri, {
+      await served(need(storeFor(uri), 'resourceWrite').write, 'write', uri)(uri, {
         data: String(params.data ?? ''),
         encoding,
         /*
@@ -202,37 +204,32 @@ const CONFLICT = -32011;
        * the same writer here as there.
        */
       const owner = ownerFor(connection);
-      await need(need(storeFor(uri), 'resourceDelete').remove, 'resourceDelete')(
+      await served(need(storeFor(uri), 'resourceDelete').delete, 'delete', uri)(
         uri, params.recursive === true, owner, connection.principal,
       );
-      log(`${connection.clientId} removed ${uri}`);
+      log(`${connection.clientId} deleted ${uri}`);
       wroteThrough(uri);
       return {};
     },
     resourceMkdir: async (params) => {
       const uri = String(params.uri ?? '');
-      await need(need(storeFor(uri), 'resourceMkdir').mkdir, 'resourceMkdir')(uri);
+      await served(need(storeFor(uri), 'resourceMkdir').mkdir, 'mkdir', uri)(uri);
       wroteThrough(uri);
       return {};
     },
     /*
-     * Both ends are the store's business, including the source.
-     *
-     * The source is emptied and the destination is filled, so a store that
-     * can write one and not the other refuses the half it cannot do. A
-     * `copy` reads the source, which the read half already allows inside a
-     * served directory.
-     *
-     * Two different schemes are refused rather than attempted: neither
-     * provider could carry out the other's half, which is the same answer
-     * two different clients already get for a cross-client move.
+     * A move or a copy is the source's store's to carry out, whatever the
+     * destination, as VS Code's host hands either to the provider of the
+     * source: a store that can write one end and not the other refuses the
+     * half it cannot do in its own words. A `copy` reads the source, which the
+     * read half already allows inside a served directory.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L68-L78
      */
     resourceMove: async (params) => {
       const source = String(params.source ?? '');
       const destination = String(params.destination ?? '');
       const held = storeFor(source);
-      if (held !== storeFor(destination)) throw new RpcError(INVALID_PARAMS, `${source} and ${destination} are served by different providers`);
-      await need(need(held, 'resourceMove').move, 'resourceMove')(
+      await served(need(held, 'resourceMove').move, 'move', source)(
         source, destination, params.failIfExists === true,
       );
       log(`${connection.clientId} moved ${source} to ${destination}`);
@@ -243,9 +240,8 @@ const CONFLICT = -32011;
     resourceCopy: async (params) => {
       const source = String(params.source ?? '');
       const destination = String(params.destination ?? '');
-      const held = storeFor(destination);
-      if (storeFor(source) !== held) throw new RpcError(INVALID_PARAMS, `${source} and ${destination} are served by different providers`);
-      await need(need(held, 'resourceCopy').copy, 'resourceCopy')(
+      const held = storeFor(source);
+      await served(need(held, 'resourceCopy').copy, 'copy', source)(
         source, destination, params.failIfExists === true,
       );
       wroteThrough(destination);
@@ -267,9 +263,22 @@ const CONFLICT = -32011;
      */
     resourceRequest: async (params) => {
       const uri = String(params.uri ?? '');
-      if (!uri.startsWith('file://')) throw new RpcError(-32009, `This host does not mediate ${uri}`);
-      // Neither flag is a read, which is what the protocol tells receivers
-      // to make of a request that sets nothing.
+      // A client's resource is that client's to grant, as VS Code's client
+      // filesystem asks the client for access to one.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostFileSystemProvider.ts#L571-L590
+      if (schemeOf(uri) === AGENT_CLIENT_SCHEME) {
+        return await clientResources.request(uri, {
+          ...(params.read !== undefined ? { read: params.read === true } : {}),
+          ...(params.write !== undefined ? { write: params.write === true } : {}),
+        });
+      }
+      /*
+       * Granted, for any URI this host serves, as VS Code's host grants every
+       * request: a receiver may still refuse a later operation, which is where
+       * this host's own refusals are. Neither flag is a read, which is what
+       * the protocol tells receivers to make of a request that sets nothing.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2493-L2498
+       */
       const write = params.write === true;
       log(`${connection.clientId} may ${write ? 'write' : 'read'} ${uri}`);
       return {};
@@ -277,12 +286,15 @@ const CONFLICT = -32011;
     /**
      * Run one of the verbs a changeset advertised.
      *
-     * Three gates, and none of them is a flag on this host: the id has to
-     * be one this changeset offers *now*, the target has to be a kind that
-     * operation accepts, and the session must not be mid-turn. The list is
-     * the access model - a client can invoke nothing that was not already
-     * put in front of it. An operation that writes is not gated on a
+     * The list is the access model - a client can invoke nothing that was
+     * not already put in front of it. Refused as VS Code's changeset
+     * operations refuse, in their order and words: a changeset this host
+     * does not hold, an operation the changeset does not offer, one it
+     * offers disabled, one asked while the session runs a turn whatever its
+     * advertised status says by then, and a target of a scope the operation
+     * does not take. An operation that writes is not gated on a
      * `resourceRequest`, because the resource half is not either.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L378-L422
      */
     invokeChangesetOperation: async (params) => {
       const channel = String(params.channel ?? '');
@@ -290,14 +302,20 @@ const CONFLICT = -32011;
       const backendChannel = ctx.relayedChannel(channel);
       if (backendChannel !== undefined) return await backendChannel.request('invokeChangesetOperation', params);
       const at = changesetAt(channel);
-      if (!at || ctx.relaysChangesets(at.owner)) throw new RpcError(-32001, `No changeset at ${channel}`);
+      if (!at || ctx.relaysChangesets(at.owner)) throw new RpcError(-32001, `Changeset not found: ${channel}`);
       const source = need(options.changes, 'invokeChangesetOperation');
       const operationId = String(params.operationId ?? '');
       const context = operationContext(at.owner, at.dir);
-      const offered = (source.operations?.(at.dir, at.owner, at.scope, context) ?? [])
-        .find((one) => one.id === operationId);
+      const offered = ctx.operationsOf(channel).find((one) => one.id === operationId);
       if (!offered)
-        throw new RpcError(INVALID_PARAMS, `No operation called ${operationId} on ${channel}`);
+        throw new RpcError(INVALID_PARAMS, `Unknown operation '${operationId}' on changeset ${channel}`);
+      if (offered.status === 'disabled')
+        throw new RpcError(INVALID_PARAMS, `Operation '${operationId}' is disabled on changeset ${channel}`);
+      // The agent is writing to this tree while a turn runs, and an operation
+      // that rewrote a file underneath it would race the work the changeset
+      // is about.
+      if ((statusOf(at.owner) & Status.InProgress) !== 0)
+        throw new RpcError(INVALID_PARAMS, `Operation '${operationId}' is disabled while a turn is active on changeset ${channel}`);
 
       const raw = params.target as Record<string, unknown> | undefined;
       const target = raw !== undefined && typeof raw === 'object'
@@ -313,107 +331,142 @@ const CONFLICT = -32011;
       // No target is the changeset itself, which is how the protocol says
       // a changeset-scoped invocation.
       const kind = target?.kind ?? 'changeset';
-      if (!offered.scopes.includes(kind))
-        throw new RpcError(INVALID_PARAMS, `${operationId} cannot be invoked on a ${kind}`);
-
-      // Refused rather than queued. The agent is writing to this tree, and
-      // an operation that rewrote a file underneath it would be racing the
-      // thing whose work the changeset is about.
-      // `-32004`, which the protocol has for exactly this: the operation
-      // requires no active turn and there is one. `-32002` is
-      // `ProviderNotFound`, so a client branching on the code was told to
-      // try another provider when what it should do is wait.
-      if ((statusOf(at.owner) & Status.InProgress) !== 0)
-        throw new RpcError(-32004, `${at.owner} is mid-turn`);
+      const scopes = Array.isArray(offered.scopes) ? offered.scopes as string[] : [];
+      if (!scopes.includes(kind))
+        throw new RpcError(INVALID_PARAMS, `Operation '${operationId}' does not support scope '${kind}' (allowed: ${scopes.join(', ')})`);
 
       /*
-       * And what the machine committed, before anything acts on the folder.
-       *
-       * The agent's commits are in a git directory of the machine's own until
-       * ahpd fetches them - decision
-       * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it` - so
-       * an operation running first would act on a changeset that does not hold
-       * the work the turn just did.
-       *
-       * Where the work could not be moved onto the branch the operation is
-       * refused rather than run: something of the host's is in the way - a
-       * commit of a person's, or staged changes - and what the operation would
-       * commit is not what the machine wrote. Under a ref of ahpd's own the
-       * work is kept, and a look at the branch picks it up.
+       * An identical invocation in flight is shared, and any other waits for
+       * the one before it on the same operation of the same changeset, as the
+       * reference host runs its operation lanes: an operation asked twice runs
+       * once.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L431-L471
        */
-      const brought = await bringBackOf(at.owner);
-      if (brought?.waiting !== undefined) {
-        throw new RpcError(CONFLICT, `the work of ${at.owner} waits in ${brought.waiting}: nothing acts on ${at.dir} until it is on the branch`);
-      }
-
-      const key = opKey(channel, operationId);
-      inFlight.add(key);
-      lastError.delete(key);
-      dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
-      try {
-        const meta = typeof params._meta === 'object' && params._meta !== null ? params._meta as Record<string, unknown> : undefined;
-        const result = await need(source.invoke, 'invokeChangesetOperation').call(source, {
-          ...context,
-          dir: at.dir,
-          session: at.owner,
-          scope: at.scope,
-          operationId,
-          ...(target !== undefined ? { target } : {}),
-          ...(meta !== undefined ? { meta } : {}),
-        });
-        inFlight.delete(key);
-        dispatch(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
-        // Before the refresh, so GitHub's later answer is what survives.
-        if (result.pullRequest !== undefined) recordPullRequest(at.owner, at.dir, result.pullRequest);
-        // Something wrote to the tree, so every changeset of this session
-        // is now describing a directory that has moved. The catalogue
-        // first, because `refresh` is what makes the next read fresh.
-        refreshFacts(at.dir);
-        await options.changes?.refresh?.(at.dir).catch(() => false);
-        await contentMoved(at.owner);
+      const lane = opKey(channel, operationId);
+      const sorted = (_: string, value: unknown): unknown => (typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value).sort(([one], [two]) => (one < two ? -1 : one > two ? 1 : 0)))
+        : value);
+      const identity = `${lane}\u0000${JSON.stringify({ target: params.target ?? null, _meta: params._meta ?? null }, sorted)}`;
+      const execute = async (): Promise<Record<string, unknown>> => {
         /*
-         * And where the operation left the branch, the machine is handed it.
+         * And what the machine committed, before anything acts on the folder.
          *
-         * The fetch above brought the machine's own work to the host; this is
-         * the other direction - a commit, a checkout, a discard or a revert has
-         * moved the host's branch, its index, or both, and a machine still at
-         * where it was would run its next turn against a history the folder it
-         * shares is no longer in - decision
-         * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`. A
-         * machine that could not be moved is a line in the log and nothing
-         * else: the operation has already happened, and it is the machine's
-         * next turn that is one branch behind.
+         * The agent's commits are in a git directory of the machine's own until
+         * ahpd fetches them - decision
+         * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it` - so
+         * an operation running first would act on a changeset that does not
+         * hold the work the turn just did.
+         *
+         * Where the work could not be moved onto the branch the operation is
+         * refused rather than run: something of the host's is in the way - a
+         * commit of a person's, or staged changes - and what the operation
+         * would commit is not what the machine wrote. Under a ref of ahpd's own
+         * the work is kept, and a look at the branch picks it up.
          */
-        await followOf(at.owner);
-        return {
-          ...(result.message !== undefined ? { message: result.message } : {}),
-          // What the operation produced, when it produced something worth
-          // opening. A pull request a push made is the case: the operation
-          // succeeded, and the useful part of it is a page somewhere.
-          ...(result.followUp !== undefined ? { followUp: result.followUp } : {}),
-        };
-      }
-      catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        inFlight.delete(key);
-        lastError.set(key, message);
-        dispatch(channel, {
-          type: 'changeset/operationStatusChanged',
-          operationId,
-          status: 'error',
-          error: { message },
-        });
-        log(`${operationId} on ${channel} failed: ${message}`);
-        // With the source's code and data when it chose them: a refusal
-        // the reference client branches on is more than its message.
-        const chosen = error as { code?: unknown; data?: unknown };
-        if (typeof chosen.code === 'number') throw new RpcError(chosen.code, message, chosen.data);
-        throw new RpcError(INTERNAL_ERROR, message);
-      }
+        const brought = await bringBackOf(at.owner);
+        if (brought?.waiting !== undefined) {
+          throw new RpcError(CONFLICT, `the work of ${at.owner} waits in ${brought.waiting}: nothing acts on ${at.dir} until it is on the branch`);
+        }
+
+        ctx.operationStatusSaid(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'running' });
+        try {
+          const meta = typeof params._meta === 'object' && params._meta !== null ? params._meta as Record<string, unknown> : undefined;
+          const request = {
+            ...context,
+            dir: at.dir,
+            session: at.owner,
+            scope: at.scope,
+            operationId,
+            ...(target !== undefined ? { target } : {}),
+            ...(meta !== undefined ? { meta } : {}),
+          };
+          /*
+           * The source's own operation runs through its `invoke`, and one a
+           * contribution offered through the handler it registered for it, as
+           * VS Code invokes the handler registered for an operation's id.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L424
+           */
+          const own = (source.operations?.(at.dir, at.owner, at.scope, context) ?? []).some((one) => one.id === operationId);
+          const handler = own ? undefined : (options.changesetOperations ?? [])
+            .find((one) => (one.operations(at.dir, at.owner, at.scope, context) ?? []).some((offer) => offer.id === operationId))
+            ?.handlers[operationId];
+          const result = handler !== undefined
+            ? await handler(request)
+            : await need(source.invoke, 'invokeChangesetOperation').call(source, request);
+          ctx.operationStatusSaid(channel, { type: 'changeset/operationStatusChanged', operationId, status: 'idle' });
+          // Before the refresh, so GitHub's later answer is what survives.
+          if (result.pullRequest !== undefined) recordPullRequest(at.owner, at.dir, result.pullRequest);
+          /*
+           * The agent's edits the operation undid, told to the session's agent
+           * with its next turn, as the reference host's discard reports them.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostDiscardChangesOperationHandler.ts#L496-L504
+           */
+          for (const edits of result.discarded ?? []) ctx.reportDiscarded(at.owner, edits);
+          // Something wrote to the tree, so every changeset of this session
+          // is now describing a directory that has moved. The catalogue
+          // first, because `refresh` is what makes the next read fresh.
+          refreshFacts(at.dir);
+          await options.changes?.refresh?.(at.dir).catch(() => false);
+          await contentMoved(at.owner);
+          /*
+           * And where the operation left the branch, the machine is handed it.
+           *
+           * The fetch above brought the machine's own work to the host; this
+           * is the other direction - a commit, a checkout, a discard or a
+           * revert has moved the host's branch, its index, or both, and a
+           * machine still at where it was would run its next turn against a
+           * history the folder it shares is no longer in - decision
+           * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+           * A machine that could not be moved is a line in the log and nothing
+           * else: the operation has already happened, and it is the machine's
+           * next turn that is one branch behind.
+           */
+          await followOf(at.owner);
+          return {
+            ...(result.message !== undefined ? { message: result.message } : {}),
+            // What the operation produced, when it produced something worth
+            // opening. A pull request a push made is the case: the operation
+            // succeeded, and the useful part of it is a page somewhere.
+            ...(result.followUp !== undefined ? { followUp: result.followUp } : {}),
+          };
+        }
+        catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          // The failure as the protocol's ErrorInfo, named and traced as the
+          // reference host's changeset operations say one.
+          // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetOperationService.ts#L519-L524
+          ctx.operationStatusSaid(channel, {
+            type: 'changeset/operationStatusChanged',
+            operationId,
+            status: 'error',
+            error: error instanceof Error
+              ? { errorType: error.name, message, ...(error.stack === undefined ? {} : { stack: error.stack }) }
+              : { errorType: 'Error', message },
+          });
+          log(`${operationId} on ${channel} failed: ${message}`);
+          // With the source's code and data when it chose them: a refusal
+          // the reference client branches on is more than its message.
+          const chosen = error as { code?: unknown; data?: unknown };
+          if (typeof chosen.code === 'number') throw new RpcError(chosen.code, message, chosen.data);
+          throw new RpcError(INTERNAL_ERROR, message);
+        }
+      };
+      const shared = ctx.inFlightOperations.get(identity);
+      if (shared !== undefined && ctx.operationLanes.get(lane) === shared) return await shared;
+      const before = ctx.operationLanes.get(lane);
+      const running = before === undefined ? execute() : before.then(execute, execute);
+      ctx.operationLanes.set(lane, running);
+      ctx.inFlightOperations.set(identity, running);
+      const cleared = (): void => {
+        if (ctx.inFlightOperations.get(identity) === running) ctx.inFlightOperations.delete(identity);
+        if (ctx.operationLanes.get(lane) === running) ctx.operationLanes.delete(lane);
+      };
+      void running.then(cleared, cleared);
+      return await running;
     },
     resourceResolve: async (params) => {
       const uri = String(params.uri ?? '');
-      return await need(need(storeFor(uri), 'resourceResolve').resolve, 'resourceResolve')(
+      return await served(need(storeFor(uri), 'resourceResolve').resolve, 'resolve', uri)(
         uri,
         params.followSymlinks !== false,
       );

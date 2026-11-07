@@ -38,7 +38,7 @@ const contributed: Agent = {
   displayName: 'Contributed backend',
 };
 
-const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, channels: {}, adapters: {}, methods: {}, events: {}, triggers: { by: 'fixture', types: {} }, starts: { by: 'fixture' }, connects: { by: 'fixture', close: () => {} }, canvases: { by: 'fixture' }, preambles: [], closers: [] };
+const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], sessionConfig: {}, sessionCompletions: {}, providerConfigurations: [], changesetOperations: [], ports: {}, providers: {}, channels: {}, adapters: {}, methods: {}, events: {}, triggers: { by: 'fixture', types: {} }, starts: { by: 'fixture' }, connects: { by: 'fixture', close: () => {} }, canvases: { by: 'fixture' }, preambles: [], closers: [] };
 
 it('answers whether it keeps a session, from the store and by the id in the URI', async () => {
   const store = memorySessions();
@@ -220,6 +220,7 @@ it('marks a contributed key dynamic only where something answers for it', () => 
     sessionCompletions: {
       computer: () => [{ value: 'computer://box', label: 'box' }],
     },
+    providerConfigurations: [], changesetOperations: [],
     ports: {},
     providers: {},
     channels: {}, adapters: {}, methods: {},
@@ -242,6 +243,7 @@ it('publishes a session setting a plugin contributed, with its value on the sess
     tools: [],
     sessionConfig: { computer: { type: 'string', title: 'Computer', default: 'computer://box' } },
     sessionCompletions: {},
+    providerConfigurations: [], changesetOperations: [],
     ports: {},
     providers: {},
     channels: {}, adapters: {}, methods: {},
@@ -298,6 +300,7 @@ it('routes a completions request to whoever registered the key', async () => {
         return [{ value: 'computer://box', label: 'box', description: 'debian · Up' }];
       },
     },
+    providerConfigurations: [], changesetOperations: [],
     ports: {},
     providers: {},
     channels: {}, adapters: {}, methods: {},
@@ -351,6 +354,7 @@ it('seeds a contributed key from its own answerer when a config is resolved', as
         ];
       },
     },
+    providerConfigurations: [], changesetOperations: [],
     ports: {},
     providers: {},
     channels: {}, adapters: {}, methods: {},
@@ -398,6 +402,7 @@ it('answers the rest of the form when a seed fails', async () => {
       computer: () => { throw new Error('docker is not running'); },
       region: () => [{ value: 'us', label: 'Nowhere near' }],
     },
+    providerConfigurations: [], changesetOperations: [],
     ports: {},
     providers: {},
     channels: {}, adapters: {}, methods: {},
@@ -424,18 +429,18 @@ it('answers the rest of the form when a seed fails', async () => {
 });
 
 /*
- * An answerer that throws is an empty picker, not a failed form.
- *
- * The person is filling in a session's settings, and a machine listing that
- * cannot be read is not a reason to refuse them the rest of it.
+ * An answerer that throws fails the request with its own words, as VS Code's
+ * host lets a completion provider's failure through.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11070-L11081
  */
-it('answers with nothing when the answerer fails', async () => {
+it('fails the request with the answerer\'s words when the answerer fails', async () => {
   const { options } = foldHostOptions(base(), [{
     by: 'fixture',
     agents: [],
     tools: [],
     sessionConfig: { computer: { type: 'string' } },
     sessionCompletions: { computer: () => { throw new Error('docker is not running'); } },
+    providerConfigurations: [], changesetOperations: [],
     ports: {},
     providers: {},
     channels: {}, adapters: {}, methods: {},
@@ -445,10 +450,10 @@ it('answers with nothing when the answerer fails', async () => {
   }]);
   const client = createHost(options).accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
-  expect(await client.handle({
+  await expect(client.handle({
     method: 'sessionConfigCompletions',
     params: { channel: 'ahp-root://', property: 'computer', query: '' },
-  })).toEqual({ items: [] });
+  })).rejects.toThrow('docker is not running');
 });
 
 it('advertises every scheme it serves on the handshake and on the root state', async () => {
@@ -456,7 +461,7 @@ it('advertises every scheme it serves on the handshake and on the root state', a
     read: async () => ({ data: 'x', encoding: 'utf-8' as const }),
     list: async () => [],
     write: async () => {},
-    remove: async () => {},
+    delete: async () => {},
     describe: () => ({ title: 'Notes', description: 'Files a session keeps.', manifest: { type: 'object', properties: {} } }),
   };
   const { options } = foldHostOptions(base(), [{
@@ -465,6 +470,7 @@ it('advertises every scheme it serves on the handshake and on the root state', a
     tools: [],
     sessionConfig: {},
     sessionCompletions: {},
+    providerConfigurations: [], changesetOperations: [],
     ports: {},
     providers: { notes },
     channels: {}, adapters: {}, methods: {},
@@ -544,12 +550,13 @@ it('names a scheme that says nothing of itself, and keeps one built-in subject o
     tools: [],
     sessionConfig: {},
     sessionCompletions: {},
+    providerConfigurations: [], changesetOperations: [],
     ports: {},
     // No `describe`, so the entry falls back to the scheme's own name; and one
     // registered under a subject the host decides, which must not be listed
     // twice.
     providers: {
-      bare: { read: async () => ({ data: 'x', encoding: 'utf-8' as const }), remove: async () => {} },
+      bare: { read: async () => ({ data: 'x', encoding: 'utf-8' as const }), delete: async () => {} },
       file: { read: async () => ({ data: 'x', encoding: 'utf-8' as const }) },
     },
     channels: {}, adapters: {}, methods: {},
@@ -589,6 +596,7 @@ it('advertises only what a read-only provider implements', async () => {
   };
   const { options } = foldHostOptions(base(), [{
     by: 'fixture', agents: [], tools: [], sessionConfig: {}, sessionCompletions: {},
+    providerConfigurations: [], changesetOperations: [],
     ports: {}, providers: { quiet }, channels: {}, adapters: {}, methods: {}, events: {}, triggers: { by: 'fixture', types: {} }, starts: { by: 'fixture' }, connects: { by: 'fixture', close: () => {} }, canvases: { by: 'fixture' }, preambles: [], closers: [],
   }]);
   const client = createHost(options).accept(peer());
@@ -648,7 +656,7 @@ it('drops a clashing agent alone, and says which plugin lost the id', () => {
   const asAgents = (by: string, ...providers: string[]): Contribution => ({
     by,
     agents: providers.map((provider) => ({ ...echo({ path: '/x' }), provider })),
-    tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, channels: {}, adapters: {}, methods: {}, events: {}, triggers: { by: 'fixture', types: {} }, starts: { by: 'fixture' }, connects: { by: 'fixture', close: () => {} }, canvases: { by: 'fixture' }, preambles: [], closers: [],
+    tools: [], sessionConfig: {}, sessionCompletions: {}, providerConfigurations: [], changesetOperations: [], ports: {}, providers: {}, channels: {}, adapters: {}, methods: {}, events: {}, triggers: { by: 'fixture', types: {} }, starts: { by: 'fixture' }, connects: { by: 'fixture', close: () => {} }, canvases: { by: 'fixture' }, preambles: [], closers: [],
   });
   const folded = foldHostOptions({ ...base(), agents: [] }, [asAgents('a', 'x', 'y'), asAgents('b', 'y', 'z')]);
   expect(folded.options.agents?.map((one) => one.provider)).toEqual(['x', 'y', 'z']);

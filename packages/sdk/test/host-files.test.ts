@@ -9,10 +9,12 @@ import { uriOf } from '../src/resources/resources.js';
 import type { Start } from '../src/types/agent.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
+import type { WorkspaceFiles } from '../src/types/host.js';
 import {
-  resetSdk, actions, builtServer, claude, complete, createHost, emit, hello, hostTools, list, machine, open,
+  resetSdk, actions, builtServer, claude, complete, createHost, emit, firstMessage, hello, hostTools, list, machine, open,
   peer, read, resolve, sendAnswered, serving, sessionQueries, settle, running, wrote,
 } from './support/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -63,6 +65,8 @@ describe('where the agent works', () => {
         workingDirectories: [uriOf(REPO)],
       },
     });
+    // Listed from its first message.
+    await firstMessage(client, chatUriFor('ahp-session:/a'));
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { workingDirectories: string[] }[];
     };
@@ -238,11 +242,12 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
     }
   });
 
-  it('answers -32601 for a store that only reads, which is not a refusal about a path', async () => {
-    // Two different ways not to have this, and they must not be confused: a
-    // host with a read-only store does not serve the method at all, while a
-    // path the store cannot write is that store's own refusal. Neither is a
-    // grant, which this host no longer asks for.
+  /*
+   * An operation a store that only reads leaves out is NotFound in VS Code's
+   * words, as its host answers an operation a provider does not implement.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95
+   */
+  it('answers NotFound in VS Code\'s words for each operation a store that only reads leaves out', async () => {
     const host = createHost({
       path: REPO,
       agents: [claude({ paths: [REPO] })],
@@ -261,61 +266,88 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
           data: '',
           encoding: 'utf-8',
         },
-      }), method).rejects.toMatchObject({ code: -32601 });
+      }), method).rejects.toMatchObject({ code: -32008, message: expect.stringMatching(/^Resource operation '\w+' is not supported for: /) });
     }
   });
 });
 
+/** A listing of each directory's files, as ripgrep lists them, for a host to complete against. */
+const listing = (byDir: Record<string, string[]>): WorkspaceFiles => ({
+  getFiles: async (dir) => ({ files: (byDir[dir] ?? []).map((one) => join(dir, one)), isTruncated: false }),
+});
+
+type FileItem = { insertText: string; rangeStart: number; rangeEnd: number; attachment: Record<string, unknown> };
+
+/** A session working in `dir` on a host listing `files` there, and what one completion of `text` answers. */
+const filesFor = async (dir: string, files: string[], text: string, trigger = '@'): Promise<FileItem[]> => {
+  const host = createHost({ path: dir, agents: [claude({ paths: [dir] })], ...machine(), workspaceFiles: listing({ [dir]: files }) });
+  const client = host.accept(peer());
+  await client.handle(hello(['0.9.0']));
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude', workingDirectories: [uriOf(dir)] } });
+  const typed = text.replace('@', trigger);
+  return (await client.handle({
+    method: 'completions',
+    params: { channel: 'ahp-session:/live', kind: 'userMessage', text: typed, offset: typed.length },
+  }) as { items: FileItem[] }).items;
+};
+
+/*
+ * VS Code's file completion provider: the files under the session's working
+ * directories ranked by the Quick Open scorer, the trigger inserted with the
+ * file's name, and a name two files share labelled with the folder each is in.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostFileCompletionProvider.ts#L119-L218
+ */
 describe('completing an at-sign', () => {
-  it('offers paths under the session\'s own directory', async () => {
+  it('offers the files under the session\'s working directory as VS Code\'s Quick Open ranks them, inserting the name', async () => {
+    const found = await filesFor(REPO, ['README.md', 'packages/sdk/src/hosting.md', 'packages/sdk/src/host.ts'], 'look at @host');
+    // A prefix of the name ranks first, the shorter name above the longer, and
+    // a file the word does not match is not offered.
+    expect(found.map((i) => i.insertText)).toEqual(['@host.ts', '@hosting.md']);
+    // The whole `@…` is replaced, so completing does not leave two at-signs;
+    // a reference rather than the bytes, since a completion that carried the
+    // file would carry it per keystroke.
+    expect(found[0]).toEqual({
+      insertText: '@host.ts',
+      rangeStart: 8,
+      rangeEnd: 13,
+      attachment: { type: 'resource', uri: uriOf(join(REPO, 'packages', 'sdk', 'src', 'host.ts')), label: 'host.ts', displayKind: 'document' },
+    });
+  });
+
+  it('labels a name two files share with the folder each is in', async () => {
+    const found = await filesFor(REPO, ['a/index.ts', 'b/index.ts'], '@index');
+    const owner = parse(REPO).base;
+    expect(found.map((i) => i.attachment.label)).toEqual([`${owner} • a/index.ts`, `${owner} • b/index.ts`]);
+  });
+
+  it('offers the files in the order they were listed while nothing is typed, fifty at most', async () => {
+    const many = Array.from({ length: 60 }, (_, at) => `f${String(at).padStart(2, '0')}.txt`);
+    const found = await filesFor(REPO, many, '@');
+    expect(found.map((i) => i.insertText)).toEqual(many.slice(0, 50).map((one) => `@${one}`));
+  });
+
+  it('answers an encoded attachment URI, so a reader can get the path back', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd files '));
+    try {
+      const found = await filesFor(dir, ['notes.txt'], 'look at @not');
+      // A folder with a space in its name completes to a URI that has to name
+      // it back: unencoded, the attachment reads as a file called `ahpd%20files`.
+      expect(found.find((i) => i.insertText === '@notes.txt')?.attachment.uri).toBe(uriOf(join(dir, 'notes.txt')));
+    } finally {
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
+  it('offers no file on a host given no listing', async () => {
     const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     const found = await client.handle({
       method: 'completions',
-      params: { channel: 'ahp-chat:/live', kind: 'userMessage', text: 'look at @packages/sdk/src/ho', offset: 30 },
-    }) as { items: { insertText: string; rangeStart: number; attachment: { type: string; uri: string } }[] };
-
-    expect(found.items.map((i) => i.insertText)).toContain('@packages/sdk/src/host.ts');
-    // The whole `@…` is replaced, so completing does not leave two at-signs.
-    expect(found.items[0]?.rangeStart).toBe(8);
-    // A reference rather than the bytes: a completion that carried the file
-    // would carry it per keystroke.
-    const file = found.items.find((i) => i.insertText === '@packages/sdk/src/host.ts');
-    expect(file?.attachment).toMatchObject({ type: 'resource', uri: uriOf(join(REPO, 'packages', 'sdk', 'src', 'host.ts')) });
-  });
-
-  it('answers an encoded attachment URI, so a reader can get the path back', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ahpd files '));
-    try {
-      writeFileSync(join(dir, 'notes.txt'), 'x');
-      const host = createHost({ path: dir, agents: [claude({ paths: [dir] })], ...machine() });
-      const client = host.accept(peer());
-      await client.handle(hello(['0.9.0']));
-      const found = await client.handle({
-        method: 'completions',
-        params: { channel: 'ahp-root://', kind: 'userMessage', text: 'look at @not', offset: 12 },
-      }) as { items: { insertText: string; attachment: { uri: string } }[] };
-
-      const file = found.items.find((i) => i.insertText === '@notes.txt');
-      // A folder with a space in its name completes to a URI that has to name
-      // it back: unencoded, the attachment reads as a file called `ahpd%20files`.
-      expect(file?.attachment.uri).toBe(uriOf(join(dir, 'notes.txt')));
-    } finally {
-      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    }
-  });
-
-  it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {
-    const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
-    const client = host.accept(peer());
-    await client.handle(hello(['0.9.0']));
-    const found = await client.handle({
-      method: 'completions',
-      params: { channel: 'ahp-root://', kind: 'userMessage', text: '@pack', offset: 5 },
-    }) as { items: { insertText: string }[] };
-    expect(found.items.map((i) => i.insertText)).toContain('@packages/');
+      params: { channel: 'ahp-session:/live', kind: 'userMessage', text: '@host', offset: 5 },
+    }) as { items: unknown[] };
+    expect(found.items).toEqual([]);
   });
 
   it('leaves a slash command alone, because the two cannot both match', async () => {
@@ -342,32 +374,17 @@ describe('completing a hash sign', () => {
    * the path - which is what decides whether the client keeps the token.
    */
   it('offers the files an at-sign offers, with the hash kept', async () => {
-    const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
-    const client = host.accept(peer());
-    await client.handle(hello(['0.9.0']));
-    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
-    const asked = { channel: 'ahp-chat:/live', kind: 'userMessage' };
-    const typed = 'look at #packages/sdk/src/ho';
-    const hashes = await client.handle({
-      method: 'completions',
-      params: { ...asked, text: typed, offset: typed.length },
-    }) as { items: { insertText: string; rangeStart: number; rangeEnd: number; attachment: Record<string, unknown> }[] };
-    const ats = await client.handle({
-      method: 'completions',
-      params: { ...asked, text: typed.replace('#', '@'), offset: typed.length },
-    }) as typeof hashes;
+    const files = ['README.md', 'packages/sdk/src/hosting.md', 'packages/sdk/src/host.ts'];
+    const hashes = await filesFor(REPO, files, 'look at @packages/sdk/src/ho', '#');
+    const ats = await filesFor(REPO, files, 'look at @packages/sdk/src/ho');
 
     // The same files, in the same order, with nothing else about them moved.
-    expect(hashes.items.map((i) => i.insertText)).toEqual(ats.items.map((i) => i.insertText.replace(/^@/, '#')));
+    expect(hashes.map((i) => i.insertText)).toEqual(ats.map((i) => i.insertText.replace(/^@/, '#')));
+    expect(hashes.map((i) => i.attachment)).toEqual(ats.map((i) => i.attachment));
     // The whole `#…` is replaced, so completing does not leave two hashes.
-    expect(hashes.items[0]?.rangeStart).toBe(8);
-    expect(hashes.items[0]?.rangeEnd).toBe(typed.length);
-    const file = hashes.items.find((i) => i.insertText === '#packages/sdk/src/host.ts');
-    expect(file?.attachment).toMatchObject({
-      type: 'resource',
-      uri: uriOf(join(REPO, 'packages', 'sdk', 'src', 'host.ts')),
-      label: 'packages/sdk/src/host.ts',
-    });
+    expect(hashes[0]?.rangeStart).toBe(8);
+    expect(hashes[0]?.rangeEnd).toBe('look at #packages/sdk/src/ho'.length);
+    expect(hashes.map((i) => i.insertText)).toEqual(['#host.ts', '#hosting.md']);
   });
 
   /*
@@ -402,7 +419,7 @@ describe('completing a hash sign', () => {
     await settle();
     // The CLI naming its conversation, and then the end of the turn: this is
     // what leaves the chat a completed turn for an attachment to be pinned to.
-    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
+    await emit({ type: 'system', subtype: 'init', session_id: `sdk-${turnId}` });
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   };
 
@@ -420,6 +437,7 @@ describe('completing a hash sign', () => {
       path: REPO,
       agents: [{ ...backend, create: (start: Start) => { starts.push(start); return backend.create(start); } }],
       ...machine(),
+      workspaceFiles: listing({ [REPO]: ['README.md', 'packages/sdk/src/host.ts'] }),
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
@@ -427,9 +445,10 @@ describe('completing a hash sign', () => {
   };
 
   /**
-   * A session with three chats, each titled by the message it opened with.
+   * A session with three chats, each titled by the message it opened with and
+   * each with a finished turn, which is what a chat is offered for.
    *
-   * A pause between the two, so the order they are offered in is the order they
+   * A pause between them, so the order they are offered in is the order they
    * were last spoken to rather than a tie between two timestamps read in the
    * same millisecond.
    */
@@ -439,17 +458,13 @@ describe('completing a hash sign', () => {
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/chats' } }) as {
       snapshot: { state: { defaultChat: string } };
     };
-    await client.handle({
-      method: 'createChat',
-      params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/review', initialMessage: { text: 'Review the diff' } },
-    });
-    await settle();
-    await new Promise((r) => { setTimeout(r, 5); });
-    await client.handle({
-      method: 'createChat',
-      params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/plan', initialMessage: { text: 'Plan the work' } },
-    });
-    await settle();
+    await spoken(client, opened.snapshot.state.defaultChat, 't0', 'Look around');
+    for (const [chat, turnId, text] of [['ahp-chat:/review', 't1', 'Review the diff'], ['ahp-chat:/plan', 't2', 'Plan the work']] as const) {
+      await new Promise((r) => { setTimeout(r, 5); });
+      await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/chats', chat } });
+      await settle();
+      await spoken(client, chat, turnId, text);
+    }
     return { client, handed: opened.snapshot.state.defaultChat };
   };
 
@@ -544,7 +559,12 @@ describe('completing a hash sign', () => {
     expect(await completing(client, 'ahp-session:/chats', 'tell #chat:Explore')).toEqual([]);
   });
 
-  it('pins a chat to the last turn it finished, and offers one that has none', async () => {
+  /*
+   * VS Code's provider pins a chat to its last completed turn and skips one
+   * with none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatCompletionProvider.ts#L170-L195
+   */
+  it('pins a chat to the last turn it finished, and skips one that has none, as VS Code\'s provider', async () => {
     const { client } = await holding();
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/chats', provider: 'claude' } });
     await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/chats', chat: 'ahp-chat:/review' } });
@@ -555,14 +575,9 @@ describe('completing a hash sign', () => {
     await settle();
 
     const found = await completing(client, 'ahp-session:/chats', 'tell #chat:');
-    expect(found.map((one) => one.attachment.resource)).toEqual(['ahp-chat:/blank', 'ahp-chat:/review']);
-    const review = found.find((one) => one.attachment.resource === 'ahp-chat:/review');
-    expect(review?.attachment).toMatchObject({ type: 'chat', label: 'Review the diff', endTurn: 't1' });
-    // Nothing rather than a key that says nothing: the protocol reads an absent
-    // `endTurn` as a chat whose whole transcript is meant, and a chat with no
-    // completed turn has no id to name.
-    const blank = found.find((one) => one.attachment.resource === 'ahp-chat:/blank');
-    expect(blank?.attachment).toEqual({ type: 'chat', resource: 'ahp-chat:/blank', label: 'New session' });
+    expect(found.map((one) => one.attachment)).toEqual([
+      { type: 'chat', resource: 'ahp-chat:/review', endTurn: 't1', label: 'Review the diff' },
+    ]);
   });
 
   it('answers a chat token with nothing where there is no session', async () => {
@@ -586,6 +601,58 @@ describe('more than one directory', () => {
   const THREE = join(tmpdir(), 'ahpd-more-three');
   const EXTRA = join(tmpdir(), 'ahpd-more-extra');
   const ELSEWHERE = join(tmpdir(), 'ahpd-more-elsewhere');
+  /*
+   * A VS Code editor window, by the name it gives itself, and the multi-root
+   * workspace it makes a session from: the two a window's folder change is
+   * taken from, as VS Code's host takes one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostClientInfo.ts#L8-L35
+   */
+  const EDITOR_WINDOW = {
+    clientInfo: { name: 'vscode-editor-window', version: '1.0.0' },
+    _meta: { 'vscode.ahpSessionUris': true, 'vscode.ahpChatUris': true },
+  };
+  const MULTI_ROOT = { multiRoot: { workspaceFile: uriOf(join(tmpdir(), 'ahpd-more.code-workspace')) } };
+
+  /**
+   * A first turn on a chat, run to its end: what makes a session ready for a
+   * window's folder change. The CLI names the conversation `sdk-spoken` as it
+   * starts, which is the name a resume asks for once the CLI has written it.
+   */
+  const spoken = async (client: { handle(r: { method: string; params: unknown }): unknown }, chatUri: string): Promise<void> => {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    });
+    await settle();
+    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-spoken' });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    await settle(8);
+  };
+
+  /** A window's session over the given folders, made from a multi-root workspace or not, and spoken in. */
+  const windowed = async (folders: string[], multiRoot = true) => {
+    const host = serving('/home/softov');
+    const p = peer();
+    p.request = async () => ({ trusted: true });
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], EDITOR_WINDOW));
+    const uri = 'ahp-session:/windowed';
+    await client.handle({
+      method: 'createSession',
+      params: { channel: uri, provider: 'claude', workingDirectories: folders.map(uriOf), ...(multiRoot ? { _meta: MULTI_ROOT } : {}) },
+    });
+    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    await spoken(client, chatUri);
+    return { host, client, peer: p, uri, chatUri };
+  };
+
+  /** What `channel` was told of the folder actions, with the sender's number and any refusal. */
+  const folderActions = (p: ReturnType<typeof peer>, channel: string) => actions(p, channel)
+    .filter((one) => String(one.action.type).startsWith('session/workingDirectory'))
+    .map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason]);
 
   it('advertises that it can, and which slot is fixed', async () => {
     const client = open();
@@ -626,64 +693,69 @@ describe('more than one directory', () => {
     expect(state.workingDirectories).toEqual([uriOf(ONE), uriOf(TWO)]);
   });
 
-  it('starts the agent again, resumed, when a directory is added to a running session', async () => {
-    const { client, uri, peer: p } = await running();
-    // The window vouches for the folder it is adding, because a folder is
-    // untrusted until a client says otherwise and this case is about the
-    // restart rather than about the question.
-    p.request = async () => ({ trusted: true });
-    // The CLI its first send started names the conversation, and that name is
-    // what a resume asks for, once the CLI has written it.
-    await sendAnswered(client, uri);
-    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-wide' });
-    wrote('sdk-wide', String(sessionQueries().at(-1)?.options.cwd));
+  it('says a directory added to a running session at once, and starts the agent again in it, resumed, at the next turn', async () => {
+    const { client, uri, chatUri, peer: p } = await windowed([ONE]);
+    wrote('sdk-spoken', String(sessionQueries().at(-1)?.options.cwd));
     const before = sessionQueries().length;
-    client.handle({
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    await settle(8);
+    // Said at once, as VS Code's host applies it, with nothing started yet.
+    expect(folderActions(p, uri)).toEqual([['session/workingDirectorySet', 1, undefined]]);
+    expect(sessionQueries().length).toBe(before);
+
+    await client.handle({
       method: 'dispatchAction',
-      params: {
-        channel: uri,
-        action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) },
-      },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go on' } } },
     });
-    await settle();
-    await sendAnswered(client, uri);
+    await settle(8);
     /*
-     * A new CLI, on the same conversation, started by the next send.
-     *
-     * The SDK takes its directories when the process starts and offers no way
-     * to add one after, so the honest implementation is to start it again and
-     * *resume* - which is what makes this the same conversation in a wider
-     * place rather than a new one.
+     * A new CLI, on the same conversation, at the turn boundary: the SDK takes
+     * its directories when the process starts and offers no way to add one
+     * after, so it starts again and *resumes*, the same conversation in a
+     * wider place.
      */
     expect(sessionQueries().length).toBe(before + 1);
     expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual([EXTRA]);
     expect(sessionQueries().at(-1)?.options.resume).toBeDefined();
   });
 
-  it('refuses to remove the directory the agent runs in', async () => {
-    const host = serving('/home/softov');
-    const p = peer();
-    const client = host.accept(p);
-    await client.handle(hello(['0.9.0']));
-    const uri = 'ahp-session:/rooted';
-    await client.handle({
-      method: 'createSession',
-      params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(ONE)] },
-    });
-    client.handle({
-      method: 'dispatchAction',
-      params: {
-        channel: uri,
-        action: { type: 'session/workingDirectoryRemoved', directory: uriOf(ONE) },
-      },
-    });
+  it('refuses to remove the directory the agent runs in, in VS Code\'s words', async () => {
+    const { client, uri, peer: p } = await windowed([ONE, TWO]);
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 2, action: { type: 'session/workingDirectoryRemoved', directory: uriOf(ONE) } } });
     await settle();
-    // The protocol says a client MUST NOT remove index 0. Said out loud rather
-    // than ignored, so a client that tried learns why nothing happened.
-    const refused = p.notes
-      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
-      .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('cannot be removed'))).toBe(true);
+    expect(folderActions(p, uri)).toEqual([['session/workingDirectoryRemoved', 2, 'The primary working directory cannot be removed.']]);
+  });
+
+  /*
+   * A window's folder change on VS Code's conditions, refused in its words
+   * where they do not hold: from an editor window, on the session's channel,
+   * for a session made from a multi-root workspace.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13634-L13650
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12669-L12689
+   */
+  it('takes a folder change from an editor window, on the session channel, for a session made from a multi-root workspace', async () => {
+    const { host, client, uri, chatUri, peer: p } = await windowed([ONE]);
+    const before = sessionQueries().length;
+    // A client that is no editor window.
+    const other = peer();
+    const plain = host.accept(other);
+    await plain.handle(hello(['0.9.0'], { clientId: 'plain' }));
+    await plain.handle({ method: 'subscribe', params: { channel: uri } });
+    await plain.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 3, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    // The editor window, on the chat's channel.
+    await client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq: 4, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    await settle(8);
+    expect(folderActions(other, uri)).toEqual([['session/workingDirectorySet', 3, 'Session working-directory actions require an Editor Window client.']]);
+    expect(folderActions(p, chatUri)).toEqual([['session/workingDirectorySet', 4, 'Session working-directory actions require a session channel.']]);
+
+    // A session the window made from no multi-root workspace.
+    const single = await windowed([ONE], false);
+    await single.client.handle({ method: 'dispatchAction', params: { channel: single.uri, clientSeq: 5, action: { type: 'session/workingDirectorySet', directory: uriOf(EXTRA) } } });
+    await settle(8);
+    expect(folderActions(single.peer, single.uri)).toEqual([
+      ['session/workingDirectorySet', 5, `Session does not support dynamic working-directory changes: ${single.uri}`],
+    ]);
+    expect(sessionQueries().length).toBe(before + 1);
   });
 
   /*
@@ -697,13 +769,14 @@ describe('more than one directory', () => {
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.9.0']));
+    await client.handle(hello(['0.9.0'], EDITOR_WINDOW));
     const uri = 'ahp-session:/split';
     await client.handle({
       method: 'createSession',
       params: {
         channel: uri, provider: 'claude',
         workingDirectories: [uriOf(ONE), uriOf(TWO), uriOf(THREE)],
+        _meta: MULTI_ROOT,
       },
     });
     return { host, client, peer: p, uri };
@@ -735,47 +808,31 @@ describe('more than one directory', () => {
     })).rejects.toThrow(/is not a working directory of/);
   });
 
-  it('starts one chat again when its own set changes, and leaves the others alone', async () => {
+  /*
+   * A chat's own folder actions are refused in VS Code's words, whatever they
+   * name, and start nothing: VS Code's host serves neither.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L139-L142
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2813-L2815
+   */
+  it('refuses a chat\'s own folder actions, as VS Code does, starting nothing', async () => {
     const { client, peer: p, uri } = await wide();
     const chat = 'ahp-chat:/narrow';
     await client.handle({
       method: 'createChat',
       params: { channel: uri, chat, workingDirectories: [uriOf(ONE), uriOf(THREE)] },
     });
-    await sendAnswered(client, uri);
-    await sendAnswered(client, chat);
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
     const before = sessionQueries().length;
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: uriOf(TWO) } },
-    });
-    await settle();
-    await sendAnswered(client, chat);
-    // One CLI, the chat's next send's, not the session's every chat: the
-    // session's own set has not moved, so the default chat is still running
-    // where it was.
-    expect(sessionQueries().length).toBe(before + 1);
-    expect(sessionQueries().at(-1)?.options.additionalDirectories)
-      .toEqual([THREE, TWO]);
+    await send(client, chat, 12, { type: 'chat/workingDirectorySet', directory: uriOf(TWO) });
+    await send(client, chat, 13, { type: 'chat/workingDirectoryRemoved', directory: uriOf(THREE) });
+    await settle(8);
 
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/workingDirectoryRemoved', directory: uriOf(THREE) } },
-    });
-    await settle();
-    await sendAnswered(client, chat);
-    expect(sessionQueries().at(-1)?.options.additionalDirectories).toEqual([TWO]);
-
-    // And the same rule as `createChat`, said rather than silently widening.
-    client.handle({
-      method: 'dispatchAction',
-      params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: uriOf(ELSEWHERE) } },
-    });
-    await settle();
-    const refused = p.notes
-      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
-      .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('is not a working directory of'))).toBe(true);
+    const answered = actions(p, chat).filter((one) => String(one.action.type).startsWith('chat/workingDirectory'));
+    expect(answered.map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason])).toEqual([
+      ['chat/workingDirectorySet', 12, 'Unsupported action: chat/workingDirectorySet'],
+      ['chat/workingDirectoryRemoved', 13, 'Unsupported action: chat/workingDirectoryRemoved'],
+    ]);
+    expect(sessionQueries().length).toBe(before);
   });
 
   /*
@@ -804,10 +861,14 @@ describe('more than one directory', () => {
 
   it('says a folder set again, one removed that is not there, and a replacement of one that is not there, to every client, starting nothing', async () => {
     const { host, client, peer: p, uri } = await watched();
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    await spoken(client, chatUri);
     const other = peer();
     const watching = host.accept(other);
-    await watching.handle(hello(['0.9.0']));
+    await watching.handle(hello(['0.9.0'], { clientId: 'other' }));
     await watching.handle({ method: 'subscribe', params: { channel: uri } });
     await sendAnswered(client, uri);
     const before = sessionQueries().length;
@@ -887,27 +948,6 @@ describe('more than one directory', () => {
     ]);
   });
 
-  it('says a chat adding a folder it holds, or removing one it does not, starting nothing', async () => {
-    const { client, peer: p, uri } = await wide();
-    const chat = 'ahp-chat:/narrow';
-    await client.handle({
-      method: 'createChat',
-      params: { channel: uri, chat, workingDirectories: [uriOf(ONE), uriOf(THREE)] },
-    });
-    await client.handle({ method: 'subscribe', params: { channel: chat } });
-    await sendAnswered(client, chat);
-    const before = sessionQueries().length;
-    await send(client, chat, 12, { type: 'chat/workingDirectorySet', directory: uriOf(THREE) });
-    await send(client, chat, 13, { type: 'chat/workingDirectoryRemoved', directory: uriOf(TWO) });
-    await settle(8);
-
-    const answered = actions(p, chat).filter((one) => String(one.action.type).startsWith('chat/workingDirectory'));
-    expect(answered.map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason])).toEqual([
-      ['chat/workingDirectorySet', 12, undefined],
-      ['chat/workingDirectoryRemoved', 13, undefined],
-    ]);
-    expect(sessionQueries().length).toBe(before);
-  });
 });
 
 describe('the repository a session\'s machine is handed', () => {
@@ -1049,13 +1089,19 @@ describe('a session entering a folder nobody vouched for', () => {
    * folder in hand.
    */
   const hosted = async (here: string, {
-    trusts = [], answer = () => ({ trusted: true }), root = {}, autoApprove, worktrees,
+    trusts = [], answer = () => ({ trusted: true }), root = {}, autoApprove, isolation, worktrees, window = false,
   }: {
     trusts?: string[];
     answer?: (asked: Asked) => unknown;
     root?: Record<string, unknown>;
     autoApprove?: string;
+    isolation?: string;
     worktrees?: Worktrees;
+    /**
+     * Whether the client is a VS Code editor window making the session from a
+     * multi-root workspace, the one a session's folders are set by.
+     */
+    window?: boolean;
   } = {}) => {
     const asked: Asked[] = [];
     const lines: string[] = [];
@@ -1074,7 +1120,13 @@ describe('a session entering a folder nobody vouched for', () => {
       onEvent: (line) => { lines.push(line); },
     });
     const client = host.accept(p);
-    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], {
+      initialSubscriptions: ['ahp-root://'],
+      ...(window ? {
+        clientInfo: { name: 'vscode-editor-window', version: '1.0.0' },
+        _meta: { 'vscode.ahpSessionUris': true, 'vscode.ahpChatUris': true },
+      } : {}),
+    }));
     await client.handle({
       method: 'dispatchAction',
       params: {
@@ -1090,7 +1142,13 @@ describe('a session entering a folder nobody vouched for', () => {
       method: 'createSession',
       params: {
         channel: uri, provider: 'claude', workingDirectories: [uriOf(here)],
-        ...(autoApprove === undefined ? {} : { config: { autoApprove } }),
+        ...(window ? { _meta: { multiRoot: { workspaceFile: uriOf(join(here, 'vouched.code-workspace')) } } } : {}),
+        ...(autoApprove === undefined && isolation === undefined ? {} : {
+          config: {
+            ...(autoApprove === undefined ? {} : { autoApprove }),
+            ...(isolation === undefined ? {} : { isolation }),
+          },
+        }),
       },
     });
     const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
@@ -1216,9 +1274,40 @@ describe('a session entering a folder nobody vouched for', () => {
     expect(String(cwd())).toContain('two.worktrees');
   });
 
-  it('refuses a folder a client adds, and does not add it', async () => {
+  it('keeps the tree a session worked in when it moves, and removes it with the session', async () => {
     const { here, there } = folders();
-    const { client, peer: p, uri } = await hosted(here, { trusts: [here], answer: () => ({ trusted: false }) });
+    const created: { path: string; branch?: string }[] = [];
+    const removed: string[] = [];
+    const worktrees: Worktrees = {
+      repository: async (dir) => dir,
+      branches: async () => ['main'],
+      create: async (one) => { created.push(one); },
+      dirty: async () => false,
+      head: async (path) => created.find((one) => one.path === path)?.branch,
+      remove: async (_repository, path) => { removed.push(path); },
+      gitDir: async () => undefined,
+    };
+    const { client, uri, move, cwd } = await hosted(here, { trusts: [here, there], isolation: 'worktree', worktrees });
+    await move(there);
+
+    // The session runs in the folder it moved to, and the tree its turns ran
+    // in is still on disk.
+    expect(cwd()).toBe(there);
+    expect(created).toHaveLength(1);
+    expect(removed).toEqual([]);
+
+    // And it is the session's: a clean one goes when the session does.
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+    await settle(8);
+    expect(removed).toEqual([created[0]?.path]);
+  });
+
+  it('refuses a folder a window adds that nobody vouched for, and does not add it', async () => {
+    const { here, there } = folders();
+    const { client, peer: p, uri, chatUri } = await hosted(here, { trusts: [here], answer: () => ({ trusted: false }), window: true });
+    // Ready from its first turn, which a working-directory change waits for.
+    await firstMessage(client, chatUri);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
     const before = sessionQueries().length;
     await client.handle({
       method: 'dispatchAction',

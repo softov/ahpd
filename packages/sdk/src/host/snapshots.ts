@@ -1,11 +1,10 @@
+import { AhpErrorCodes } from '@microsoft/agent-host-protocol';
 import { Status, idOf } from '../sessions/catalog.js';
 import { windowOf } from '../sessions/paging.js';
 import { RpcError } from '../rpc.js';
-import { uriOf } from '../resources/fileuri.js';
 import { runState } from './automations.js';
 import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, MARKS, chatUriFor, servedIn, schemeOf, spaceOf, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { ownerFilter } from '../utils/values.js';
-import { need } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { WireTurn } from '../types/wire.js';
@@ -16,7 +15,8 @@ import type { SubscribeView, Turn } from '@microsoft/agent-host-protocol';
 /** What a subscribe is answered with, and the state a session or chat channel opens with. */
 export interface Snapshots {
   value(snapshot: Record<string, unknown>): Record<string, unknown>;
-  snapshotOf(channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>>;
+  /** A channel's snapshot, or nothing for a stateless channel, whose subscribe answers none. */
+  snapshotOf(channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown> | undefined>;
   /**
    * The state a running session's channel opens with: what its default chat's
    * backend says, with what this host keeps beside it. Read once, when the
@@ -24,11 +24,13 @@ export interface Snapshots {
    */
   sessionSeed(uri: string): Bag;
   /**
-   * The state a running chat's channel opens with: what its backend holds,
-   * with what this host keeps beside it. Read once, when the backend starts
-   * the chat; every change after it is an action.
+   * The state a running chat's channel opens with, resolved as VS Code's host
+   * resolves a chat's state: what its backend holds, with what this host keeps
+   * beside it. Read once, when the backend starts the chat; every change after
+   * it is an action.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L213
    */
-  chatSeed(session: string, chatUri: string): Bag;
+  resolveChatState(session: string, chatUri: string): Bag;
   /**
    * A running session's held state, opened from `sessionSeed` the first time
    * anything reads it, or nothing for a session this host is not running.
@@ -38,17 +40,16 @@ export interface Snapshots {
 
 export function createSnapshots(ctx: HostContext): Snapshots {
   const {
-    options, sessions, subagents, byChat, owners, decided, wheres, moves, drafts, terminals,
-    kept, watches, marksOf, resumedSessions, activeClientsOf,
+    options, sessions, subagents, byChat, owners, decided, wheres, moves, terminals,
+    kept, marksOf, restoredSessions, activeClientsOf,
     about, leadOf,
     LOGS, TRACES, METRICS,
     nameOf, sessionOfChat, sessionChannel, sessionFor,
-    relayed,
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
     mergedConfig, sessionSchema, storedConfig, contributedDefaults,
-    waitingFor, startedBy, chatCatalogOf, movable, restoredSubagentSummary, activityOf,
-    past, restoredSubagents, restoredParentChat, linkedTurns, titles,
+    unavailableProvider, startedBy, chatCatalogOf, movable, restoredSubagentSummary, activityOf,
+    restoreSession, restoredSubagents, restoredParentChat, linkedTurns, titles,
     recordedChats, recordedChat, homeId,
   } = ctx;
 
@@ -109,24 +110,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     return { ...rest, turns: window.turns, ...(window.turnsNextCursor === undefined ? {} : { turnsNextCursor: window.turnsNextCursor }) };
   };
 
-  /**
-   * A session's status as its own reducer keeps it, from the flags this host
-   * keeps and the input it waits on.
-   *
-   * The protocol's session reducer moves `status` through `IsRead`,
-   * `IsArchived` and the input-needed list, and through nothing else, so the
-   * activity a seed starts from is idle, raised to input-needed while the list
-   * holds an entry a person answers. What the session's chats are doing is
-   * their own status, carried on each row of `chats`; the catalogue row is
-   * where the session-wide answer is drawn.
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-session/reducer.ts#L44-L62
-   */
-  const seedStatus = (uri: string, inputNeeded: unknown): number => {
-    const waiting = Array.isArray(inputNeeded)
-      && inputNeeded.some((one) => (one as Bag | undefined)?.kind !== 'toolClientExecution');
-    return (waiting ? Status.InputNeeded : Status.Idle) | kept.flags(idOf(uri));
-  };
-
   const sessionSeed = (channel: string): Bag => {
     const held = sessions.get(channel);
     const lead = held === undefined ? undefined : leadOf(held);
@@ -150,12 +133,19 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * activity is its own chat's, and the session's is the chat that decides
      * it, which this host reads across all of them.
      */
-    const { resource: _resource, activity: _activity, customizations: reported, ...theirs } = lead.sessionState();
+    const { resource: _resource, activity: _activity, customizations: reported, inputNeeded: _raised, ...theirs } = lead.sessionState();
     const mine = decided.get(channel);
     const activity = activityOf(held);
     const customizations = ctx.laidCustomizations(channel, reported);
+    // What each chat's running turn waits on a person for, read from the
+    // chat's state as this host raises it.
+    const inputNeeded = [...held.chats].flatMap(([chatUri, chat]) => ctx.inputNeededOf(chatUri, ctx.stateOf(chatUri) ?? chat.chatState() as Bag));
     return {
       ...theirs,
+      // Creating until it is said ready, which a provisional session is at its
+      // first message, as VS Code's host holds a session it has not said ready.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6422-L6426
+      ...(ctx.provisional(channel) ? { lifecycle: 'creating' } : {}),
       ...(customizations === undefined ? {} : { customizations }),
       // What this host answered, beside what the backend did. Its own keys
       // never reached the backend, so this is the only place they can be
@@ -172,7 +162,11 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       // What this host contributes, which is nothing unless it was given
       // any - and then the field is absent rather than an empty list.
       ...(ctx.contributing.length > 0 ? { serverTools: ctx.toolDefinitions(channel) } : {}),
-      status: seedStatus(channel, theirs.inputNeeded),
+      ...(inputNeeded.length > 0 ? { inputNeeded } : {}),
+      // The chats' aggregate with the session's own bits, as VS Code's state
+      // manager seeds and keeps a session's status.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3301-L3325
+      status: ctx.statusOf(channel),
       // No `modifiedAt`: `SessionSummary` declares it and `SessionState`
       // does not, and the catalogue row is where a client reads it.
       defaultChat: held.defaultChat,
@@ -183,7 +177,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     };
   };
 
-  const chatSeed = (session: string, chatUri: string): Bag => {
+  const resolveChatState = (session: string, chatUri: string): Bag => {
     const talking = byChat.get(chatUri);
     if (talking === undefined) return {};
     const owner = sessions.get(session);
@@ -192,7 +186,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * restored transcript did before the session went live.
      */
     const restored = owner !== undefined && owner.defaultChat === chatUri && owner.agent.subagents !== undefined
-      && resumedSessions.has(session)
+      && restoredSessions.has(session)
       ? (ctx.subHistory.get(idOf(session)) ?? [])
         .filter((one) => one.parentToolCallId === undefined || String(one.parentToolCallId) === '')
       : [];
@@ -200,7 +194,15 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const canvases = talking.chat.channel === undefined ? ctx.canvases.listOf(chatUri) : undefined;
     const state: Bag = {
       ...talking.chat.chatState(),
-      ...startedBy(session, chatUri),
+      ...startedBy(chatUri),
+      /*
+       * The session's default chat holds the title it was given, or none,
+       * which reads as its session's: whoever titles the session, a client
+       * shows that title for the chat, as VS Code's host opens a default chat
+       * with its own title or an empty one.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
+       */
+      ...(owner?.defaultChat === chatUri ? { title: ctx.titleOf(session, chatUri) ?? '' } : {}),
       // The chat's own status with the read and archived bits laid over it,
       // which is what its catalogue row says too: a chat's state and its row
       // are two answers to one question.
@@ -220,29 +222,24 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       ...(canvases === undefined ? {} : { canvases }),
     };
     /*
-     * The backend that serves this chat, where it is not the session's own.
-     *
-     * A chat opened on another harness is still a chat of this session - its
-     * channel, its row and its place among the session's chats - so what it
-     * runs on is said in `_meta` and not in `provider`: `ChatState` declares
-     * no provider, and the session must go on answering the provider it was
-     * started on. Laid over whatever the backend put there itself, which is
-     * where a harness speaks its own keys, and left off for the session's own
-     * chats, whose backend is the one the session already names.
+     * The agent that serves this chat, where it is not the session's own, as
+     * VS Code's host gives a chat its own `provider` only where it differs
+     * from its session's: a chat opened on another harness is still a chat of
+     * this session, and the session goes on answering the provider it was
+     * started on.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L128-L131
      */
     const foreign = owner?.backends.get(talking.chat.chatUri);
-    if (foreign !== undefined) {
-      const meta = (typeof state._meta === 'object' && state._meta !== null ? state._meta : {}) as Bag;
-      state._meta = { ...meta, 'ahpd.provider': foreign.agent.provider };
-    }
-    // Every turn the backend holds, with each worker linked from its call;
-    // the window a subscribe asks for is cut from these when it is served.
+    if (foreign !== undefined) state.provider = foreign.agent.provider;
+    // Every turn the backend holds, with each worker linked from its call and
+    // the sender on each message; the window a subscribe asks for is cut from
+    // these when it is served.
     if (Array.isArray(state.turns)) {
-      state.turns = ctx.stampedCalls(session, linkedTurns(session, state.turns as Bag[], restored));
+      state.turns = ctx.withSender(session, ctx.stampedCalls(session, chatUri, linkedTurns(session, state.turns as Bag[], restored)));
     }
     delete state.turnsNextCursor;
     if (typeof state.activeTurn === 'object' && state.activeTurn !== null) {
-      state.activeTurn = ctx.stampedCalls(session, [state.activeTurn as Bag])[0];
+      state.activeTurn = ctx.withSender(session, ctx.stampedCalls(session, chatUri, [state.activeTurn as Bag]))[0];
     }
     // The attachments the clients sent, back on the messages that carry them:
     // a `chat` attachment reaches a backend as a pointer, and the reference
@@ -258,7 +255,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     return ctx.openState(uri, 'session', sessionSeed(uri));
   };
 
-  const snapshotOf = async (channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>> => {
+  const snapshotOf = async (channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown> | undefined> => {
     if (isRootChannel(channel)) {
       /*
        * The root's held state, as this connection may read it.
@@ -305,12 +302,13 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      *
      * A channel this host does not hold is refused here rather than read for a
      * session: the canvas is gone, and a client that subscribed to one the
-     * chat no longer lists is told so rather than handed an empty state.
-     * https://github.com/microsoft/vscode/blob/e646868227c/src/vs/platform/agentHost/node/agentService.ts#L9191-L9206
+     * chat no longer lists is told so, in the reference host's words, rather
+     * than handed an empty state.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11502-L11509
      */
     if (schemeOf(channel) === 'ahp-canvas') {
       const state = ctx.canvases.snapshot(channel);
-      if (state === undefined) throw new RpcError(-32008, 'Canvas is no longer available');
+      if (state === undefined) throw new RpcError(-32008, `Canvas is no longer available: ${channel}`);
       return value({ resource: channel, state, fromSeq: ctx.serverSeq });
     }
     const terminal = terminals.get(channel);
@@ -334,12 +332,15 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * tears down every changeset it had by string-prefix scan, and the reverse
      * lookup - which session is this - is the same scan.
      */
+    /*
+     * A telemetry channel, which is stateless: a subscriber receives only what
+     * is emitted after it arrived, and its subscribe answers with no snapshot,
+     * as the spec says and the reference host answers it.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/telemetry-channel.md#L43
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2143-L2150
+     */
     if (channel === LOGS || channel.startsWith(`${LOGS}/`) || channel === TRACES || channel === METRICS) {
-      // Nothing to snapshot: the channel is a stream, and the protocol says a
-      // subscriber receives only what was emitted after it arrived. Answering
-      // with an empty state is how a client is told it is subscribed rather
-      // than refused.
-      return value({ resource: channel, state: {}, fromSeq: ctx.serverSeq });
+      return undefined;
     }
     if (isAutomations(channel)) {
       /*
@@ -352,7 +353,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
        * and is answered exactly as before.
        */
       const owner = ownerFilter(queryOf(channel), connection?.principal);
-      const entries = need(options.automations, 'the automations channel').list();
+      // A host with no store refuses the catalogue in the reference host's words.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1294
+      if (options.automations === undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `Automation catalogue is unavailable: ${channel}`);
+      const entries = options.automations.list();
       return value({
         resource: channel,
         state: { entries: owner === undefined ? entries : entries.filter((entry) => automationOwner(entry) === owner) },
@@ -380,37 +384,34 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     if (channel.endsWith(MARKS) && sessionChannel(channel)) {
       const owning = channel.slice(0, -MARKS.length);
       const id = idOf(owning);
-      // The same sentence as the roads that open the session itself, since a
-      // client hydrates the marks on the way in and a row waiting for its
-      // harness has none to read.
-      const missing = waitingFor(id);
-      if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
-      // Asked of `past`, which consults the catalogue itself, rather than of
-      // the maps a listing fills: a client sends the three subscriptions that
-      // open a session in one breath, before its own `listSessions` has come
-      // back, and a test against those maps refuses on the race. The session
-      // is the one published under that URI, which is the only one its marks
-      // hang off.
-      if (sessions.has(owning) || ((await past(id)) !== undefined && nameOf(id) === owning))
+      /*
+       * Asked of `restoreSession`, which consults the catalogue itself, rather than of
+       * the maps a listing fills: a client sends the three subscriptions that
+       * open a session in one breath, before its own `listSessions` has come
+       * back, and a test against those maps refuses on the race. The session
+       * is the one published under that URI, which is the only one its marks
+       * hang off. A session whose agent this host is not serving keeps its
+       * marks, which are read without that agent, as the reference host reads
+       * a session's annotations without restoring its provider.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14267-L14278
+       */
+      if (sessions.has(owning) || (unavailableProvider(id) !== undefined && nameOf(id) === owning)
+        || ((await restoreSession(id)) !== undefined && nameOf(id) === owning))
         return value({ resource: channel, state: marksOf(id), fromSeq: ctx.serverSeq });
     }
     /*
-     * A watch another client is keeping, which this host only relays.
-     *
-     * Its state is the params it was made with, the same as one of this
-     * host's own - and a snapshot has to be served here or the client that
-     * asked for the watch cannot subscribe to what it was given.
+     * A watch, attached at its channel's first subscribe. The state is what
+     * the watch *is*: its root, `recursive` and globs. The protocol's reducer
+     * keeps no history: `resourceWatch/changed` exists to deliver events to
+     * whoever is subscribed, and a client that arrives later has missed them
+     * the way it misses anything it was not there for. A watch channel that
+     * names no watch this host can run is refused in the reference host's
+     * words.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2152-L2156
      */
-    const away = relayed.get(channel);
-    if (away) return value({ resource: channel, state: away.state, fromSeq: ctx.serverSeq });
-    const watching = watches.get(channel);
-    if (watching) {
-      // The state is what the watch *is*, not what it has seen. The protocol's
-      // reducer keeps no history: `resourceWatch/changed` exists to deliver
-      // events to whoever is subscribed, and a client that arrives later has
-      // missed them the way it misses anything it was not there for.
-      return value({ resource: channel, state: watching.state, fromSeq: ctx.serverSeq });
-    }
+    const watching = await ctx.attachWatch(channel, connection?.principal);
+    if (watching !== undefined) return value({ resource: channel, state: watching, fromSeq: ctx.serverSeq });
+    if (schemeOf(channel) === 'ahp-resource-watch') throw new RpcError(AhpErrorCodes.SessionNotFound, `Resource watch not found: ${channel}`);
     const at = changesetAt(channel);
     // A changeset of a session in a machine is its host's there, which
     // answers it while the session runs.
@@ -445,10 +446,20 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       startWatchingDir(at.dir);
       const state = await options.changes?.state(at.dir, at.owner, at.scope, at.base);
       if (!state) throw new RpcError(-32001, `No changeset at ${channel}`);
-      // The verbs, alongside the files. Omitted when there are none, which
-      // the protocol asks for and which is what a changeset with nothing to
-      // do to it says.
-      const operations = operationsOf(channel);
+      /*
+       * The verbs, alongside the files. Omitted when there are none, which
+       * the protocol asks for and which is what a changeset with nothing to
+       * do to it says. An invocation's `running` or `error` the channel holds
+       * is what a new subscriber reads as well, until the next list replaces
+       * it, as VS Code's host hands out the changeset state it holds.
+       */
+      const held = shown.get(channel)?.operations ?? [];
+      const operations = operationsOf(channel).map((one) => {
+        const was = held.find((other) => other.id === one.id);
+        return was !== undefined && (was.status === 'running' || was.status === 'error')
+          ? { ...one, status: was.status, ...(was.error === undefined ? {} : { error: was.error }) }
+          : one;
+      });
       /*
        * What this subscriber now holds, which is what the next change is
        * against.
@@ -458,7 +469,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
        * only ever applied from the second change onwards, which is not what
        * "the diff is smaller" means.
        */
-      shown.set(channel, { files: state.files, status: state.status });
+      shown.set(channel, { files: state.files, status: state.status, operations });
       return value({
         resource: channel,
         state: { ...state, ...(operations.length > 0 ? { operations } : {}) },
@@ -475,7 +486,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
        * goes before the seed so no action dispatched while it is out falls
        * between the state and `fromSeq`.
        */
-      if (ctx.stateOf(channel) === undefined && held.agent.subagents !== undefined && resumedSessions.has(channel)) {
+      if (ctx.stateOf(channel) === undefined && held.agent.subagents !== undefined && restoredSessions.has(channel)) {
         const lead = leadOf(held);
         if (lead !== undefined) await restoredSubagents(idOf(channel), held.agent, lead.allTurns() as unknown as WireTurn<Turn>[]);
       }
@@ -483,7 +494,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       const state = sessionStateOf(channel);
       // What it holds of its folder and backend, read now, since this is the
       // moment somebody reads it, and said by action where it moved.
-      ctx.factsMoved(channel);
+      ctx.changesetsAndMetaChanged(channel);
       if (state !== undefined) return served(channel, ctx.stateOf(channel) ?? state);
     }
     /*
@@ -499,7 +510,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const talking = byChat.get(channel);
     if (talking) {
       // Held from the moment its backend started, which is where its seed is read.
-      const state = heldOf(channel, 'chat', () => chatSeed(talking.uri, channel));
+      const state = heldOf(channel, 'chat', () => resolveChatState(talking.uri, channel));
       return served(channel, windowed(state, view));
     }
     /*
@@ -569,23 +580,51 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      */
     const chat = spaceOf(channel) === 'chat';
     const asked = chat ? sessionFor(channel) : channel;
-    // Never a session's id read out of a file, a terminal, a watch or a chat.
-    if (spaceOf(asked) === 'chat' || !sessionChannel(asked)) throw new RpcError(-32001, `No agent for session ${channel}`);
+    /*
+     * Never a session's id read out of a file, a terminal, a watch or a chat.
+     * A chat no session holds is a resource not found, in the reference host's
+     * words for a chat it finds no owner for.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2188-L2199
+     */
+    if (spaceOf(asked) === 'chat' || !sessionChannel(asked)) {
+      throw new RpcError(AhpErrorCodes.SessionNotFound, chat ? `Resource not found: ${channel}` : `No agent for session: ${asked}`);
+    }
     const id = idOf(asked);
-    const missing = waitingFor(id);
-    if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
-    const turns = await past(id);
-    // The chat's session read again, once `past` has named the row.
+    /*
+     * A session whose agent this host is not serving, one not running and not
+     * in the catalogue, or one in it under another URI, is refused as the
+     * reference host's restore refuses a session it finds no agent for: the
+     * code a client takes as final.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
+     */
+    if (unavailableProvider(id) !== undefined) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${asked}`);
+    const turns = await restoreSession(id);
+    // The chat's session read again, once `restoreSession` has named the row.
     const owning = chat ? sessionFor(channel) : channel;
     const owner = owners.get(nameOf(id)) ?? ctx.first;
-    // Not running and not in the catalogue, or in it under another URI.
-    // Refusing is the honest answer and the one a client already knows how to
-    // render - it is what a real host says about a session whose agent has
-    // gone, and what the reference host says about a URI no session is held
-    // under.
-    // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083
-    if (owner === undefined || !turns || nameOf(id) !== owning) throw new RpcError(-32001, `No agent for session ${channel}`);
+    if (owner === undefined || !turns || nameOf(id) !== owning) throw new RpcError(AhpErrorCodes.SessionNotFound, `No agent for session: ${owning}`);
     const title = titles.get(id) ?? 'Session';
+    /*
+     * The chats the store recorded for it, closed ones left out, and which of
+     * them the session would come back as. None for a session inside a
+     * machine, whose chats are the inner host's.
+     */
+    const recorded = kept.nested?.(id) !== undefined ? [] : recordedChats(id);
+    const lead = recorded.find((one) => one.default === true);
+    const leadUri = lead?.uri ?? chatUriFor(nameOf(id));
+    /*
+     * The title its default chat holds, as it holds it live: the one it was
+     * given; with another chat beside it, the session's, which a default chat
+     * takes as its own once its session has one; and otherwise none, which
+     * reads as the session's. VS Code's host restores a default chat with its
+     * own title or an empty one, and gives it the session's as it registers
+     * the session's other chats.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1668-L1675
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1816
+     */
+    const leadOwn = ctx.titleOf(nameOf(id), leadUri);
+    const besides = recorded.some((one) => one.uri !== leadUri);
+    const leadTitle = (others: boolean): string => leadOwn ?? (others ? title : '');
     /*
      * A chat of this session, answered from its own conversation.
      *
@@ -610,80 +649,72 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       : recordedChat(id, channel);
     const stamp = moves.get(owning) ?? new Date().toISOString();
     if (opened !== undefined && opened.uri !== chatUriFor(nameOf(id))) {
-      const own = await ctx.transcriptOf(owner, opened.backendId, ctx.sessionAt(id), nameOf(id), opened.uri);
+      const own = await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), nameOf(id), opened.uri);
       return {
         kind: 'chat',
         state: {
           resource: channel,
-          title: opened.title ?? title,
+          title: opened.uri === leadUri ? leadTitle(besides) : opened.title ?? title,
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
-          turns: ctx.stampedCalls(owning, (own ?? []) as unknown as Bag[]),
-          queuedMessages: [],
-          ...(drafts.get(channel) !== undefined ? { draft: drafts.get(channel) } : {}),
+          turns: ctx.withSender(owning, ctx.stampedCalls(owning, channel, (own ?? []) as unknown as Bag[])),
+          ...(kept.chatDraft?.(id, channel) !== undefined ? { draft: kept.chatDraft?.(id, channel) } : {}),
         },
       };
     }
     const workers = await restoredSubagents(id, owner, turns as unknown as WireTurn<Turn>[]);
     /*
-     * A worker chat read back out of the backend's own record.
-     *
-     * Its call id is in the URI, which is how a subscribe to a worker's
-     * channel finds the conversation it names rather than the session's.
+     * A worker chat read back out of the backend's own record: the worker
+     * the record holds under this channel's name, and the call that spawned
+     * it as the record says, as the reference host reads a spawned chat's
+     * call from its recorded origin.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L801
      */
-    const wanted = toolCallOfSubagentChat(channel);
-    if (wanted !== undefined) {
-      const one = workers.find((held) => String(held.toolCallId ?? '') === wanted);
-      if (one === undefined) throw new RpcError(-32001, `No worker chat at ${channel}`);
+    const one = chat ? workers.find((held) => subagentChatUri(nameOf(id), String(held.toolCallId ?? '')) === channel) : undefined;
+    if (one !== undefined) {
+      const wanted = String(one.toolCallId ?? '');
       const parentChat = restoredParentChat(nameOf(id), chatUriFor(nameOf(id)), one);
       return {
         kind: 'chat',
         state: {
           resource: channel,
           title: String(one.title ?? 'Subagent'),
-          status: Status.Idle | kept.chatFlags(id, channel),
+          // Read where nothing was kept, as the session's list says it.
+          status: Status.Idle | (kept.chatFlags(id, channel) || Status.IsRead),
           modifiedAt: stamp,
           origin: { kind: 'tool', chat: parentChat, toolCallId: wanted },
           interactivity: 'read-only',
           // With each worker it spawned linked from the call that ran it.
-          turns: ctx.stampedCalls(owning, linkedTurns(
+          turns: ctx.withSender(owning, ctx.stampedCalls(owning, channel, linkedTurns(
             owning,
             (one.turns ?? []) as Bag[],
             workers.filter((held) => String(held.parentToolCallId ?? '') === wanted),
-          )),
-          queuedMessages: [],
+          ))),
         },
       };
     }
-    if (sessionOfChat(channel) !== undefined) {
+    // The session's own chat; a worker's name the record does not hold is no
+    // chat here.
+    if (sessionOfChat(channel) !== undefined && toolCallOfSubagentChat(channel) === undefined) {
       return {
         kind: 'chat',
         state: {
           resource: channel,
-          title,
+          title: channel === leadUri ? leadTitle(besides || workers.length > 0) : title,
           status: Status.Idle | kept.chatFlags(id, channel),
           modifiedAt: stamp,
-          ...startedBy(nameOf(id)),
-          turns: ctx.stampedCalls(owning, linkedTurns(owning, turns, workers)),
-          queuedMessages: [],
-          // Held here rather than by a chat, because there is no chat. A
-          // client that typed into this row and came back finds what it
-          // typed, which is what a draft is for.
-          ...(drafts.get(channel) !== undefined ? { draft: drafts.get(channel) } : {}),
+          ...startedBy(),
+          turns: ctx.withSender(owning, ctx.stampedCalls(owning, channel, linkedTurns(owning, turns, workers))),
+          // Kept in the session's record. A client that typed into this row
+          // and came back finds what it typed, which is what a draft is for.
+          ...(kept.chatDraft?.(id, channel) !== undefined ? { draft: kept.chatDraft?.(id, channel) } : {}),
         },
       };
     }
     // A chat that is none of the above is not one this record answers for.
     if (chat) throw new RpcError(-32001, `No chat at ${channel}`);
-    /*
-     * The chats the store recorded for it, closed ones left out, and which of
-     * them the session would come back as. None for a session inside a
-     * machine, whose chats are the inner host's.
-     */
-    const recorded = kept.nested?.(id) !== undefined ? [] : recordedChats(id);
-    const lead = recorded.find((one) => one.default === true);
     const listedAt = moves.get(nameOf(id)) ?? stamp;
-    const offered = ctx.laidCustomizations(nameOf(id), about(owner.provider).seeds);
+    const offered = ctx.laidCustomizations(nameOf(id), about(owner.provider).customizations);
     const running = {
       schema: sessionSchema(owner),
       values: { ...owner.defaults(), ...contributedDefaults(), ...storedConfig(owner, id) },
@@ -702,17 +733,17 @@ export function createSnapshots(ctx: HostContext): Snapshots {
          * from the backend's disk has one by construction, and a session
          * whose first chat was closed has another chat as its default.
          */
-        defaultChat: lead?.uri ?? chatUriFor(nameOf(id)),
+        defaultChat: leadUri,
         // A whole `ChatSummary`, and not a name and a URI: a client reads a
         // chat row's `status` and `modifiedAt` by name, and a live session
         // answers with both.
         chats: [
           {
-            resource: lead?.uri ?? chatUriFor(nameOf(id)),
-            title: lead?.title ?? title,
-            status: Status.Idle | kept.chatFlags(id, lead?.uri ?? chatUriFor(nameOf(id))),
+            resource: leadUri,
+            title: leadTitle(besides || workers.length > 0),
+            status: Status.Idle | kept.chatFlags(id, leadUri),
             modifiedAt: listedAt,
-            ...startedBy(nameOf(id), lead?.uri),
+            ...startedBy(lead?.uri),
           },
           /*
            * And every other chat the store recorded for it.
@@ -730,7 +761,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
               title: one.title ?? title,
               status: Status.Idle | kept.chatFlags(id, one.uri),
               modifiedAt: listedAt,
-              ...startedBy(nameOf(id), one.uri),
+              ...startedBy(one.uri),
             })),
           // And the workers this session ran, each read-only and linked from
           // the call that spawned it - which is what makes a restored
@@ -743,7 +774,11 @@ export function createSnapshots(ctx: HostContext): Snapshots {
             listedAt,
           )),
         ],
-        workingDirectories: wheres.get(nameOf(id)) ?? [uriOf(options.path)],
+        // The folders its record holds, and none where it recorded none, as
+        // the reference host restores a session with the folders its
+        // metadata recorded.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14736
+        ...(wheres.get(nameOf(id)) === undefined ? {} : { workingDirectories: wheres.get(nameOf(id)) }),
         activeClients: activeClientsOf(nameOf(id)),
         ...(ctx.contributing.length > 0 ? { serverTools: ctx.toolDefinitions(nameOf(id)) } : {}),
         ...describes(nameOf(id)),
@@ -771,5 +806,5 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     };
   };
 
-  return { value, snapshotOf, sessionSeed, chatSeed, sessionStateOf };
+  return { value, snapshotOf, sessionSeed, resolveChatState, sessionStateOf };
 }

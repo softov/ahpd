@@ -70,7 +70,7 @@ describe('the local turns of a chat', () => {
   it('skips a file another version wrote, and one whose turn a client could not read', () => {
     const { store, turns } = area();
     const all = [said('t1', 'hello'), said('t2', '!echo kept'), said('t3', '!echo broken'), said('t4', '!echo old')];
-    for (const at of [2, 3, 4]) turns.keepLocalTurn(LIVE, PEER, all.slice(0, at), String(all[at - 1]?.id));
+    for (const at of [2, 3, 4]) turns.recordLocalTurn(LIVE, PEER, all.slice(0, at), String(all[at - 1]?.id));
     const folder = join(String(store.attachmentsDir?.('live')), 'turns');
     for (const name of readdirSync(folder, { recursive: true, encoding: 'utf8' }).filter((one) => one.endsWith('.json'))) {
       const path = join(folder, name);
@@ -78,39 +78,39 @@ describe('the local turns of a chat', () => {
       if (held.turnId === 't3') writeFileSync(path, JSON.stringify({ ...held, turn: { ...(held.turn as Bag), state: undefined } }));
       if (held.turnId === 't4') writeFileSync(path, JSON.stringify({ ...held, version: 2 }));
     }
-    expect(turns.withLocalTurns(LIVE, PEER, [said('t1', 'hello')]).map((turn) => turn.id)).toEqual(['t1', 't2']);
+    expect(turns.interleaveLocalTurns(LIVE, PEER, [said('t1', 'hello')]).map((turn) => turn.id)).toEqual(['t1', 't2']);
   });
 
   it('answers the turn a cut goes to: itself, or the nearest earlier one of the backend\'s', () => {
     const { turns } = area();
     const all = [said('t1', 'hello'), said('t2', '!echo one'), said('t3', '!echo two')];
-    turns.keepLocalTurn(LIVE, PEER, all.slice(0, 2), 't2');
-    turns.keepLocalTurn(LIVE, PEER, all, 't3');
-    expect(turns.concreteTurnOf(LIVE, PEER, all, 0)).toBe('t1');
-    expect(turns.concreteTurnOf(LIVE, PEER, all, 2)).toBe('t1');
+    turns.recordLocalTurn(LIVE, PEER, all.slice(0, 2), 't2');
+    turns.recordLocalTurn(LIVE, PEER, all, 't3');
+    expect(turns.resolveConcreteTurnId(LIVE, PEER, all, 0)).toBe('t1');
+    expect(turns.resolveConcreteTurnId(LIVE, PEER, all, 2)).toBe('t1');
     const alone = [said('t9', '!echo alone')];
-    turns.keepLocalTurn(LIVE, TAIL, alone, 't9');
-    expect(turns.concreteTurnOf(LIVE, TAIL, alone, 0)).toBeUndefined();
+    turns.recordLocalTurn(LIVE, TAIL, alone, 't9');
+    expect(turns.resolveConcreteTurnId(LIVE, TAIL, alone, 0)).toBeUndefined();
   });
 
   it('keeps nothing on a store that keeps no folder', () => {
     const turns = createLocalTurns({ kept: memorySessions(), log: () => {} } as unknown as HostContext);
     const all = [said('t1', 'hello'), said('t2', '!echo nowhere')];
-    turns.keepLocalTurn(LIVE, PEER, all, 't2');
-    expect(turns.withLocalTurns(LIVE, PEER, [said('t1', 'hello')]).map((turn) => turn.id)).toEqual(['t1']);
-    expect(turns.concreteTurnOf(LIVE, PEER, all, 1)).toBe('t2');
+    turns.recordLocalTurn(LIVE, PEER, all, 't2');
+    expect(turns.interleaveLocalTurns(LIVE, PEER, [said('t1', 'hello')]).map((turn) => turn.id)).toEqual(['t1']);
+    expect(turns.resolveConcreteTurnId(LIVE, PEER, all, 1)).toBe('t2');
   });
 
   it('names an anchor by the transcript id its backend gave it, and a fork carries the name', () => {
     const { store, turns } = area();
     turns.turnRecordedAs(LIVE, PEER, 't1', 'cli-uuid-1');
-    turns.keepLocalTurn(LIVE, PEER, [said('t1', 'hello'), said('t2', '!echo kept')], 't2');
+    turns.recordLocalTurn(LIVE, PEER, [said('t1', 'hello'), said('t2', '!echo kept')], 't2');
     expect(keptIn(store, 'live').map((one) => one.anchor)).toEqual(['cli-uuid-1']);
-    turns.copyLocalTurns(LIVE, PEER, TAIL, [said('t1', 'hello'), said('t2', '!echo kept')]);
-    turns.keepLocalTurn(LIVE, TAIL, [said('t1', 'hello'), said('t2', '!echo kept'), said('t5', 'more'), said('t6', '!echo late')], 't6');
+    turns.persistForkedLocalTurns(LIVE, PEER, TAIL, [said('t1', 'hello'), said('t2', '!echo kept')]);
+    turns.recordLocalTurn(LIVE, TAIL, [said('t1', 'hello'), said('t2', '!echo kept'), said('t5', 'more'), said('t6', '!echo late')], 't6');
     expect(keptIn(store, 'live').map((one) => one.anchor)).toEqual(['cli-uuid-1', 'cli-uuid-1', 't5']);
     const later = [said('t1', 'hello'), said('t2', '!echo kept'), said('t7', '!echo after the copy')];
-    turns.keepLocalTurn(LIVE, TAIL, later, 't7');
+    turns.recordLocalTurn(LIVE, TAIL, later, 't7');
     expect(keptIn(store, 'live').at(-1)?.anchor).toBe('cli-uuid-1');
   });
 });
@@ -122,14 +122,14 @@ describe('the turns a chat began', () => {
   const ids = (turns: Bag[]): unknown[] => turns.map((turn) => turn.id);
   const prose = (turn: Bag | undefined): unknown[] => ((turn?.responseParts ?? []) as Bag[]).map((part) => part.content);
 
-  it('reads a turn the chat never began back inside the turn before it', async () => {
+  it('reads each turn its transcript holds back as its own, one the chat never began included, as VS Code\'s replay', async () => {
     const { turns } = area();
     turns.turnRecordedAs(LIVE, PEER, 't1', 't1');
     turns.turnRecordedAs(LIVE, PEER, 't2', 't2');
     const back = await read(turns, [said('t1', 'asked'), said('s1', 'and also'), said('t2', 'next')]);
-    expect(ids(back)).toEqual(['t1', 't2']);
-    expect((back[0]?.message as Bag).text).toBe('asked');
-    expect(prose(back[0])).toEqual(['asked', 'and also']);
+    expect(ids(back)).toEqual(['t1', 's1', 't2']);
+    expect(prose(back[0])).toEqual(['asked']);
+    expect((back[1]?.message as Bag).text).toBe('and also');
   });
 
   it('reads a turn written again under a new id back as the turn it began as', async () => {
@@ -141,28 +141,22 @@ describe('the turns a chat began', () => {
     expect(prose(back[0])).toEqual(['asked', 'asked']);
   });
 
-  it('leaves the turns a chat had before it kept a record as they are', async () => {
+  it('reads a turn written twice back as two for a chat with no record, and on a store that keeps no folder', async () => {
+    const held = [said('first-try', 'asked'), said('second-try', 'asked')];
     const { turns } = area();
-    turns.turnRecordedAs(LIVE, PEER, 't3', 't3');
-    const back = await read(turns, [said('t1', 'old'), said('s1', 'old steer'), said('t3', 'new'), said('s2', 'new steer')]);
-    expect(ids(back)).toEqual(['t1', 's1', 't3']);
-    expect(prose(back[2])).toEqual(['new', 'new steer']);
-  });
-
-  it('folds nothing for a chat with no record, nor on a store that keeps no folder', async () => {
-    const held = [said('t1', 'asked'), said('s1', 'and also')];
-    const { turns } = area();
-    turns.turnRecordedAs(LIVE, TAIL, 't1', 't1');
-    expect(ids(await read(turns, held))).toEqual(['t1', 's1']);
+    turns.turnRecordedAs(LIVE, TAIL, 't1', 'first-try');
+    turns.turnRecordedAs(LIVE, TAIL, 't1', 'second-try');
+    expect(ids(await read(turns, held))).toEqual(['first-try', 'second-try']);
     const nowhere = createLocalTurns({ kept: memorySessions(), log: () => {}, outputsFor: () => undefined } as unknown as HostContext);
-    nowhere.turnRecordedAs(LIVE, PEER, 't1', 't1');
-    expect(ids(await read(nowhere, held))).toEqual(['t1', 's1']);
+    nowhere.turnRecordedAs(LIVE, PEER, 't1', 'first-try');
+    nowhere.turnRecordedAs(LIVE, PEER, 't1', 'second-try');
+    expect(ids(await read(nowhere, held))).toEqual(['first-try', 'second-try']);
   });
 
   it('keeps a local turn the transcript holds as a turn of its own', async () => {
     const { turns } = area();
     turns.turnRecordedAs(LIVE, PEER, 't1', 't1');
-    turns.keepLocalTurn(LIVE, PEER, [said('t1', 'asked'), said('t2', '!echo kept')], 't2');
+    turns.recordLocalTurn(LIVE, PEER, [said('t1', 'asked'), said('t2', '!echo kept')], 't2');
     expect(ids(await read(turns, [said('t1', 'asked'), said('t2', '!echo kept')]))).toEqual(['t1', 't2']);
   });
 
@@ -170,35 +164,43 @@ describe('the turns a chat began', () => {
     const { turns } = area();
     turns.turnRecordedAs(LIVE, PEER, 't1', 'first-try');
     turns.turnRecordedAs(LIVE, PEER, 't1', 'second-try');
-    turns.keepLocalTurn(LIVE, PEER, [said('t1', 'asked'), said('t2', '!echo kept')], 't2');
+    turns.recordLocalTurn(LIVE, PEER, [said('t1', 'asked'), said('t2', '!echo kept')], 't2');
     expect(ids(await read(turns, [said('first-try', 'asked'), said('second-try', 'asked')]))).toEqual(['first-try', 't2']);
   });
 
-  it('ends a turn where the last turn read back inside it ended, with what both spent', async () => {
+  /*
+   * VS Code's resumed turn: the reducer reopens the failed turn with its parts,
+   * the host adds the runs' durations, and mergeLogicalTurnUsage keeps the
+   * later run's counts and model and adds the costs.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L974
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L137-L174
+   */
+  it('reads a turn run twice back as VS Code keeps a resumed turn, its durations added and its usage merged', async () => {
     const { turns } = area();
-    turns.turnRecordedAs(LIVE, PEER, 't1', 't1');
-    const first = {
-      ...said('t1', 'asked'),
+    turns.turnRecordedAs(LIVE, PEER, 't1', 'first-try');
+    turns.turnRecordedAs(LIVE, PEER, 't1', 'second-try');
+    const failed = {
+      ...said('first-try', 'asked'),
+      state: 'error',
       startedAt: '2026-10-28T10:00:00.000Z',
       duration: 2000,
-      usage: { inputTokens: 10, outputTokens: 5, model: 'one', _meta: { 'ahpd.cacheWriteTokens': 3, 'ahpd.cost': { amount: 0.5, currency: 'USD' } } },
+      usage: { inputTokens: 10, outputTokens: 5, model: 'one', _meta: { 'ahpd.cacheWriteTokens': 3, 'ahpd.cost': { amount: 0.5, currency: 'USD', input: 0.25 } } },
     };
-    const after = {
-      ...said('s1', 'and also'),
-      state: 'cancelled',
+    const again = {
+      ...said('second-try', 'asked'),
       startedAt: '2026-10-28T10:00:05.000Z',
       duration: 1000,
-      usage: { inputTokens: 7, cacheReadTokens: 4, model: 'two', _meta: { 'ahpd.cost': { amount: 0.25, currency: 'USD' }, 'ahpd.context': { used: 20, size: 100 } } },
+      usage: { inputTokens: 7, cacheReadTokens: 4, model: 'two', _meta: { 'ahpd.cost': { amount: 0.25, currency: 'USD', input: 0.125 }, 'ahpd.context': { used: 20, size: 100 } } },
     };
-    const back = await read(turns, [first, after]);
+    const back = await read(turns, [failed, again]);
     expect(back).toHaveLength(1);
-    expect(back[0]).toMatchObject({ id: 't1', state: 'cancelled', startedAt: '2026-10-28T10:00:00.000Z', duration: 6000 });
+    expect(back[0]).toMatchObject({ id: 'first-try', state: 'complete', startedAt: '2026-10-28T10:00:00.000Z', duration: 3000 });
     expect(back[0]?.usage).toEqual({
-      inputTokens: 17,
+      inputTokens: 7,
       outputTokens: 5,
       cacheReadTokens: 4,
       model: 'two',
-      _meta: { 'ahpd.cacheWriteTokens': 3, 'ahpd.cost': { amount: 0.75, currency: 'USD' }, 'ahpd.context': { used: 20, size: 100 } },
+      _meta: { 'ahpd.cacheWriteTokens': 3, 'ahpd.cost': { amount: 0.75, currency: 'USD', input: 0.375 }, 'ahpd.context': { used: 20, size: 100 } },
     });
   });
 
@@ -208,10 +210,10 @@ describe('the turns a chat began', () => {
     turns.turnRecordedAs(LIVE, PEER, 't2', 'cli-2');
     turns.turnRecordedAs(LIVE, PEER, 't3', 't3');
     expect(recordIn(store, 'live', PEER)).toEqual({ t1: 't1', 'cli-2': 't2', t3: 't3' });
-    turns.forgetLocalTurns(LIVE, PEER, [said('t3', 'dropped')]);
+    turns.deleteLocalTurns(LIVE, PEER, [said('t3', 'dropped')]);
     expect(recordIn(store, 'live', PEER)).toEqual({ t1: 't1', 'cli-2': 't2' });
     // A fork's turns are held by the ids the transcript gave them, or by the client's.
-    turns.copyLocalTurns(LIVE, PEER, TAIL, [said('t1', 'kept'), said('cli-2', 'kept too')]);
+    turns.persistForkedLocalTurns(LIVE, PEER, TAIL, [said('t1', 'kept'), said('cli-2', 'kept too')]);
     expect(recordIn(store, 'live', TAIL)).toEqual({ t1: 't1', 'cli-2': 't2' });
     turns.moveChatLocalTurns(LIVE, 'echo:/other', TAIL);
     expect(recordIn(store, 'live', TAIL)).toEqual({});

@@ -64,13 +64,6 @@ export interface Held {
 export interface HeldState {
   kind: 'root' | 'session' | 'chat';
   state: Bag;
-  /**
-   * The clients this state was served to, by id: each was given a snapshot
-   * of it, and the actions since apply to what that client holds. A client
-   * whose state came from an earlier opening of the channel is not here.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
-   */
-  baselines: Set<string>;
 }
 
 /**
@@ -112,13 +105,15 @@ export interface Learned {
   /** What a slash offers when no session of this backend is running. */
   commands: { name: string; description?: string; argumentHint?: string }[];
   /**
-   * Skills, commands, subagents and MCP servers, as the probe found them.
+   * Skills, commands, subagents and MCP servers, as the probe found them: the
+   * agent's customizations, as the protocol names them on an agent's info.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/state.ts#L90
    *
    * What every new session reports until its own backend answers. That takes
-   * several seconds, and a client asks once - so a session that started
-   * empty stayed empty for anyone who looked before the reply landed.
+   * several seconds, and a client asks once, so a session reports these from
+   * its start to anyone who looks before the reply lands.
    */
-  seeds: Bag[];
+  customizations: Bag[];
   /**
    * The account this backend's harness is signed in as.
    *

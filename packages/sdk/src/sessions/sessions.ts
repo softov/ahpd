@@ -3,10 +3,10 @@
 import { existsSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { readJson, writeJsonAtomic } from '../utils/jsonfile.js';
-import { asCreatedBy, asOrigin } from './remotesession.js';
+import { asCreatedBy, asMultiRoot, asOrigin } from './remotesession.js';
 import type { Scope } from '../usage/scopes.js';
 import type { ChangesSummary } from '../types/changes.js';
-import type { CreatedBy, NestedRecord, PullRequestBaseline, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from '../types/sessions.js';
+import type { CreatedBy, MultiRoot, NestedRecord, PullRequestBaseline, RemoteOrigin, SessionStore, StoredChat, StoredWorktree } from '../types/sessions.js';
 import type { Owner } from '../types/usage.js';
 import { ownerOf } from '../utils/values.js';
 
@@ -19,6 +19,7 @@ import { ownerOf } from '../utils/values.js';
  */
 interface Held {
   chatTitlesOf(id: string): Record<string, string> | undefined;
+  sendersOf(id: string): Record<string, Owner> | undefined;
   parent(id: string): string | undefined;
   setParent(id: string, value: string | undefined): void;
   rootOf(id: string): string;
@@ -32,6 +33,8 @@ interface Held {
   setWorkingDirectory(id: string, value: string | undefined): void;
   worktree(id: string): StoredWorktree | undefined;
   setWorktree(id: string, value: StoredWorktree | undefined): void;
+  additionalWorktrees(id: string): StoredWorktree[];
+  setAdditionalWorktrees(id: string, value: StoredWorktree[]): void;
   autoArchivedAt(id: string): string | undefined;
   setAutoArchivedAt(id: string, value: string | undefined): void;
   /** Everything held about one session, in the file's field order, or nothing where nothing is. */
@@ -104,6 +107,15 @@ export function memorySessions(): SessionStore & Held {
     setScope: (id, value) => { patch(id, { scope: value }); },
     owner: (id) => rows.get(id)?.owner,
     setOwner: (id, value) => { patch(id, { owner: value }); },
+    sender: (id, turnId) => rows.get(id)?.senders?.get(turnId),
+    setSender: (id, turnId, value) => {
+      // Copied rather than edited in place, because the row is replaced whole:
+      // the map a row holds is never written to after it is put there.
+      const held = new Map(rows.get(id)?.senders);
+      if (value === undefined) held.delete(turnId);
+      else held.set(turnId, value);
+      patch(id, { senders: held.size === 0 ? undefined : held });
+    },
     provider: (id) => rows.get(id)?.provider,
     setProvider: (id, value) => { patch(id, { provider: value }); },
     uri: (id) => rows.get(id)?.uri,
@@ -129,8 +141,12 @@ export function memorySessions(): SessionStore & Held {
     setRemoteOrigin: (id, value) => { patch(id, { remoteOrigin: value }); },
     createdBy: (id) => rows.get(id)?.createdBy,
     setCreatedBy: (id, value) => { patch(id, { createdBy: value }); },
+    multiRoot: (id) => rows.get(id)?.multiRoot,
+    setMultiRoot: (id, value) => { patch(id, { multiRoot: value }); },
     worktree: (id) => rows.get(id)?.worktree,
     setWorktree: (id, value) => { patch(id, { worktree: value }); },
+    additionalWorktrees: (id) => rows.get(id)?.additionalWorktrees ?? [],
+    setAdditionalWorktrees: (id, value) => { patch(id, { additionalWorktrees: value.length === 0 ? undefined : value }); },
     autoArchivedAt: (id) => rows.get(id)?.autoArchivedAt,
     setAutoArchivedAt: (id, value) => { patch(id, { autoArchivedAt: value === '' ? undefined : value }); },
     workingDirectory: (id) => rows.get(id)?.workingDirectory,
@@ -148,6 +164,8 @@ export function memorySessions(): SessionStore & Held {
     pullRequests: (id) => rows.get(id)?.pullRequests,
     // An all-empty pair is still a baseline, so it is kept rather than dropped.
     setPullRequests: (id, value) => { patch(id, { pullRequests: value }); },
+    customTitle: (id) => rows.get(id)?.customTitle,
+    setCustomTitle: (id, value) => { patch(id, { customTitle: value }); },
     chatTitle: (id, chatUri) => rows.get(id)?.chatTitles?.get(chatUri),
     setChatTitle: (id, chatUri, title) => {
       const held = new Map(rows.get(id)?.chatTitles);
@@ -164,31 +182,65 @@ export function memorySessions(): SessionStore & Held {
       else held.set(chatUri, value);
       patch(id, { chatFlags: held.size === 0 ? undefined : held });
     },
+    chatChanges: (id, chatUri) => rows.get(id)?.chatChanges?.get(chatUri),
+    setChatChanges: (id, chatUri, value) => {
+      const held = new Map(rows.get(id)?.chatChanges);
+      if (value === undefined) held.delete(chatUri);
+      else held.set(chatUri, value);
+      patch(id, { chatChanges: held.size === 0 ? undefined : held });
+    },
+    chatDraft: (id, chatUri) => rows.get(id)?.chatDrafts?.get(chatUri),
+    setChatDraft: (id, chatUri, draft) => {
+      const held = new Map(rows.get(id)?.chatDrafts);
+      if (draft === undefined) held.delete(chatUri);
+      else held.set(chatUri, draft);
+      patch(id, { chatDrafts: held.size === 0 ? undefined : held });
+    },
+    annotations: (id) => rows.get(id)?.annotations,
+    setAnnotations: (id, value) => { patch(id, { annotations: value }); },
     chats: (id) => rows.get(id)?.chats ?? [],
     // An empty list is held as that absence, the way an empty artifact list is:
     // a session with no chat left is a session nothing was recorded for.
     setChats: (id, list) => { patch(id, { chats: list.length === 0 ? undefined : [...list] }); },
-    moveChat: (from, to, uri) => {
+    moveChat: (from, to, uri, turns) => {
       /*
        * The moving chat's own record, read before either row is written: its
-       * entry on the source's list and the title it was given. A row is
-       * replaced whole, so both rows are built from what is read here.
+       * entry on the source's list, the title it was given, its draft, its
+       * counts and the senders of the turns it owns. A row is replaced whole,
+       * so both rows are built from what is read here.
        */
       const source = rows.get(from);
       const chat = (source?.chats ?? []).find((one) => one.uri === uri);
       const titles = new Map(source?.chatTitles);
       const title = titles.get(uri);
       titles.delete(uri);
+      const drafts = new Map(source?.chatDrafts);
+      const draft = drafts.get(uri);
+      drafts.delete(uri);
+      const counted = new Map(source?.chatChanges);
+      const counts = counted.get(uri);
+      counted.delete(uri);
+      const senders = new Map(source?.senders);
+      const ours = new Map<string, Owner>();
+      for (const turn of turns) {
+        const who = senders.get(turn);
+        if (who === undefined) continue;
+        ours.set(turn, who);
+        senders.delete(turn);
+      }
       const left = (source?.chats ?? []).filter((one) => one.uri !== uri);
       patch(from, {
         chats: left.length === 0 ? undefined : left,
         chatTitles: titles.size === 0 ? undefined : titles,
+        chatDrafts: drafts.size === 0 ? undefined : drafts,
+        chatChanges: counted.size === 0 ? undefined : counted,
+        senders: senders.size === 0 ? undefined : senders,
       });
       /*
        * And onto the destination, as one write: the entry appended to its list,
-       * and the title. Only the fields this move changes are handed over, so a
-       * `chatTitles` map the destination already has is not replaced by a copy
-       * of itself.
+       * the senders its turns name, the title, the draft and the counts. Only
+       * the fields this move changes are handed over, so a `chatTitles` map
+       * the destination already has is not replaced by a copy of itself.
        *
        * The entry is copied, because a read answers with the store's own
        * objects and this one is about to be written into another row.
@@ -196,11 +248,20 @@ export function memorySessions(): SessionStore & Held {
       const target = rows.get(to);
       const list = [...(target?.chats ?? [])];
       if (chat !== undefined) list.push({ ...chat });
+      const theirs = new Map(target?.senders);
+      for (const [turn, who] of ours) theirs.set(turn, who);
       const named = new Map(target?.chatTitles);
       if (title !== undefined) named.set(uri, title);
+      const typed = new Map(target?.chatDrafts);
+      if (draft !== undefined) typed.set(uri, draft);
+      const totals = new Map(target?.chatChanges);
+      if (counts !== undefined) totals.set(uri, counts);
       patch(to, {
         chats: list.length === 0 ? undefined : list,
+        ...(ours.size === 0 ? {} : { senders: theirs }),
         ...(title === undefined ? {} : { chatTitles: named }),
+        ...(draft === undefined ? {} : { chatDrafts: typed }),
+        ...(counts === undefined ? {} : { chatChanges: totals }),
       });
     },
     // A row is held only while it says something, so this is the sessions
@@ -208,6 +269,10 @@ export function memorySessions(): SessionStore & Held {
     sessions: () => [...rows.keys()],
     chatTitlesOf: (id) => {
       const held = rows.get(id)?.chatTitles;
+      return held === undefined ? undefined : Object.fromEntries(held);
+    },
+    sendersOf: (id) => {
+      const held = rows.get(id)?.senders;
       return held === undefined ? undefined : Object.fromEntries(held);
     },
     rowOf: (id) => {
@@ -220,6 +285,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.config === undefined ? {} : { config: held.config }),
         ...(held.scope === undefined ? {} : { scope: held.scope }),
         ...(held.owner === undefined ? {} : { owner: held.owner }),
+        ...(held.senders === undefined ? {} : { senders: held.senders }),
         ...(held.provider === undefined ? {} : { provider: held.provider }),
         ...(held.uri === undefined ? {} : { uri: held.uri }),
         ...(held.tools === undefined ? {} : { tools: held.tools }),
@@ -227,15 +293,21 @@ export function memorySessions(): SessionStore & Held {
         ...(held.userSettings === undefined ? {} : { userSettings: held.userSettings }),
         ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
         ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
+        ...(held.customTitle === undefined ? {} : { customTitle: held.customTitle }),
         ...(held.chatTitles === undefined ? {} : { chatTitles: held.chatTitles }),
         ...(held.chatFlags === undefined ? {} : { chatFlags: held.chatFlags }),
+        ...(held.chatChanges === undefined ? {} : { chatChanges: held.chatChanges }),
+        ...(held.chatDrafts === undefined ? {} : { chatDrafts: held.chatDrafts }),
+        ...(held.annotations === undefined ? {} : { annotations: held.annotations }),
         ...(held.parent === undefined ? {} : { parent: held.parent }),
         ...(held.nested === undefined ? {} : { nested: held.nested }),
         ...(held.chats === undefined ? {} : { chats: held.chats }),
         ...(held.remoteOrigin === undefined ? {} : { remoteOrigin: held.remoteOrigin }),
         ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
+        ...(held.multiRoot === undefined ? {} : { multiRoot: held.multiRoot }),
         ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
         ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
+        ...(held.additionalWorktrees === undefined ? {} : { additionalWorktrees: held.additionalWorktrees }),
         ...(held.autoArchivedAt === undefined ? {} : { autoArchivedAt: held.autoArchivedAt }),
         ...(held.changes === undefined ? {} : { changes: held.changes }),
       };
@@ -401,6 +473,7 @@ interface Row {
   /** `null` is charged to nothing on purpose, which is not the same as never decided. */
   scope?: Scope | null | undefined;
   owner?: Owner | undefined;
+  senders?: Map<string, Owner> | undefined;
   provider?: string | undefined;
   /** The name the host holds the session under, when it chose one. */
   uri?: string | undefined;
@@ -412,15 +485,21 @@ interface Row {
   userSettings?: boolean | undefined;
   artifacts?: Record<string, unknown>[] | undefined;
   pullRequests?: PullRequestBaseline | undefined;
+  customTitle?: string | undefined;
   chatTitles?: Map<string, string> | undefined;
   chatFlags?: Map<string, number> | undefined;
+  chatChanges?: Map<string, ChangesSummary> | undefined;
+  chatDrafts?: Map<string, Record<string, unknown>> | undefined;
+  annotations?: Record<string, unknown> | undefined;
   parent?: string | undefined;
   nested?: NestedRecord | undefined;
   chats?: StoredChat[] | undefined;
   remoteOrigin?: RemoteOrigin | undefined;
   createdBy?: CreatedBy | undefined;
+  multiRoot?: MultiRoot | undefined;
   workingDirectory?: string | undefined;
   worktree?: StoredWorktree | undefined;
+  additionalWorktrees?: StoredWorktree[] | undefined;
   autoArchivedAt?: string | undefined;
   changes?: ChangesSummary | undefined;
 }
@@ -436,13 +515,13 @@ interface Row {
  */
 const empty = (row: Row): boolean =>
   row.flags === undefined && row.config === undefined && row.scope === undefined
-  && row.owner === undefined && row.provider === undefined
+  && row.owner === undefined && row.senders === undefined && row.provider === undefined
   && row.tools === undefined && row.trustedFolder === undefined && row.userSettings === undefined
-  && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
-  && row.chatFlags === undefined
+  && row.artifacts === undefined && row.pullRequests === undefined && row.customTitle === undefined && row.chatTitles === undefined
+  && row.chatFlags === undefined && row.chatChanges === undefined && row.chatDrafts === undefined && row.annotations === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined
-  && row.remoteOrigin === undefined && row.createdBy === undefined && row.worktree === undefined
-  && row.autoArchivedAt === undefined && row.changes === undefined;
+  && row.remoteOrigin === undefined && row.createdBy === undefined && row.multiRoot === undefined && row.worktree === undefined
+  && row.additionalWorktrees === undefined && row.autoArchivedAt === undefined && row.changes === undefined;
 
 /**
  * What is persisted for one session: a `Row` as the file holds it.
@@ -459,6 +538,7 @@ interface Saved {
   config?: Record<string, unknown>;
   scope?: Scope | null;
   owner?: string;
+  senders?: Record<string, string>;
   provider?: string;
   /** The name the host holds the session under, when it chose one. */
   uri?: string;
@@ -470,9 +550,17 @@ interface Saved {
   userSettings?: boolean;
   artifacts?: Record<string, unknown>[];
   pullRequests?: PullRequestBaseline;
+  /** The title the session was given, beside each chat's own. */
+  customTitle?: string;
   chatTitles?: Record<string, string>;
   /** The read and archived bits of each chat, by the chat's URI. */
   chatFlags?: Record<string, number>;
+  /** The counts of each chat's own work, by the chat's URI. */
+  chatChanges?: Record<string, ChangesSummary>;
+  /** The draft typed into each chat, by the chat's URI. */
+  chatDrafts?: Record<string, Record<string, unknown>>;
+  /** What clients marked on the session, as the annotations channel holds it. */
+  annotations?: Record<string, unknown>;
   /** The id of the session this one was started from, where one did. */
   parent?: string;
   nested?: NestedRecord;
@@ -482,10 +570,14 @@ interface Saved {
   remoteOrigin?: RemoteOrigin;
   /** The session that made this one, as a window recorded it. */
   createdBy?: CreatedBy;
+  /** The multi-root workspace the session was made from, as a window recorded it. */
+  multiRoot?: MultiRoot;
   /** The folder the session works in, as a path. */
   workingDirectory?: string;
   /** The worktree this host made for the session. */
   worktree?: StoredWorktree;
+  /** The trees the session worked in before a move, kept as its own. */
+  additionalWorktrees?: StoredWorktree[];
   /** When the host archived the session because its pull requests were merged. */
   autoArchivedAt?: string;
   /** What this session's own work added and removed, as it was last read. */
@@ -613,6 +705,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.config === undefined ? {} : { config: held.config }),
       ...(held.scope === undefined ? {} : { scope: held.scope }),
       ...(held.owner === undefined ? {} : { owner: held.owner }),
+      ...(held.senders === undefined ? {} : { senders: Object.fromEntries(held.senders) }),
       ...(held.provider === undefined ? {} : { provider: held.provider }),
       ...(held.uri === undefined ? {} : { uri: held.uri }),
       ...(held.tools === undefined ? {} : { tools: held.tools }),
@@ -620,15 +713,21 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.userSettings === undefined ? {} : { userSettings: held.userSettings }),
       ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
       ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
+      ...(held.customTitle === undefined ? {} : { customTitle: held.customTitle }),
       ...(held.chatTitles === undefined ? {} : { chatTitles: Object.fromEntries(held.chatTitles) }),
       ...(held.chatFlags === undefined ? {} : { chatFlags: Object.fromEntries(held.chatFlags) }),
+      ...(held.chatChanges === undefined ? {} : { chatChanges: Object.fromEntries(held.chatChanges) }),
+      ...(held.chatDrafts === undefined ? {} : { chatDrafts: Object.fromEntries(held.chatDrafts) }),
+      ...(held.annotations === undefined ? {} : { annotations: held.annotations }),
       ...(held.parent === undefined ? {} : { parent: held.parent }),
       ...(held.nested === undefined ? {} : { nested: held.nested }),
       ...(held.chats === undefined ? {} : { chats: held.chats }),
       ...(held.remoteOrigin === undefined ? {} : { remoteOrigin: held.remoteOrigin }),
       ...(held.createdBy === undefined ? {} : { createdBy: held.createdBy }),
+      ...(held.multiRoot === undefined ? {} : { multiRoot: held.multiRoot }),
       ...(held.workingDirectory === undefined ? {} : { workingDirectory: held.workingDirectory }),
       ...(held.worktree === undefined ? {} : { worktree: held.worktree }),
+      ...(held.additionalWorktrees === undefined ? {} : { additionalWorktrees: held.additionalWorktrees }),
       ...(held.autoArchivedAt === undefined ? {} : { autoArchivedAt: held.autoArchivedAt }),
       ...(held.changes === undefined ? {} : { changes: held.changes }),
     };
@@ -719,6 +818,15 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       }
       const owner = ownerOf(row.owner);
       if (owner !== undefined) inner.setOwner(row.id, owner);
+      // A turn's sender is a typed reference or it is nothing, one value at a
+      // time: a row written by something that meant something else is ignored
+      // rather than guessed at, as an owner that is not one already is.
+      if (typeof row.senders === 'object' && row.senders !== null && !Array.isArray(row.senders)) {
+        for (const [turnId, sender] of Object.entries(row.senders)) {
+          const who = ownerOf(sender);
+          if (who !== undefined) inner.setSender(row.id, turnId, who);
+        }
+      }
       // A harness is named by whatever string the agent called itself, so any
       // non-empty one is taken as it stands. A row written before providers
       // were kept has none, and reads as a session nothing was recorded for.
@@ -753,6 +861,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           associatedPullRequestUrls: strings(baseline.associatedPullRequestUrls),
         });
       }
+      // The session's own title, where it is a string.
+      if (typeof row.customTitle === 'string') inner.setCustomTitle?.(row.id, row.customTitle);
       // A record of string titles, one per chat, and anything else is ignored
       // rather than guessed at.
       if (typeof row.chatTitles === 'object' && row.chatTitles !== null && !Array.isArray(row.chatTitles)) {
@@ -766,6 +876,23 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
         for (const [chatUri, value] of Object.entries(row.chatFlags)) {
           if (typeof value === 'number') inner.setChatFlags(row.id, chatUri, value);
         }
+      }
+      // A record of counts, one per chat, each read as a session's counts are.
+      if (typeof row.chatChanges === 'object' && row.chatChanges !== null && !Array.isArray(row.chatChanges)) {
+        for (const [chatUri, value] of Object.entries(row.chatChanges)) {
+          const counts = countsOf(value);
+          if (counts !== undefined) inner.setChatChanges?.(row.id, chatUri, counts);
+        }
+      }
+      // A record of messages, one per chat: an entry that is no object is ignored.
+      if (typeof row.chatDrafts === 'object' && row.chatDrafts !== null && !Array.isArray(row.chatDrafts)) {
+        for (const [chatUri, draft] of Object.entries(row.chatDrafts)) {
+          if (typeof draft === 'object' && draft !== null && !Array.isArray(draft)) inner.setChatDraft?.(row.id, chatUri, draft);
+        }
+      }
+      // The annotations channel's state, which holds a list: anything else is ignored.
+      if (typeof row.annotations === 'object' && row.annotations !== null && Array.isArray((row.annotations as { annotations?: unknown }).annotations)) {
+        inner.setAnnotations?.(row.id, row.annotations);
       }
       // The id of a session that started this one. Anything that is not a
       // non-empty string is ignored rather than guessed at, as every other
@@ -785,11 +912,19 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       if (origin !== undefined) inner.setRemoteOrigin?.(row.id, origin);
       const createdBy = asCreatedBy(row.createdBy);
       if (createdBy !== undefined) inner.setCreatedBy?.(row.id, createdBy);
+      const multiRoot = asMultiRoot(row.multiRoot);
+      if (multiRoot !== undefined) inner.setMultiRoot?.(row.id, multiRoot);
       // A path, and anything that is not a non-empty string is ignored rather
       // than guessed at, as every other field here is.
       if (typeof row.workingDirectory === 'string' && row.workingDirectory !== '') inner.setWorkingDirectory(row.id, row.workingDirectory);
       const worktree = worktreeOf(row.worktree);
       if (worktree !== undefined) inner.setWorktree(row.id, worktree);
+      // Each read as the session's own tree is, and one that is not a tree
+      // is left out, since this record decides which trees a host takes away.
+      if (Array.isArray(row.additionalWorktrees)) {
+        const additional = row.additionalWorktrees.map(worktreeOf).filter((one): one is StoredWorktree => one !== undefined);
+        inner.setAdditionalWorktrees(row.id, additional);
+      }
       // A time, and anything that is not one is ignored rather than guessed
       // at, since this record decides which session a host deletes.
       if (typeof row.autoArchivedAt === 'string' && !Number.isNaN(Date.parse(row.autoArchivedAt))) {
@@ -813,6 +948,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setScope: (id, value) => { touched(id, () => { inner.setScope(id, value); }); },
     owner: (id) => inner.owner(id),
     setOwner: (id, value) => { touched(id, () => { inner.setOwner(id, value); }); },
+    sender: (id, turnId) => inner.sender(id, turnId),
+    setSender: (id, turnId, value) => { touched(id, () => { inner.setSender(id, turnId, value); }); },
     provider: (id) => inner.provider(id),
     setProvider: (id, value) => { touched(id, () => { inner.setProvider(id, value); }); },
     uri: (id) => inner.uri?.(id),
@@ -835,8 +972,12 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setRemoteOrigin: (id, value) => { touched(id, () => { inner.setRemoteOrigin?.(id, value); }); },
     createdBy: (id) => inner.createdBy?.(id),
     setCreatedBy: (id, value) => { touched(id, () => { inner.setCreatedBy?.(id, value); }); },
+    multiRoot: (id) => inner.multiRoot?.(id),
+    setMultiRoot: (id, value) => { touched(id, () => { inner.setMultiRoot?.(id, value); }); },
     worktree: (id) => inner.worktree(id),
     setWorktree: (id, value) => { touched(id, () => { inner.setWorktree(id, value); }); },
+    additionalWorktrees: (id) => inner.additionalWorktrees(id),
+    setAdditionalWorktrees: (id, value) => { touched(id, () => { inner.setAdditionalWorktrees(id, value); }); },
     autoArchivedAt: (id) => inner.autoArchivedAt(id),
     setAutoArchivedAt: (id, value) => { touched(id, () => { inner.setAutoArchivedAt(id, value); }); },
     workingDirectory: (id) => inner.workingDirectory(id),
@@ -847,18 +988,26 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setArtifacts: (id, values) => { touched(id, () => { inner.setArtifacts(id, values); }); },
     pullRequests: (id) => inner.pullRequests(id),
     setPullRequests: (id, value) => { touched(id, () => { inner.setPullRequests(id, value); }); },
+    customTitle: (id) => inner.customTitle?.(id),
+    setCustomTitle: (id, value) => { touched(id, () => { inner.setCustomTitle?.(id, value); }); },
     chatTitle: (id, chatUri) => inner.chatTitle(id, chatUri),
     setChatTitle: (id, chatUri, title) => { touched(id, () => { inner.setChatTitle(id, chatUri, title); }); },
     chatFlags: (id, chatUri) => inner.chatFlags(id, chatUri),
     setChatFlags: (id, chatUri, value) => { touched(id, () => { inner.setChatFlags(id, chatUri, value); }); },
+    chatChanges: (id, chatUri) => inner.chatChanges?.(id, chatUri),
+    setChatChanges: (id, chatUri, value) => { touched(id, () => { inner.setChatChanges?.(id, chatUri, value); }); },
+    chatDraft: (id, chatUri) => inner.chatDraft?.(id, chatUri),
+    setChatDraft: (id, chatUri, draft) => { touched(id, () => { inner.setChatDraft?.(id, chatUri, draft); }); },
+    annotations: (id) => inner.annotations?.(id),
+    setAnnotations: (id, value) => { touched(id, () => { inner.setAnnotations?.(id, value); }); },
     chats: (id) => inner.chats(id),
     setChats: (id, list) => { touched(id, () => { inner.setChats(id, list); }); },
     // Two rows move, so two files have to be written - which is why this is
     // written out rather than handed to `touched`, which names one.
-    moveChat: (from, to, uri) => {
+    moveChat: (from, to, uri, turns) => {
       heard.add(from);
       heard.add(to);
-      inner.moveChat(from, to, uri);
+      inner.moveChat(from, to, uri, turns);
       dirty.add(from);
       dirty.add(to);
       later();

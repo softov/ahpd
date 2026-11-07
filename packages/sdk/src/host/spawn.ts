@@ -1,5 +1,7 @@
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { chatReducer } from '@microsoft/agent-host-protocol';
-import type { ChatAction, ChatState, SessionInputRequestKind, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
+import type { ChatAction, ChatState, ErrorInfo, ToolCallConfirmationReason } from '@microsoft/agent-host-protocol';
 import { CommandAutoApprover, DEFAULT_TERMINAL_AUTO_APPROVE_RULES, splitCommand } from '../access/commandautoapprover.js';
 import type { CommandShell, CommandSplit, CommandSplitter, SensitiveEditLocation, TerminalAutoApprovePatterns, TerminalAutoApproveRules } from '../access/commandautoapprover.js';
 import { RpcError, INTERNAL_ERROR } from '../rpc.js';
@@ -15,12 +17,22 @@ import { linkIn } from '../automations/calllinks.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
-import { CLOSING } from './common.js';
-import { chatFlag, commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
+import { CLOSING, withSenderOn } from './common.js';
+import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
+import {
+  alwaysAsks, asksForTool, confirmationOptions, getAutoApproval as autoApprovalOf, isDeniedByPermissions, isForbiddenSnapshotWrite, managedDecision,
+  mcpServerOf, permissionRulesOf,
+} from './permissions.js';
+import type { ToolApproval } from './permissions.js';
+import { vscodeRootProperties } from '../vscoderootconfig.js';
+import { PENDING_CONFIRMATION_FIELDS } from '../types/agent.js';
+import type { PendingConfirmation } from '../types/agent.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
+import type { TurnEndEvent, TurnEndReason } from '../types/events.js';
+import type { Owner } from '../types/usage.js';
 import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
@@ -42,24 +54,37 @@ export interface Spawn {
   unstamped(meta: unknown): meta is Bag;
   /** A tool call action with the worker chat's URI in its `_meta`. */
   withWorkerUri(chat: string, action: Bag): Bag;
-  /** Every turn's tool calls stamped with this session's name. */
-  stampedCalls(session: string, turns: Bag[]): Bag[];
+  /** Every turn's tool calls stamped with this session's name where a client reduced the stamp. */
+  stampedCalls(session: string, chat: string, turns: Bag[]): Bag[];
+  /** Every turn marked with which client sent it, where the daemon's `turnSenders` says senders. */
+  withSender(session: string, turns: Bag[]): Bag[];
+  /** A turn's start carrying who sent it, where the daemon's `turnSenders` says senders. */
+  withSenderSaid(action: Bag, sender: Owner): Bag;
   /** A chat's state with the attachments its clients sent back on its messages. */
   asSentChat(state: Bag): Bag;
   /** Write one action on a worker's chat. */
   sendSubagent(uri: string, given: Bag): void;
   /** Workers whose turn has been ended, so a second ending is not a second turn. */
   endedWorkers: Set<string>;
+  /**
+   * Raise `turn_end` for a turn of a session's chat, with who sent it where
+   * `end` does not say, as VS Code's host offers its chat contributions each
+   * turn's end at the place that ends it: its agent's end, a send that failed,
+   * a start its admission refused, a local command run.
+   */
+  raiseTurnEnd(end: Omit<TurnEndEvent, 'type'>): void;
   /** The worker chat for one tool call of a backend's, made on first ask. */
   openSubagent(session: string, lead: string, toolCallId: string, request: SubagentRequest): SubagentChat;
-  /** A chat of a session in the session's `ahp-session:/<id>` spelling, when it has one. */
-  formerChatUri(uri: string, chatUri: string): string | undefined;
+  /** A chat of a session held as `<provider>:/<id>`, in the `ahp-session:/<id>` spelling it was built for, when it has one. */
+  legacyChatUri(uri: string, chatUri: string): string | undefined;
   /** A chat's stored title. */
   titleOf(uri: string, chatUri: string): string | undefined;
-  /** Store a chat's title under its name. */
-  keepTitle(uri: string, chatUri: string, title: string): void;
-  /** Write down which harness a session runs on, under every id it answers to. */
-  keepProvider(uri: string, agent: Agent, session: Session): void;
+  /** Persist a chat's title under its name. */
+  persistChatTitle(uri: string, chatUri: string, title: string): void;
+  /** Persist the title a session was given, beside its chats' own. */
+  persistSessionTitle(uri: string, title: string): void;
+  /** Record which harness a session runs on, under every id it answers to. */
+  recordSessionProvider(uri: string, agent: Agent, session: Session): void;
   /**
    * Start one backend's session, and the worker chats it goes on to ask for.
    *
@@ -111,31 +136,6 @@ const clearsRead = (type: unknown): boolean =>
   type === 'chat/turnStarted' || type === 'chat/turnResume' || type === 'chat/inputRequested';
 
 /**
- * Whether the operator's rule makes a tool ask every time.
- *
- * `eligibleForAutoApproval` is VS Code's map of tool name to boolean, kept in
- * root config, and `false` is the one value that asks. An exact name is read
- * first and answers on its own: a `true` there keeps the tool eligible even
- * when its server is named with `false`. A name that is not there falls back
- * to `<server>/*`, one key for every tool of that server - the part of the
- * name before its first slash.
- *
- * A value that is not a boolean is not the `false` that asks, and a rule that
- * is not an object names nothing: both leave the call as it was. The rule is
- * read where it is kept on each call rather than remembered at a start, so a
- * push reaches a session already running.
- */
-export const asksForTool = (rootConfig: Record<string, unknown>, tool: string): boolean => {
-  const held = rootConfig.eligibleForAutoApproval;
-  if (held === null || typeof held !== 'object' || Array.isArray(held)) return false;
-  const rules = held as Record<string, unknown>;
-  if (Object.hasOwn(rules, tool)) return rules[tool] === false;
-  const slash = tool.indexOf('/');
-  if (slash <= 0) return false;
-  return rules[`${tool.slice(0, slash)}/*`] === false;
-};
-
-/**
  * The host's store, as one session's backend is handed it.
  *
  * A new object per session, frozen, whose every method calls the host's own -
@@ -157,13 +157,13 @@ function heldResources(store: ResourceStore): ResourceStore {
     complete: (typed, base, limit) => store.complete(typed, base, limit),
   };
   const write = store.write;
-  const remove = store.remove;
+  const erase = store.delete;
   const mkdir = store.mkdir;
   const move = store.move;
   const copy = store.copy;
   const watch = store.watch;
   if (write !== undefined) taken.write = (uri, content, owner, client, reader) => write(uri, content, owner, client, reader);
-  if (remove !== undefined) taken.remove = (uri, recursive, owner, reader) => remove(uri, recursive, owner, reader);
+  if (erase !== undefined) taken.delete = (uri, recursive, owner, reader) => erase(uri, recursive, owner, reader);
   if (mkdir !== undefined) taken.mkdir = (uri) => mkdir(uri);
   if (move !== undefined) taken.move = (source, destination, failIfExists) => move(source, destination, failIfExists);
   if (copy !== undefined) taken.copy = (source, destination, failIfExists) => copy(source, destination, failIfExists);
@@ -173,13 +173,52 @@ function heldResources(store: ResourceStore): ResourceStore {
 
 export function createSpawn(ctx: HostContext): Spawn {
   const {
-    options, sessions, byChat, subagents, owners, kept, names, births, drafts, about,
-    dispatch, log, described, links, resumedSessions,
+    options, sessions, byChat, subagents, owners, kept, names, births, about,
+    dispatch, log, described, links, restoredSessions,
     sessionHolding, dirOf, operationsMoved, refreshWatched, refreshFacts,
     fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, enteredIn, inMachine, bringBackOf,
-    contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, summaryKept, learnModels,
-    learnAccount, movableMoved,
+    contributedDefaults, runningSchema, chatSummary, subagentSummary, markSummaryDirty, refreshSessionChangesSummary, setAgentModels,
+    publishAccountInfo, updateChatMovability,
   } = ctx;
+  ctx.turnSenders = options.turnSenders ?? 'said';
+  ctx.backendBackgroundWork = options.backendBackgroundWork ?? 'drop';
+
+  /*
+   * A turn's end, raised where it ends, on every chat a worker's among them,
+   * with its sender read from the turn while the host holds it and from the
+   * store once it has let it go, as VS Code's host offers its chat
+   * contributions each turn's end on the channel the turn ran on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L39-L49
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L137
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L221
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1127-L1152
+   */
+  const raiseTurnEnd = (end: Omit<TurnEndEvent, 'type'>): void => {
+    const sender = end.sender ?? senderOf(end.turnId) ?? kept.sender(idOf(end.session), end.turnId);
+    void fire({ ...end, type: 'turn_end', ...(sender === undefined ? {} : { sender }) });
+  };
+  /*
+   * Why an action that ends a turn on `chat` ended it, as VS Code's host reads
+   * its agent's ending actions: an error with the part's own error and its
+   * `resumable`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1127-L1152
+   */
+  const endingOf = (chat: string, action: Bag): TurnEndReason => {
+    if (action.type === 'chat/turnCancelled') return { kind: 'cancelled' };
+    if (action.type === 'chat/turnComplete') {
+      return ctx.commandTurns.has(commandTurnKey(chat, String(action.turnId ?? ''))) ? { kind: 'localCommand' } : { kind: 'success' };
+    }
+    const part = (action.part ?? {}) as Bag;
+    const failure = (part.error ?? {}) as Bag;
+    return {
+      kind: 'error',
+      error: {
+        errorType: typeof failure.errorType === 'string' ? failure.errorType : 'turnFailed',
+        message: typeof failure.message === 'string' ? failure.message : 'The turn failed',
+      },
+      resumable: part.resumable === true,
+    };
+  };
 
   /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
   const unstamped = (meta: unknown): meta is Bag =>
@@ -188,12 +227,13 @@ export function createSpawn(ctx: HostContext): Spawn {
   /**
    * A tool call action with the chat it links in its `_meta`.
    *
-   * The reference's `subagentChatUri`, stamped on every tool call action that
-   * carries a `_meta` whose `toolKind` is `subagent`, so a client can open the
-   * worker's chat from the call before the chat is announced. Every such
-   * action and not only the start: an action carrying `_meta` replaces the
-   * call's whole bag; the backend never spells a worker chat URI, and this
-   * host does. Any other action is returned as it is.
+   * The reference's `subagentChatUri`, stamped on a call's start, delta and
+   * ready whose `_meta` says `toolKind` `subagent`, so a client can open the
+   * worker's chat from the call before the chat is announced; the backend
+   * never spells a worker chat URI, and this host does. A later action goes
+   * out as the backend made it, as the reference sends it, and every other
+   * action is returned as it is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1038-L1043
    *
    * A call that carries a `subagent` content already says which chat it works
    * with, and that link is kept: a worker chat of this session is the URI
@@ -204,7 +244,7 @@ export function createSpawn(ctx: HostContext): Spawn {
    * from an earlier one, because a completion may carry no content at all.
    */
   const withWorkerUri = (chat: string, action: Bag): Bag => {
-    if (typeof action.type !== 'string' || !action.type.startsWith('chat/toolCall')) return action;
+    if (action.type !== 'chat/toolCallStart' && action.type !== 'chat/toolCallDelta' && action.type !== 'chat/toolCallReady') return action;
     if (!unstamped(action._meta) || typeof action.toolCallId !== 'string') return action;
     const session = sessionHolding(chat);
     if (session === undefined) return action;
@@ -261,9 +301,9 @@ export function createSpawn(ctx: HostContext): Spawn {
    * turn, the message waiting behind one and the steering message are all held
    * by the backend as it was handed them, so a subscriber would read the
    * pointer `messageAttachments` made in place of the chat attachment that was
-   * sent. A backend's state is the agent's answer and not a place this host
-   * writes into, so what moves is copied and what did not is the backend's own
-   * object.
+   * sent. `withSender` is here for the same reason and in the same place - a
+   * backend's state is the agent's answer and not a place this host writes
+   * into, so what moves is copied and what did not is the backend's own object.
    */
   const asSentChat = (state: Bag): Bag => {
     const list = (given: unknown): unknown => {
@@ -287,26 +327,53 @@ export function createSpawn(ctx: HostContext): Spawn {
     return next;
   };
   /**
-   * A chat's state with the same stamp on every spawning call in its turns,
-   * so a client that subscribes late reads what the wire said. A call that
-   * links a chat carries that link, and every other one gets this session's
-   * worker chat; a worker's own content names exactly that URI, so a worker
-   * of this session is left as it was. A copy where anything moved; the state
-   * passed in is the backend's own.
+   * A chat's state with the stamp on each spawning call whose bag, as a
+   * client reduced it, carries one, so a client that subscribes late reads
+   * what the wire said: a call whose last `_meta` came on its start, delta or
+   * ready. A call that links a chat carries that link, and every other one
+   * gets this session's worker chat; a worker's own content names exactly that
+   * URI, so a worker of this session is left as it was. A copy where anything
+   * moved; the state passed in is the backend's own.
    */
-  const stampedCalls = (session: string, turns: Bag[]): Bag[] => turns.map((turn) => {
+  const stampedCalls = (session: string, chat: string, turns: Bag[]): Bag[] => turns.map((turn) => {
     const parts = Array.isArray(turn.responseParts) ? turn.responseParts as Bag[] : undefined;
     if (parts === undefined) return turn;
     let touched = false;
     const next = parts.map((part) => {
       const call = part.toolCall as Bag | undefined;
-      if (call === undefined || !unstamped(call._meta) || typeof call.toolCallId !== 'string') return part;
+      if (call === undefined || !unstamped(call._meta) || typeof call.toolCallId !== 'string'
+        || !links.stampedOn(chat, call.toolCallId)) return part;
       touched = true;
       const linked = linkIn(call.content);
       return { ...part, toolCall: { ...call, _meta: { ...call._meta, subagentChatUri: linked ?? subagentChatUri(session, call.toolCallId) } } };
     });
     return touched ? { ...turn, responseParts: next } : turn;
   });
+  /**
+   * A turn with the sender who asked it, and every turn without one left as it
+   * is.
+   *
+   * `_meta` is the protocol's own place for a message's context and only the
+   * message declares one - `Turn` and `ActiveTurn` do not - so a turn read out
+   * of a session says who sent it the way the live action does, on the thing
+   * the client was handed. A copy where a sender was found and the backend's
+   * own object everywhere else, because `chatState()` is the agent's answer
+   * and not a place this host writes into.
+   */
+  const withSender = (session: string, turns: Bag[]): Bag[] => turns.map((turn) => {
+    if (ctx.turnSenders === 'kept') return turn;
+    const sender = kept.sender(idOf(session), String(turn.id ?? ''));
+    const message = turn.message as Bag | undefined;
+    if (sender === undefined || typeof message !== 'object' || message === null) return turn;
+    return { ...turn, message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } } };
+  });
+  /*
+   * A turn's start as this host says it: with its sender where the daemon's
+   * `turnSenders` is `said`, and as it is where it is `kept`, VS Code's, whose
+   * host keeps a turn's sender and says it in no action.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L183-L199
+   */
+  const withSenderSaid = (action: Bag, sender: Owner): Bag => (ctx.turnSenders === 'kept' ? action : withSenderOn(action, sender));
 
   /** Workers whose turn has been ended, so a second ending is not a second turn. */
   const endedWorkers = new Set<string>();
@@ -317,14 +384,176 @@ export function createSpawn(ctx: HostContext): Spawn {
    * and the chat's state takes each action as every chat's does; the row and
    * the session's activity follow that state from there.
    */
+  /**
+   * Whether a backend's `chat/toolCallConfirmed` names a call a client's
+   * decision already moved, which the host said in its place (`Session.confirm`):
+   * VS Code's host says a client's confirmation once, and no provider says one
+   * of its own. A backend's word on a call still waiting is its own decision,
+   * and is said.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1878-L1904
+   */
+  const decidedAlready = (chat: string, action: Bag): boolean => {
+    if (action.type !== 'chat/toolCallConfirmed') return false;
+    const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
+    const call = (Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [])
+      .map((part) => part.toolCall as Bag | undefined)
+      .find((one) => one !== undefined && one.toolCallId === action.toolCallId);
+    return call?.status !== 'pending-confirmation';
+  };
+
+  /**
+   * A backend's question about a call, as this host puts it to a person, as
+   * VS Code's host handles its agent's pending confirmation.
+   *
+   * A question is a `chat/toolCallReady` with a `confirmationTitle` and no
+   * `confirmed`. The options are VS Code's where the backend put none of its
+   * own, and Allow Once and Skip, whatever the backend offered, for a tool the
+   * operator's rule names. A tool the session's `permissions` deny is refused
+   * before its question reaches any client: nothing is said, and the backend
+   * is handed the refusal, as VS Code's host answers a call its permissions
+   * deny. A tool they allow is answered here, unless the operator's rule
+   * names it: the call is said running with `confirmed: not-needed`, and the
+   * backend is handed the approval with no option. A client's tool keeps its
+   * question, marked `autoApproveBySetting`, which the client that runs it
+   * answers, as VS Code's host leaves that answer to the client. The backend
+   * is handed an answer once its own question is in place. Undefined is a
+   * question said to nobody.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1684-L1766
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L566-L610
+   */
+  const toolReady = (session: string, chat: string, given: Bag, backend: () => Session | undefined): Bag | undefined => {
+    if (given.type !== 'chat/toolCallReady') return given;
+    // The question's host-only fields, read here and sent to no client.
+    const signal = Object.fromEntries(PENDING_CONFIRMATION_FIELDS.flatMap((key) => (given[key] === undefined ? [] : [[key, given[key]]]))) as PendingConfirmation;
+    const action = Object.fromEntries(Object.entries(given).filter(([key]) => !(PENDING_CONFIRMATION_FIELDS as readonly string[]).includes(key)));
+    if (typeof action.confirmationTitle !== 'string' || action.confirmed !== undefined) return action;
+    const toolCallId = String(action.toolCallId ?? '');
+    const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
+    const call = (Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [])
+      .map((part) => part.toolCall as Bag | undefined)
+      .find((one) => one !== undefined && one.toolCallId === toolCallId);
+    const toolName = typeof call?.toolName === 'string' ? call.toolName : undefined;
+    const owning = sessions.get(session);
+    const serving = owning?.backends.get(chat)?.agent ?? owning?.agent;
+    const contributor = (action.contributor ?? call?.contributor) as Bag | undefined;
+    const folders = (owning === undefined ? [] : ctx.leadOf(owning)?.workingDirectories() ?? []).map(localPath).filter((one) => one !== '');
+    const shell = signal.permissionKind === 'shell';
+    const commandLine = shell ? signal.shellCommand ?? (typeof action.toolInput === 'string' ? action.toolInput : undefined) : undefined;
+    const subCommands = commandLine === undefined ? [] : splitForRules(commandLine, signal.shellLanguage ?? 'bash')?.subCommands ?? [];
+    /*
+     * The terminal rules and the edit patterns are the host's one value each,
+     * which on a host with people answer the owner's turns alone, as the
+     * host's shell answers read them.
+     */
+    const owners = options.users === undefined || senderOf(String(action.turnId ?? '')) === kept.owner(idOf(session));
+    const pushed = ctx.rootConfig['terminalAutoApproveRules'];
+    const terminalRules = pushed !== null && typeof pushed === 'object'
+      ? pushed as TerminalAutoApproveRules
+      : options.terminalAutoApproveDefaults === 'none' ? {} : DEFAULT_TERMINAL_AUTO_APPROVE_RULES;
+    const patterns = ctx.rootConfig['editAutoApprovePatterns'];
+    const editPatterns = (patterns !== null && typeof patterns === 'object' ? patterns : vscodeRootProperties.editAutoApprovePatterns?.default ?? {}) as TerminalAutoApprovePatterns;
+    const held: unknown = owning?.config['sensitiveEditLocations'];
+    const sensitive = Array.isArray(held) && held.every((one: unknown) => typeof one === 'object' && one !== null && !Array.isArray(one)
+      && typeof (one as Bag).path === 'string' && typeof (one as Bag).isDirectory === 'boolean')
+      ? held as SensitiveEditLocation[]
+      : [];
+    const managedSettings = options.managedSettingsPermissions;
+    const attachments = kept.attachmentsDir?.(idOf(session));
+    const messages = [...(Array.isArray(ctx.stateOf(chat)?.turns) ? ctx.stateOf(chat)?.turns as Bag[] : []), ...(turn === undefined ? [] : [turn])]
+      .map((one) => one.message as Bag | undefined);
+    const approval: ToolApproval = {
+      request: {
+        kind: signal.permissionKind,
+        toolName: toolName ?? '',
+        ...(signal.shellLanguage === undefined ? {} : { shellLanguage: signal.shellLanguage }),
+        ...(signal.permissionUrl === undefined ? {} : { url: signal.permissionUrl }),
+        ...(signal.permissionPath === undefined ? {} : { path: signal.permissionPath }),
+      },
+      ...(commandLine === undefined ? {} : { commandLine }),
+      ...(signal.requestSandboxBypass === true ? { requestSandboxBypass: true } : {}),
+      rules: permissionRulesOf(owning?.config.permissions, ctx.rootConfig.permissions),
+      context: { ...(folders[0] === undefined ? {} : { workingDirectory: folders[0] }), homeDirectory: homedir(), ignorePathCase: process.platform === 'win32' || process.platform === 'darwin' },
+      workingDirectories: folders,
+      ...(attachments === undefined ? {} : { attachmentsDirectory: attachments }),
+      attached: messages.flatMap((message) => (Array.isArray(message?.attachments) ? message.attachments as Bag[] : []))
+        .flatMap((one) => (typeof one.uri === 'string' && one.uri.startsWith('file:') && localPath(one.uri) !== '' ? [localPath(one.uri)] : [])),
+      globalAutoApprove: ctx.rootConfig.globalAutoApproveEnabled === true,
+      sessionAutoApprove: ctx.rootConfig.autoApprovePolicyRestricted !== true && owning?.config.autoApprove === 'autoApprove',
+      bypassLocked: managedSettings?.disableBypassPermissionsMode === 'disable',
+      terminalAutoApprove: ctx.rootConfig.terminalAutoApproveEnabled !== false && owners,
+      ...(owners ? { editPatterns } : {}),
+      sensitive,
+      ...(commandLine === undefined ? {} : {
+        evaluateShell: (classifiers) => approver.evaluation(commandLine, {
+          rules: terminalRules, editPatterns, shell: signal.shellLanguage ?? 'bash', sensitive, ...classifiers,
+          ...(folders[0] === undefined ? {} : { workingDirectory: folders[0] }),
+        }),
+      }),
+      exists: existsSync,
+    };
+    // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
+    // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
+    const eligible = toolName === undefined || !alwaysAsks(ctx.rootConfig, toolName,
+      ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
+      mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
+    /*
+     * The operator's managed rules, read on every question beside the
+     * session's permissions; a question a managed rule asks, its backend's
+     * mark or this host's, answers to nobody but a person, as one the
+     * operator's `eligibleForAutoApproval` names.
+     */
+    const managedSays = managedDecision(managedSettings, approval, subCommands);
+    const managed = signal.managedApprovalRequired === true || managedSays === 'ask' || !eligible;
+    if (managedSays === 'deny' || isForbiddenSnapshotWrite(approval) || isDeniedByPermissions(approval, subCommands)) {
+      queueMicrotask(() => { backend()?.confirm(toolCallId, false); });
+      return undefined;
+    }
+    const asked = { ...approval, ...(managed ? { managedApprovalRequired: true } : {}) };
+    const approved = managed ? undefined : autoApprovalOf(asked);
+    // A client's tool keeps its question, which the client that runs it answers, marked approved by the setting.
+    const marked = approved !== undefined && contributor?.kind === 'client'
+      ? { ...(call?._meta as Bag | undefined), ...(action._meta as Bag | undefined), autoApproveBySetting: true }
+      : action._meta as Bag | undefined;
+    if (approved === undefined || contributor?.kind === 'client') {
+      const { options: offered, meta } = confirmationOptions(asked, Array.isArray(action.options) ? action.options as Bag[] : undefined, marked);
+      const { _meta: _given, ...rest } = action;
+      return { ...rest, options: offered, ...(meta === undefined ? {} : { _meta: meta }) };
+    }
+    queueMicrotask(() => { backend()?.confirm(toolCallId, true); });
+    return {
+      type: 'chat/toolCallReady',
+      turnId: action.turnId,
+      toolCallId,
+      ...(action.contributor === undefined ? {} : { contributor: action.contributor }),
+      ...(action.intention === undefined ? {} : { intention: action.intention }),
+      invocationMessage: action.invocationMessage,
+      ...(action.toolInput === undefined ? {} : { toolInput: action.toolInput }),
+      confirmed: 'not-needed',
+      ...(action._meta === undefined ? {} : { _meta: action._meta }),
+    };
+  };
+
   const sendSubagent = (uri: string, given: Bag): void => {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
-    const action = withWorkerUri(uri, given);
+    // A question a worker's call puts is the lead chat's backend's to be answered, as a client's answer on the worker's chat is.
+    const action = toolReady(ref.session, uri, withWorkerUri(uri, given), () => {
+      const owning = sessions.get(ref.session);
+      return owning === undefined ? undefined : ctx.leadOf(owning);
+    });
+    if (action === undefined || decidedAlready(uri, action)) return;
     const was = ctx.stateOf(uri)?.status;
+    // Whether this ends the turn the worker's chat runs, whose end is then raised as every chat's is.
+    const turn = String(action.turnId ?? '');
+    const ends = (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')
+      && String((ctx.stateOf(uri)?.activeTurn as Bag | undefined)?.id ?? '') === turn;
     dispatch(uri, action);
-    // Unread where the protocol's chat reducer makes it so.
-    if (clearsRead(String(action.type)) && sessions.has(ref.session)) chatFlag(ctx, ref.session, uri, Status.IsRead, false);
+    if (ends) raiseTurnEnd({ session: ref.session, channel: uri, turnId: turn, reason: endingOf(uri, action) });
+    // Unread where the protocol's chat reducer makes it so, from the action a
+    // client reduces, with nothing said of this host's own.
+    if (clearsRead(String(action.type)) && sessions.has(ref.session)) {
+      kept.setChatFlags(idOf(ref.session), uri, kept.chatFlags(idOf(ref.session), uri) & ~Status.IsRead);
+    }
     /*
      * And whether the chat that carries it may still be moved.
      *
@@ -336,7 +565,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (ctx.stateOf(uri)?.status !== was) {
       let at = ref.parentChat;
       for (let up = subagents.get(at); up !== undefined && up.parentChat !== at; up = subagents.get(at)) at = up.parentChat;
-      movableMoved(at);
+      updateChatMovability(at);
     }
   };
 
@@ -385,12 +614,17 @@ export function createSpawn(ctx: HostContext): Spawn {
         origin: { kind: 'tool', chat: parentChat, toolCallId },
         interactivity: 'read-only',
         turns: [],
-        queuedMessages: [],
       });
+      /*
+       * The default chat takes its own title from here, before the worker is
+       * said, as the reference host adds a spawned chat to its session.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L15539-L15548
+       */
+      ctx.snapshotDefaultChatTitle(session);
       dispatch(session, { type: 'session/chatAdded', summary: subagentSummary(uri, ref) });
       // The session's row is where a client listing sessions reads its chats,
       // so a chat that has just appeared is said there too.
-      summaryMoved(session);
+      markSummaryDirty(session);
       sendSubagent(uri, {
         type: 'chat/turnStarted',
         turnId: ref.turnId,
@@ -438,41 +672,50 @@ export function createSpawn(ctx: HostContext): Spawn {
         if (state === 'complete') sendSubagent(uri, { type: 'chat/turnComplete', turnId, duration });
         else if (state === 'cancelled') sendSubagent(uri, { type: 'chat/turnCancelled', turnId, duration });
         else {
+          // VS Code's error type for a failed subagent, with the failure's own
+          // words, or VS Code's where it has none.
+          // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L2983-L2998
           sendSubagent(uri, {
             type: 'chat/error',
             turnId,
             duration,
-            part: { kind: 'error', error: { errorType: 'turnFailed', message: why ?? 'The subagent failed' } },
+            part: { kind: 'error', error: { errorType: 'subagentFailed', message: why ?? 'Subagent failed.' } },
           });
         }
-        // Something new to read in the worker's chat, which a turn's end marks
-        // unread as the reference host marks every chat's. A worker's chat is
-        // a tool's, so its end leaves the session's bit as it is.
-        // https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48
+        // Something new to read in the worker's chat, which a turn's end says
+        // unread, whatever its bit, as the reference host's markUnread says
+        // every chat's. A worker's chat is a tool's, so its end leaves the
+        // session's bit as it is.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
         // https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070
-        if (sessions.has(held.session)) chatFlag(ctx, held.session, uri, Status.IsRead, false);
+        if (sessions.has(held.session)) {
+          kept.setChatFlags(idOf(held.session), uri, kept.chatFlags(idOf(held.session), uri) & ~Status.IsRead);
+          dispatch(uri, { type: 'chat/isReadChanged', isRead: false });
+        }
       },
     };
   };
 
   /**
    * A default or worker chat of a session held as `<provider>:/<id>`, built
-   * for `ahp-session:/<id>`, or nothing for any other chat.
+   * for `ahp-session:/<id>`, or nothing for any other chat: the chat's legacy
+   * URI, as VS Code derives a legacy default chat from a session's identity.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostLegacyDefaultChat.ts#L25
    *
    * A default or worker chat's URI embeds its session's, and a session store
    * may hold a chat's title under that URI of it, so a title is looked for
    * there too.
    */
-  const formerChatUri = (uri: string, chatUri: string): string | undefined => {
+  const legacyChatUri = (uri: string, chatUri: string): string | undefined => {
     const former = uriFor(idOf(uri));
     if (former === uri) return undefined;
     if (chatUri === chatUriFor(uri)) return chatUriFor(former);
     const callId = toolCallOfSubagentChat(chatUri);
     return callId !== undefined && chatUri === subagentChatUri(uri, callId) ? subagentChatUri(former, callId) : undefined;
   };
-  /** A chat's stored title: under its URI, or else under `formerChatUri`. */
+  /** A chat's stored title: under its URI, or else under `legacyChatUri`. */
   const titleOf = (uri: string, chatUri: string): string | undefined => {
-    const former = formerChatUri(uri, chatUri);
+    const former = legacyChatUri(uri, chatUri);
     return kept.chatTitle(idOf(uri), chatUri) ?? (former === undefined ? undefined : kept.chatTitle(idOf(uri), former));
   };
   /** A nested session's record with a new title or a new time, where it has one. */
@@ -481,15 +724,28 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (was === undefined) return;
     kept.setNested?.(id, { ...was, ...change, modifiedAt: new Date().toISOString() });
   };
-  /** Store a chat's title under its URI, and clear one kept under `formerChatUri`. */
-  const keepTitle = (uri: string, chatUri: string, title: string): void => {
+  /**
+   * Persist a chat's title under its URI, and clear one kept under
+   * `legacyChatUri`, as VS Code persists a chat's custom title under its chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/persistSessionMetadata.ts#L36
+   */
+  const persistChatTitle = (uri: string, chatUri: string, title: string): void => {
     kept.setChatTitle(idOf(uri), chatUri, title);
-    if (chatUri === chatUriFor(uri)) moveNested(idOf(uri), { title });
-    const former = formerChatUri(uri, chatUri);
+    const former = legacyChatUri(uri, chatUri);
     if (former !== undefined && kept.chatTitle(idOf(uri), former) !== undefined) kept.setChatTitle(idOf(uri), former, '');
     // And on the session's own list of chats, so a session served read-only
     // after a restart lists this one under the name it was given.
     ctx.keepChat(uri, chatUri, undefined, false);
+  };
+  /**
+   * Persist the title a session was given, beside its chats' own: the name
+   * its backend is handed as its default chat starts, and the title a nested
+   * session's record lists it by. An empty one is kept as the session having
+   * none, and its backend's own title stands.
+   */
+  const persistSessionTitle = (uri: string, title: string): void => {
+    kept.setCustomTitle?.(idOf(uri), title);
+    moveNested(idOf(uri), { title });
   };
 
   /**
@@ -503,14 +759,18 @@ export function createSpawn(ctx: HostContext): Spawn {
   };
 
   /**
-   * Which harness a session runs on, written down under every id it answers to.
+   * Which harness a session runs on, recorded under every id it answers to,
+   * as VS Code records a chat's agent provider and persists its default chat's
+   * backing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10038
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L15573
    *
    * The host's own and the agent's, which are one name unless the backend chose
-   * a different id for the transcript it writes. Written when a session starts
-   * rather than when it is listed: two agents can read the same transcripts, a
-   * listing is a read, and a session that was never recorded still has to open
-   * somewhere. A backend that names its own id only once a turn has run is
-   * recorded at the end of that turn instead, in the chat's own emit.
+   * a different id for the transcript it writes. Recorded when a session
+   * starts: two agents can read the same transcripts, a listing is a read and
+   * writes nothing, and a session that was never recorded still has to open
+   * somewhere. A backend that names its own id once a turn has run is recorded
+   * at the end of that turn, in the chat's own emit.
    *
    * The working folder goes under the agent's id as well, so a backend that
    * finds the session by that id is told where it ran.
@@ -521,7 +781,7 @@ export function createSpawn(ctx: HostContext): Spawn {
    * id it is written under is the host's, because that is what `names` is
    * keyed by and what a listed session is found again by.
    */
-  const keepProvider = (uri: string, agent: Agent, session: Session): void => {
+  const recordSessionProvider = (uri: string, agent: Agent, session: Session): void => {
     kept.setProvider(idOf(uri), agent.provider);
     if (kept.uri?.(idOf(uri)) === undefined) kept.setUri?.(idOf(uri), uri);
     const own = session.agentId();
@@ -592,16 +852,18 @@ export function createSpawn(ctx: HostContext): Spawn {
   const approver = new CommandAutoApprover(splitForRules);
 
   /*
-   * The Plan call the host draws, one per turn.
+   * The task list call the host draws, one per turn.
    *
    * A plugin registers the lines and the host draws them: a call is opened in
    * every turn open when the plugin says the lines moved, rewritten on each
-   * later change, and completed as the turn ends - which is the shape the ACP
-   * bridge draws from its own entries, so a client that knows one knows the
-   * other. The line is kept from the change it was drawn for, because the
-   * completion carries what the call last showed, and a turn that ended while
-   * a read was running draws nothing at all: the turn's end is said as its
-   * backend says it, as the reference host says an agent's end of a turn.
+   * later change, and completed as the turn ends. It is named as VS Code
+   * shows an agent's task list, its todo call `TodoWrite`, "Update todo list".
+   * The line is kept from the change it was drawn for, because the completion
+   * carries what the call last showed, and a turn that ended while a read was
+   * running draws nothing at all: the turn's end is said as its backend says
+   * it, as the reference host says an agent's end of a turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L160
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L393-L394
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L917
    */
   const planCallId = (turn: string): string => `${turn}:plan`;
@@ -622,7 +884,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       toolCallId: planCallId(turn),
       result: {
         success: true,
-        pastTenseMessage: 'Plan',
+        pastTenseMessage: 'Update todo list',
         ...(held.content.length === 0 ? {} : { content: held.content }),
       },
     });
@@ -660,8 +922,8 @@ export function createSpawn(ctx: HostContext): Spawn {
       const previous = drawnPlans.get(chat);
       if (previous === undefined || previous.turn !== turn) {
         drawnPlans.set(chat, { turn, content });
-        dispatch(chat, { type: 'chat/toolCallStart', turnId: turn, toolCallId: planCallId(turn), toolName: 'plan', displayName: 'Plan' });
-        dispatch(chat, { type: 'chat/toolCallReady', turnId: turn, toolCallId: planCallId(turn), invocationMessage: 'Plan', confirmed: 'not-needed' });
+        dispatch(chat, { type: 'chat/toolCallStart', turnId: turn, toolCallId: planCallId(turn), toolName: 'TodoWrite', displayName: 'Update todo list' });
+        dispatch(chat, { type: 'chat/toolCallReady', turnId: turn, toolCallId: planCallId(turn), invocationMessage: 'Update todo list', confirmed: 'not-needed' });
       }
       else {
         previous.content = content;
@@ -746,7 +1008,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       })
       : agent;
     if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
-    if (resuming?.resume !== undefined) resumedSessions.add(uri);
+    if (resuming?.resume !== undefined) restoredSessions.add(uri);
     /*
      * What this session's turns cost, kept against each turn until it ends.
      *
@@ -975,11 +1237,18 @@ export function createSpawn(ctx: HostContext): Spawn {
     let booking = false;
     /** The client whose relayed action the action on this road answers, while it is said. */
     let answering: Origin | undefined;
+    /**
+     * Whether the backend has reported what it can do, which a backend that
+     * opens its server before it answers does inside `create`, before this
+     * host holds the session: its models are then learned once it is held.
+     */
+    let reported = false;
     const wired: Start = {
       uri,
       chatUri,
       trusted: trustedBy,
       getAutoApproval,
+      ...(options.managedSettingsPermissions === undefined ? {} : { managedSettings: { permissions: options.managedSettingsPermissions } }),
       ...(userSettings === undefined ? {} : { userSettings }),
       /*
        * The tools bound to this session: this host's own, and whatever the
@@ -1073,7 +1342,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       // `[]` until its own agent replied was empty for the first several
       // seconds - and a client that asks once and caches never found out
       // otherwise.
-      seedCustomizations: about(agent.provider).seeds,
+      seedCustomizations: about(agent.provider).customizations,
       /*
        * What the boot probe learned the models are, for the same reason and
        * read from the same place: a session opened with a stored model needs to
@@ -1094,7 +1363,7 @@ export function createSpawn(ctx: HostContext): Spawn {
        *
        * Always offered, because a task is a record and needs no store: the
        * host builds the row from what the backend says, and a backend that
-       * emitted `chat/backgroundWorkSet` itself has it dropped below.
+       * emits `chat/backgroundWorkSet` itself has it dropped, by `emit`.
        */
       backgroundTasks: ctx.background.heldTasks(),
       /*
@@ -1161,6 +1430,32 @@ export function createSpawn(ctx: HostContext): Spawn {
        */
       emit: (channel, action) => {
         /*
+         * The session's `inputNeeded` entries are this host's to say: it
+         * raises and takes down each from the chats' state, whoever asked, as
+         * VS Code's host mirrors every chat's blockers and no agent raises an
+         * entry.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L19-L25
+         */
+        if (channel === 'session' && (action.type === 'session/inputNeededSet' || action.type === 'session/inputNeededRemoved')) return;
+        /*
+         * Background work is the host's to draw, where the daemon's
+         * `backendBackgroundWork` is `drop`.
+         *
+         * A row is the protocol's shape with a `_meta` flag and a snapshot
+         * beside it, all of which the host builds from `backgroundTasks`, so an
+         * action a backend emitted itself would be a second builder, and the one
+         * a late subscriber never sees: one shape for every backend's rows, a
+         * third party's among them, as upstream decided (plan host/115). Dropped
+         * rather than refused, because a backend mid-migration should not fail
+         * a turn over it, and logged because silence is how it goes unnoticed.
+         * `say` is VS Code's: a provider's own action goes out as the host's.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
+         */
+        if ((action.type === 'chat/backgroundWorkSet' || action.type === 'chat/backgroundWorkRemoved') && ctx.backendBackgroundWork === 'drop') {
+          log(`dropped ${action.type} from ${agent.provider}: the host draws background work`);
+          return;
+        }
+        /*
          * A chat's read and archived bits are the ones this host keeps, laid
          * over the status a backend says on the chat's row, as they are on the
          * chat's state.
@@ -1188,6 +1483,13 @@ export function createSpawn(ctx: HostContext): Spawn {
           const turns = Array.isArray(held?.turns) ? held.turns as Bag[] : [];
           if (String((held?.activeTurn as Bag | undefined)?.id ?? '') === turn || turns.some((one) => String(one.id ?? '') === turn)) return;
         }
+        // A client's decision on a call is said once, as the client's.
+        if (channel === 'chat' && decidedAlready(chatUri, action)) return;
+        if (channel === 'chat') {
+          const put = toolReady(uri, chatUri, action, () => sessions.get(uri)?.chats.get(chatUri));
+          if (put === undefined) return;
+          action = put;
+        }
         // A turn the chat began, under its own id: the id a read after a
         // restart holds it by, unless the backend says it wrote it otherwise.
         if (channel === 'chat' && action.type === 'chat/turnStarted') ctx.turnRecordedAs(uri, chatUri, turn, turn);
@@ -1201,6 +1503,20 @@ export function createSpawn(ctx: HostContext): Spawn {
         if (channel === 'chat' && (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled'
           || action.type === 'chat/error')) {
           completePlan(chatUri, turn);
+        }
+        /*
+         * Who asked, on the wire and on disk.
+         *
+         * The action carries it because `chat/turnStarted` is one of the few
+         * that declares a `_meta`; the store keeps it because the in-memory
+         * entry is let go of when the turn ends and a session read out of its
+         * transcript asks the store, not this map. Nothing is written and
+         * nothing is sent where there is nobody to name, so a host with no
+         * users directory sends exactly what it sent before.
+         */
+        if (sender !== undefined && channel === 'chat' && action.type === 'chat/turnStarted') {
+          kept.setSender(idOf(uri), turn, sender);
+          if (answering === undefined) action = withSenderSaid(action, sender);
         }
         /*
          * The bits of a chat whose backend runs it on another host, as that
@@ -1219,15 +1535,19 @@ export function createSpawn(ctx: HostContext): Spawn {
         }
         dispatch(where, asSent(action), answering);
         if (bit === Status.IsRead) sessionFollows(ctx, uri, chatUri, readBefore);
-        // A tool call that finished may have written to this session's tree, so
-        // the changeset is re-read then rather than waiting for the turn's end.
+        // A tool call whose result names file edits wrote to this session's
+        // tree, so the changeset is re-read then rather than waiting for the
+        // turn's end, as the reference recomputes on a completed call's edits.
         // The row's counts move with it: the turn has no checkpoint yet, so
         // the session kind is counted from its baseline to the working tree.
-        if (action.type === 'chat/toolCallComplete') {
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1118-L1124
+        const result = action.result as Bag | undefined;
+        if (action.type === 'chat/toolCallComplete' && Array.isArray(result?.content)
+          && (result.content as Bag[]).some((one) => one?.type === 'fileEdit')) {
           const dir = dirOf(uri);
           if (dir !== undefined) {
             void refreshWatched(dir);
-            void summaryKept(uri, true);
+            void refreshSessionChangesSummary(uri, true);
           }
         }
         /*
@@ -1264,10 +1584,10 @@ export function createSpawn(ctx: HostContext): Spawn {
         // A nested session's record follows the title and the last turn.
         if (action.type === 'session/titleChanged' && typeof action.title === 'string') moveNested(idOf(uri), { title: action.title });
         else if (channel === 'chat' && action.type === 'chat/turnComplete') moveNested(idOf(uri), {});
-        // The two ends of a turn, as the host sees them: the backend saying it
-        // began, and saying it finished, was stopped or failed. A per-token
-        // delta is not an event, because a plugin that wants the stream is a
-        // client.
+        // A turn's two ends as its road says them: begun, and finished,
+        // stopped or failed, a `!` command's turn finished as this host's
+        // local command. A per-token delta is not an event, because a plugin
+        // that wants the stream is a client.
         if (action.type === 'chat/turnStarted') {
           // The queued message the turn took up, which the queue drain admitted it for.
           const queued = channel === 'chat' ? ctx.takenUp(chatUri, turn) : undefined;
@@ -1280,66 +1600,29 @@ export function createSpawn(ctx: HostContext): Spawn {
             ...(queued === undefined ? {} : { queuedMessageId: queued }),
           });
         }
-        else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
-          void fire({
-            type: 'turn_end',
-            session: uri,
-            chat: chatUri,
-            turn,
-            status: action.type === 'chat/turnCancelled' ? 'cancelled' : 'complete',
-            ...(sender === undefined ? {} : { sender }),
-          });
-        }
-        else if (action.type === 'chat/error') {
-          const failure = (((action.part ?? {}) as Bag).error ?? {}) as Bag;
-          void fire({
-            type: 'turn_end',
-            session: uri,
-            chat: chatUri,
-            turn,
-            status: 'error',
-            error: typeof failure.message === 'string' ? failure.message : 'The turn failed',
-            ...(sender === undefined ? {} : { sender }),
-          });
+        else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
+          raiseTurnEnd({ session: uri, channel: chatUri, turnId: turn, reason: endingOf(chatUri, action), ...(sender === undefined ? {} : { sender }) });
         }
         /*
-         * A session that began, or stopped, waiting on a person. The set is an
-         * upsert keyed by `id`, so setting one entry again raises it again.
+         * And the run this session was started for, when its default chat's
+         * turn ends, as VS Code's host settles a run on its sessions' default
+         * chats: completed, cancelled, or failed with the chat error's own
+         * `ErrorInfo`. One call per action, so a run is never settled twice for
+         * one event.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1249-L1297
          */
-        if (action.type === 'session/inputNeededSet') {
-          const request = (action.request ?? {}) as Bag;
-          const id = String(request.id ?? '');
-          const chat = String(request.chat ?? '');
-          if (id !== '' && chat !== '') {
-            void fire({
-              type: 'input_needed_set',
-              session: uri,
-              chat,
-              id,
-              kind: request.kind as `${SessionInputRequestKind}`,
+        if (chatUri === sessions.get(uri)?.defaultChat) {
+          if (action.type === 'chat/turnComplete') ctx.settleRun(uri, { status: 'completed' });
+          else if (action.type === 'chat/turnCancelled') ctx.settleRun(uri, { status: 'cancelled' });
+          else if (action.type === 'chat/error') {
+            const failure = ((action.part ?? {}) as Bag).error as Bag | undefined;
+            ctx.settleRun(uri, {
+              status: 'failed',
+              ...(typeof failure?.errorType === 'string' && typeof failure.message === 'string'
+                ? { error: failure as unknown as ErrorInfo }
+                : {}),
             });
           }
-        }
-        else if (action.type === 'session/inputNeededRemoved') {
-          const id = String(action.id ?? '');
-          if (id !== '') void fire({ type: 'input_needed_removed', session: uri, id });
-        }
-        /*
-         * And the run this session was started for, when the turn that was it
-         * ends. One call per action, so a run is never settled twice for one
-         * event.
-         */
-        if (action.type === 'chat/turnComplete') ctx.settleRun(uri, { status: 'completed' });
-        else if (action.type === 'chat/turnCancelled') ctx.settleRun(uri, { status: 'cancelled' });
-        else if (action.type === 'chat/error') {
-          // `ChatErrorAction.part` is `{ kind: 'error', error: { errorType,
-          // message } }`, and only the message is worth carrying into a run.
-          const part = (action.part ?? {}) as Bag;
-          const failure = (part.error ?? {}) as Bag;
-          ctx.settleRun(uri, {
-            status: 'failed',
-            error: { message: typeof failure.message === 'string' ? failure.message : 'The run failed' },
-          });
         }
         /*
          * The harness a transcript is written under, kept as soon as the
@@ -1348,7 +1631,7 @@ export function createSpawn(ctx: HostContext): Spawn {
          * Claude names the transcript from the stream, so a fork, and a
          * session whose id the host chose and the backend did not, have no id
          * of their own until a turn has run - and a fork has none at all,
-         * because `keepProvider` is called before anything is said. Only when
+         * because `recordSessionProvider` is called before anything is said. Only when
          * the store does not already say it: a row rewritten on every turn is
          * a store written to for nothing.
          *
@@ -1387,27 +1670,27 @@ export function createSpawn(ctx: HostContext): Spawn {
           operationsMoved(uri);
         }
         /*
-         * The chat's read bit, and the session's at a turn's end, each moved by
-         * its own action on its own channel.
+         * The chat's read bit, and the session's at a turn's end.
          *
          * Cleared where the protocol's chat reducer clears it, so the bit kept
-         * here is the one a client reduces.
+         * here is the one a client reduces, from the action the client reduces
+         * it from: the reference host says nothing more at a turn's start.
          * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L358-L372
          *
-         * At a turn's end the chat is marked unread again, because a client may
-         * have marked it read while it ran, and then a read session is marked
-         * unread with this host's own `session/isReadChanged`, as the reference
-         * host does at a turn's end. A chat a tool opened, or a hidden one,
-         * keeps its own bit and leaves the session's as it is, which is the
-         * reference's `isChatInSessionReadAggregate`. After the action and the
-         * chat's row, so a client applies those first.
-         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48
+         * At a turn's end the chat is said unread, whatever its bit, and then a
+         * read session is marked unread with this host's own
+         * `session/isReadChanged`, as the reference host's markUnread does at
+         * every turn's end. A chat a tool opened, or a hidden one, keeps its
+         * own bit and leaves the session's as it is, which is the reference's
+         * `isChatInSessionReadAggregate`. After the action and the chat's row,
+         * so a client applies those first. The bits move while the session
+         * holds the chat, whose row they mark.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
          * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070
          *
-         * A `!` command turn ran what the person typed, which is nothing new
-         * to them, so its end puts back the bit its chat had when it started
-         * and leaves the session's as it is. The bits move while the session
-         * holds the chat, whose row they mark.
+         * A `!` command turn's end says nothing of either bit, as the
+         * reference's leaves a local command's: the chat stays as its start
+         * left it.
          *
          * A chat whose backend runs it on another host has its read bit moved
          * there, and said as the chat's action.
@@ -1415,14 +1698,10 @@ export function createSpawn(ctx: HostContext): Spawn {
         const commandKey = commandTurnKey(chatUri, turn);
         const ownBit = moved !== undefined && moved.flag === undefined;
         if (ownBit && clearsRead(action.type)) {
-          if (action.type === 'chat/turnStarted' && ctx.commandTurns.has(commandKey)) {
-            ctx.commandTurns.set(commandKey, (ctx.kept.chatFlags(idOf(uri), chatUri) & Status.IsRead) !== 0);
-          }
-          chatFlag(ctx, uri, chatUri, Status.IsRead, false);
+          kept.setChatFlags(idOf(uri), chatUri, kept.chatFlags(idOf(uri), chatUri) & ~Status.IsRead);
         }
         if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
           const command = ctx.commandTurns.has(commandKey);
-          const wasRead = ctx.commandTurns.get(commandKey) === true;
           /*
            * A `!` command's turn is the host's, so no transcript holds it: the
            * host keeps it for its chat once it has ended, as the chat's state
@@ -1431,26 +1710,31 @@ export function createSpawn(ctx: HostContext): Spawn {
            * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L229-L247
            */
           if (moved !== undefined && command) {
-            ctx.keepLocalTurn(uri, chatUri, (ctx.stateOf(chatUri)?.turns ?? []) as Bag[], turn);
+            ctx.recordLocalTurn(uri, chatUri, (ctx.stateOf(chatUri)?.turns ?? []) as Bag[], turn);
           }
           ctx.commandTurns.delete(commandKey);
-          if (moved !== undefined) {
-            if (ownBit) chatFlag(ctx, uri, chatUri, Status.IsRead, wasRead);
+          if (moved !== undefined && !command) {
+            if (ownBit) {
+              kept.setChatFlags(idOf(uri), chatUri, kept.chatFlags(idOf(uri), chatUri) & ~Status.IsRead);
+              dispatch(chatUri, { type: 'chat/isReadChanged', isRead: false });
+            }
             const row = chatSummary(uri, chatUri, moved);
-            if (!command && (row.origin as Bag | undefined)?.['kind'] !== 'tool' && row.interactivity !== 'hidden') {
+            if ((row.origin as Bag | undefined)?.['kind'] !== 'tool' && row.interactivity !== 'hidden') {
               sessionFlag(ctx, uri, Status.IsRead, false, { type: 'session/isReadChanged', isRead: false });
             }
           }
         }
         // A turn starting or finishing moves the catalogue too, and a client
         // watching only the list is the one that most needs telling.
-        summaryMoved(uri);
+        markSummaryDirty(uri);
         /*
          * And a turn that ended is when the branch is worth asking about
          * again: the agent may have changed it, or somebody may have in a
-         * terminal. A turn that failed is one of those, and the files it wrote
-         * before it died are as much the session's work as a finished turn's -
-         * a tree left uncommitted by a failure is a tree nobody can see.
+         * terminal. A turn that failed for good is one of those, and the files
+         * it wrote before it died are as much the session's work as a finished
+         * turn's. A turn that broke with an error the client may resume is
+         * left as it is until it ends again, as VS Code's host leaves one.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/checkpointAndChangeset/checkpointAndChangesetContribution.ts#L30-L54
          *
          * The machine's own commits first, where the session is in one: a
          * machine that commits in a git directory of its own leaves the host's
@@ -1460,48 +1744,51 @@ export function createSpawn(ctx: HostContext): Spawn {
          * A session in no machine has nothing to fetch, and its facts are read
          * without waiting for an answer nobody was asked for.
          */
-        if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
+        const resumable = action.type === 'chat/error' && ((action.part ?? {}) as Bag).resumable === true;
+        if ((action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') && !resumable) {
           const dir = dirOf(uri);
           if (dir !== undefined) {
             /*
              * The tree first, since what a session changed is a difference
              * between two of them: the counts read next are read against the
              * turn just written down, and the facts after those are read
-             * against the same tree - so a row that moved because of the turn
-             * says so once rather than once per answer.
+             * against the same tree, so a row that moved because of the turn
+             * says so once. A cancelled turn's
+             * edits stay in the session's changes with no checkpoint of their
+             * own, as VS Code's host keeps them, so the counts are read at once.
              */
-            void checkpointOf(dir, uri, turn)
-              .then(() => summaryKept(uri))
+            void (action.type === 'chat/turnCancelled' ? Promise.resolve() : checkpointOf(dir, uri, turn))
+              .then(() => refreshSessionChangesSummary(uri))
               .then(() => {
                 if (enteredIn.get(uri) === undefined) refreshFacts(dir);
                 else void bringBackOf(uri).then(() => { refreshFacts(dir); });
               });
           }
         }
-        // A turn starting or ending is the whole of what disables and re-enables
-        // a changeset's operations, and it moves nothing inside the changeset
-        // itself - so it has to be said here or it is never said.
+        // A turn starting or ending, however it ended, is the whole of what
+        // disables and re-enables a changeset's operations, and it moves
+        // nothing inside the changeset itself - so it has to be asked here or
+        // it is never said.
         if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
-          || action.type === 'chat/turnCancelled') operationsMoved(uri);
+          || action.type === 'chat/turnCancelled' || action.type === 'chat/error') operationsMoved(uri);
         /*
-         * And whether this chat may be moved, which a turn is the whole of.
-         *
-         * `chat/error` is here with the two endings the protocol names: it is
-         * how a turn that failed ends, and a chat left unmovable by one would
-         * be a chat nobody could ever move again.
+         * And a move the agent asked for is made now, once its turn completed:
+         * the one moment the backend can be started again without losing
+         * anything. A turn that was cancelled or failed drops the move it
+         * asked for, as VS Code's host carries out a workspace change only for
+         * a turn that succeeded.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionContribution.ts#L28-L37
          */
-        if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
-          || action.type === 'chat/turnCancelled' || action.type === 'chat/error') movableMoved(chatUri);
-        // And a move the agent asked for is made now, once its turn is over:
-        // the one moment the backend can be started again without losing
-        // anything.
         if ((action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')
           && ctx.moving.get(uri)?.chat === chatUri) {
           const move = ctx.moving.get(uri) as Move;
           ctx.moving.delete(uri);
-          void ctx.moveSession(uri, move).catch((error: unknown) => {
-            log(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
-          });
+          if (action.type === 'chat/turnComplete') {
+            void ctx.moveSession(uri, move).catch((error: unknown) => {
+              log(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);
+            });
+          }
+          else log(`${uri} dropped its move to ${move.directory}: its turn did not complete`);
         }
       },
       /*
@@ -1546,30 +1833,45 @@ export function createSpawn(ctx: HostContext): Spawn {
        */
       onEditCompleted: (toolCallId, path, before, after) => options.changes?.complete?.(uri, toolCallId, path, before, after),
       /*
+       * Content a tool result or a part of the agent's message carries inline,
+       * kept in the session's folder and answered by the reference a part
+       * names it by.
+       */
+      storeToolResultResource: (resource) => ctx.toolResults.store(uri, resource),
+      /*
        * A turn the backend has written under an id of its own.
        *
        * What the host keeps against a turn is kept against the id the client
        * chose it by, and a backend whose transcript names turns its own way -
        * Claude writes a turn whose id is not a UUID under a uuid of its own - is
        * read back by that other id after a restart, finding nothing. So the
-       * record of the turns the chat began keeps it, and a `!` turn after it is
-       * anchored to it by that id, with no host learning one backend's
-       * transcript format. Nothing where the two ids agree, which is every
+       * record of the turns the chat began keeps it, the sender is kept under
+       * it as well, and a `!` turn after it is anchored to it by that id, with
+       * no host learning one backend's transcript format.
+       *
+       * The sender's in-memory entry first, because a turn still running is
+       * only in that map, and the store after it for the turn a backend names
+       * once the turn is over. Nothing where the two ids agree, which is every
        * backend that keeps the ids it was given and which the turn's start
-       * recorded already.
+       * recorded already, and no sender where nobody sent the turn.
        */
       onTurnRecorded: (turnId, transcriptId) => {
         if (transcriptId === turnId) return;
         ctx.turnRecordedAs(uri, chatUri, turnId, transcriptId);
+        const sender = senderOf(turnId) ?? kept.sender(idOf(uri), turnId);
+        if (sender !== undefined) kept.setSender(idOf(uri), transcriptId, sender);
       },
-      onHandshake: () => { learnModels(uri); },
+      onHandshake: () => {
+        reported = true;
+        setAgentModels(uri);
+      },
       /*
        * The account the running CLI is signed in as, which is the only way this
        * host learns one for a backend that spawns nothing at boot. It is kept
        * and published the same way the probe's is, so a client sees one key
        * rather than two paths that could disagree about who is signed in.
        */
-      onAccount: (account) => { learnAccount(agent.provider, account); },
+      onAccount: (account) => { publishAccountInfo(agent.provider, account); },
     };
     /*
      * Whether this chat is one the session's own backend does not serve.
@@ -1617,7 +1919,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     births.set(uri, held.createdAt);
     held.chats.set(chatUri, session);
     sessions.set(uri, held);
-    ctx.asleep.delete(uri);
     /*
      * Started, or brought back, which is recent in the residency; one more
      * resident may put another past the limit, which is read once the start is
@@ -1677,7 +1978,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * of nothing and the right answer for a session that has done nothing yet.
      */
     if (held.workingDirectory !== undefined) {
-      void checkpointOf(held.workingDirectory, uri, BASELINE_TURN).then(() => summaryKept(uri));
+      void checkpointOf(held.workingDirectory, uri, BASELINE_TURN).then(() => refreshSessionChangesSummary(uri));
     }
     /*
      * The name it had before, when it is being created again.
@@ -1685,9 +1986,13 @@ export function createSpawn(ctx: HostContext): Spawn {
      * A chat's title is its own and the catalogue's is derived, so the store
      * is what remembers it across a restart. Applied here, before the chat is
      * announced or handed to a backend, so a client never sees the derived
-     * name first and then a correction.
+     * name first and then a correction. The default chat's backend holds the
+     * session's title, so it is handed the one the session was given, an
+     * empty one being none; a record that keeps no title of the session's
+     * kept the session's name as its default chat's, and that is handed.
      */
-    const named_ = titleOf(uri, chatUri);
+    const given = held.defaultChat === chatUri ? kept.customTitle?.(idOf(uri)) : undefined;
+    const named_ = given === undefined ? titleOf(uri, chatUri) : given === '' ? undefined : given;
     if (named_ !== undefined) session.setTitle?.(named_);
     // The name it is held under, which is the session's own and not its
     // provider's. Recorded so every other answer about it uses that same string.
@@ -1711,19 +2016,16 @@ export function createSpawn(ctx: HostContext): Spawn {
      * the one road every start of a backend goes through, so it is also the
      * only place the baseline can be set without a second one to keep in step.
      */
-    movableMoved(chatUri);
+    updateChatMovability(chatUri);
     /*
-     * The draft somebody left on this chat before it was running.
-     *
-     * Handed over rather than dropped: it was typed into this conversation,
-     * and a session that loses it on the way to starting is one that ate what
-     * was in the composer.
+     * The draft the session's record keeps for this chat, handed to the chat
+     * as it opens, as VS Code's host restores a chat's draft when it opens
+     * the chat: it was typed into this conversation, before this start or
+     * before the last process stopped.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatDraft/chatDraftContribution.ts#L54-L67
      */
-    const typed = drafts.get(chatUri);
-    if (typed !== undefined) {
-      drafts.delete(chatUri);
-      session.setDraft(typed);
-    }
+    const typed = kept.chatDraft?.(idOf(uri), chatUri);
+    if (typed !== undefined) session.setDraft(typed);
     /*
      * The session's own backend, which claims the session where it was built
      * from a record rather than started: a chat of another backend is one chat
@@ -1731,6 +2033,13 @@ export function createSpawn(ctx: HostContext): Spawn {
      * the catalogue, a resume and a charge read.
      */
     if (!foreign) owners.set(uri, agent);
+    /*
+     * The models of a backend that reported them before it was held, learned
+     * now that the session they are read from is, as VS Code's host seeds a
+     * session's offers before its first state is served.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
+     */
+    if (reported) setAgentModels(uri);
     /*
      * The machine this session is now running in, told to the plugin that owns
      * it.
@@ -1775,19 +2084,23 @@ export function createSpawn(ctx: HostContext): Spawn {
      */
     ctx.flushDeltas();
     const open = ctx.stateOf(chatUri);
-    if (open === undefined) ctx.openState(chatUri, 'chat', ctx.chatSeed(uri, chatUri));
+    if (open === undefined) ctx.openState(chatUri, 'chat', ctx.resolveChatState(uri, chatUri));
     else if (open.activeTurn === undefined && (!Array.isArray(open.turns) || open.turns.length === 0)) {
       /*
        * A chat that opened with no conversation - its record read nothing, as
        * one inside a machine reads before its host there answers - takes the
-       * one its backend holds once it starts, as `chat/turnsLoaded`: the
-       * action the reference host refreshes a chat's persisted history with.
-       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
+       * one its backend holds once it starts, as `chat/truncated` and then
+       * `chat/turnsLoaded`: the two actions the reference host refreshes a
+       * chat's persisted history with.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
        */
-      const turns = ctx.chatSeed(uri, chatUri).turns;
-      if (Array.isArray(turns) && turns.length > 0) dispatch(chatUri, { type: 'chat/turnsLoaded', turns });
+      const turns = ctx.resolveChatState(uri, chatUri).turns;
+      if (Array.isArray(turns) && turns.length > 0) {
+        dispatch(chatUri, { type: 'chat/truncated' });
+        dispatch(chatUri, { type: 'chat/turnsLoaded', turns });
+      }
     }
-    ctx.chatMoved(chatUri);
+    ctx.onChatSummaryChanged(chatUri);
     /*
      * A session whose state this host holds already - read from its record, or
      * kept across a sleep - is told the customizations of the backend that now
@@ -1810,9 +2123,9 @@ export function createSpawn(ctx: HostContext): Spawn {
   };
 
   return {
-    unstamped, withWorkerUri, stampedCalls, asSentChat,
-    sendSubagent, endedWorkers,
-    openSubagent, formerChatUri, titleOf, keepTitle, keepProvider,
+    unstamped, withWorkerUri, stampedCalls, withSender, withSenderSaid, asSentChat,
+    sendSubagent, endedWorkers, raiseTurnEnd,
+    openSubagent, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
     spawn, wirePlan,
   };
 }

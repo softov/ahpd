@@ -27,12 +27,13 @@ const STATE: CanvasState = {
 /** A chat name, for the store's own cases, which need no session. */
 const CHAT = 'ahp-chat://default/YWhwLXNlc3Npb246L29uZQ';
 
-/** A store, and every action it said. */
+/** A store, and every action it said, over chats that are all live. */
 const recording = (holds: boolean | (() => boolean) = true, enabled = true) => {
   const said: { channel: string; action: Record<string, unknown> }[] = [];
   const store = createCanvases({
     dispatch: (channel, action) => { said.push({ channel, action }); },
     holds: typeof holds === 'function' ? holds : () => holds,
+    restore: async () => {},
     enabled: () => enabled,
   });
   return { store, said };
@@ -86,12 +87,12 @@ const withCanvases = (over: Parameters<typeof host>[0] = {}) => {
 /** A subscribe to a canvas, which a gone one refuses. */
 const refusedCanvas = (client: Client, resource: string) =>
   expect(client.handle({ method: 'subscribe', params: { channel: resource } }))
-    .rejects.toMatchObject({ code: -32008, message: 'Canvas is no longer available' });
+    .rejects.toMatchObject({ code: -32008, message: `Canvas is no longer available: ${resource}` });
 
 describe('the store', () => {
-  it('answers a canvas before the chat that lists it, and lists the whole of them', () => {
+  it('answers a canvas before the chat that lists it, and lists the whole of them', async () => {
     const { store, said } = recording();
-    const resource = store.open(CHAT, STATE, 'fixture');
+    const resource = await store.open(CHAT, STATE, 'fixture');
     // The name carries the chat in base64url, so it reads back to the chat.
     expect(resource.startsWith(canvasResource(CHAT, ''))).toBe(true);
     expect(chatOfCanvas(resource)).toBe(CHAT);
@@ -102,18 +103,56 @@ describe('the store', () => {
     expect(said[1]!.action.canvases).toEqual([{ resource }]);
   });
 
-  it('draws an instance again on the channel it already has, and says no new list', () => {
+  it('draws an instance again on the channel it already has, and says no new list', async () => {
     const { store, said } = recording();
-    const first = store.open(CHAT, STATE, 'fixture');
-    const again = store.open(CHAT, { ...STATE, title: 'Drawn again' }, 'fixture');
+    const first = await store.open(CHAT, STATE, 'fixture');
+    const again = await store.open(CHAT, { ...STATE, title: 'Drawn again' }, 'fixture');
     expect(again).toBe(first);
     expect(said.map((one) => one.action.type)).toEqual(['canvas/stateChanged', 'chat/canvasesChanged', 'canvas/stateChanged']);
     expect(store.snapshot(first)).toMatchObject({ title: 'Drawn again' });
   });
 
-  it('takes a canvas off its chat, and says the list is absent when it was the last one', () => {
+  /*
+   * An instance opened again as it is says nothing, as the reference's
+   * projection keeps a canvas it already shows.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L5196-L5210
+   */
+  it('says nothing for an instance opened again as it is', async () => {
     const { store, said } = recording();
-    const resource = store.open(CHAT, STATE, 'fixture');
+    const first = await store.open(CHAT, STATE, 'fixture');
+    const before = said.length;
+    expect(await store.open(CHAT, { ...STATE }, 'fixture')).toBe(first);
+    expect(said.slice(before)).toEqual([]);
+  });
+
+  /*
+   * The chat is brought back before anything opens on it, as the reference
+   * restores a session's chat before a canvas operation, and a chat the
+   * restore cannot bring back opens nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6601-L6604
+   */
+  it('brings the chat back before it opens a canvas on it, and opens nothing on a chat that cannot be', async () => {
+    const said: string[] = [];
+    let back = false;
+    const store = createCanvases({
+      dispatch: (_channel, action) => { said.push(String(action.type)); },
+      holds: () => back,
+      restore: async (chat) => {
+        if (chat !== CHAT) throw new Error(`Canvas operation targeted a chat outside session '${chat}'.`);
+        said.push('restored');
+        back = true;
+      },
+      enabled: () => true,
+    });
+    await store.open(CHAT, STATE, 'fixture');
+    expect(said).toEqual(['restored', 'canvas/stateChanged', 'chat/canvasesChanged']);
+    await expect(store.open('ahp-chat:/nobody', STATE, 'fixture')).rejects.toThrow("Canvas operation targeted a chat outside session 'ahp-chat:/nobody'.");
+    expect(said).toHaveLength(3);
+  });
+
+  it('takes a canvas off its chat, and says the list is absent when it was the last one', async () => {
+    const { store, said } = recording();
+    const resource = await store.open(CHAT, STATE, 'fixture');
     store.close(resource, 'fixture');
     expect(store.snapshot(resource)).toBeUndefined();
     expect(store.listOf(CHAT)).toBeUndefined();
@@ -125,17 +164,44 @@ describe('the store', () => {
     expect(last?.action.canvases).toBeUndefined();
   });
 
-  it('refuses an update or a close from a plugin that did not open the canvas', () => {
+  /*
+   * The reference installs and says a canvas's state only when it is not the
+   * one it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1192-L1197
+   */
+  it('says nothing for an update that leaves the state as it was, and says one that moves it', async () => {
+    const { store, said } = recording();
+    const resource = await store.open(CHAT, STATE, 'fixture');
+    const before = said.length;
+    store.update(resource, { ...STATE }, 'fixture');
+    expect(said.slice(before)).toEqual([]);
+    store.update(resource, { ...STATE, title: 'Board, moved' }, 'fixture');
+    expect(said.slice(before)).toEqual([
+      { channel: resource, action: { type: 'canvas/stateChanged', canvas: { ...STATE, title: 'Board, moved' } } },
+    ]);
+  });
+
+  /*
+   * The reference asks whether canvases are served before it looks for
+   * anything to close.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6615-L6621
+   */
+  it('refuses a close while canvases are off, though nothing is open under the name', () => {
+    const { store } = recording(true, false);
+    expect(() => store.close(canvasResource(CHAT, 'gone'), 'fixture')).toThrow('Canvases are disabled.');
+  });
+
+  it('refuses an update or a close from a plugin that did not open the canvas', async () => {
     const { store } = recording();
-    const resource = store.open(CHAT, STATE, 'one');
+    const resource = await store.open(CHAT, STATE, 'one');
     expect(() => store.update(resource, STATE, 'two')).toThrow('was opened by one');
     expect(() => store.close(resource, 'two')).toThrow('was opened by one');
     expect(store.snapshot(resource)).toEqual(STATE);
   });
 
-  it('tells a chat that moved that its list is empty, and says nothing to one that is gone', () => {
+  it('tells a chat that moved that its list is empty, and says nothing to one that is gone', async () => {
     const moved = recording(true);
-    const resource = moved.store.open(CHAT, STATE, 'fixture');
+    const resource = await moved.store.open(CHAT, STATE, 'fixture');
     moved.store.forgetChat(CHAT);
     expect(moved.store.snapshot(resource)).toBeUndefined();
     const last = moved.said.at(-1);
@@ -146,7 +212,7 @@ describe('the store', () => {
     // The chat was live when the plugin opened, and is gone when it is forgotten.
     let live = true;
     const gone = recording(() => live);
-    gone.store.open(CHAT, STATE, 'fixture');
+    await gone.store.open(CHAT, STATE, 'fixture');
     live = false;
     const before = gone.said.length;
     gone.store.forgetChat(CHAT);
@@ -159,7 +225,7 @@ describe('a chat\'s snapshot', () => {
     const { made, calls } = withCanvases();
     const { client } = await at(made, 'canvas');
     const chat = await sessionAt(client);
-    const resource = calls.open(chat, STATE);
+    const resource = await calls.open(chat, STATE);
 
     const listed = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
       snapshot: { state: Record<string, unknown> };
@@ -179,7 +245,7 @@ describe('a subscribe to a canvas', () => {
     const { made, calls } = withCanvases();
     const { client } = await at(made, 'canvas');
     const chat = await sessionAt(client);
-    const resource = calls.open(chat, STATE);
+    const resource = await calls.open(chat, STATE);
 
     const opened = await client.handle({ method: 'subscribe', params: { channel: resource } }) as {
       snapshot: { resource: string; state: CanvasState };
@@ -199,9 +265,9 @@ describe('a subscribe to a canvas', () => {
       .filter((one) => one.method === 'action' && one.params.action?.type === 'chat/canvasesChanged')
       .length;
 
-    const first = calls.open(chat, STATE);
+    const first = await calls.open(chat, STATE);
     expect(lists()).toBe(1);
-    expect(calls.open(chat, { ...STATE, title: 'Drawn again' })).toBe(first);
+    expect(await calls.open(chat, { ...STATE, title: 'Drawn again' })).toBe(first);
     expect(lists()).toBe(1);
   });
 });
@@ -220,7 +286,7 @@ describe('who may read a canvas', () => {
     const opened = await admin.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as {
       snapshot: { state: { defaultChat: string } };
     };
-    const resource = calls.open(opened.snapshot.state.defaultChat, STATE);
+    const resource = await calls.open(opened.snapshot.state.defaultChat, STATE);
 
     const guest = made.accept(peer());
     await hello(guest, 'guest');
@@ -235,7 +301,7 @@ describe('a canvas whose chat goes', () => {
     const { made, calls } = withCanvases();
     const { client } = await at(made, 'canvas');
     const chat = await sessionAt(client);
-    const resource = calls.open(chat, STATE);
+    const resource = await calls.open(chat, STATE);
 
     await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
     await refusedCanvas(client, resource);
@@ -245,35 +311,46 @@ describe('a canvas whose chat goes', () => {
     const { made, calls } = withCanvases();
     const { client } = await at(made, 'canvas');
     await sessionAt(client);
-    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'peer:/spare' } });
-    const resource = calls.open('peer:/spare', STATE);
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'ahp-chat:/spare' } });
+    const resource = await calls.open('ahp-chat:/spare', STATE);
 
-    await client.handle({ method: 'disposeChat', params: { channel: 'peer:/spare' } });
+    await client.handle({ method: 'disposeChat', params: { channel: 'ahp-chat:/spare' } });
     await refusedCanvas(client, resource);
   });
 
-  it('goes when the chat moves, and the chat is told its list is now empty', async () => {
+  /*
+   * A move keeps a chat's canvases, as the reference host's keeps its state,
+   * changesets, canvases and in-progress turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1893-L1904
+   */
+  it('stays with its chat when the chat moves, and the list is said nothing', async () => {
     const { made, calls } = withCanvases();
     const { client, seen } = await at(made, 'canvas');
+    // Moving chats on, as a VS Code window with its move setting on turns it on.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+    });
     await sessionAt(client);
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'base' } });
-    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'peer:/spare' } });
-    await client.handle({ method: 'subscribe', params: { channel: 'peer:/spare' } });
-    const resource = calls.open('peer:/spare', STATE);
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/one', chat: 'ahp-chat:/spare' } });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/spare' } });
+    const resource = await calls.open('ahp-chat:/spare', STATE);
+    const lists = () => seen.seen.filter((one) => one.method === 'action'
+      && one.params.channel === 'ahp-chat:/spare'
+      && one.params.action?.type === 'chat/canvasesChanged').length;
+    const before = lists();
 
     await client.handle({
       method: 'moveChat',
-      params: { channel: 'peer:/spare', destination: { kind: 'session', session: 'ahp-session:/two' } },
+      params: { channel: 'ahp-chat:/spare', destination: { kind: 'session', session: 'ahp-session:/two' } },
     });
 
-    // The chat is still live in the session it moved to, so it is told.
-    const lists = seen.seen.filter((one) => one.method === 'action'
-      && one.params.channel === 'peer:/spare'
-      && one.params.action?.type === 'chat/canvasesChanged');
-    const last = lists.at(-1);
-    expect(Object.hasOwn(last?.params.action ?? {}, 'canvases')).toBe(true);
-    expect(last?.params.action.canvases).toBeUndefined();
-    await refusedCanvas(client, resource);
+    expect(lists()).toBe(before);
+    const opened = await client.handle({ method: 'subscribe', params: { channel: resource } }) as { snapshot: { state: CanvasState } };
+    expect(opened.snapshot.state).toEqual(STATE);
+    const chat = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/spare' } }) as { snapshot: { state: Record<string, unknown> } };
+    expect(chat.snapshot.state.canvases).toEqual([{ resource }]);
   });
 });
 
@@ -290,7 +367,7 @@ describe('a second client of the session', () => {
     const theirChat = view.snapshot.state.defaultChat;
     await other.client.handle({ method: 'subscribe', params: { channel: theirChat } });
 
-    const resource = calls.open(chat, STATE);
+    const resource = await calls.open(chat, STATE);
     const lists = other.seen.seen.filter((one) => one.method === 'action' && one.params.action?.type === 'chat/canvasesChanged');
     expect(lists).toHaveLength(1);
     // Under the chat's one URI, and the resource untouched.

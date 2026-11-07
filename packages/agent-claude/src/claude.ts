@@ -461,6 +461,10 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     description: `The Claude Agent SDK, on ${dirs.join(', ')}`,
     schema,
     defaults,
+    // The client-pushed tier first, then what the SDK loaded, as VS Code's
+    // Claude agent projects a session's list.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1541-L1556
+    sessionCustomizations: (reported, clients) => [...clients, ...reported],
 
     /*
      * What a machine needs for this CLI to run in it.

@@ -1,6 +1,6 @@
 /** Automations: a session started by a trigger rather than by a person. */
 
-import type { AutomationOperation, AutomationTriggerDefinition, SessionOriginKind } from '@microsoft/agent-host-protocol';
+import type { AutomationOperation, AutomationTriggerDefinition, ErrorInfo, SessionOriginKind } from '@microsoft/agent-host-protocol';
 
 import type { CapturedPlugin } from './clientplugins.js';
 import type { Bag } from './common.js';
@@ -225,8 +225,8 @@ export interface StartSession {
 /** How a run's execution ended, for a store to record. */
 export interface RunEnding {
   status: 'completed' | 'failed' | 'cancelled';
-  /** Why it failed, when it did. */
-  error?: { message: string };
+  /** Why it failed, when it did, as the turn's own error said it. */
+  error?: ErrorInfo;
 }
 
 /**
@@ -304,6 +304,10 @@ export interface AutomationStore {
    * `start` is handed in rather than reached for: only the host can create a
    * session, and a store that could would be a second thing that knows what a
    * session is. It answers the session URI, and the store records it.
+   *
+   * Answered with the run once it is recorded, before the session `start` makes
+   * is there: what the start comes to is said on the run, as VS Code's host
+   * answers `runAutomation` with the run it recorded and starts it after.
    */
   run(
     resource: string,

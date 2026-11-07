@@ -367,7 +367,7 @@ export interface PushProvider extends ResourceProvider {
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string): Promise<Read>;
   write(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
-  remove(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
+  delete(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   describe(): SchemeDescription;
 }
 
@@ -562,7 +562,7 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      * takes when a person turns notifications off, so it is a device's whole id
      * or nothing: there are no children to take with a flag.
      */
-    remove: async (uri) => {
+    delete: async (uri) => {
       const place = placeOf(uri);
       if (place.at === 'vapid') {
         throw new RpcError(-32602, `${uri} is the host's public key and cannot be deleted; delete ${SCHEME}://${DEVICES}/<id>`);

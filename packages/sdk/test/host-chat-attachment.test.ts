@@ -269,6 +269,35 @@ describe('a chat attached to a message', () => {
     expect(sdk.blocks).toEqual([]);
   });
 
+  /*
+   * A queued message is said as it was sent, whatever it attaches, and the
+   * chats it attaches are read as its turn is sent: a pin nobody can honour
+   * then ends that turn, as VS Code's host accepts a pending message and
+   * resolves a turn's attachments in its send.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2380-L2409
+   */
+  it('says a queued message whatever it attaches, and ends its turn on a pin it cannot honour', async () => {
+    const { client, p, live } = await opened();
+    await spoken(client, 'ahp-chat:/review', 'r1', 'the only question');
+
+    await client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: live,
+        clientSeq: 21,
+        action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { origin: { kind: 'user' }, text: 'see this', attachments: [attached({ endTurn: 'r9' })] } },
+      },
+    });
+    await settle();
+
+    const set = actions(p, live).filter((one) => one.origin?.clientSeq === 21);
+    expect(set.map((one) => [one.action.type, one.rejectionReason])).toEqual([['chat/pendingMessageSet', undefined]]);
+    const drained = actions(p, live).filter((one) => one.action.type === 'chat/error');
+    expect((drained.at(-1)?.action.part as Bag | undefined)?.error)
+      .toEqual({ errorType: 'sendFailed', message: 'Chat attachment endTurn r9 was not found in the retained transcript.' });
+  });
+
   it('ends a turn pinned to a turn this host cannot find in an error', async () => {
     const { client, p, live } = await opened();
     await spoken(client, 'ahp-chat:/review', 'r1', 'the only question');

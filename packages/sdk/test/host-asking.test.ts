@@ -114,6 +114,30 @@ async function serving() {
 }
 
 describe('a host tool asks the person', () => {
+  /*
+   * The session lists it as it lists any chat's question, so a client watching
+   * only the session sees the session waits on a person, as VS Code's host
+   * mirrors every chat's question whoever asked it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L103
+   */
+  it('lists its question in the session under VS Code\'s id, and takes it down once answered', async () => {
+    const { p, uri, chatUri, tool, begin, lastRequest, completing } = await serving();
+    await begin();
+    const pending = tool().handler({ questions: two });
+    await settle();
+
+    const request = lastRequest();
+    const raised = actions(p, uri).filter((one) => one.action.type === 'session/inputNeededSet');
+    expect(raised.map((one) => one.action.request)).toMatchObject([
+      { id: `chatInput:${chatUri}:${String(request.id)}`, kind: 'chatInput', chat: chatUri, request: { id: request.id } },
+    ]);
+
+    await completing(String(request.id), { response: 'cancel' });
+    await pending;
+    const removed = actions(p, uri).filter((one) => one.action.type === 'session/inputNeededRemoved');
+    expect(removed.map((one) => one.action.id)).toEqual([`chatInput:${chatUri}:${String(request.id)}`]);
+  });
+
   it('puts one request on the chat and returns the answers, in order', async () => {
     const { client, p, chatUri, answered, tool, begin, lastRequest, completing } = await serving();
     await begin();

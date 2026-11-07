@@ -118,7 +118,12 @@ it('gives a targeted token to that server in that session alone', async () => {
   expect(sdk.mcpReconnected).toEqual(['tickets']);
 });
 
-it('refuses a target it cannot find, and gives the token to nobody', async () => {
+/*
+ * VS Code refuses a target only for a kind other than an MCP server, and for
+ * one naming no MCP server of an existing session, in its words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2155-L2164
+ */
+it('refuses a target it cannot find in VS Code\'s words, and gives the token to nobody', async () => {
   const { client } = await twoSessions();
   const state = (await client.handle({ method: 'subscribe', params: { channel: TWO } }) as {
     snapshot: { state: { customizations: { id: string; type: string }[] } };
@@ -126,31 +131,30 @@ it('refuses a target it cannot find, and gives the token to nobody', async () =>
   const skills = state.customizations.find((one) => one.type !== 'mcpServer');
   expect(skills).toBeDefined();
 
-  for (const target of [
-    // A kind this host does not know names a consumer it cannot confine the token to.
-    { ...at(TWO, serverId('tickets')), kind: 'hostOwned' },
-    at('ahp-session:/nowhere', serverId('tickets')),
-    at(TWO, serverId('nowhere')),
-    at(TWO, skills?.id ?? ''),
-    serverId('tickets'),
-  ]) {
+  for (const target of [{ ...at(TWO, serverId('tickets')), kind: 'hostOwned' }, serverId('tickets')]) {
     await expect(client.handle({
       method: 'authenticate',
       params: { channel: ROOT, resource: DESK, token: 'lost', target },
-    })).rejects.toMatchObject({ code: -32602 });
+    })).rejects.toMatchObject({ code: -32602, message: 'Unsupported authentication target kind' });
+  }
+  for (const target of [at('ahp-session:/nowhere', serverId('tickets')), at(TWO, serverId('nowhere')), at(TWO, skills?.id ?? '')]) {
+    await expect(client.handle({
+      method: 'authenticate',
+      params: { channel: ROOT, resource: DESK, token: 'lost', target },
+    })).rejects.toMatchObject({ code: -32602, message: 'Authentication target must identify an MCP server in an existing session' });
   }
   await settle(8);
   expect(sdk.mcpDeclared).toEqual([]);
 });
 
-it('refuses a targeted token for a resource its server is not waiting for', async () => {
+it('takes a targeted token whatever resource it names, as VS Code\'s, and hands it to no server not waiting for it', async () => {
   const { client } = await twoSessions();
   // A resource this host advertises, for the backend itself, and not the one
   // this server waits for.
   await expect(client.handle({
     method: 'authenticate',
     params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-wrong', target: at(TWO, serverId('tickets')) },
-  })).rejects.toMatchObject({ code: -32602 });
+  })).resolves.toEqual({});
   await settle(8);
   expect(sdk.mcpDeclared).toEqual([]);
 });

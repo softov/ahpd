@@ -42,8 +42,8 @@ import type { Bag } from '@ahpd/sdk';
  * call ran.
  *
  * A read here is the backend's alone. The host reads a message the CLI ran
- * after the turn's last answer back inside the turn it steered, from its record
- * of the turns the chat began, which `host-local-turns.test.ts` in the sdk
+ * after the turn's last answer back as a turn of its own, as VS Code's replay
+ * starts a turn at every prompt, which `host-local-turns.test.ts` in the sdk
  * drives with these same captures.
  */
 
@@ -431,8 +431,8 @@ it('reads a steering message the CLI took in at a tool call back in the turn it 
   const read = await readBack(renamed(fixture('claude-steered-transcript.jsonl'), FOLDED, foldedOne.steered));
   // The folded one comes back marked by the SDK's reader, in the turn a client saw.
   expect(history(read).at(-1)).toEqual(history(foldedTurns)[0]);
-  // The late one is a prompt of its own in the transcript, which the host's
-  // record of the turns the chat began reads back inside the turn it steered.
+  // The late one is a prompt of its own in the transcript, which the host
+  // reads back as a turn of its own too.
   expect(history(read)).toEqual([
     [FIRST, 'complete', ALPHA_TEXT, 'user', ['ALPHA']],
     [LATE, 'complete', BETA_TEXT, 'user', ['BETA']],

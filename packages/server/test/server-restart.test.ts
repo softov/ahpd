@@ -934,12 +934,23 @@ describe('a turn and a restart that is stopping the daemon', () => {
 
   type Client = ReturnType<ReturnType<typeof createHost>['accept']>;
 
-  /** What the host last said about an action on a chat: the action, or the refusal of it. */
-  const answeredOn = (said: { notes: { method: string; params: unknown }[] }, chat: string) => said.notes
-    .filter((note) => note.method === 'action')
-    .map((note) => note.params as { channel: string; action: { type: string }; rejectionReason?: string })
-    .filter((one) => one.channel === chat)
-    .at(-1);
+  /*
+   * How a turn on a chat ended, as the host said it: completed, or ended at its
+   * admission in an error, as the reference host ends a turn it refuses with
+   * `chat/error` on the turn the request started.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L110
+   */
+  const endOf = (said: { notes: { method: string; params: unknown }[] }, chat: string, turnId: string) => {
+    const ended = said.notes
+      .filter((note) => note.method === 'action')
+      .map((note) => note.params as { channel: string; action: { type: string; turnId?: string; part?: { error?: { errorType?: string; message?: string } } } })
+      .filter((one) => one.channel === chat && one.action.turnId === turnId
+        && ['chat/turnComplete', 'chat/turnCancelled', 'chat/error'].includes(one.action.type))
+      .at(-1)?.action;
+    return ended?.type === 'chat/error'
+      ? { type: ended.type, errorType: ended.part?.error?.errorType, message: ended.part?.error?.message }
+      : ended === undefined ? undefined : { type: ended.type };
+  };
 
   /** A client saying something on a chat now. */
   const say = async (client: Client, chat: string, text: string, turnId: string): Promise<void> => {
@@ -995,7 +1006,7 @@ describe('a turn and a restart that is stopping the daemon', () => {
     // On its way down, with the host still answering: the window a turn can
     // start in, and be ended by the close at the end of this restart.
     await say(client, chat, 'hello', 't1');
-    expect(answeredOn(said, chat)?.rejectionReason).toBe('The daemon is restarting');
+    expect(endOf(said, chat, 't1')).toEqual({ type: 'chat/error', errorType: 'rejected', message: 'The daemon is restarting' });
 
     release();
     await over;
@@ -1025,7 +1036,8 @@ describe('a turn and a restart that is stopping the daemon', () => {
     // ends before the next thing somebody says.
     await quiet(host);
     await say(client, chat, 'still here', 't2');
-    expect(answeredOn(said, chat)?.rejectionReason).toBeUndefined();
+    await quiet(host);
+    expect(endOf(said, chat, 't2')).toEqual({ type: 'chat/turnComplete' });
     await host.close();
   });
 
@@ -1042,7 +1054,8 @@ describe('a turn and a restart that is stopping the daemon', () => {
     );
     await expect(unrunnable(ARGV, false)).rejects.toThrow('Its line cannot run now, so it was not stopped: config.json is not JSON');
     await say(client, chat, 'hello', 't1');
-    expect(answeredOn(said, chat)?.rejectionReason).toBeUndefined();
+    await quiet(host);
+    expect(endOf(said, chat, 't1')).toEqual({ type: 'chat/turnComplete' });
 
     const underWay = checkedRestart(
       async () => 'xyz',
@@ -1052,7 +1065,8 @@ describe('a turn and a restart that is stopping the daemon', () => {
     );
     await expect(underWay(ARGV, false)).rejects.toThrow('A restart is already under way.');
     await say(client, chat, 'and again', 't2');
-    expect(answeredOn(said, chat)?.rejectionReason).toBeUndefined();
+    await quiet(host);
+    expect(endOf(said, chat, 't2')).toEqual({ type: 'chat/turnComplete' });
     expect(asked).toEqual([]);
     await host.close();
   });

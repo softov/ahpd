@@ -691,7 +691,7 @@ it('refuses a press into a chat the automation owner may not read', async () => 
   expect(sdk.said).toHaveLength(said);
 });
 
-it('refuses a press while the chat the automation runs in is busy', async () => {
+it('answers a press while the run\'s own turn is going with that run, as VS Code\'s host', async () => {
   const store = memoryAutomations();
   const { client, chatUri, cli } = await live({ automations: store });
   store.create(AUTOMATION, waking({ session: 'pinned' }));
@@ -699,25 +699,57 @@ it('refuses a press while the chat the automation runs in is busy', async () => 
   await fails(client, chatUri, 't1', cli);
   await until(() => runCount(store) === 1, 'the first run');
   const pin = String(newest(store)['primarySession']);
+  const first = String(newest(store)['resource']);
 
-  // A person presses Run while the run's own turn is still going. One chat has
-  // one turn at a time, and what the press gets is the reason rather than a
-  // second turn on top of the first.
+  // A person presses Run while the run's own turn is still going: the answer
+  // is the run that is going, and no second turn lands on the chat.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1546-L1555
   const said = sdk.said.length;
-  await client.handle({
+  const answer = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: AUTOMATION, requestId: 'r' },
-  });
-  await until(() => runCount(store) === 2, 'the refused press');
-  expect(refusalOf(store)).toBe('The chat this automation runs in is already running a turn');
-  expect(newest(store)['primarySession']).toBeUndefined();
+  }) as { resource: string };
+  expect(answer.resource).toBe(first);
+  expect(runCount(store)).toBe(1);
   expect(sdk.said).toHaveLength(said);
 
-  // And the turn that is going is still the first run's: it settles when it
-  // ends, which is what a press moving the chat onto its own failed run would
-  // have taken away.
+  // And the turn that is going settles the run when it ends.
   await ends(cli + 1);
-  await until(() => String(bag(runsOf(store)[1]?.['lifecycle'])['status']) === 'completed', 'the first run to settle');
-  expect(runsOf(store)[1]?.['primarySession']).toBe(pin);
+  await until(() => String(bag(runsOf(store)[0]?.['lifecycle'])['status']) === 'completed', 'the first run to settle');
+  expect(runsOf(store)[0]?.['primarySession']).toBe(pin);
+});
+
+/*
+ * A run settles when its session's default chat ends a turn, and a failed one
+ * carries that chat's error whole, as VS Code's host settles a run on its
+ * sessions' default chats with the chat error's own `ErrorInfo`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1249-L1297
+ */
+it('settles a run on its session\'s default chat alone, failed with the chat\'s ErrorInfo, as VS Code\'s host', async () => {
+  const store = memoryAutomations();
+  const { client, chatUri, cli } = await live({ automations: store });
+  store.create(AUTOMATION, watching());
+
+  await fails(client, chatUri, 't1', cli);
+  await until(() => runCount(store) === 1 && newest(store)['primarySession'] !== undefined, 'the run');
+  const session = String(newest(store)['primarySession']);
+
+  // A side chat of the run's session ends a turn while the run's own turn is
+  // going, and the run goes on.
+  const side = 'ahp-chat:/side';
+  await client.handle({ method: 'createChat', params: { channel: session, chat: side } });
+  await settle();
+  await begins(client, side, 's1');
+  await ends(cli + 2);
+  expect(bag(newest(store)['lifecycle'])['status']).toBe('running');
+
+  // The run's own turn fails, and the run fails with the chat's error.
+  const own = sessionQueries()[cli + 1];
+  if (own === undefined) throw new Error('the run has no session running');
+  own.frames.push({ type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 3 });
+  own.wake?.();
+  own.wake = undefined;
+  await until(() => bag(newest(store)['lifecycle'])['status'] === 'failed', 'the run to fail');
+  expect(bag(bag(newest(store)['lifecycle'])['error'])).toMatchObject({ errorType: 'turnFailed', message: expect.any(String) });
 });
 
 it('waits behind a turn a person is running in the chat it is pinned to', async () => {

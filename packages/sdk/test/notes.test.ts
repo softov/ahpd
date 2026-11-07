@@ -140,7 +140,7 @@ it('asks before it writes, and writes once it is allowed', async () => {
   // The session says what is wanted, so a client that never subscribed to the
   // chat still knows somebody is being asked.
   const asked = actions(p, uri).find((a) => a.type === 'session/inputNeededSet');
-  const request = asked?.request as { id: string; kind: string; chat: string; turnId: string };
+  const request = asked?.request as { id: string; kind: string; chat: string; turnId: string; toolCall: { toolCallId: string } };
   expect(request.kind).toBe('toolConfirmation');
   expect(request.chat).toBe(chatUri);
   const before = reduced(p, uri, chatUri);
@@ -152,7 +152,8 @@ it('asks before it writes, and writes once it is allowed', async () => {
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/toolCallConfirmed', toolCallId: request.id, approved: true, confirmed: 'user-action' },
+      // The call the entry names, as a client answers the entry's call.
+      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.toolCall.toolCallId, approved: true, confirmed: 'user-action' },
     },
   });
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
@@ -165,17 +166,46 @@ it('asks before it writes, and writes once it is allowed', async () => {
   expect(call).toMatchObject({ status: 'completed', confirmed: 'user-action' });
 });
 
+/*
+ * A client's decision on a call is said once, as the client's: the host says
+ * it in the backend's place, and the backend's own word on the call it already
+ * moved is not said again, as VS Code's host echoes a client's confirmation
+ * once and no provider says one of its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1878-L1904
+ */
+it('says a client\'s decision on a call once, as the client\'s, as VS Code\'s host', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  say(client, chatUri, 'write shopping bread and milk');
+  await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
+  const asked = actions(p, uri).find((a) => a.type === 'session/inputNeededSet');
+  const request = asked?.request as { id: string; turnId: string; toolCall: { toolCallId: string } };
+  void client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      clientSeq: 7,
+      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.toolCall.toolCallId, approved: true, confirmed: 'user-action' },
+    },
+  });
+  await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
+  const confirmed = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; action: Record<string, unknown>; origin?: { clientId: string; clientSeq: number } })
+    .filter((e) => e.channel === chatUri && e.action.type === 'chat/toolCallConfirmed');
+  expect(confirmed.map((e) => e.origin)).toEqual([{ clientId: 'probe', clientSeq: 7 }]);
+});
+
 it('writes nothing when it is told not to', async () => {
   const { dir, client, peer: p, uri, chatUri } = await talking();
   say(client, chatUri, 'write secrets everything');
   await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
-  const request = actions(p, uri).find((a) => a.type === 'session/inputNeededSet')?.request as { id: string };
+  const request = actions(p, uri).find((a) => a.type === 'session/inputNeededSet')?.request as { turnId: string; toolCall: { toolCallId: string } };
 
   void client.handle({
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      action: { type: 'chat/toolCallConfirmed', toolCallId: request.id, approved: false, reason: 'denied' },
+      action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.toolCall.toolCallId, approved: false, reason: 'denied' },
     },
   });
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
@@ -197,9 +227,10 @@ it('asks which note when the line did not say, and reads the one named', async (
   await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
 
   const request = actions(p, uri).find((a) => a.type === 'session/inputNeededSet')?.request as {
-    id: string; kind: string; request: { questions: { options: { id: string }[] }[] };
+    id: string; kind: string; request: { id: string; questions: { options: { id: string }[] }[] };
   };
-  // The other kind of question: not a tool call, and answered by its own id.
+  // The other kind of question: not a tool call, and answered by the id of the
+  // request the entry carries.
   expect(request.kind).toBe('chatInput');
   expect(request.request.questions[0]?.options.map((one) => one.id)).toEqual(['monday.md']);
   // `chat/inputRequested` opens its own response part, the way toolCallStart
@@ -214,7 +245,7 @@ it('asks which note when the line did not say, and reads the one named', async (
       channel: chatUri,
       action: {
         type: 'chat/inputCompleted',
-        requestId: request.id,
+        requestId: request.request.id,
         response: 'accept',
         answers: { name: { state: 'submitted', value: { kind: 'selected', value: 'monday.md' } } },
       },
@@ -290,13 +321,14 @@ it('lets a cancelled turn go rather than leaving it waiting for an answer', asyn
     snapshot: { state: { status: number; inputNeeded?: unknown[] } };
   };
   expect(opened.snapshot.state.inputNeeded).toBeUndefined();
-  // The session's status is what its reducer made of the actions it was
-  // sent, so a client subscribing now reads the bits a watching client holds,
+  // The session's status is its chats' aggregate as the host keeps it, as
+  // VS Code's state manager does, so a client subscribing now reads it idle,
   // and the input-needed bit left with the question. Its activity is read
   // without the read bit, which is the person's and not the turn's.
   const activity = (status: number): number => status & (Status.IsRead - 1);
-  expect(activity(opened.snapshot.state.status)).toBe(activity(session.status));
+  expect(activity(opened.snapshot.state.status)).toBe(Status.Idle);
   expect(opened.snapshot.state.status & (Status.InputNeeded & ~Status.InProgress)).toBe(0);
+  expect(session.status & (Status.InputNeeded & ~Status.InProgress)).toBe(0);
   // And the session's row, which aggregates its chats, says it is idle.
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: { resource: string; status: number }[];
@@ -352,7 +384,13 @@ it('refuses a key its schema marks immutable, without the backend being asked', 
   expect(why.rejectionReason).toBe('tone is fixed once the session has started');
 });
 
-it('takes one its schema marks mutable, and says so in the backend\'s words when the value is wrong', async () => {
+/*
+ * A value its property's list does not offer is refused in the reference
+ * host's words for one, since a client draws a property with a list as a
+ * picker of exactly those values.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L148
+ */
+it('takes one its schema marks mutable, and refuses a value its list does not offer in the reference host\'s words', async () => {
   const { client, peer: p, uri } = await talking();
   await client.handle({
     method: 'dispatchAction',
@@ -367,17 +405,7 @@ it('takes one its schema marks mutable, and says so in the backend\'s words when
     params: { channel: uri, action: { type: 'session/configChanged', config: { ask: 'sometimes' } } },
   });
   await settle();
-  // The backend's sentence, not the host's: only it knows whether the key or
-  // the value was the problem, and saying "no such key" about a bad value
-  // would tell a client to stop drawing a control that works.
+  // The whole sentence, naming the key and the value it does not offer.
   const why = p.notes.filter((n) => n.method === 'action').at(-1)?.params as { rejectionReason?: string };
-  /*
-   * The whole sentence, because the weak half was the assertion.
-   *
-   * `toContain('sometimes')` matched the value the test itself supplied, so
-   * it passed on any message that echoed the bad input back - including one
-   * that never named the key or said what the valid answers were, which is
-   * the entire thing this test exists to check.
-   */
-  expect(why.rejectionReason).toBe('ask is one of writes, always or never - not sometimes');
+  expect(why.rejectionReason).toBe('Session configuration \'ask\' does not offer \'sometimes\'.');
 });

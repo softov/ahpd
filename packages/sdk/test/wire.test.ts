@@ -426,6 +426,11 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
       type: 'assistant',
       message: { id: 'm1', model: 'claude-opus-5', content: [{ type: 'tool_use', id: 'tc1', name: 'Read', input: { file_path: '/home/softov/a' } }] },
     },
+  );
+  // Past the catalogue's 100 ms debounce, so the row says the tool it is on
+  // and then, once the turn ends, that it is on none.
+  await new Promise((r) => { setTimeout(r, 120); });
+  await said(
     { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tc1', content: 'ok' }] } },
     { type: 'assistant', message: { id: 'm2', content: [{ type: 'text', text: 'Done.' }] } },
     {
@@ -440,6 +445,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
       modelUsage: { 'claude-opus-5': { costUSD: 0.25, costBasis: 'exact' } },
     },
   );
+  await new Promise((r) => { setTimeout(r, 120); });
 
   // The rest of the session channel: a title, the flags a client keeps, a
   // config value, and a client saying it is watching.
@@ -532,8 +538,10 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    * announcements reach nobody - what the capture keeps is the entry holding
    * them.
    */
+  // Each ended, as a press during a run that is going is answered with that run.
   for (let i = 0; i < 19; i++) {
-    await automations.run(nightly, { kind: 'manual' }, async () => `ahp-session:/seeded-${String(i)}`);
+    const seeded = await automations.run(nightly, { kind: 'manual' }, async () => `ahp-session:/seeded-${String(i)}`);
+    if (seeded !== undefined) automations.settle?.(seeded.resource, { status: 'completed' });
   }
   await settle();
 
@@ -591,15 +599,17 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   /*
    * And the one departure that is refused rather than answered.
    *
-   * `shutdown` stops the daemon, and this host was built with no way to stop,
-   * so it answers `-32601`. Which makes it the only frame in the capture that
-   * is not an answer, and the only exercise the recorder's refusal branch
-   * gets - a branch nothing goes down is a branch that does not hold.
+   * A chunk read of an artifact this host never made is refused, which makes
+   * it the only frame in the capture that is not an answer, and the only
+   * exercise the recorder's refusal branch gets - a branch nothing goes down
+   * is a branch that does not hold.
    */
-  await ask('shutdown', {});
+  await ask('vscode/readAgentHostDebugLogsChunk', { resource: 'file:///nowhere.zip', position: 0 });
 
   await ask('disposeSession', { channel: uri });
   await ask('disposeSession', { channel: echoUri });
+  // The window's shutdown last, since it closes the host.
+  await ask('shutdown', {});
   await settle();
   rmSync(home, { recursive: true, force: true });
 
@@ -706,6 +716,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     'vscode/stopBackgroundWork': 'What the window asks a host about itself',
     'vscode/getAgentHostSessionStateFile': 'What the window asks a host about itself',
     'vscode/collectAgentHostDebugLogs': 'What the window asks a host about itself',
+    'vscode/cancelAgentHostDebugLogs': 'What the window asks a host about itself',
     'vscode/readAgentHostDebugLogsChunk': 'What the window asks a host about itself',
     'vscode/devContainers/isDockerAvailable': 'CONTAINERS.md',
     'vscode/devContainers/connect': 'CONTAINERS.md',
@@ -786,7 +797,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   // And exactly one request in the capture is refused, which is the departure
   // that refuses by design. Anything else here is a request that stopped
   // working, recorded as an error frame rather than as an answer.
-  expect(refused).toEqual(['shutdown']);
+  expect(refused).toEqual(['vscode/readAgentHostDebugLogsChunk']);
 
   /*
    * The other half of everything this host sends: the names it invents.

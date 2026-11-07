@@ -3,7 +3,7 @@
 import type { ActionOrigin, ToolCallConfirmationReason, Turn } from '@microsoft/agent-host-protocol';
 import type { CommandShell } from '../access/commandautoapprover.js';
 import type { Bag } from './common.js';
-import type { FileEdit } from './changes.js';
+import type { ContentRef, FileEdit } from './changes.js';
 import type { WireTurn } from './wire.js';
 import type { Emit, PlanUpdate, Session, SubagentChat, SubagentRequest } from './session.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
@@ -16,6 +16,7 @@ import type { ComputerPort } from './computers.js';
 import type { MachineNeed } from './machine.js';
 import type { ShellEnv } from '../machines/shellenv.js';
 import type { SessionConfigAnswerer } from './completions.js';
+import type { ManagedSettingsPermissions, PermissionKind } from './permissions.js';
 
 /**
  * An MCP server the host offers its agents, reached over stdio.
@@ -157,6 +158,35 @@ export interface SessionAt {
 export type AutoApprovalKind = 'shell' | 'tool';
 
 /**
+ * What a backend's question about a call carries for the host's decision,
+ * beside the `chat/toolCallReady` it emits, as VS Code's agents raise a
+ * pending confirmation: fields the host reads and takes off the action before
+ * any client is sent it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1499-L1541
+ */
+export interface PendingConfirmation {
+  /** What the call asks to do. */
+  permissionKind?: PermissionKind;
+  /** The absolute path a read or a write is of. */
+  permissionPath?: string;
+  /** The URL a fetch is of. */
+  permissionUrl?: string;
+  /** The command line a shell call runs, where its input carries more than the line. */
+  shellCommand?: string;
+  /** The shell that runs it; a shell call with none asks. */
+  shellLanguage?: 'bash' | 'powershell';
+  /** The call asks to leave its sandbox: answered by a person alone, for this call alone. */
+  requestSandboxBypass?: boolean;
+  /** A managed rule asks about the call: answered by a person alone, Allow Once or Skip. */
+  managedApprovalRequired?: boolean;
+}
+
+/** The host-only fields of a backend's question, which no client is sent. */
+export const PENDING_CONFIRMATION_FIELDS = [
+  'permissionKind', 'permissionPath', 'permissionUrl', 'shellCommand', 'shellLanguage', 'requestSandboxBypass', 'managedApprovalRequired',
+] as const;
+
+/**
  * What the host's approval check says about one tool call.
  *
  * `not-needed` is host/100's: the rules the owner's window pushed approved the
@@ -166,6 +196,27 @@ export type AutoApprovalKind = 'shell' | 'tool';
  * no answer, which leaves the backend to ask as it would have.
  */
 export type AutoApproval = ToolCallConfirmationReason | 'ask';
+
+/**
+ * One content a backend hands the host to keep, which a part then names by
+ * reference: identified as VS Code identifies a tool result's embedded
+ * resource, by its call and its place among the result's contents.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/mcpResourceUri.ts#L12-L17
+ */
+export interface ToolResultResource {
+  /** The turn the content belongs to. */
+  turnId: string;
+  /** The tool call whose result carries the content, or, for a part of the agent's message, the part's own id. */
+  toolCallId: string;
+  /** The content's place among the result's contents, or among the part's. */
+  ordinal: number;
+  /** A name a person reads it by, which the reference's path carries. */
+  name: string;
+  /** Its MIME type. */
+  contentType: string;
+  /** The bytes. */
+  bytes: Uint8Array;
+}
 
 /** How the host asks a backend to start a session. */
 export interface Start {
@@ -246,6 +297,15 @@ export interface Start {
    * that as a call that asks.
    */
   getAutoApproval?: (kind: AutoApprovalKind, line: string, shell?: CommandShell, tool?: string) => AutoApproval | undefined;
+  /**
+   * The managed settings the operator set for every session on the host, as
+   * VS Code hands its runtime `managedSettings: { permissions }`, for a
+   * backend whose runtime enforces managed settings itself: it refuses what a
+   * managed rule denies, and marks a question a managed rule asks with
+   * `managedApprovalRequired`. Absent where the operator set none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1107
+   */
+  managedSettings?: { permissions: ManagedSettingsPermissions };
   /**
    * Whether this session loads the settings of the person who runs the daemon.
    *
@@ -541,6 +601,22 @@ export interface Start {
    */
   onEditCompleted?(toolCallId: string, path: string, before: string | undefined, after: string): FileEdit | undefined;
   /**
+   * Keep content a tool result, or a part of the agent's message, carries
+   * inline, and answer the `ContentRef` a part names it by: a URI of the
+   * `session-db-resource` scheme, whose query names the session, the call and
+   * the content's place and whose path is a display name, with the content's
+   * type and size. As VS Code's host keeps a tool result's embedded resources
+   * in its session's database and answers each with such a reference, which a
+   * client reads back through `resourceRead`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L148-L183
+   *
+   * Nothing back is content the host keeps none of, which the backend leaves
+   * out: over the host's `toolResultResourceLimitBytes`, in a session whose
+   * store keeps no folder, or a write that failed. Optional both ways: a host
+   * that keeps none passes nothing.
+   */
+  storeToolResultResource?(resource: ToolResultResource): Promise<ContentRef | undefined>;
+  /**
    * A turn this backend has written under an id of its own.
    *
    * The host names a turn when a client sends one, and what this host keeps
@@ -583,7 +659,11 @@ export interface Start {
    * passes none.
    */
   onAccount?(account: Account): void;
-  /** Called once the backend has reported what it can do. */
+  /**
+   * Called once the backend has reported what it can do, during `create` or
+   * after it: the host learns the session's models from it once it holds the
+   * session `create` answered.
+   */
   onHandshake?(): void;
   /**
    * Tokens for this backend's protected resources, by resource identifier.
@@ -720,6 +800,23 @@ export interface Agent<Started extends Session | Promise<Session> = Session | Pr
   schema(): Bag;
   /** What each schema key sits at when nothing has been chosen. */
   defaults(): Record<string, unknown>;
+  /**
+   * The settings a chat or session a session tool makes takes from the chat
+   * that made it, picked out of that chat's config, or nothing to take: VS
+   * Code's `getInheritedChatConfig`, where each agent names its own (Claude's
+   * permission mode and permissions).
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L2023-L2024
+   */
+  inheritedChatConfig?(config: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined;
+  /**
+   * A session's customizations as its clients read them: what this backend
+   * reported, and the plugins the session's clients handed it, in this
+   * backend's order. VS Code's `getSessionCustomizations`, where each agent
+   * projects its own list (Claude's puts the client-pushed tier first).
+   * Absent, the backend's come first and the clients' after them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1499-L1562
+   */
+  sessionCustomizations?(reported: readonly Bag[], clients: readonly Bag[]): Bag[];
 
   /**
    * Answers for a key of this backend's own schema, by key.

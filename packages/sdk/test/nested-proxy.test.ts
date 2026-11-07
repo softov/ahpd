@@ -255,13 +255,16 @@ it('a turn goes in and the inner session\'s actions come out unchanged', async (
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
 
   expect(seen.some(({ action }) => action.type === 'session/creationFailed')).toBe(false);
+  /*
+   * The start is the host's to say, which says it before it hands a turn over,
+   * so the start the host inside said stays inside: a session handed a message
+   * says no start of its own, as VS Code's agent says none for `sendMessage`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1303-L1311
+   */
   const types = seen.filter(({ channel }) => channel === 'chat').map(({ action }) => action.type);
-  expect(types).toContain('chat/turnStarted');
+  expect(types).not.toContain('chat/turnStarted');
   expect(types).toContain('chat/responsePart');
   expect(types).toContain('chat/turnComplete');
-  const began = seen.find(({ action }) => action.type === 'chat/turnStarted')?.action;
-  expect(began?.turnId).toBe('t1');
-  expect(began?.message?.text).toBe('hello world');
   // The streamed text, as the inner backend wrote it: same chunks, same turn.
   const delta = seen.filter(({ action }) => action.type === 'chat/delta').map(({ action }) => String(action.content)).join('');
   expect(delta).toBe('hello world');
@@ -849,8 +852,8 @@ it('carries a read of the lead chat to the host inside, which answers it, and re
   await settleInner();
   const carried = (type: string): Bag[] => inner.messages
     .filter((message) => message.method === 'dispatchAction' && message.params?.action?.type === type);
-  // The turn moved the bit inside, at its start and its end, and out here a
-  // client heard each of those once.
+  // The turn's end said the chat unread inside, and out here a client heard
+  // it once.
   expect(told('chat/isReadChanged').map((one) => [one.action.isRead, one.origin])).toEqual([[false, undefined]]);
 
   await dispatch(2, { type: 'chat/isReadChanged', isRead: true });
@@ -900,23 +903,25 @@ it('says a customization switch on a nested session to the clients outside once'
 /*
  * A turn the host inside will not run is ended out here as that host ends it,
  * in its words: a turn it refuses after its echo ends in `chat/error`, as the
- * reference host's admission ends one. The session ending later fails no turn
- * a second time.
+ * reference host's admission ends one, and the session inside, whose first
+ * message that was, fails its creation in the same words after it, as the
+ * reference host fails a session its first send could not bring up. The
+ * session ending later fails no turn a second time.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2446-L2480
  */
 it('ends a turn the host inside would not run as the host inside ends it', async () => {
   const inner = innerHost(backend());
   inner.host.refuseTurns('The host inside is stopping');
   const { host, dispatch, told } = await outside(inner);
   await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
-  await until(() => told('chat/error').length > 0 || told('session/creationFailed').length > 0);
-  expect(told('session/creationFailed')).toEqual([]);
+  await until(() => told('chat/error').length > 0 && told('session/creationFailed').length > 0);
+  const refused = { errorType: 'rejected', message: 'The host inside is stopping' };
   expect(told('chat/turnStarted').map((one) => [one.origin, one.rejectionReason])).toEqual([[{ clientId: 'window', clientSeq: 8 }, undefined]]);
-  expect(told('chat/error').map((one) => [one.action.turnId, (one.action.part as Bag | undefined)?.error])).toEqual([
-    ['t1', { errorType: 'rejected', message: 'The host inside is stopping' }],
-  ]);
+  expect(told('chat/error').map((one) => [one.action.turnId, (one.action.part as Bag | undefined)?.error])).toEqual([['t1', refused]]);
+  expect(told('session/creationFailed').map((one) => one.action.error)).toEqual([refused]);
   inner.crash();
-  await until(() => told('session/creationFailed').length > 0);
+  await until(() => told('session/creationFailed').length > 1);
   expect(told('chat/error')).toHaveLength(1);
   await host.close();
 });
@@ -958,8 +963,16 @@ it('carries a stop sent right after a start inside behind it, as the client sent
   void dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 7 });
   await until(() => told('chat/turnCancelled').length > 0 || told('session/creationFailed').length > 0);
   expect(told('session/creationFailed')).toEqual([]);
-  expect(told('chat/turnCancelled').map((one) => [one.origin, one.rejectionReason, one.action.duration]))
-    .toEqual([[{ clientId: 'window', clientSeq: 2 }, undefined, 7]]);
+  /*
+   * The client's stop first; the backend's own end of the turn it stopped is
+   * said after it with no origin, as VS Code's host says an agent's late end
+   * of a stopped turn, which the reducer leaves as nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L900-L918
+   */
+  const stops = told('chat/turnCancelled');
+  expect(stops.map((one) => [one.origin, one.rejectionReason, one.action.duration])[0])
+    .toEqual([{ clientId: 'window', clientSeq: 2 }, undefined, 7]);
+  expect(stops.slice(1).map((one) => [one.origin, one.rejectionReason])).toEqual(stops.slice(1).map(() => [undefined, undefined]));
   await settleInner();
   const carried = inner.messages
     .filter((one) => one.method === 'dispatchAction')
@@ -1082,7 +1095,7 @@ it.each([['0.9.0'], ['1.0.0']])('a host that answers %s, which it was offered, i
     }
     if (message.method === 'subscribe') return listing(message.id);
     if (message.method === 'createSession') {
-      return { jsonrpc: '2.0', id: message.id, error: { code: -32002, message: 'No provider called cofold' } };
+      return { jsonrpc: '2.0', id: message.id, error: { code: -32002, message: 'No agent provider registered for: cofold' } };
     }
     return undefined;
   });
@@ -1091,7 +1104,7 @@ it.each([['0.9.0'], ['1.0.0']])('a host that answers %s, which it was offered, i
   const session = agent.create(start(emit));
   await until(() => seen.some(({ action }) => action.type === 'session/creationFailed'));
   const failure = seen.find(({ action }) => action.type === 'session/creationFailed')?.action;
-  expect(failure?.error?.message).toMatch(/No provider called cofold/);
+  expect(failure?.error?.message).toMatch(/No agent provider registered for: cofold/);
   session.close();
 });
 
@@ -1601,9 +1614,12 @@ it('a nested session moved to this host before its first turn shows its history'
   const first = await daemon();
   const uri = 'ahp-session:/moved';
   await first.client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
-  await until(() => port.read().length > 0, 1000);
   await first.client.handle({ method: 'subscribe', params: { channel: uri } });
   await first.client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
+  // Its backend comes up at its first turn, as VS Code's provider materializes
+  // a session at its first send, so nothing has been asked of the machine yet.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+  expect(port.read()).toEqual([]);
 
   /*
    * Moved to this host before it has said anything.
@@ -1645,69 +1661,6 @@ it('a nested session moved to this host before its first turn shows its history'
   port.done();
 });
 
-it('a nested chat started again keeps the transcript inside the machine', async () => {
-  const port = scriptedPort([PROVIDER]);
-  const dir = join(port.dir, 'sessions');
-  /*
-   * A chat's own set of directories is its CLI started again, which for a
-   * nested session is the host inside stopped and another one resumed on the
-   * same transcript - decision `a-nested-session-resumes-its-inner-transcript
-   * -by-id`. Told a removal instead, the machine disposes the session: the
-   * chat comes back on a conversation that is no longer there.
-   */
-  const real: Agent = { ...backend(), runsNested: true, multipleDirectories: true };
-  const host = createHost({
-    path: REPO_ROOT,
-    agents: [real],
-    agentPlugins: { [PROVIDER]: '@ahpd/agent-cofold' },
-    computers: port.computers,
-    sessions: fileSessions({ dir }),
-  });
-  const peer = watching();
-  const client = host.accept(peer);
-  await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
-  const uri = 'ahp-session:/wide';
-  const second = join(port.dir, 'second');
-  await client.handle({
-    method: 'createSession',
-    params: {
-      channel: uri, provider: PROVIDER, config: { computer: 'computer://box' },
-      workingDirectories: [uriOf(REPO_ROOT), uriOf(second)],
-    },
-  });
-  await until(() => port.read().length > 0, 1000);
-  const chat = 'ahp-chat:/narrow';
-  await client.handle({ method: 'createChat', params: { channel: uri, chat, workingDirectories: [uriOf(REPO_ROOT)] } });
-  await client.handle({ method: 'subscribe', params: { channel: chat } });
-  const subscribed = (): number =>
-    port.asked().filter(({ method, channel }) => method === 'subscribe' && channel === 'ahp-session:/wide').length;
-  // The chat's own host inside, up: the second subscription to the session,
-  // behind the one the session itself opened with.
-  await until(() => subscribed() >= 2, 1000);
-  /*
-   * A directory the session has and the chat does not, which is the one thing
-   * that starts a chat again: the CLI takes its directories when it is started.
-   */
-  await client.handle({
-    method: 'dispatchAction',
-    params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: uriOf(second) } },
-  });
-  // And started again: the third subscription to the session, from the host
-  // that replaces the one the restart closed.
-  await until(() => subscribed() >= 3, 1000);
-  // The action landed, so the frames above are a chat started again and not a
-  // change this host refused.
-  expect(peer.seen.some(({ params }) => params?.action?.type === 'chat/workingDirectorySet')).toBe(true);
-  /*
-   * And the machine still holds the session, which is what the chat resumes
-   * into: a restart that closed as a removal asks for the session to be
-   * disposed, and the transcript inside goes with it.
-   */
-  expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
-  await host.close();
-  port.done();
-});
-
 it('a nested session whose folders change starts the host inside again, and disposes nothing', async () => {
   const port = scriptedPort([PROVIDER]);
   const dir = join(port.dir, 'sessions');
@@ -1729,7 +1682,10 @@ it('a nested session whose folders change starts the host inside again, and disp
   const client = host.accept(peer);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   const uri = 'ahp-session:/wide';
-  await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
+  await client.handle({
+    method: 'createSession',
+    params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' }, workingDirectories: [uriOf(REPO_ROOT)] },
+  });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await until(() => port.read().length > 0, 1000);
   const subscribed = (): number =>
@@ -1738,9 +1694,11 @@ it('a nested session whose folders change starts the host inside again, and disp
 
   const elsewhere = mkdtempSync(join(tmpdir(), 'ahpd-nested-wide-'));
   try {
+    // Another folder in the first one's place, which starts the host inside
+    // again there.
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, clientSeq: 1, action: { type: 'session/workingDirectorySet', directory: uriOf(elsewhere) } },
+      params: { channel: uri, clientSeq: 1, action: { type: 'session/workingDirectoryReplaced', directory: uriOf(REPO_ROOT), replacement: uriOf(elsewhere) } },
     });
     // The second subscription to the session, from the host that replaces the
     // one the restart closed.
@@ -1748,7 +1706,7 @@ it('a nested session whose folders change starts the host inside again, and disp
     expect(subscribed()).toBeGreaterThanOrEqual(2);
     // The action landed, so this is a session started again rather than a
     // change this host refused.
-    expect(peer.seen.some(({ params }) => params?.action?.type === 'session/workingDirectorySet')).toBe(true);
+    expect(peer.seen.some(({ params }) => params?.action?.type === 'session/workingDirectoryReplaced' && params?.rejectionReason === undefined)).toBe(true);
     expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
   }
   finally {
@@ -1758,16 +1716,18 @@ it('a nested session whose folders change starts the host inside again, and disp
   port.done();
 });
 
-it('a truncate of a nested session is refused, and disposes nothing inside the machine', async () => {
+/*
+ * The proxy answers no `endPoint`, so this host cannot name the point in the
+ * machine's own conversation to cut back to: the truncation is said and the
+ * backend keeps its history, as the reference host's provider with no
+ * truncation of its own keeps it. What it must not do on the way is close the
+ * session as a removal: the turn it read back is the machine's, and a dispose
+ * there takes the whole conversation with it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1990
+ */
+it('a truncate of a nested session is said, its backend keeping its history, and disposes nothing inside the machine', async () => {
   const port = scriptedPort([PROVIDER], { turns: true });
   const dir = join(port.dir, 'sessions');
-  /*
-   * The proxy answers no `endPoint`, so this host cannot name the point in the
-   * machine's own conversation to cut back to, and the action is refused. What
-   * it must not do on the way to that answer is close the session as a removal:
-   * the turn it read back is the machine's, and a dispose there takes the whole
-   * conversation with it.
-   */
   const real: Agent = { ...backend(), runsNested: true };
   const host = createHost({
     path: REPO_ROOT,
@@ -1783,27 +1743,35 @@ it('a truncate of a nested session is refused, and disposes nothing inside the m
   await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
+  // A first message, which brings the session up in the machine, as VS Code's
+  // provider materializes a session at its first send.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
   await until(() => port.read().length > 0, 1000);
   /*
-   * And the turn, which this host reads off the snapshot the machine answers
-   * with. Waiting for it is what makes the refusal below the one this case is
-   * about: a truncate that arrives before the session is up is refused for
-   * having no such turn, which says nothing about what a rewind would do.
+   * And the turn the machine holds, which this host reads off the snapshot the
+   * machine answers with. Waiting for it is what makes the truncation below the
+   * one this case is about: one at a turn the chat does not hold yet cuts
+   * nothing, which says nothing about what a rewind would do.
    */
   const shown = async (): Promise<Bag[]> =>
     ((await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } })) as {
       snapshot: { state: { turns: Bag[] } };
     }).snapshot.state.turns;
-  for (let i = 0; i < 200 && (await shown()).length === 0; i++) await new Promise((resolve) => { setTimeout(resolve, 5); });
-  expect((await shown()).map((turn) => turn.id)).toEqual(['t1']);
+  for (let i = 0; i < 200 && !(await shown()).some((turn) => turn.id === 't1'); i++) await new Promise((resolve) => { setTimeout(resolve, 5); });
+  expect((await shown()).map((turn) => turn.id)).toContain('t1');
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/truncated', turnId: 't1' } },
+    params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/truncated', turnId: 't1' } },
   });
-  const refused = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action' && params?.rejectionReason !== undefined)?.params;
-  await until(() => refused() !== undefined, 1000);
-  expect(String(refused()?.rejectionReason)).toMatch(/rewind/);
+  const truncated = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action' && params?.action?.type === 'chat/truncated')?.params;
+  await until(() => truncated() !== undefined, 1000);
+  expect(truncated()).toMatchObject({ origin: { clientId: 'window', clientSeq: 2 } });
+  expect(truncated()?.rejectionReason).toBeUndefined();
   expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
   await host.close();
   port.done();
@@ -2021,7 +1989,13 @@ it('an agent no plugin registered is refused nested with a sentence, and nothing
   await host.close();
 });
 
-it('a client announcing itself in a nested session that ended is refused with the sentence it ended with', async () => {
+/*
+ * A client announcing itself is taken in a session whose backend ended as in
+ * any other, as VS Code's host takes an active client whatever its agent's
+ * process did.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2008-L2011
+ */
+it('a client announcing itself in a nested session that ended is taken', async () => {
   const real: Agent = { ...backend(), runsNested: true };
   const host = createHost({ path: REPO_ROOT, agents: [real], computers: { how: async () => ({ command: 'true', args: [] }) } });
   const peer = watching();
@@ -2030,10 +2004,11 @@ it('a client announcing itself in a nested session that ended is refused with th
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
-  await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/activeClientSet', activeClient: { tools: [] } } } });
-  const refused = (): Bag | undefined => peer.seen.find(({ params }) => params?.action?.type === 'session/activeClientSet' && params?.rejectionReason !== undefined)?.params;
-  await until(() => refused() !== undefined, 200);
-  expect(String(refused()?.rejectionReason)).toMatch(/which plugin/);
+  await new Promise((resolve) => { setTimeout(resolve, 50); });
+  await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/activeClientSet', activeClient: { clientId: 'window', tools: [] } } } });
+  const answered = (): Bag | undefined => peer.seen.find(({ params }) => params?.action?.type === 'session/activeClientSet' && params?.origin?.clientSeq === 1)?.params;
+  await until(() => answered() !== undefined, 200);
+  expect(answered()?.rejectionReason).toBeUndefined();
   await host.close();
 });
 
@@ -2262,7 +2237,7 @@ it('lists a nested chat\'s canvases as the host inside does, and serves each fro
   await local.handle({ method: 'initialize', params: { clientId: 'inside', protocolVersions: ['1.0.0'] } });
   await local.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { canvasesEnabled: true } } } });
   const state = { instanceId: 'board-1', extensionId: 'com.brbyte.canvas', canvasId: 'board', title: 'Board', url: 'https://canvas.test/board' };
-  const resource = served.open?.(chatUriFor(uri), state) ?? '';
+  const resource = await served.open?.(chatUriFor(uri), state) ?? '';
   await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/canvasesChanged'));
 
   expect((await read(chatUriFor(uri))).canvases).toEqual([{ resource }]);

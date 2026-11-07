@@ -582,20 +582,26 @@ it('opens no entry for a call the agent has not started', async () => {
   expect(types(p, uri)).not.toContain('session/inputNeededSet');
 });
 
-it('opens no entry for a call the agent has finished as it announced it', async () => {
+it('leaves no entry for a call the agent has finished as it announced it', async () => {
   const { host, client, peer: p, uri, chatUri } = await talking();
   await providing(host, uri, chatUri, 'a');
   begin(client, chatUri, 't1', 'report client=mcp__host__a__openFile cdone');
   await until(() => ended(p, chatUri));
 
-  // The row is drawn, attributed and closed at once. Nothing is asking anybody
-  // to run it: the call is already run, and an entry raised for one would wait
-  // on a client for a call whose result is in the chat.
+  /*
+   * The row is drawn, attributed and closed at once, and nothing is left asking
+   * anybody to run it: the entry its ready raised went with its completion, as
+   * VS Code's host syncs a call's entry with each action on the call.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L67-L157
+   */
   const calls = actions(p, chatUri).filter((e) => String(e.action.type).startsWith('chat/toolCall'));
   expect(calls.map((e) => e.action.type))
     .toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
   expect(calls[0]?.action.contributor).toEqual({ kind: 'client', clientId: 'a' });
-  expect(types(p, uri)).not.toContain('session/inputNeededSet');
+  const raised = actions(p, uri).filter((e) => e.action.type === 'session/inputNeededSet')
+    .map((e) => (e.action.request as Bag).id);
+  const removed = actions(p, uri).filter((e) => e.action.type === 'session/inputNeededRemoved').map((e) => e.action.id);
+  expect(removed).toEqual(raised);
 });
 
 it('asks a client to run the call once the person allows it', async () => {
@@ -956,20 +962,27 @@ it('starts the head once a client reorders a stopped turn\'s queue', async () =>
 /**
  * The status the catalogue announced as a turn ended.
  *
- * The host moves the session's row on every chat action, reading the status
- * as that action passes; the row sent right after the ending is the one a
- * client's list is left with when nothing else about the session moves.
+ * The first row carrying a status said after the action of `type` that ended
+ * turn `turnId`, or the first such action where no turn is named, once that
+ * row is said: the row a client's list is left with when nothing else about
+ * the session moves. A running session's moves are said together once they
+ * have been quiet for 100 ms, as VS Code's host flushes a session marked dirty.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L212-L330
  */
-const statusAtEnd = (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string): unknown => {
-  const at = p.notes.findIndex((n) => n.method === 'action'
-    && (n.params as Note).channel === chatUri
-    && (n.params as Note).action.type === type);
-  if (at < 0) return undefined;
-  // By id: the row is published under the provider's name, whatever the
-  // client created the session as.
-  const row = p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
-    && idOf((n.params as { session: string }).session) === idOf(uri));
-  const status = (row?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
+const statusAtEnd = async (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string, turnId?: string): Promise<unknown> => {
+  const rowAfter = () => {
+    const at = p.notes.findIndex((n) => n.method === 'action'
+      && (n.params as Note).channel === chatUri
+      && (n.params as Note).action.type === type
+      && (turnId === undefined || (n.params as Note).action.turnId === turnId));
+    // By id: the row is published under the provider's name, whatever the
+    // client created the session as.
+    return at < 0 ? undefined : p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
+      && idOf((n.params as { session: string }).session) === idOf(uri)
+      && (n.params as { changes: { status?: unknown } }).changes.status !== undefined);
+  };
+  await until(() => rowAfter() !== undefined);
+  const status = (rowAfter()?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
   // Without the read bit, which is the person's and not the turn's.
   return typeof status === 'number' ? status & ~Status.IsRead : status;
 };
@@ -978,7 +991,7 @@ it('announces the session idle with the turnComplete that ends its turn', async 
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'hi');
   await until(() => ended(p, chatUri));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
 });
 
 it('announces the session idle with the turnCancelled that ends its turn', async () => {
@@ -990,7 +1003,7 @@ it('announces the session idle with the turnCancelled that ends its turn', async
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
 });
 
 it('announces the session failed with the chat/error that ends its turn', async () => {
@@ -998,14 +1011,36 @@ it('announces the session failed with the chat/error that ends its turn', async 
   begin(client, chatUri, 't1', 'fail');
   await until(() => types(p, chatUri).includes('chat/error'));
   expect(types(p, chatUri)).toContain('chat/error');
-  expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
 });
 
 it('announces the session idle with the turnComplete that ends a !command', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
-  begin(client, chatUri, 't1', '!echo acp-ran-it');
-  await until(() => ended(p, chatUri));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  // A first message the agent answers, which announces the session: one made
+  // fresh is provisional until its first send, as VS Code's host keeps it.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+  begin(client, chatUri, 't1', 'hi');
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete', 't1')).toBe(Status.Idle);
+  const command = 't2';
+  begin(client, chatUri, command, '!echo acp-ran-it');
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
+  /*
+   * The status a client's list holds once the command's moves were quiet:
+   * idle, whether the command's running was said or its moves were coalesced
+   * into a row that says only what moved since the last one said. Read from
+   * the session's announcement and every row after it, as a list holds them.
+   */
+  const told = () => p.notes.filter((n) => (n.method === 'root/sessionSummaryChanged'
+    && idOf((n.params as { session: string }).session) === idOf(uri))
+    || (n.method === 'root/sessionAdded' && idOf((n.params as { summary: { resource: string } }).summary.resource) === idOf(uri)));
+  const commandEnd = p.notes.findIndex((n) => n.method === 'action' && (n.params as Note).channel === chatUri
+    && (n.params as Note).action.type === 'chat/turnComplete' && (n.params as Note).action.turnId === command);
+  await until(() => p.notes.slice(commandEnd + 1).some((n) => told().includes(n)));
+  const held = told()
+    .map((n) => (n.params as { summary?: { status?: unknown } }).summary?.status ?? (n.params as { changes?: { status?: unknown } }).changes?.status)
+    .filter((status) => typeof status === 'number')
+    .at(-1) as number;
+  expect(held & ~Status.IsRead).toBe(Status.Idle);
 });
 
 /**

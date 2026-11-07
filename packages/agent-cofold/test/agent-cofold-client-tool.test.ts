@@ -308,13 +308,22 @@ it('settles the call from the owning client and gives the model the result', asy
 
   // The model's next step carries the client's text as the tool result.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('opened /a.txt');
-  // One completion, the client's own, and the turn is over.
+  /*
+   * The client's completion first, and the backend's own for the same call
+   * after it, said as VS Code's host says an agent's second result for a call
+   * its turn completed: the reducer leaves the call as the client completed it,
+   * and the turn is over.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L944-L963
+   */
   const done = completion(p, chatUri);
   expect(done).toMatchObject({ success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
-  expect(types(p, chatUri).filter((type) => type === 'chat/toolCallComplete')).toHaveLength(1);
+  expect(types(p, chatUri).filter((type) => type === 'chat/toolCallComplete')).toHaveLength(2);
   const call = callIn(reduced(p, chatUri).turns[0]?.responseParts ?? []);
-  expect(call).toMatchObject({ status: 'completed', success: true });
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  expect(call).toMatchObject({ status: 'completed', success: true, pastTenseMessage: 'Opened it' });
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread
+  // says it at every turn's end.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 it('refuses a result from a client that does not own the call', async () => {
@@ -367,22 +376,34 @@ it('refuses a result from a client that does not own the call', async () => {
 
 it('fails a call whose client went away and finishes the turn', async () => {
   const model = createFakeModel({ script: script('carried on'), stream: true });
-  const { client, peer: p, uri, chatUri } = await offering(model);
+  const { host, client, peer: p, uri, chatUri } = await offering(model);
+  // Somebody else on the chat, who sees how the turn ends.
+  const watcher = await outsider(host);
+  await watcher.client.handle({ method: 'subscribe', params: { channel: chatUri } });
   begin(client, chatUri, 't1', 'open it');
   await until(() => called(p, chatUri));
 
-  // The protocol's way a client stops being active: it lets the session go,
-  // which takes its tools with it and fails the call it was running.
+  /*
+   * The protocol's way a client stops being active: it lets the session and
+   * every chat of it go, which takes its tools with it and fails the call it
+   * was running, as VS Code counts a subscription to the session or to any of
+   * its chats as presence.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1895-L1913
+   */
   await client.handle({ method: 'unsubscribe', params: { channel: uri } });
-  await until(() => ended(p, chatUri));
+  await client.handle({ method: 'unsubscribe', params: { channel: chatUri } });
+  await until(() => ended(watcher.peer, chatUri));
 
-  const done = completion(p, chatUri);
+  // Failed by the host in VS Code's words for a client that left.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
+  const done = completion(watcher.peer, chatUri);
   expect(done?.success).toBe(false);
   const error = done?.error as { message?: string } | undefined;
-  expect(error?.message).toContain('no longer here');
+  expect(error?.message).toContain('disconnected before completing');
   // The failure is the tool result the model read, and the run went on.
-  expect(JSON.stringify(model.requests[1]?.messages)).toContain('no longer here');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('disconnected before completing');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(watcher.peer, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });
 
 it('raises one entry for a call a client runs, and removes it when the client answers', async () => {
@@ -472,7 +493,8 @@ it('fails a call nobody answers in the time the host allows, and the turn finish
   expect((done?.error as { message?: string } | undefined)?.message).toContain('got no answer from probe');
   // The failure is the tool result the model read, and the run went on.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('got no answer from probe');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
   // And nothing is being asked for any more.
   expect(needed(p, uri)).toHaveLength(0);
 });

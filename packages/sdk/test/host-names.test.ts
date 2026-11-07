@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   resetSdk, actions, claude, createHost, hello, machine, open,
-  peer, sdk, sendTurn, serving, sessionQueries, settle, running, wrote,
+  peer, sdk, sendTurn, serving, sessionQueries, settle, running, wrote, firstMessage,
 } from './support/host.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 
@@ -51,14 +51,12 @@ describe('a chat asked for by the name a client computed', () => {
     });
     await settle();
 
-    // Driven through the alias, and heard back through it: a client watching
-    // one name and told about another has been told nothing.
+    // Driven through the name a client computes, which is the name this host
+    // mints the chat by, and heard back under it.
+    expect(alias).toBe(chatUri);
     expect(sdk.said).toEqual(['hi']);
-    const said = actions(p, alias).find((e) => e.action.type === 'chat/turnStarted');
+    const said = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
     expect(said?.origin).toEqual({ clientId: 'probe', clientSeq: 4 });
-    // And the canonical channel is what this host publishes, so a client that
-    // read `chats` is watching that one and is unaffected.
-    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
   });
 
   it('leaves a chat URI it did not mint alone', async () => {
@@ -113,6 +111,7 @@ describe('a session a client names', () => {
     const client = serving('/home/softov').accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'claude' } });
+    await firstMessage(client, `ahp-chat://default/${Buffer.from(`ahp-session:/${id}`, 'utf8').toString('base64url')}`);
 
     // Listed and announced under the name it was made with.
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
@@ -140,6 +139,7 @@ describe('a session a client names', () => {
     const client = serving('/home/softov').accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: `claude:/${id}`, provider: 'claude' } });
+    await firstMessage(client, `ahp-chat://default/${Buffer.from(`claude:/${id}`, 'utf8').toString('base64url')}`);
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string }[];
@@ -161,6 +161,7 @@ describe('a session a client names', () => {
     const client = serving('/home/softov').accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: `pi:/${id}`, provider: 'claude' } });
+    await firstMessage(client, `ahp-chat://default/${Buffer.from(`pi:/${id}`, 'utf8').toString('base64url')}`);
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string }[];
@@ -221,6 +222,7 @@ describe('a session a client names', () => {
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: `claude:/${id}`, provider: 'claude' } });
+    await firstMessage(client, `ahp-chat://default/${Buffer.from(`claude:/${id}`, 'utf8').toString('base64url')}`);
     // The id is what everything kept about a session is stored by, so a
     // second one under it would share the first one's flags, config and marks.
     await expect(client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'codex' } }))
@@ -257,7 +259,7 @@ describe('a session a client names', () => {
     expect(asked).toEqual([]);
   });
 
-  it('refuses the id of a session a backend keeps on disk', async () => {
+  it('keeps a session a backend keeps on disk when it is made again under its name, and refuses its id under another', async () => {
     const { echo } = await import('../../../examples/echo/agent.js');
     const stamp = new Date(0).toISOString();
     const host = createHost({
@@ -269,7 +271,40 @@ describe('a session a client names', () => {
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     await expect(client.handle({ method: 'createSession', params: { channel: 'ahp-session:/kept', provider: 'echo' } }))
+      .resolves.toBeNull();
+    await expect(client.handle({ method: 'createSession', params: { channel: 'echo:/kept', provider: 'echo' } }))
       .rejects.toMatchObject({ code: -32003 });
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; title: string }[];
+    };
+    expect(listed.items.map((one) => [one.resource, one.title])).toEqual([['ahp-session:/kept', 'Kept']]);
+  });
+
+  /*
+   * A window whose subscription a reconnect reported missing creates the
+   * session again before it subscribes, and VS Code's host runs that creation
+   * over the session it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6323-L6328
+   */
+  it('answers a session made again for the agent it is held under, and keeps it, as VS Code\'s host', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    const added = () => p.notes.filter((one) => one.method === 'root/sessionAdded').length;
+    const before = added();
+
+    await expect(client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } })).resolves.toBeNull();
+    await settle();
+
+    const read = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[]; activeTurn?: { id: string } } };
+    };
+    const { state } = read.snapshot;
+    expect([...state.turns.map((turn) => turn.id), state.activeTurn?.id]).toContain('t1');
+    expect(added()).toBe(before);
   });
 });
 
@@ -355,11 +390,17 @@ describe('a session asked for by the name a client computed', () => {
     expect(marks.snapshot.state.annotations).toEqual([]);
   });
 
-  it('applies what is sent under the provider\'s scheme of its id to the session', async () => {
+  /*
+   * Said under the session's own channels, as VS Code's host sends each
+   * envelope under its own channel and its client takes a session's and a
+   * chat's URIs as the host advertised them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/agentSubscription.ts#L538-L543
+   */
+  it('applies what is sent under the provider\'s scheme of its id to the session, and says it under the session\'s own channels', async () => {
     const p = peer();
     const client = await browsing(p);
     const other = 'claude:/row';
-    // Watched under the spelling the client used, which is where its echoes go.
+    // Subscribed under the spelling the client used, which names the session's own channels.
     for (const channel of [other, `${other}/annotations`, derived(other)]) {
       await client.handle({ method: 'subscribe', params: { channel } });
     }
@@ -375,16 +416,16 @@ describe('a session asked for by the name a client computed', () => {
       await settle(6);
     }
 
-    // Each is applied to the session, and said on the channel the client named.
+    // Each is applied to the session, and said on the session's own channel.
     expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
     const said = actions(p).filter((e) => e.channel !== 'ahp-root://').map((e) => [e.channel, e.action.type]);
     expect(said).toEqual([
-      [other, 'session/isReadChanged'],
+      [ROW, 'session/isReadChanged'],
       // The session's sole counted chat follows its read bit, and its row with it.
-      [derived(other), 'chat/isReadChanged'],
-      [other, 'session/chatUpdated'],
-      [`${other}/annotations`, 'annotations/set'],
-      [derived(other), 'chat/draftChanged'],
+      [derived(ROW), 'chat/isReadChanged'],
+      [ROW, 'session/chatUpdated'],
+      [`${ROW}/annotations`, 'annotations/set'],
+      [derived(ROW), 'chat/draftChanged'],
     ]);
     // Nothing is woken for a flag, a mark or a draft.
     expect(sessionQueries()).toHaveLength(0);
@@ -578,6 +619,7 @@ describe('a session asked for by the name its creator used', () => {
 
   it('disposes it, and says so under the name it is held by', async () => {
     const { client, peer: p } = await created();
+    await firstMessage(client, chatOfSession(given));
     await client.handle({ method: 'disposeSession', params: { channel: given } });
     const removed = p.notes.filter((n) => n.method === 'root/sessionRemoved')
       .map((n) => (n.params as { session: string }).session);
@@ -595,13 +637,15 @@ describe('a session asked for by the name its creator used', () => {
   });
 
   it('answers it on a reconnect, in the creator\'s spelling', async () => {
-    const { host } = await created();
+    const { host, client } = await created();
+    await client.handle({ method: 'dispatchAction', params: { channel: given, action: { type: 'session/isReadChanged', isRead: true } } });
+    await settle();
     const again = host.accept(peer());
-    // Ahead of anything this host issued, so it is answered with state
+    // Behind the oldest action this host holds, so it is answered with state
     // rather than a replay.
     const result = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 1_000_000, subscriptions: [given] },
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given] },
     }) as { type: string; snapshots: { resource: string; state: { defaultChat: string } }[] };
     expect(result.type).toBe('snapshot');
     expect(result.snapshots.map((one) => one.resource)).toEqual([given]);
@@ -653,12 +697,12 @@ describe('a session asked for by the name its creator used', () => {
 
   it('replays what it missed on a reconnect in the creator\'s spelling', async () => {
     const { host, client } = await created();
-    await client.handle({ method: 'subscribe', params: { channel: given } });
+    const read = await client.handle({ method: 'subscribe', params: { channel: given } }) as { snapshot: { fromSeq: number } };
     await client.handle({ method: 'createChat', params: { channel: given, chat: 'ahp-chat:/second' } });
     const again = host.accept(peer());
     const result = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given] },
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [given] },
     }) as { type: string; actions: { channel: string }[] };
     expect(result.type).toBe('replay');
     expect(result.actions.length).toBeGreaterThan(0);
@@ -668,7 +712,7 @@ describe('a session asked for by the name its creator used', () => {
   it('replays a chat and a pending approval on a reconnect in the creator\'s spelling, and leaves text alone', async () => {
     const { host, client } = await created();
     await client.handle({ method: 'subscribe', params: { channel: given } });
-    await client.handle({ method: 'subscribe', params: { channel: chatOfSession(given) } });
+    const read = await client.handle({ method: 'subscribe', params: { channel: chatOfSession(given) } }) as { snapshot: { fromSeq: number } };
     // Text that names the session is somebody's words, not a URI to respell.
     const text = `${held}/changeset/session is what changed`;
     client.handle({
@@ -682,7 +726,7 @@ describe('a session asked for by the name its creator used', () => {
     const again = host.accept(peer());
     const result = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given, chatOfSession(given)] },
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [given, chatOfSession(given)] },
     }) as { type: string; actions: { channel: string; action: Record<string, any> }[] };
     expect(result.type).toBe('replay');
     // The chat's actions under the creator's name for the chat.
@@ -742,6 +786,8 @@ describe('an older VS Code window', () => {
     await maker.handle(hello(['1.0.0'], { clientId: 'maker', initialSubscriptions: ['ahp-root://'] }));
     await maker.handle({ method: 'createSession', params: { channel: AHP, provider: 'claude' } });
     await maker.handle({ method: 'createSession', params: { channel: NAMED, provider: 'claude' } });
+    await firstMessage(maker, derived(AHP));
+    await firstMessage(maker, derived(NAMED));
     return { host, maker };
   };
   const listed = async (client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> }) =>
@@ -776,6 +822,7 @@ describe('an older VS Code window', () => {
     const { host } = await both();
     const window = host.accept(peer());
     const result = await window.handle(hello(['1.0.0'], { clientId: 'window', ...older, initialSubscriptions: ['ahp-root://', AHP, NAMED] })) as {
+      serverSeq: number;
       snapshots: { resource: string }[];
     };
     expect(result.snapshots.map((one) => one.resource)).toEqual(['ahp-root://', NAMED]);
@@ -783,7 +830,7 @@ describe('an older VS Code window', () => {
     const again = host.accept(peer());
     const back = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: 0, subscriptions: [AHP, NAMED] },
+      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: result.serverSeq, subscriptions: [AHP, NAMED] },
     }) as { type: string; missing: string[] };
     expect(back.type).toBe('replay');
     expect(back.missing).toEqual([AHP]);
@@ -791,7 +838,7 @@ describe('an older VS Code window', () => {
     const declared = host.accept(peer());
     const whole = await declared.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: 0, subscriptions: [AHP, NAMED], _meta: current._meta },
+      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: result.serverSeq, subscriptions: [AHP, NAMED], _meta: current._meta },
     }) as { missing: string[] };
     expect(whole.missing).toEqual([]);
   });
@@ -803,7 +850,8 @@ describe('an older VS Code window', () => {
     await window.handle(hello(['1.0.0'], { clientId: 'window', ...older, initialSubscriptions: ['ahp-root://'] }));
     await maker.handle({ method: 'createSession', params: { channel: 'ahp-session:/later', provider: 'claude' } });
     await maker.handle({ method: 'createSession', params: { channel: 'claude:/latest', provider: 'claude' } });
-    await settle();
+    await firstMessage(maker, derived('ahp-session:/later'));
+    await firstMessage(maker, derived('claude:/latest'));
     await maker.handle({ method: 'disposeSession', params: { channel: AHP } });
     await settle();
     const said = (method: string) => p.notes.filter((n) => n.method === method).map((n) => {
@@ -847,6 +895,7 @@ describe('an older VS Code window', () => {
     await window.handle(hello(['1.0.0'], { clientId: 'window', ...older }));
     const made = 'claude:/9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f';
     await window.handle({ method: 'createSession', params: { channel: made, provider: 'claude' } });
+    await firstMessage(window, derived(made));
     const other = host.accept(peer());
     await other.handle(hello(['1.0.0'], { clientId: 'other' }));
     expect(await listed(window)).toEqual([made]);

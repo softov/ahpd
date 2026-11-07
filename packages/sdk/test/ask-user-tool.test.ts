@@ -30,12 +30,16 @@ const quiet = (): Agent => {
     create: (start) => {
       handed.set(start.chatUri, [...(start.tools ?? [])]);
       const session = base.create(start) as Session;
+      /** The turn this backend is running, as its own state says. */
+      let running: string | undefined;
       return {
         ...session,
+        chatState: () => ({ ...session.chatState(), ...(running === undefined ? {} : { activeTurn: { id: running } }) }) as ReturnType<Session['chatState']>,
         // Say the turn began and stop there. Echo would answer and complete
         // it before the case could ask, and a question needs a turn to be
         // drawn in.
         sendMessage: (turnId, text) => {
+          running = turnId;
           start.emit('chat', {
             type: 'chat/turnStarted',
             turnId,
@@ -129,6 +133,25 @@ describe('ask_user', () => {
     });
 
     expect(await pending).toBe('Which one? (one): a\nAnd then? (two): yes');
+  });
+
+  /*
+   * The request carries its questions and no message of its own, as VS Code's
+   * ask_user puts one, and a call with no turn running in the chat is answered
+   * Cancel at once and asks nobody, as VS Code's host answers it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8715-L8734
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1346-L1359
+   */
+  it('asks with no message of its own, and answers Cancel with no turn running, as VS Code\'s host', async () => {
+    const { tool, begin, requests } = await serving();
+    expect(await tool().run?.({ questions: [{ id: 'one', question: 'Which one?' }] })).toBe('The person cancelled the question.');
+    expect(requests()).toEqual([]);
+
+    await begin();
+    void tool().run?.({ questions: [{ id: 'one', question: 'Which one?' }] });
+    await settle();
+    expect(requests()).toHaveLength(1);
+    expect(requests()[0]).not.toHaveProperty('message');
   });
 
   it('refuses a duplicate question id before asking anybody', async () => {

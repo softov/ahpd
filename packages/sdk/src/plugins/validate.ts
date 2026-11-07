@@ -182,6 +182,7 @@ export const checkAgent = (value: unknown, by: string): CheckedSchema[] => {
  */
 const TOOL_OPTIONAL: Record<string, Kind> = {
   instruction: 'string',
+  isEnabledForSession: 'function',
   forSession: 'function',
   deferLoading: 'boolean',
 };
@@ -221,9 +222,12 @@ const PORT_MEMBERS: Record<PortKey, Record<string, Kind>> = {
   },
   sessions: {
     flags: 'function', setFlags: 'function', config: 'function', setConfig: 'function',
+    scope: 'function', setScope: 'function', owner: 'function', setOwner: 'function',
+    sender: 'function', setSender: 'function', provider: 'function', setProvider: 'function',
+    changes: 'function', setChanges: 'function',
     artifacts: 'function', setArtifacts: 'function', pullRequests: 'function', setPullRequests: 'function',
-    chatTitle: 'function', setChatTitle: 'function', chats: 'function', setChats: 'function',
-    chatFlags: 'function', setChatFlags: 'function',
+    chatTitle: 'function', setChatTitle: 'function', chatFlags: 'function', setChatFlags: 'function',
+    chats: 'function', setChats: 'function', moveChat: 'function',
     sessions: 'function', forget: 'function',
   },
   // Every member of `Diagnostics` is optional, so any object is a diagnostics
@@ -231,7 +235,7 @@ const PORT_MEMBERS: Record<PortKey, Record<string, Kind>> = {
   diagnostics: {},
   computers: { how: 'function' },
   containers: { docker: 'function', available: 'function', connect: 'function', send: 'function', disconnect: 'function' },
-  usage: { record: 'function', total: 'function' },
+  usage: { record: 'function', total: 'function', pools: 'function', records: 'function', groups: 'function' },
   policies: { list: 'function', get: 'function', put: 'function', remove: 'function' },
   vault: { get: 'function', set: 'function', delete: 'function', list: 'function' },
   records: { collection: 'function' },
@@ -293,7 +297,7 @@ const PROVIDER_OPTIONAL: Record<string, Kind> = {
   resolve: 'function',
   watch: 'function',
   write: 'function',
-  remove: 'function',
+  delete: 'function',
   mkdir: 'function',
   move: 'function',
   copy: 'function',

@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Listed } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -219,6 +220,12 @@ it('answers a delete that failed, and the session is gone all the same', async (
   };
   const { client, peer: p } = await serving(agent, (line) => said.push(line));
   await open(client, 'ahp-session:/held');
+  // Its first message, which announces it, so its removal is said.
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/held'), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+  });
+  await settle();
 
   await expect(dispose(client, 'ahp-session:/held')).rejects.toThrow('the store would not let go of it');
 
@@ -229,7 +236,7 @@ it('answers a delete that failed, and the session is gone all the same', async (
   expect(p.notes.some((one) => one.method === 'root/sessionRemoved'
     && (one.params as { session?: string }).session === 'ahp-session:/held')).toBe(true);
   // A name in neither map: it is out of `sessions`, and out of `owners`.
-  await expect(dispose(client, 'ahp-session:/held')).rejects.toThrow('No agent for session ahp-session:/held');
+  await expect(dispose(client, 'ahp-session:/held')).rejects.toThrow('No agent for session: ahp-session:/held');
   client.close();
 });
 
@@ -278,7 +285,7 @@ it('refuses a name it has never heard of, in either map', async () => {
   const deleted: Deleted[] = [];
   const { client } = await serving(recording(order, deleted));
 
-  await expect(dispose(client, 'echo:/nobody')).rejects.toThrow('No agent for session echo:/nobody');
+  await expect(dispose(client, 'echo:/nobody')).rejects.toThrow('No agent for session: echo:/nobody');
 
   // Nothing was deleted, because nothing was found to ask about.
   expect(order).toEqual([]);

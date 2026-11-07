@@ -202,6 +202,7 @@ against its contract before it is recorded.
 | `registerEngine(engine)` | register, open key | One engine, whose records are the agents a client makes on `x-ahpd-agents` |
 | `registerTool(tool)` | append | A server tool offered to every session's model |
 | `registerSessionConfig(key, schema, completions?)` | register, open key | One setting a client draws on every session, merged into the backend's own schema. With a third argument, the key becomes a picker every client can draw |
+| `registerProviderConfiguration(registration)` | register, by provider | A provider's settings at the top of the root config, as VS Code registers a provider's configuration: each of `properties` joins the root config's schema with its `default` held where nothing is set, and `{ provider, title, description, settings, configurationFile? }` is the page a client draws them on, listed in the root's `_meta['vscode.agentCustomizationSettings']`. A key the host or another registration declares is reported, and the first stands |
 | `registerResources(store)` | set | `list`, `read`, `resolve`, `complete`, and the optional write half |
 | `registerResourceProvider(scheme, provider)` | register, open key | One host-owned URI scheme, routed beside the `file:` store |
 | `registerChannel(scheme, channel)` | register, open key | One channel a client subscribes to, under an `x-` scheme; answers a handle to publish on |
@@ -210,15 +211,16 @@ against its contract before it is recorded.
 | `registerMethod(name, method)` | register, open key | One command a client sends by name, under an `x-` name |
 | `registerTerminals(store)` | set | `create` |
 | `registerChanges(source)` | set | `scopes`, `state`, `summary`, and the optional operations |
+| `registerChangesetOperations(contribution)` | register, by operation id | One feature area's changeset operations beside the source's, as VS Code registers a changeset operation contribution: `operations(dir, session, scope, context)` answers what to advertise after the source's own, and `handlers` runs each by its id. An id the source offers stays the source's, and an id another contribution handles is reported |
 | `registerDirectories(facts)` | set | `meta`, and the optional `refresh` |
 | `registerWorktrees(worktrees)` | set | `repository`, `branches`, `create`, `dirty`, `remove`, and the optional `gitDir` |
 | `registerGithub(pullRequests)` | set | `resource`, `forBranch`, `create` |
 | `registerAutomations(store)` | set | the automation store |
-| `registerSessions(store)` | set | the session store: flags, config, artifacts, pull requests, chat titles, the chats a session has, and the sessions it holds |
+| `registerSessions(store)` | set | the session store: flags, config, scope, owner, the senders of turns, provider, counts, artifacts, pull requests, chat titles and flags, the chats a session has and a chat's move between sessions, and the sessions it holds |
 | `registerDiagnostics(diagnostics)` | set | all members optional, so `{}` is valid |
 | `registerComputers(computers)` | set | how a backend runs its process in a named machine |
 | `registerContainers(containers)` | set | whether a dev container can be made, made, written to, stopped and removed; present, the host serves `vscode/devContainers/*` and advertises the capability |
-| `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record`, `total`, `pools` and `records`, all four |
+| `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record`, `total`, `pools`, `records` and `groups`, all five |
 | `registerPolicies(policies, when?)` | set | where policies are kept: `list`, `get`, `put` and `remove`, all four |
 | `registerVault(vault, when?)` | set | where this host's secrets are kept: `get`, `set`, `delete` and `list`, all four |
 | `registerCommandParser(split, when?)` | set | reads a shell command before the terminal rules match it: `(line, shell)` in, `{ subCommands, writeDests, unanalyzable }` or `undefined` out |
@@ -365,15 +367,41 @@ The token is the session's own. It names one path and no other, so a session hol
 
 The host side of this is `HostOptions.toolsServers`, one `ToolsServers` from `toolServers({ origin, name, version })` that both opens the endpoints and answers the requests: its `request` takes the paths under `/ahp-mcp` and answers `undefined` for anything else, so a host serving an API of its own tries one handler and then the other. `origin()` is read when an endpoint opens rather than held, because the host is built before the port is bound; that is what `run.ts` does and why the daemon mounts `toolsServers.request` beside its own answers.
 
-### A backend's approval options
+### A question about a tool call
 
-A backend that asks before a tool call may offer the choices its own agent has, as `options` on the call's `chat/toolCallReady` and on the `toolCall` of its `toolConfirmation` entry, each a `ConfirmationOption` with an `id`, a `label`, a `kind` of `approve` or `deny` and a `group`.
-The option a person picks arrives as the third argument of `Session.confirm(toolCallId, approved, optionId?)`, from the `selectedOptionId` a client sent, and the backend acts on it through its agent's own mechanism; the host keeps no approval itself.
-A client that sends no option gets a plain approve or deny, which is what every backend does with `optionId` absent.
-Claude offers Allow once, an "always" choice labelled by what the SDK's suggestions for the call do, and Deny, and only when the SDK suggested something; the "always" choice returns those suggestions as `updatedPermissions`.
+A backend that asks before a tool call sends `chat/toolCallReady` with a `confirmationTitle`, and the host decides and puts the question as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L238-L650) does.
+Beside the action the backend says what the call asks for, in host-only fields the host takes off before any client is sent it (`PendingConfirmation`, as VS Code's agents raise a pending confirmation): `permissionKind` (`shell`, `read`, `write`, `url` and VS Code's other kinds), `permissionPath` for a read or a write, `permissionUrl` for a fetch, `shellCommand` and `shellLanguage` (`bash` or `powershell`) for a shell call, `requestSandboxBypass` for a call that asks to leave its sandbox, and `managedApprovalRequired` for a call a managed rule asks about.
+A call the session's or the host's `permissions` deny is refused before any client is asked: nothing is said, and the backend is handed `confirm(toolCallId, false)`.
+So is a write to a snapshot the host keeps of an attachment.
+The rules are VS Code's: a tool's name, `Shell` and `Shell(<command>)` matched against the line and each command of it, `Shell(commandLine:<pattern>)`, `WebFetch(<url pattern>)`, and `Read(<path>)` and `Edit(<path>)` matched against the path and the path it really is.
+A URL pattern is matched by VS Code's URL approval and a path pattern by VS Code's glob, vendored from VS Code with the URI they parse with.
+Otherwise the host answers the question itself where VS Code's chain does, in its order: a call that asks to leave the sandbox is never answered; global Allow All (`globalAutoApproveEnabled`), then the session's own (`autoApprove`); an `ask` rule asks, a write the edit patterns always check asks unless an exact path grant names it, an `allow` rule approves; a read inside the session's folders, of an attachment snapshot or of something attached approves; a write inside the folders the edit patterns allow approves; and a shell line the `Shell` rules and the host's command table approve approves.
+An answered call is said running with `confirmed: not-needed`, and the backend is handed `confirm(toolCallId, true)` with no option.
+Each option is a `ConfirmationOption` with an `id`, a `label`, a `kind` of `approve` or `deny` and a `group`.
+A question about a shell line, a fetch, a read or a write offers grants of what it asks for between `allow-once` "Allow Once" and `skip` "Skip": the commands no rule approved, by their prefixes and exactly, the host a fetch goes to, and the file or folder a read or write is of, each "in this Session" and "Always".
+Any other question offers the backend's own options where it put some, and else VS Code's three, in its words: `allow-session` "Allow in this Session", `allow-once` and `skip`.
+A grant "in this Session" is kept in the session's `permissions`, VS Code's session property, said as the host's own `session/configChanged`, kept with the session and handed to every backend of the session through `setConfig`; "Allow in this Session" keeps the tool's name there.
+An "Always" grant is kept in the host's own `permissions`, root config, said as the host's `root/configChanged`.
+A call that asks to leave the sandbox offers `allow-once` "Allow" and `skip`, is marked `_meta['agentHost.sandboxBypass']`, and keeps nothing from its answer.
+A tool the operator's `eligibleForAutoApproval` sets to `false` is the managed layer's per-tool ask, which is [VS Code's planned translation](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L32-L42) of that setting once a rule can name a tool: it and a call a managed rule asks about offer `allow-once` and `skip` alone, whatever the backend offered, and nothing answers them but a person, Allow All and grants included.
+
+The host's `managedSettingsPermissions` are VS Code's managed permissions: `deny` and `ask` rules in the managed grammar (`Shell`, `Read`, `Write`, `Domain`), `disableBypassPermissionsMode: 'disable'`, and `limitTo`.
+`limitTo` holds `Domain` boundary rules alone, `Domain` or `Domain(<host>)` with the host written as VS Code's network filter normalizes it, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L270-L283) holds a boundary; any other value stops the daemon's start.
+So does a `deny` or `ask` rule the managed grammar refuses, since [the runtime that takes a managed document](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L58-L63) refuses the whole document for one rule it cannot read.
+The host checks the rules of `deny` and `ask` on every question from every backend, each on the questions of its kind (`Shell` on a command, `Read` and `Write` on a file's read and write, `Domain` on a URL request), beside the session's permissions.
+`Shell`, `Read` and `Write` are matched with the checks the session's rules are, and a rule the managed grammar cannot express names nothing.
+A `Domain` rule is matched by the URL's host alone, as [VS Code's network filter](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/networkFilter/common/domainMatcher.ts#L208-L241) matches a domain: `Domain(example.com)` names `example.com` whatever the URL's scheme, port or path, `Domain(*.example.com)` it and its subdomains, and `Domain` every URL.
+A managed deny is refused before its question is said, and so is a URL request whose host no rule of `limitTo` names, and a managed ask is put with `allow-once` and `skip` alone, as a question a backend marks `managedApprovalRequired` is.
+That check is ahpd's own, carrying the enforcement [VS Code's policy inventory](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostPolicySupport.ts#L46-L56) records as partial.
+Every backend is also handed them on `Start.managedSettings`, as VS Code hands its runtime `managedSettings: { permissions }`, so a runtime that enforces managed settings itself does so for the calls it never asks the host about.
+The lock takes the host's Allow All away from every session.
+The option a person picks arrives as the third argument of `Session.confirm(toolCallId, approved, optionId?)`, from the `selectedOptionId` a client sent, and a client that sends no option gets a plain approve or deny.
+Claude offers Allow once, an "always" choice labelled by what the SDK's suggestions for the call do, and Deny, when the SDK suggested something; the "always" choice returns those suggestions as `updatedPermissions`.
+With no suggestion it offers nothing, and the host's three are put.
+Claude also reads the session's `permissions` itself, and a tool they allow runs without a question.
 An ACP server's own options are offered as it listed them, approvals first, and the one picked is the `optionId` the server receives.
 cofold offers Allow once, Allow the tool for this session, and Deny, and the session choice is sent as `alwaysApprove`, which cofold keeps for that session and tool.
-pi offers none, so a client draws approve and deny.
+pi offers none, so the host's three are put.
 
 ### A contributed setting can be a question
 
@@ -1091,7 +1119,7 @@ const chat = await host.startChat('claude:/bot', {
 });
 ```
 
-`provider` names the backend that serves this one chat, where that is not the session's own; a chat of another backend keeps a conversation of its own, and every start of it - a session restart, `restartChat`, a rewind, a daemon restart - goes back to that backend. Absent, the chat runs on the session's own. `config` is that backend's settings for the chat, checked against its schema before anything starts, and a value it refuses is refused with the key and the value in the sentence. The session's keys that no backend owns - its `computer` and any key a plugin contributed - reach the chat from the session whatever is named here, so the chat works in the session's machine; the session backend's own keys do not, because they mean nothing to a harness that never read them. `model` is a model id within that backend, `title` names the chat, and `prompt` is its first turn, absent for a chat that opens with nobody speaking.
+`provider` names the backend that serves this one chat, where that is not the session's own; a chat of another backend keeps a conversation of its own, and every start of it - a session restart, a chat's relaunch, a rewind, a daemon restart - goes back to that backend. Absent, the chat runs on the session's own. `config` is that backend's settings for the chat, checked against its schema before anything starts, and a value it refuses is refused with the key and the value in the sentence. The session's keys that no backend owns - its `computer` and any key a plugin contributed - reach the chat from the session whatever is named here, so the chat works in the session's machine; the session backend's own keys do not, because they mean nothing to a harness that never read them. `model` is a model id within that backend, `title` names the chat, and `prompt` is its first turn, absent for a chat that opens with nobody speaking.
 
 The session owner's own `chat:create` is asked first, and a refusal reads exactly as it does at the door - `soft may not chat:create here` - so a plugin cannot add a chat the person the session belongs to could not have added. A host with no users directory gates nothing, here as anywhere else.
 
@@ -1109,7 +1137,7 @@ A canvas is a page a plugin draws on the chat a person is reading. The host serv
 
 | Call | Answers | What it does |
 | --- | --- | --- |
-| `openCanvas(chat, state)` | the canvas channel, `ahp-canvas:/<base64url(chat)>/<uuid>` | Opens a canvas on a chat this host has live, or draws an open one again |
+| `openCanvas(chat, state)` | a promise of the canvas channel, `ahp-canvas:/<base64url(chat)>/<uuid>` | Opens a canvas on a chat, waking the session that holds it where it sleeps, or draws an open one again |
 | `updateCanvas(resource, state)` | nothing | Replaces the state of a canvas this plugin opened, whole |
 | `closeCanvas(resource)` | nothing | Takes a canvas off its chat; a resource that is gone does nothing |
 
@@ -1122,12 +1150,14 @@ const state = {
   status: 'ready',
   url: 'https://boards.acme.test/live/board-1',
 } satisfies CanvasState;
-const canvas = host.openCanvas(chat, state);
+const canvas = await host.openCanvas(chat, state);
 host.updateCanvas(canvas, { ...state, status: 'saving' });
 host.closeCanvas(canvas);
 ```
 
-The state is your whole claim about the canvas, and the host draws it. `instanceId`, `extensionId` and `canvasId` are required and non-empty, and `title`, `status` and `url` are as the protocol declares them. An `open` under an `instanceId` that is already open on that chat replaces its state and answers the same channel. A canvas that is redrawn is therefore not a second one.
+`openCanvas` brings the chat back first, as VS Code's host restores a session's chat before a canvas operation: a chat whose session sleeps is woken with it, and a chat no session holds is refused with `Canvas operation targeted a chat outside session '<session>'.`
+
+The state is your whole claim about the canvas, and the host draws it. `instanceId`, `extensionId` and `canvasId` are required and non-empty, and `title`, `status` and `url` are as the protocol declares them. An `open` under an `instanceId` that is already open on that chat replaces its state and answers the same channel, and one with the state it already has says nothing, as VS Code's host keeps a canvas it already shows. A canvas that is redrawn is therefore not a second one.
 
 A canvas belongs to the plugin that opened it. Only that plugin can update or close it, and a second plugin naming another's canvas is refused. A client cannot close one either. A canvas is the plugin's claim about a page it serves, and a client that hid one would leave the plugin drawing to nobody.
 
@@ -1137,7 +1167,7 @@ Ask whether a remote person can reach the URL you give. A URL on `localhost` rea
 
 The three calls are refused with `Canvases are disabled.` until a window turns `canvasesEnabled` on, and it is off by default. Turning it off leaves open canvases open and refuses the three calls after it. An unload still closes the canvases a plugin had open. That is the host taking back what the plugin drew, rather than the plugin asking.
 
-A canvas lives as long as its chat. A chat that closes, is removed or moves to another session takes its canvases with it. A subscription to one answers `-32008` "Canvas is no longer available", and nothing survives a restart.
+A canvas lives as long as its chat. A chat that closes or is removed takes its canvases with it, and one that moves to another session keeps them, as VS Code's host keeps a moved chat's canvases. A subscription to one answers `-32008` "Canvas is no longer available: <canvas uri>", and nothing survives a restart.
 
 [examples/canvas](../../examples/canvas) is a whole plugin that does this: a route serves its page, and a tool opens it on the chat that calls it.
 
@@ -1271,7 +1301,7 @@ export function apply(host: PluginHost) {
     ctx.log(`session ${event.session} on ${event.provider}`);
   });
   host.on('turn_end', async (event) => {
-    await report(event.session, event.turn, event.status);
+    await report(event.session, event.turnId, event.reason.kind);
   });
 }
 ```
@@ -1288,8 +1318,8 @@ does not stop the next handler or the action it observed.
 | `session_start` | `session`, `provider`, and `client` when a client of this host created it |
 | `session_end` | `session`, `reason` |
 | `session_opened` | `session`, `client` |
-| `turn_start` | `session`, `chat`, `turn`, `sender` (`user:<id>` or `root:<host>`) when the host knows who sent it, and `queuedMessageId` when the turn took up a queued message |
-| `turn_end` | `session`, `chat`, `turn`, `status` (`complete`, `cancelled`, or `error` for a turn that ended in `chat/error`), `error` with that error's message on `error`, and `sender` as on `turn_start` |
+| `turn_start` | `session`, `chat`, `turn`, `sender` (`user:<id>` or `root:<host>`) when the host knows who sent it, and `queuedMessageId` when the turn took up a queued message. Raised when the turn is handed to a session's chat: its backend, or the host's own `!` command. A worker's turn begins inside a call of its lead chat's turn, with none |
+| `turn_end` | The shape of [VS Code's `ITurnEnd`](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L19-L49), which its host offers its chat contributions after every turn ends: `session`, `channel` (the chat the turn ran on, the session's default chat, a peer chat or a worker's), `turnId` and `reason`, and beside them `sender` as on `turn_start` and `queuedMessageId` where the queue drain that began the turn ended it itself. `reason.kind` is `success`, `cancelled`, `error` for a turn that ended in `chat/error`, a send that failed included, with `error` (`errorType` and `message`) and `resumable`, `rejected` for a start the host refused before handing it over, with `error` and `recoverable`, whether whoever sent it still holds the message (no `turn_start` comes before it), or `localCommand` for a `!` command the host ran. Raised on every chat, a worker's included, so a plugin waiting on one chat's turn reads `channel` |
 | `message` | `session`, `chat`, `turn`, `text` |
 | `tool_call` | `session`, `chat`, `tool`, `ok`, and `error` when it threw |
 | `plan_update` | `session`, `chat`, `turn`, `harness`, `tool`, `title` when the session has one, `sender` when the host knows who sent the turn, and either `entries` (a whole list) or `change` (one change, with the harness's id where it names one) |
@@ -1312,7 +1342,7 @@ Both are awaited like any other event, so a handler that takes three seconds to 
 
 There is no per-token event: a plugin that wants the live stream of a turn is a
 client. The `chat` on a turn event is the host's own chat URI, which is not
-always the alias a client addressed it by.
+always the spelling a client addressed it by.
 
 `session_start` names the client that created the session where a client did,
 and `session_opened` names each one that subscribed to it, or to one of its
@@ -1472,7 +1502,7 @@ A client draws an icon as an image, an `<img>` or a native image view, and never
 
 ### Text in the client's language
 
-A client sends a `locale`, a BCP 47 tag such as `pt-BR`, in `initialize`. The host answers the new session form and the plugins screen in that locale. A plugin ships the text for its own fields in `ahpd.i18n`:
+A client sends a `locale`, a BCP 47 tag such as `pt-BR`, in `initialize`, and may send another on `reconnect` under `_meta['ahpd.locale']`. The host answers the new session form and the plugins screen in that locale. A tag longer than 35 characters, the least [RFC 5646](https://www.rfc-editor.org/rfc/rfc5646#section-4.4.1) lets a bounded implementation keep, is read as no locale sent: English at `initialize`, and the locale the client had at `reconnect`. A plugin ships the text for its own fields in `ahpd.i18n`:
 
 ```json
 "i18n": "i18n"
@@ -1518,6 +1548,8 @@ that method may be called with:
 | `tunnelKinds` | `registerTunnelKind(kind)`, by the kind's name |
 | `tools` | `registerTool(tool)`, by the tool's `name` |
 | `sessionConfigs` | `registerSessionConfig(key, ...)`, by key |
+| `providerConfigurations` | `registerProviderConfiguration(registration)`, by `provider` |
+| `changesetOperations` | `registerChangesetOperations(contribution)`, by each handled operation id |
 | `resourceProviders` | `registerResourceProvider(scheme, provider)`, by scheme |
 | `channels` | `registerChannel(scheme, channel)`, by scheme |
 | `methods` | `registerMethod(name, method)`, by name |
@@ -1729,7 +1761,7 @@ After `listening` the host adds each kind's system tunnel, when the list holds n
 
 ### `x-ahpd-clients`
 
-One row for each connection the daemon is serving, keyed by the number the listener gave its socket, as a string. A row carries `socket`, and `clientId`, `name`, `protocolVersion` and `locale` when the connection said them at `initialize`. It carries `principal` when it signed in, `watching` (the channels it subscribed to), and `connectedAt`, a wall-clock millisecond. It also carries `address`, the remote address the socket reported, and `forwardedFor`, the `X-Forwarded-For` text the request carried.
+One row for each connection the daemon is serving, keyed by the number the listener gave its socket, as a string. A row carries `socket`, and `clientId`, `name`, `protocolVersion` and `locale` when the connection said them at `initialize`. It carries `principal` when it signed in, `subscriptions` (the channels it is subscribed to), and `connectedAt`, a wall-clock millisecond. It also carries `address`, the remote address the socket reported, and `forwardedFor`, the `X-Forwarded-For` text the request carried.
 
 A row carries `framesIn`, `framesOut`, `bytesIn` and `bytesOut`: the frames its socket has carried in each direction, and the UTF-8 bytes of those frames. A daemon that counts nothing sends no counters.
 
@@ -2457,16 +2489,15 @@ no bytes serves nothing.
 | `list(uri)` | Optional. Directory entries, for a scheme that has directories |
 | `resolve(uri, followSymlinks?)` | Optional. What a URI is, for a client that browses |
 | `watch(uri, options, onChange)` | Optional. `createResourceWatch` answers `-32601` without it |
-| `write`, `remove`, `mkdir`, `move`, `copy` | Optional, together. A provider with none cannot be written to |
+| `write`, `delete`, `mkdir`, `move`, `copy` | Optional, together. A provider with none cannot be written to; `delete` serves the protocol's `resourceDelete` |
 
-The order of authority for a URI is: a URI a connected client published is
-relayed to that client first, then a registered scheme goes to its provider,
-then `file:` goes to the daemon's store. A scheme nobody serves is explained as
-somebody else's - `nothing here serves notes:` - rather than read as a path.
+A URI goes by its scheme: `file:` to the daemon's store, the client scheme
+`vscode-agent-client:` to the connected client it names, and a registered
+scheme to its provider. A scheme nobody serves is told as one nothing here
+serves - `nothing here serves notes:`.
 
 A `move` or a `copy` whose two ends are different schemes is refused `-32602`:
-neither provider could carry out the other's half, which is the same answer two
-different clients get for a cross-client move.
+neither provider could carry out the other's half.
 
 `packages/server/test/fixtures/plugin-uri-resources` is a read-only `computer:` serving
 `computer://local/status` and `computer://local/capabilities`, and is what the

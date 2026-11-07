@@ -36,7 +36,7 @@ export interface RecordsProvider extends ResourceProvider {
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string): Promise<Read>;
   write(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
-  remove(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
+  delete(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   describe(): SchemeDescription;
 }
 
@@ -223,7 +223,7 @@ export const removeRecord = async (
  * would get from the command of the same name - this is another door onto the
  * same directory, not a second set of rules.
  *
- * `changed` is called after each write and remove the store took, so a
+ * `changed` is called after each write and delete the store took, so a
  * channel over the same records hears a change made through the scheme.
  */
 export const recordsProvider = (scheme: string, records: Records, changed?: () => void): RecordsProvider => {
@@ -297,7 +297,7 @@ export const recordsProvider = (scheme: string, records: Records, changed?: () =
      * record holding a role - and it says who, which is the refusal the command
      * of the same name makes.
      */
-    remove: async (uri, _recursive, _owner, reader) => {
+    delete: async (uri, _recursive, _owner, reader) => {
       const at = splitResource(uri, scheme);
       if (at.id === '') throw new RpcError(INVALID_PARAMS, `${uri} is the ${scheme} directory; remove ${scheme}://<id>`);
       if (at.leaf !== '') throw absentResource(scheme, uri);

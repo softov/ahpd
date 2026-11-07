@@ -1,6 +1,6 @@
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
-import { stat } from 'node:fs/promises';
+import { normalizeScopes } from './auth.js';
 import { sessionFlag } from './chatactions.js';
 import type { Bag } from '../types/common.js';
 import type { Summary } from '../types/catalog.js';
@@ -8,8 +8,9 @@ import type { PullRequest } from '../types/github.js';
 import type { HostContext } from './context.js';
 
 /**
- * Sessions whose pull requests are merged, archived and then deleted by the
- * host itself.
+ * The session lifecycle: sessions whose pull requests are merged, archived
+ * and then deleted by the host itself, under VS Code's names for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L50-L107
  *
  * A pass reads every row, and acts on two root config keys a window pushes:
  * `autoArchiveMergedSessionsAfterDays` archives an inactive session whose
@@ -18,13 +19,13 @@ import type { HostContext } from './context.js';
  * archived that way. Each is off at `0`, and at any value that is not a
  * positive whole number.
  */
-export interface Merged {
+export interface SessionLifecycle {
   /** Run a pass now, for a push of either key. */
-  mergedSoon(): void;
+  scheduleSessionLifecycle(): void;
   /** Run a pass now and start the hourly clock. */
-  startMerged(): void;
+  startSessionLifecycle(): void;
   /** Stop the clock, for a host that is closing. */
-  stopMerged(): void;
+  disposeSessionLifecycle(): void;
 }
 
 /** The root config key that archives a merged session, in days without activity. */
@@ -44,8 +45,8 @@ const urlKey = (url: string): string => url.trim().replace(/\/+$/, '').toLowerCa
 const complete = (related: PullRequest[]): boolean =>
   related.length > 0 && related.every((one) => one.state !== 'open') && related.some((one) => one.state === 'merged');
 
-export function createMerged(ctx: HostContext): Merged {
-  const { options, sessions, kept, restarting, githubFacts, worktreeOf, dirOf, lent, log, running } = ctx;
+export function createSessionLifecycle(ctx: HostContext): SessionLifecycle {
+  const { options, sessions, kept, restarting, githubFacts, worktreeOf, dirOf, getAuthToken, log, running } = ctx;
 
   // How the pass learns the state of a pull request, from the host's own
   // option: set here because the pass is where it is read.
@@ -58,12 +59,12 @@ export function createMerged(ctx: HostContext): Merged {
     return { cancel: () => { clearTimeout(handle); } };
   });
 
-  /** The armed timer, while the clock runs. */
-  let timer: { cancel(): void } | undefined;
-  /** The pass under way, so a second ask waits for it and runs once more. */
-  let passing: Promise<void> | undefined;
-  /** Whether a pass was asked for while one ran. */
-  let again = false;
+  /** The armed clock, while it runs: VS Code's scheduler. */
+  let scheduler: { cancel(): void } | undefined;
+  /** The pass under way, so a second ask waits for it and runs once more, as VS Code chains its runs. */
+  let runPromise: Promise<void> | undefined;
+  /** Whether a pass was asked for while one ran, to be chained behind it. */
+  let chained = false;
   /** Whether the log has said that the port cannot look a pull request up by its URL. */
   let saidNoUrl = false;
 
@@ -99,9 +100,6 @@ export function createMerged(ctx: HostContext): Merged {
     return !Number.isNaN(when) && when <= now() - days * DAY_MS ? at : undefined;
   };
 
-  /** Whether something is at a path. */
-  const present = (path: string): Promise<boolean> => stat(path).then(() => true, () => false);
-
   /** The folder a row's session works in. */
   const folderOf = (row: Summary): string | undefined => {
     const first = row.workingDirectories[0];
@@ -130,14 +128,18 @@ export function createMerged(ctx: HostContext): Merged {
     const branch = tree?.branch ?? git?.branchName ?? facts?.pullRequestBranchName;
     if (typeof owner !== 'string' || typeof repo !== 'string' || typeof branch !== 'string') return undefined;
     const resource = String(github.resource.resource ?? '');
-    return github.forBranch({ owner, repo }, branch, lent(resource), tree?.repository ?? dir);
+    return github.forBranch({ owner, repo }, branch, getAuthToken(resource, normalizeScopes(github.resource.scopes_supported)), tree?.repository ?? dir);
   };
 
   /**
    * The pull requests of a session, asked one URL at a time: the folder's
-   * recorded pull requests and the ones the session took over.
+   * recorded pull requests and the ones the session took over, with the URLs
+   * GitHub answered nothing for: a related pull request the lookup cannot
+   * resolve makes the session not eligible, as the reference host's
+   * lifecycle reads one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L229-L241
    */
-  const byUrls = async (row: Summary, dir: string): Promise<PullRequest[] | undefined> => {
+  const byUrls = async (row: Summary, dir: string): Promise<{ found: PullRequest[]; unresolved: string[] } | undefined> => {
     const github = options.github;
     const ask = github?.byUrl;
     if (github === undefined || ask === undefined) return undefined;
@@ -153,11 +155,13 @@ export function createMerged(ctx: HostContext): Merged {
     const resource = String(github.resource.resource ?? '');
     const cwd = worktreeOf(row.resource)?.repository ?? dir;
     const found: PullRequest[] = [];
+    const unresolved: string[] = [];
     for (const url of urls) {
-      const one = await ask.call(github, url, lent(resource), cwd);
+      const one = await ask.call(github, url, getAuthToken(resource, normalizeScopes(github.resource.scopes_supported)), cwd);
       if (one !== undefined) found.push(one);
+      else unresolved.push(url);
     }
-    return found;
+    return { found, unresolved };
   };
 
   /**
@@ -169,8 +173,13 @@ export function createMerged(ctx: HostContext): Merged {
     const dir = folderOf(row);
     if (dir === undefined || options.github === undefined) return undefined;
     let found: PullRequest[] | undefined;
+    let unresolved: string[] = [];
     try {
-      if (ctx.pullRequestLookup === 'url' && options.github.byUrl !== undefined) found = await byUrls(row, dir);
+      if (ctx.pullRequestLookup === 'url' && options.github.byUrl !== undefined) {
+        const asked = await byUrls(row, dir);
+        found = asked?.found;
+        unresolved = asked?.unresolved ?? [];
+      }
       else {
         if (ctx.pullRequestLookup === 'url' && !saidNoUrl) {
           saidNoUrl = true;
@@ -187,6 +196,8 @@ export function createMerged(ctx: HostContext): Merged {
     const baseline = kept.pullRequests(idOf(row.resource));
     const taken = new Set((baseline?.associatedPullRequestUrls ?? []).map(urlKey));
     const before = new Set((baseline?.initialPullRequestUrls ?? []).map(urlKey).filter((key) => !taken.has(key)));
+    // A related pull request GitHub answered nothing for: the session is not eligible.
+    if (unresolved.some((url) => !before.has(urlKey(url)))) return undefined;
     return found.filter((one) => !before.has(urlKey(one.url)));
   };
 
@@ -201,21 +212,32 @@ export function createMerged(ctx: HostContext): Merged {
     // Checked again, since GitHub took a while to answer.
     const fresh = await rowNow(row.resource);
     if (ctx.closed || fresh === undefined || archived(row.resource) || busy(row.resource) || !idleFor(fresh, days)) return false;
-    // The time first, so `shelve` knows the archive is the host's own.
+    // The time first, so `requestSessionWorktreeRemoval` knows the archive is the host's own.
     kept.setAutoArchivedAt?.(idOf(row.resource), new Date(now()).toISOString());
     sessionFlag(ctx, row.resource, Status.IsArchived, true, { type: 'session/isArchivedChanged', isArchived: true });
     log(`archived ${row.resource}: its pull requests are merged (${related.filter((one) => one.state === 'merged').map((one) => one.url).join(', ')})`);
     return true;
   };
 
-  /** Delete one session the host archived, once its tree is gone. */
+  /*
+   * Delete one session the host archived, once deleting it keeps its work:
+   * each of its trees gone, or synced with its remote, as VS Code's host
+   * deletes one by itself. A synced tree is taken away with the session, by
+   * `requestSessionWorktreeRemoval` while the record that names it is still here, as the automatic
+   * archive takes one away; a running session's goes with its teardown.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L184-L191
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11163-L11179
+   */
   const deleteOne = async (row: Summary, at: string): Promise<boolean> => {
     const related = await relatedOf(row);
     if (related === undefined || !complete(related)) return false;
-    const tree = worktreeOf(row.resource);
-    if (tree !== undefined && await present(tree.path)) return false;
+    if (!await ctx.canAutomaticallyDeleteArchivedSession(row.resource)) {
+      log(`kept ${row.resource}: the archived session still has a worktree with unsynced work`);
+      return false;
+    }
     // Checked again, since GitHub and the disk took a while to answer.
     if (ctx.closed || !archived(row.resource) || busy(row.resource) || kept.autoArchivedAt?.(idOf(row.resource)) !== at) return false;
+    await ctx.requestSessionWorktreeRemoval(row.resource);
     try {
       await ctx.removeSession(row.resource);
     }
@@ -227,8 +249,8 @@ export function createMerged(ctx: HostContext): Merged {
     return true;
   };
 
-  /** One pass over every row. */
-  const pass = async (): Promise<void> => {
+  /** One pass over every row: VS Code's `run`. */
+  const run = async (): Promise<void> => {
     const archiveDays = daysOf(AUTO_ARCHIVE_KEY);
     const deleteDays = daysOf(AUTO_DELETE_KEY);
     if ((archiveDays === 0 && deleteDays === 0) || options.github === undefined) return;
@@ -254,48 +276,49 @@ export function createMerged(ctx: HostContext): Merged {
     if (looked > 0) log(`merged sessions: looked at ${looked}, archived ${archivedCount}, deleted ${deletedCount}`);
   };
 
-  /** Run a pass, or one more after the pass under way. */
-  const run = (): Promise<void> => {
-    if (passing !== undefined) {
-      again = true;
-      return passing;
+  /** Run a pass, or one more chained after the pass under way: VS Code's `_runScheduled`. */
+  const runScheduled = (): Promise<void> => {
+    if (runPromise !== undefined) {
+      chained = true;
+      return runPromise;
     }
     const going = (async () => {
       do {
-        again = false;
-        await pass().catch((error: unknown) => {
+        chained = false;
+        await run().catch((error: unknown) => {
           log(`merged sessions: ${error instanceof Error ? error.message : String(error)}`);
         });
-      } while (again && !ctx.closed);
+      } while (chained && !ctx.closed);
     })();
-    passing = going;
-    void going.then(() => { if (passing === going) passing = undefined; });
+    runPromise = going;
+    void going.then(() => { if (runPromise === going) runPromise = undefined; });
     return going;
   };
 
-  const rearm = (): void => {
-    timer = arm(() => {
-      timer = undefined;
+  /** Arm the clock for the next pass: VS Code's `_schedule` of its interval. */
+  const schedule = (): void => {
+    scheduler = arm(() => {
+      scheduler = undefined;
       if (ctx.closed) return;
-      void run();
-      rearm();
+      void runScheduled();
+      schedule();
     }, PASS_MS);
   };
 
-  const mergedSoon = (): void => {
-    if (!ctx.closed) void run();
+  const scheduleSessionLifecycle = (): void => {
+    if (!ctx.closed) void runScheduled();
   };
 
-  const startMerged = (): void => {
-    if (timer !== undefined) return;
-    void run();
-    rearm();
+  const startSessionLifecycle = (): void => {
+    if (scheduler !== undefined) return;
+    void runScheduled();
+    schedule();
   };
 
-  const stopMerged = (): void => {
-    timer?.cancel();
-    timer = undefined;
+  const disposeSessionLifecycle = (): void => {
+    scheduler?.cancel();
+    scheduler = undefined;
   };
 
-  return { mergedSoon, startMerged, stopMerged };
+  return { scheduleSessionLifecycle, startSessionLifecycle, disposeSessionLifecycle };
 }

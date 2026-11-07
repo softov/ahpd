@@ -208,7 +208,10 @@ it('loads the package from its source file and serves a turn through the stub mo
   const { chatUri } = await open(client, 'cofold', 'plugin');
   begin(client, chatUri, 't1', 'hello there');
   await until(() => ended(said, chatUri));
-  expect(types(said, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread
+  // says it at every turn's end.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
+  expect(types(said, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { turns: { responseParts: { content: string }[] }[] } };
@@ -465,5 +468,6 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
   // And then the queued message, behind it.
   await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
   expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.queuedMessageId === 'q2')).toBe(true);
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 });

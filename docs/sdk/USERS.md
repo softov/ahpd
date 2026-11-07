@@ -31,7 +31,8 @@ The `users` key, the `--users` flag and the `ahpd user` commands are [server/USE
 
 ## The record the host advertises
 
-The host advertises, on every agent, an RFC 9728 record describing its own
+The host names, in the `data.resources` of every `-32007` that refuses a
+command before somebody signs in, an RFC 9728 record describing its own
 sign-in:
 
 ```json
@@ -55,16 +56,14 @@ answers `-32007` until a person is known. The daemon prints the identifier at
 startup on a `sign-in` line, so an operator can see what a client will be told
 without reading root state.
 
-A connection the host already treats as somebody is told `required: false`
-instead, and that is the deployment's own connection token - root - or a
-personal token that has signed in. A client reads the field to decide whether
-to prompt, and prompting a connection that would be served anyway is a client
-that never sends `createSession`, which is what a root connection on VS Code
-met with an issuer that was not running. The field is rewritten per connection
-as the root state is delivered: in the snapshot, in the live
-`root/agentsChanged` and in a reconnect replay. Every other connection still
-reads `true`, and a backend's own resources and GitHub's are listed as they
-are.
+No agent lists it, as VS Code's host says its host-level sign-in only in the
+data of the request it refuses
+([protocolServerHandler.ts#L2634-L2642](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2634-L2642)):
+a VS Code client asks for a token for every resource an agent lists, and the
+sign-in is the host's requirement rather than a backend's. A backend's own
+resources and GitHub's are listed on each agent as they are. A sign-in that
+runs out is `auth/required` on the root, `reason: 'expired'`, naming the
+identifier alone, as VS Code's host says its own identity's expiry.
 
 ## An issuer, when a client needs one
 
@@ -117,7 +116,7 @@ The subjects the host decides are these nineteen:
 | `proxy` | `models` | `call` | The model proxy under `/v1` ([PROXY.md](../server/PROXY.md)). `proxy:call` calls a model, which spends this host's provider keys; `proxy:models` lists the model names |
 | `mcp` | - | `call` | Running the host's tools from a person's MCP client at `/mcp` ([MCP.md](../server/MCP.md)). `mcp:call` is what the door asks; each tool checks its own grants again |
 | `trust` | - | `push` | Pushing the host's answer about the folders sessions load their projects from, which a window sends. A push answers for every folder at once ([Trusted folders](AUTHENTICATION.md#trusted-folders)) |
-| `account` | `status` | - | The account each agent's harness is signed in as, published on the root config under `vscode.codexAccount` for Codex and `ahpd.<provider>Account` for the rest. The email is the operator's own, so a connection that does not hold `account:read` is shown no account value at all ([Agent accounts](AUTHENTICATION.md#agent-accounts)) |
+| `account` | `status` | - | The account each agent's harness is signed in as, published on the root config under `vscode.codexAccount` for Codex and `ahpd.<provider>Account` for the rest. The email is the operator's own, so under a people directory a connection that does not hold `account:read` is shown no account value at all ([Agent accounts](AUTHENTICATION.md#agent-accounts)) |
 
 `proxy`, `mcp` and `trust` have no scheme of their own: a client never reads a
 `proxy://`, an `mcp://` or a `trust://` URI, so nothing asks for a resource

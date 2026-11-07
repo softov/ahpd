@@ -1,16 +1,28 @@
+import { constants } from 'node:fs';
+import { access, stat } from 'node:fs/promises';
 import { ROOT, named, retainedTerminalOf, retainedTerminalUri } from './channels.js';
 import { commandTurnKey } from './chatactions.js';
 import { localPath } from '../resources/fileuri.js';
-import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, RpcError } from '../rpc.js';
 import { BANG, CLOSING, need } from './common.js';
 import { textOf } from './outputs.js';
+import { DEFAULT_SHELL_COMMAND_TIMEOUT_MS, executeShellCommand, shellTypeForExecutable } from '../machines/shellcommand.js';
+import { shellOf } from '../machines/terminals.js';
 import { toolCallDurationMs, withToolCallDuration } from '../utils/timing.js';
+import { reason } from '../utils/values.js';
 import type { Bag } from '../types/common.js';
 import type { Session } from '../types/session.js';
-import type { Claim, CommandTerminal, OutputTerminal, OutputTerminals, Ran, StartTerminals, Terminal, TerminalStore } from '../types/terminals.js';
+import type { Claim, CommandTerminal, OutputTerminal, OutputTerminals, ShellCommandResult, StartTerminals, Terminal, TerminalStore } from '../types/terminals.js';
 import type { OnWire } from '../types/wire.js';
 import type { TerminalInfo } from '@microsoft/agent-host-protocol';
 import type { ConnectionContext, HostContext } from './context.js';
+
+/**
+ * VS Code's `WAIT_FOR_PROMPT_TIMEOUT`: how long a new pseudoterminal's prompt
+ * is waited on before the root's list says the terminal anyway.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L33
+ */
+const PROMPT_WAIT_MS = 10_000;
 
 /**
  * The host's own terminals.
@@ -28,6 +40,14 @@ export interface Terminals {
   heldTerminals(shells: TerminalStore, sessionUri: string, chatUri: string): StartTerminals;
   /** The output terminals a backend may open, handed on `Start`. */
   heldOutputs(sessionUri: string): OutputTerminals;
+  /**
+   * A client's claim, taken by the terminal and heard by a command running in
+   * it, as VS Code's terminal manager sets a claim and fires its change.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L620-L633
+   */
+  setTerminalClaim(uri: string, claim: Claim): void;
+  /** An output terminal let go of with nothing said, answering whether the name was one. */
+  dropOutputTerminal(uri: string): boolean;
 }
 
 /**
@@ -60,13 +80,12 @@ export function claimOf(value: unknown): Claim | undefined {
 }
 
 /**
- * The scrollback cap an output terminal shares with a process one.
- *
- * The same number `machines/terminals.ts` keeps, and for the same reason: a
- * backend polling a shell that ran for a day must not hold a day of text for a
- * client that may never come back.
+ * How much of an output terminal's text is kept: once it passes the cap, the
+ * last part of it, as VS Code keeps a terminal's content.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/terminalConstants.ts#L10-L16
  */
-const KEEP = 200_000;
+const MAX_CONTENT_LENGTH = 100_000;
+const TRIMMED_CONTENT_LENGTH = 80_000;
 
 /**
  * Whether a pseudoterminal runs a terminal, as its state says, for a call that
@@ -91,29 +110,48 @@ export function createTerminals(ctx: HostContext): Terminals {
   const outputs = new Set<string>();
 
   /**
-   * One command, in a terminal of its own, and what it did.
+   * What hears the actions said on each terminal a command runs in, by the
+   * terminal's name: the store's own, and a client's claim.
+   */
+  const hearing = new Map<string, Set<(action: Bag) => void>>();
+  /** Every hearer of one terminal hears one action. */
+  const heard = (uri: string, action: Bag): void => {
+    for (const hear of [...(hearing.get(uri) ?? [])]) hear(action);
+  };
+
+  /**
+   * One command, in a shell of its own that sits at its prompt, and how it
+   * ended.
    *
    * The composer's `!` shorthand runs here rather than in the session,
    * because the shell is the host's: a backend has no port to spawn one
    * through, and the terminal has to be a real channel so the client can
    * watch the output arrive instead of waiting for the whole of it.
    *
-   * The terminal stays, exited, until the session that ran it goes, as the
-   * reference host keeps its own alive for the call that names it. It is
-   * named after that call's chat and id, and what it printed is kept when it
-   * exits: a call whose terminal a client disposed, or one read back after a
-   * restart, names a terminal the host rebuilds from it.
+   * As the reference host's `!` command runs one: the shell opens to sit in,
+   * kept out of the person's history and told nobody is watching it; it is
+   * listed once it has printed, or exited, or the prompt's ten seconds have
+   * passed, and at once on pipes, where a shell prints nothing until it is
+   * given something; `opened` names it then; and the command is typed into it
+   * and waited on for VS Code's two minutes.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L117
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L470-L508
+   *
+   * The shell stays until the session that ran it goes, as the reference host
+   * keeps its own alive for the call that names it. It is named after that
+   * call's chat and id, and what it printed is kept when the command ends: a
+   * call whose terminal a client disposed, or one read back after a restart,
+   * names a terminal the host rebuilds from it.
    * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L29-L39
    *
-   * `opened` hears the terminal once it is a channel a client can subscribe
-   * to, which is when the call names it. Rejects where the command cannot run.
+   * Rejects where the command cannot run, the shell it opened closed first.
    */
   const commanded = async (
     command: string,
     cwd: string,
     claim: Claim,
     opened?: (terminal: CommandTerminal) => void,
-  ): Promise<Ran> => {
+  ): Promise<{ terminal: CommandTerminal; result: ShellCommandResult }> => {
     const shells = options.terminals;
     if (!shells) throw new Error('There is no shell here to run it in');
     if (ctx.closed) throw new Error(CLOSING);
@@ -122,47 +160,76 @@ export function createTerminals(ctx: HostContext): Terminals {
       ? { session: claim.session, chat: claim.chat, key: claim.toolCallId }
       : undefined;
     const uri = call === undefined ? `ahp-terminal:/${crypto.randomUUID()}` : retainedTerminalUri(call.chat, call.key);
-    return await new Promise<Ran>((resolve) => {
-      const terminal = shells.create({
-        uri,
-        cwd,
-        claim,
-        command,
-        name: 'Terminal',
-        // No shell named, so `shellOf` takes the daemon's own: `$SHELL`, then
-        // `/bin/sh`, or the first PowerShell found on Windows. `defaultShell`
-        // is what a client's own terminal opens, and this runs through a
-        // session - and a pushed shell must not be what a turn runs, because
-        // that is the escalation the review found.
-        emit: (_channel, action) => {
-          dispatch(uri, action);
-          if ((action as Bag).type !== 'terminal/exited') return;
-          dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
-          // A command that ran in this session's directory may have moved it:
-          // a commit, a checkout, or anything that wrote a file.
-          const ranIn = dirOfFile(cwd);
-          if (ranIn !== undefined) void refreshWatched(ranIn);
-          const code = terminal.exitCode() ?? 0;
-          /*
-           * Read off the terminal rather than accumulated here.
-           *
-           * The store already keeps the output for a client that subscribes
-           * late, capped, and a second copy in this closure would be the same
-           * bytes held twice and the cap applied to only one of them.
-           */
-          const state = terminal.state();
-          const printed = textOf(state.content);
-          // Kept before the call completes, so the terminal it names answers
-          // from the moment a client can read the name.
-          if (call !== undefined) ctx.keepExited(call.chat, call.key, call.session, state, terminal.exitCode());
-          resolve({ output: printed, terminal: uri, ...ptyOf(terminal), code });
-        },
-      });
-      terminals.set(uri, terminal);
-      log(`ran ${command} in ${uri}`);
-      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
-      opened?.({ uri, ...ptyOf(terminal) });
+    /*
+     * The daemon's own shell, `$SHELL`, then `/bin/sh`, or the first
+     * PowerShell found on Windows. `defaultShell` is what a client's own
+     * terminal opens, and this runs through a session - and a pushed shell
+     * must not be what a turn runs, because that is the escalation the review
+     * found. Named here, so the command is typed in the syntax of the shell
+     * it reaches.
+     */
+    const shell = shellOf();
+    const hears = new Set<(action: Bag) => void>();
+    hearing.set(uri, hears);
+    let spoke: () => void = () => {};
+    const spoken = new Promise<void>((done) => { spoke = done; });
+    const terminal = shells.create({
+      uri,
+      cwd,
+      claim,
+      name: 'Terminal',
+      shell,
+      preventShellHistory: true,
+      nonInteractive: true,
+      emit: (_channel, action) => {
+        dispatch(uri, action);
+        const type = (action as Bag).type;
+        if (type === 'terminal/data' || type === 'terminal/exited') spoke();
+        heard(uri, action as Bag);
+        if (type !== 'terminal/exited') return;
+        hearing.delete(uri);
+        if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+      },
     });
+    terminals.set(uri, terminal);
+    log(`opened ${uri} for ${command}`);
+    if (terminal.state().isPty === true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([spoken, new Promise<void>((done) => { timer = setTimeout(done, PROMPT_WAIT_MS); })]);
+      clearTimeout(timer);
+    }
+    if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+    const named = { uri, ...ptyOf(terminal) };
+    opened?.(named);
+    try {
+      const result = await executeShellCommand(
+        {
+          terminal,
+          shellType: shellTypeForExecutable(shell),
+          hear: (listen) => {
+            hears.add(listen);
+            return () => { hears.delete(listen); };
+          },
+        },
+        command,
+        DEFAULT_SHELL_COMMAND_TIMEOUT_MS,
+      );
+      // Kept before the call completes, so the terminal it names answers from
+      // the moment a client can read the name, and after the shell has gone.
+      if (call !== undefined) ctx.keepExited(call.chat, call.key, call.session, terminal.state(), result.exitCode);
+      // A command that ran in this session's directory may have moved it: a
+      // commit, a checkout, or anything that wrote a file.
+      const ranIn = dirOfFile(cwd);
+      if (ranIn !== undefined) void refreshWatched(ranIn);
+      return { terminal: named, result };
+    }
+    catch (error) {
+      terminal.close();
+      terminals.delete(uri);
+      hearing.delete(uri);
+      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+      throw error;
+    }
   };
 
   /*
@@ -180,7 +247,8 @@ export function createTerminals(ctx: HostContext): Terminals {
    * start again, which the chat holds and which is not said twice, then the
    * call and the turn's end, which keeps it as a local turn and lets its
    * sender go. A worker's chat has no road of its own, so its command is said
-   * as this host's actions, kept as a local turn here and its sender let go.
+   * as this host's actions, kept as a local turn here, its `turn_end` raised
+   * here and its sender let go.
    */
   const bang = (session: Session, chat: string, turnId: string, command: string): void => {
     /*
@@ -200,7 +268,7 @@ export function createTerminals(ctx: HostContext): Terminals {
     };
     const turn = ctx.stateOf(chat)?.activeTurn as Bag | undefined;
     const startedAt = typeof turn?.startedAt === 'string' ? turn.startedAt : new Date().toISOString();
-    ctx.commandTurns.set(commandTurnKey(chat, turnId), false);
+    ctx.commandTurns.add(commandTurnKey(chat, turnId));
     if (road !== undefined) say({ type: 'chat/turnStarted', turnId, startedAt, message: turn?.message ?? { text: `${BANG}${command}`, origin: { kind: 'user' } } });
     const toolCallId = crypto.randomUUID();
     const began = Date.now();
@@ -218,18 +286,36 @@ export function createTerminals(ctx: HostContext): Terminals {
     void commanded(command, where, { kind: 'session', session: session.uri, chat, turnId, toolCallId }, (opened) => {
       say({ type: 'chat/toolCallContentChanged', turnId, toolCallId, content: [terminalOf(opened)] });
     }).then(
-      (ran): Bag => ({
-        success: ran.code === 0,
-        pastTenseMessage: ran.code === 0 ? 'Ran command' : `Command exited with code ${String(ran.code)}`,
-        // The terminal again, with how the command ended, and then the text it printed.
-        content: [
-          {
-            ...terminalOf({ uri: ran.terminal, ...(ran.isPty === undefined ? {} : { isPty: ran.isPty }) }),
-            result: { exitCode: ran.code, ...(ran.output === '' ? {} : { preview: ran.output }) },
-          },
-          ...(ran.output === '' ? [] : [{ type: 'text', text: ran.output }]),
-        ],
-      }),
+      ({ terminal, result: ran }): Bag => {
+        /*
+         * Whether it went well, and the line that says how it ended, in the
+         * reference host's words for each of the five endings.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L141-L158
+         */
+        const exitCode = ran.exitCode ?? 0;
+        const [success, pastTenseMessage] = ran.status === 'completed'
+          ? exitCode === 0 ? [true, 'Ran command'] : [false, `Command exited with code ${String(exitCode)}`]
+          : ran.status === 'timeout' ? [false, 'Command timed out']
+            : ran.status === 'shellExited' ? [false, 'Shell exited unexpectedly']
+              : ran.status === 'background' ? [true, 'Command is running in the background']
+                : [true, 'Command opened an interactive terminal'];
+        // How the command ended, which the protocol has on a terminal's block once it has exited.
+        const exited = ran.status === 'completed' || ran.status === 'shellExited';
+        return {
+          success,
+          pastTenseMessage,
+          // The terminal again, with how the command ended, and then the text it printed.
+          content: [
+            {
+              ...terminalOf(terminal),
+              ...(exited
+                ? { result: { ...(ran.exitCode === undefined ? {} : { exitCode: ran.exitCode }), ...(ran.output === '' ? {} : { preview: ran.output }) } }
+                : {}),
+            },
+            ...(ran.output === '' ? [] : [{ type: 'text', text: ran.output }]),
+          ],
+        };
+      },
       (error: unknown): Bag => ({
         success: false,
         pastTenseMessage: 'Failed to run command',
@@ -241,7 +327,9 @@ export function createTerminals(ctx: HostContext): Terminals {
       say({ type: 'chat/toolCallComplete', turnId, toolCallId, result, ...(_meta === undefined ? {} : { _meta }) });
       say({ type: 'chat/turnComplete', turnId, duration: Math.max(0, ended - began) });
       if (road !== undefined) return;
-      ctx.keepLocalTurn(session.uri, chat, (ctx.stateOf(chat)?.turns ?? []) as Bag[], turnId);
+      ctx.recordLocalTurn(session.uri, chat, (ctx.stateOf(chat)?.turns ?? []) as Bag[], turnId);
+      // The road raises its chat's turn end; a worker's chat, with none, has it raised here.
+      ctx.raiseTurnEnd({ session: session.uri, channel: chat, turnId, reason: { kind: 'localCommand' } });
       ctx.forgetSender(turnId);
     });
   };
@@ -293,10 +381,25 @@ export function createTerminals(ctx: HostContext): Terminals {
       if (ctx.closed) throw new Error(CLOSING);
       const key = crypto.randomUUID();
       const uri = retainedTerminalUri(chatUri, key);
+      /*
+       * Claimed by the session with the chat, the turn running in it and the
+       * tool call the backend named, as VS Code's shell tool claims an
+       * agent's terminal.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts#L196-L202
+       */
+      const turn = (ctx.stateOf(chatUri)?.activeTurn as Bag | undefined)?.id;
+      let spoke: () => void = () => {};
+      const spoken = new Promise<void>((done) => { spoke = done; });
       const terminal = shells.create({
         uri,
         cwd: asked.cwd,
-        claim: { kind: 'session', session: sessionUri, chat: chatUri },
+        claim: {
+          kind: 'session',
+          session: sessionUri,
+          chat: chatUri,
+          ...(typeof turn === 'string' ? { turnId: turn } : {}),
+          ...(asked.toolCallId !== undefined ? { toolCallId: asked.toolCallId } : {}),
+        },
         command: asked.command,
         ...(asked.args !== undefined ? { args: asked.args } : {}),
         ...(asked.env !== undefined ? { env: asked.env } : {}),
@@ -314,11 +417,13 @@ export function createTerminals(ctx: HostContext): Terminals {
          */
         emit: (_channel, action) => {
           dispatch(uri, action);
+          if ((action as Bag).type === 'terminal/data' || (action as Bag).type === 'terminal/exited') spoke();
           // The root list says whether a terminal is still running, so it is
-          // stale the moment one exits and reaches nobody unless it moves.
+          // stale the moment one exits and reaches nobody unless it moves. A
+          // terminal closed and taken off the list was said as it went.
           if ((action as Bag).type === 'terminal/exited') {
             ctx.keepExited(chatUri, key, sessionUri, terminal.state(), terminal.exitCode());
-            dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+            if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
             // A command that ran in this session's directory may have moved it.
             const ranIn = dirOfFile(asked.cwd);
             if (ranIn !== undefined) void refreshWatched(ranIn);
@@ -330,7 +435,21 @@ export function createTerminals(ctx: HostContext): Terminals {
       // shell cannot tell which half of the host opened it.
       void fire({ type: 'terminal_open', terminal: uri, cwd: asked.cwd });
       log(`opened ${uri} for ${sessionUri}`);
-      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+      /*
+       * Listed once the shell has printed or exited or ten seconds passed, as
+       * the reference's terminal manager waits for a pseudoterminal's prompt;
+       * a process on pipes is listed at once, as `createTerminal` lists one.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L470-L508
+       */
+      const list = (): void => {
+        if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
+      };
+      if (terminal.state().isPty === true) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        void Promise.race([spoken, new Promise<void>((done) => { timer = setTimeout(done, PROMPT_WAIT_MS); })])
+          .then(() => { clearTimeout(timer); list(); });
+      }
+      else list();
       return {
         uri,
         ...ptyOf(terminal),
@@ -374,10 +493,8 @@ export function createTerminals(ctx: HostContext): Terminals {
     create: (asked) => {
       if (ctx.closed) throw new Error(CLOSING);
       const uri = `ahp-terminal:/${crypto.randomUUID()}`;
-      let title = asked.title;
+      const title = asked.title;
       let claim: Claim = { kind: 'session', session: sessionUri, chat: asked.chat };
-      let cols = 80;
-      let rows = 24;
       let content = '';
       let exitCode: number | undefined;
       let done = false;
@@ -400,30 +517,32 @@ export function createTerminals(ctx: HostContext): Terminals {
         lifecycle: () => (done
           ? { status: 'exited', ...(exitCode === undefined ? {} : { exitCode }) }
           : { status: 'running' }),
+        /*
+         * The five fields VS Code's terminal manager answers an output
+         * terminal with: no size and no command detection, there being no
+         * process, and one part, there being no command boundaries to divide
+         * an output somebody else already ended.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L273-L284
+         */
         state: () => ({
           title,
-          cols,
-          rows,
-          // One part: there are no command boundaries to divide an output
-          // somebody else already ended.
           content: content === '' ? [] : [{ type: 'unclassified', value: content }],
-          claim,
-          supportsCommandDetection: false,
-          isPty: asked.isPty === true,
           lifecycle: done
             ? { status: 'exited' as const, ...(exitCode === undefined ? {} : { exitCode }) }
             : { status: 'running' as const },
-          ...(exitCode === undefined ? {} : { exitCode }),
+          claim,
+          isPty: false,
         }),
-        // Input has no process to reach, and goes nowhere. A size is kept,
-        // since the state reports one and a client draws to it.
+        /*
+         * Input has no process to reach, and a client's size, clear and title
+         * are its echo's alone: only the claim is applied, as VS Code's
+         * terminal manager applies a client's action to an output terminal.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L620-L633
+         */
         write: () => {},
-        resize: (nextCols, nextRows) => {
-          cols = nextCols;
-          rows = nextRows;
-        },
-        clear: () => { content = ''; },
-        setTitle: (next) => { title = next; },
+        resize: () => {},
+        clear: () => {},
+        setTitle: () => {},
         setClaim: (next) => { claim = next; },
         close: () => {
           finish();
@@ -441,24 +560,27 @@ export function createTerminals(ctx: HostContext): Terminals {
       terminals.set(uri, terminal);
       log(`opened the output terminal ${uri} for ${sessionUri}`);
 
+      /*
+       * The owner's text, said as VS Code's terminal manager says an output
+       * terminal's whatever its lifecycle: an append that is not empty, kept
+       * to the last of it past the content cap; a reset; and a replace said
+       * whole, cleared then written.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L876-L921
+       */
       return {
         uri,
         append: (text) => {
-          if (done) return;
-          content = (content + text).slice(-KEEP);
+          if (text === '') return;
+          content += text;
+          if (content.length > MAX_CONTENT_LENGTH) content = content.slice(-TRIMMED_CONTENT_LENGTH);
           dispatch(uri, { type: 'terminal/data', data: text });
         },
         reset: () => {
-          if (done) return;
           content = '';
           dispatch(uri, { type: 'terminal/cleared' });
         },
         replace: (text) => {
-          if (done) return;
-          // Cleared then written, in that order, so a client's reducer ends
-          // with exactly what this keeps - and the same text a late subscriber
-          // reads, rather than the uncapped one a live client saw arrive.
-          content = text.slice(-KEEP);
+          content = text;
           dispatch(uri, { type: 'terminal/cleared' });
           if (content !== '') dispatch(uri, { type: 'terminal/data', data: content });
         },
@@ -475,7 +597,19 @@ export function createTerminals(ctx: HostContext): Terminals {
     },
   });
 
-  return { bang, terminalInfo, heldTerminals, heldOutputs };
+  const setTerminalClaim = (uri: string, claim: Claim): void => {
+    terminals.get(uri)?.setClaim(claim);
+    heard(uri, { type: 'terminal/claimed', claim });
+  };
+
+  const dropOutputTerminal = (uri: string): boolean => {
+    if (!outputs.delete(uri)) return false;
+    terminals.delete(uri);
+    hearing.delete(uri);
+    return true;
+  };
+
+  return { bang, terminalInfo, heldTerminals, heldOutputs, setTerminalClaim, dropOutputTerminal };
 }
 
 /**
@@ -486,10 +620,9 @@ export interface TerminalMethods {
   disposeTerminal: (params: Record<string, unknown>) => Promise<unknown>;
 }
 
-export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext): TerminalMethods {
-  const { connection } = conn;
+export function createTerminalMethods(ctx: HostContext, _conn: ConnectionContext): TerminalMethods {
   const {
-    claimable, dir, dirOfFile, dispatch, fire, log, options, refreshWatched, terminalInfo, terminals,
+    claimable, dirOfFile, dispatch, fire, log, options, refreshWatched, terminalInfo, terminals,
   } = ctx;
 
   return {
@@ -497,10 +630,9 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
      * A shell on this machine.
      *
      * The client picks the URI, as it does for a session, so it can
-     * subscribe without a round trip in between. `cwd` is checked against
-     * the directories this host serves - a terminal is arbitrary code on
-     * the machine, and one that started anywhere would be a host that
-     * hands out a shell wherever it is asked.
+     * subscribe without a round trip in between. The connection token is
+     * what decides who gets one, as it is for a session, so it opens in the
+     * folder the client names.
      */
     createTerminal: async (params) => {
       // Before the URI is looked at. A host that opens no shells at all
@@ -508,45 +640,67 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       // was never going to answer.
       const shells = need(options.terminals, 'createTerminal');
       const uri = named(String(params.channel ?? ''), 'terminal');
+      // In the reference's words, as the plain error it throws.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L306-L310
       if (terminals.has(uri))
-        throw new RpcError(-32003, `${uri} already exists`);
+        throw new Error(`Terminal already exists: ${uri}`);
       // The host names these, and a client's shell under one would answer for
       // the terminal a tool call names.
       if (retainedTerminalOf(uri) !== undefined)
         throw new RpcError(-32003, `${uri} is a name this host keeps for the terminals a tool result names`);
       claimable(uri, 'terminal');
-      const asked = typeof params.cwd === 'string' ? localPath(params.cwd) : dir;
       /*
-       * Whose terminal this is, checked rather than taken.
-       *
-       * A claim used to be a `Bag` and anything at all was accepted, so a
-       * client could take a terminal with `{}` and the channel then said
-       * so to everyone watching. Absent is this connection, which is the
-       * ordinary case; present and malformed is a refusal, because a
-       * client that meant to name a session and got it wrong should hear
-       * about it rather than quietly become the owner.
+       * The folder the client names, as a `file:` URI or a path, and the home
+       * folder where it names none, or one that is not a folder here: a shell
+       * started in a folder that is not there exits at once. As VS Code's
+       * terminal manager resolves it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L962-L992
        */
-      const claim = params.claim === undefined
-        ? { kind: 'client' as const, clientId: connection.clientId }
-        : claimOf(params.claim);
-      if (!claim) throw new RpcError(INVALID_PARAMS, 'That is not a terminal claim');
+      const given = typeof params.cwd === 'string' ? localPath(params.cwd) : '';
+      const folder = given !== '' && given !== '/' && await stat(given).then((found) => found.isDirectory(), () => false);
+      const asked = folder ? given : process.env.HOME || process.env.USERPROFILE || process.cwd();
+      if (!folder && given !== '') log(`${uri}: ${given} is not a folder here, so it opens in ${asked}`);
+      /*
+       * The host's `defaultShell` where a client pushed one this machine can
+       * run, and the system's shell otherwise, as VS Code's terminal manager
+       * reads it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L949-L960
+       */
+      const configured = typeof ctx.rootConfig.defaultShell === 'string' && ctx.rootConfig.defaultShell !== ''
+        ? ctx.rootConfig.defaultShell
+        : undefined;
+      const shell = configured === undefined ? undefined : await access(configured, constants.X_OK).then(
+        () => configured,
+        (error: unknown) => {
+          log(`the defaultShell ${configured} cannot run here, so ${uri} opens the system shell: ${reason(error)}`);
+          return undefined;
+        },
+      );
+      /*
+       * Whose terminal this is, taken as the client sent it, and a client's
+       * with no id where it sent none, as the reference's terminal manager
+       * takes it.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L421
+       */
+      const claim = (params.claim ?? { kind: 'client', clientId: '' }) as Claim;
       if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
+      /*
+       * The shell's first words, or its exit: what the root's list waits on
+       * below.
+       */
+      let spoke: () => void = () => {};
+      const spoken = new Promise<void>((done) => { spoke = done; });
       const terminal = shells.create({
         uri,
         cwd: asked,
         claim,
-        // The host's `defaultShell`, if a client pushed one: the one value
-        // every client's terminal opens, as the reference host's terminal
-        // manager reads it.
-        // https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L949-L960
-        ...(typeof ctx.rootConfig.defaultShell === 'string'
-          ? { shell: ctx.rootConfig.defaultShell }
-          : {}),
+        ...(shell === undefined ? {} : { shell }),
         ...(typeof params.name === 'string' ? { name: params.name } : {}),
         ...(typeof params.cols === 'number' ? { cols: params.cols } : {}),
         ...(typeof params.rows === 'number' ? { rows: params.rows } : {}),
         emit: (_channel, action) => {
           dispatch(uri, action);
+          if ((action as Bag).type === 'terminal/data' || (action as Bag).type === 'terminal/exited') spoke();
           /*
            * A terminal that exited is a different row on the root channel
            * as well, and that list only moved when one was created or
@@ -560,7 +714,8 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
            * been told something untrue.
            */
           if ((action as Bag).type === 'terminal/exited') {
-            dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+            // A terminal closed and taken off the list was said as it went.
+            if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
             // A command that ran in this session's directory may have moved
             // it: a commit, a checkout, or anything that wrote a file.
             const ranIn = dirOfFile(asked);
@@ -571,16 +726,45 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       terminals.set(uri, terminal);
       void fire({ type: 'terminal_open', terminal: uri, cwd: asked });
       log(`opened ${uri} in ${asked}`);
-      dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
+      /*
+       * Listed, and answered, once the shell has printed or exited or ten
+       * seconds passed, as the reference's terminal manager waits for a
+       * pseudoterminal's prompt before it lists a terminal. A shell on pipes
+       * prints no prompt until it is given something to run, so it is listed
+       * at once.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L470-L508
+       */
+      if (terminal.state().isPty === true) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([spoken, new Promise<void>((done) => { timer = setTimeout(done, PROMPT_WAIT_MS); })]);
+        clearTimeout(timer);
+      }
+      if (terminals.get(uri) === terminal) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
       return null;
     },
+    /*
+     * A terminal closed, and one this host does not hold is closed already,
+     * answered `null` either way, as the reference host answers two windows
+     * closing the same terminal.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L937-L947
+     */
+    /*
+     * A terminal a client is done with, as VS Code's terminal manager disposes
+     * one: an output terminal dropped with nothing said, it being on no list,
+     * a process terminal ended and the list said, a name this host holds no
+     * terminal under answered all the same.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L936-L947
+     */
     disposeTerminal: async (params) => {
       const uri = String(params.channel ?? '');
       const terminal = terminals.get(uri);
-      if (!terminal)
-        throw new RpcError(-32008, `No terminal at ${uri}`);
-      terminal.close();
+      if (!terminal) return null;
+      if (ctx.dropOutputTerminal(uri)) {
+        log(`dropped the output terminal ${uri}`);
+        return null;
+      }
       terminals.delete(uri);
+      terminal.close();
       log(`closed ${uri}`);
       dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
       return null;

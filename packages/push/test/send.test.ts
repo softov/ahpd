@@ -310,9 +310,13 @@ it('carries a hundred messages to a request, and the rest in another', async () 
   expect((world.sends()[1]?.body as unknown[]).length).toBe(1);
 });
 
-/** The session's turn, ended as `status` says, on `chat` or the session's own. */
-const ended = async (world: { fire: Node['fire'] }, session: string, status: 'complete' | 'cancelled' = 'complete', chat = `${session}/chat`): Promise<void> =>
-  world.fire({ type: 'turn_end', session, chat, turn: 't1', status });
+/** The session's turn, ended for the reason `kind` says, on `channel` or the session's own chat. */
+const ended = async (
+  world: { fire: Node['fire'] },
+  session: string,
+  kind: 'success' | 'cancelled' | 'localCommand' = 'success',
+  channel = `${session}/chat`,
+): Promise<void> => world.fire({ type: 'turn_end', session, channel, turnId: 't1', reason: { kind } });
 
 it('tells the devices in a session when its own chat finishes a turn', async () => {
   const world = up(accepted, devices({
@@ -326,10 +330,11 @@ it('tells the devices in a session when its own chat finishes a turn', async () 
   ]);
 });
 
-it('sends nothing for a stopped turn or a worker chat', async () => {
+it('sends nothing for a stopped turn, a `!` command or a worker chat', async () => {
   const world = up(accepted, devices({ 'phone-1': { client: 'phone', token: 'ExponentPushToken[phone]' } }));
   await openedBy(world, 'echo:/one', 'phone');
   await ended(world, 'echo:/one', 'cancelled');
-  await ended(world, 'echo:/one', 'complete', 'ahp-chat://subagent/ZWNobzovb25l/call-1');
+  await ended(world, 'echo:/one', 'localCommand');
+  await ended(world, 'echo:/one', 'success', 'ahp-chat://subagent/ZWNobzovb25l/call-1');
   expect(world.sends()).toEqual([]);
 });

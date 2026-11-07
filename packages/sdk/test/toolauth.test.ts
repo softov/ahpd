@@ -192,7 +192,34 @@ it('says which running call a sign-in is blocking, and says when it is not', asy
   const freed = actions(p).find((one) => one.action.type === 'chat/toolCallAuthResolved');
   expect(freed?.action.toolCallId).toBe('tc1');
   const lifted = actions(p).filter((one) => one.action.type === 'session/inputNeededRemoved');
-  expect(lifted.some((one) => one.action.id === entry)).toBe(true);
+  expect(lifted.map((one) => one.action.id)).toEqual([(blocked?.action.request as { id?: string }).id]);
+});
+
+/*
+ * The host's own entry for the call, raised from the call's state under VS
+ * Code's id, and taken down once the call no longer waits, as VS Code's
+ * input-needed contribution does.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L105-L156
+ */
+it('raises the session\'s entry for a call waiting on a sign-in under VS Code\'s id, and takes it down after', async () => {
+  const { client, peer: p } = await running();
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'find the ticket' } } },
+  });
+  await settle();
+  await said({
+    type: 'assistant',
+    message: { id: 'm1', content: [{ type: 'tool_use', id: 'tc1', name: 'mcp__desk__search', input: { query: 'ticket' } }] },
+  });
+  await becomes(client, 'needs-auth');
+  const set = actions(p).filter((one) => one.action.type === 'session/inputNeededSet')
+    .map((one) => one.action.request as { id?: string; kind?: string; turnId?: string; toolCall?: { toolCallId?: string; status?: string } });
+  const id = `toolAuthentication:${chatUri}:t1:tc1`;
+  expect(set.find((one) => one.id === id)).toMatchObject({ kind: 'toolAuthentication', turnId: 't1', toolCall: { toolCallId: 'tc1', status: 'auth-required' } });
+
+  await becomes(client, 'connected');
+  expect(actions(p).some((one) => one.action.type === 'session/inputNeededRemoved' && one.action.id === id)).toBe(true);
 });
 
 it('says nothing about a call that had already finished', async () => {

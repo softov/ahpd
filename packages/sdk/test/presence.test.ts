@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -27,10 +28,10 @@ const host = () => createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })
 /**
  * The example backend, with what a session's clients come to for the work.
  *
- * A backend reaches the clients of its session through two calls: the tools it
- * may offer, retold whenever they move, and the one that fails what a client
- * that is gone still owed it. A fake that keeps both is what says whether a
- * client is still in the session as far as anything but the bookkeeping goes.
+ * A backend reaches the clients of its session through the tools it may
+ * offer, retold whenever they move. A fake that keeps them is what says whether
+ * a client is still in the session as far as anything but the bookkeeping
+ * goes.
  */
 const watched = (pace = 0, backend?: Agent) => {
   const base = backend ?? echo({ path: DIR, pace });
@@ -40,8 +41,6 @@ const watched = (pace = 0, backend?: Agent) => {
   const born: string[][] = [];
   /** The tool names each chat was handed, in the order it was handed them. */
   const offered: string[][] = [];
-  /** The clients each chat was told have gone. */
-  const gone: string[] = [];
   const agent: Agent = {
     ...base,
     create: (start) => {
@@ -56,11 +55,10 @@ const watched = (pace = 0, backend?: Agent) => {
         // A backend that can be told, so the list is a real one rather than
         // one this host built and had nowhere to send.
         setTools: async (tools) => { offered.push(tools.map((one) => one.definition.name)); return true; },
-        clientGone: (clientId) => { gone.push(clientId); chat.clientGone?.(clientId); },
       };
     },
   };
-  return { agent, spawned, born, offered, gone };
+  return { agent, spawned, born, offered };
 };
 
 // The cases that hold a clock put it back, so no test runs on another's time.
@@ -88,6 +86,7 @@ const envelopes = (p: ReturnType<typeof peer>, channel: string) => p.notes
     action: Record<string, unknown>;
     serverSeq: number;
     origin?: { clientId: string; clientSeq: number };
+    rejectionReason?: string;
   })
   .filter((n) => n.channel === channel);
 
@@ -287,6 +286,25 @@ it('is an empty list before anybody says otherwise, because the field is require
   expect(await clientsIn(client, URI)).toEqual([]);
 });
 
+/*
+ * A client announcing itself in a session this host does not have is refused
+ * as VS Code's restore refuses a session it finds no agent for.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
+ */
+it('refuses an announcement in a session nobody has, in VS Code\'s restore words', async () => {
+  const held = host();
+  const { client, peer: p } = await joins(held, 'one');
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-session:/nobody', clientSeq: 3, action: { type: 'session/activeClientSet', activeClient: { clientId: 'one', tools: [] } } },
+  });
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  const refused = p.notes.filter((note) => note.method === 'action')
+    .map((note) => (note.params as { rejectionReason?: string }).rejectionReason)
+    .filter((reason) => reason !== undefined);
+  expect(refused).toEqual(['No agent for session: ahp-session:/nobody']);
+});
+
 it('shows one client to another, which is the whole reason a host keeps it', async () => {
   const held = host();
   const a = await joins(held, 'one');
@@ -377,6 +395,41 @@ it('holds an entry that names no client as sent, and the sender\'s leaving leave
   await b.client.handle({ method: 'subscribe', params: { channel: URI } });
   await a.client.handle({ method: 'unsubscribe', params: { channel: URI } });
   expect(await entries(b.client)).toEqual([entry]);
+});
+
+/*
+ * A client that leaves by its own action is out at once, with what it
+ * contributed, as the reference host's reducer and side effect take it out;
+ * one that names a client the session does not hold changes nothing and is
+ * still said.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2012-L2015
+ */
+it('takes a client out on its own removal, with its tools, and says one naming nobody', async () => {
+  const held = host();
+  const a = await joins(held, 'one');
+  await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await enter(a.client, 'one', [{ name: 'lookup', description: 'Look a thing up.', inputSchema: { type: 'object' } }]);
+  expect(await clientsIn(a.client, URI)).toEqual(['one']);
+  const remove = (clientId: string, clientSeq: number) => a.client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, clientSeq, action: { type: 'session/activeClientRemoved', clientId } },
+  });
+  await remove('one', 1);
+  await remove('nobody', 2);
+  await settle();
+
+  expect(await clientsIn(a.client, URI)).toEqual([]);
+  expect(envelopes(a.peer, URI)
+    .filter((one) => one.action.type === 'session/activeClientRemoved')
+    .map((one) => [one.action.clientId, one.origin?.clientSeq, one.rejectionReason])).toEqual([
+    ['one', 1, undefined],
+    ['nobody', 2, undefined],
+  ]);
+  // And the session's tools are offered again without the client's.
+  const tools = (await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { serverTools?: { name: string }[] } };
+  }).snapshot.state.serverTools ?? [];
+  expect(tools.map((one) => one.name)).not.toContain('lookup');
 });
 
 it('replaces what a client contributes rather than merging it', async () => {
@@ -539,7 +592,7 @@ it('keeps a client in while another window of theirs is still watching', async (
 
 it('keeps a client that dropped, with its tool, for thirty seconds', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-  const { agent, offered, gone } = watched();
+  const { agent, offered } = watched();
   const held = createHost({ path: DIR, agents: [agent] });
   const a = await joins(held, 'watcher');
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
@@ -555,11 +608,10 @@ it('keeps a client that dropped, with its tool, for thirty seconds', async () =>
   await settle();
   await vi.advanceTimersByTimeAsync(29_999);
 
-  // One millisecond short: nothing said, nothing taken away, nothing failed.
+  // One millisecond short: nothing said, nothing taken away.
   expect(removals(a.peer, URI)).toEqual([]);
   expect(await clientsIn(a.client, URI)).toEqual(['dropper']);
   expect(offered.at(-1)).toContain('dropper__openFile');
-  expect(gone).toEqual([]);
 
   await vi.advanceTimersByTimeAsync(1);
 
@@ -567,7 +619,6 @@ it('keeps a client that dropped, with its tool, for thirty seconds', async () =>
   expect(removals(a.peer, URI)).toMatchObject([{ clientId: 'dropper' }]);
   expect(await clientsIn(a.client, URI)).toEqual([]);
   expect(offered.at(-1)).not.toContain('dropper__openFile');
-  expect(gone).toEqual(['dropper']);
 });
 
 it('has not gone anywhere when it subscribes again inside the window', async () => {
@@ -603,6 +654,68 @@ it('has not gone anywhere when it subscribes again inside the window', async () 
   expect(spawned).toHaveLength(1);
 });
 
+/*
+ * A subscription to any chat of a session is presence in it, as VS Code's host
+ * counts one, so a client that left the session's own channel but still
+ * watches one of its chats stays.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1895-L1913
+ */
+it('keeps a client in while it watches one of the session\'s chats', async () => {
+  const held = host();
+  const a = await joins(held, 'watcher');
+  await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await a.client.handle({ method: 'subscribe', params: { channel: URI } });
+
+  const b = await joins(held, 'chatty');
+  await enter(b.client, 'chatty');
+  await b.client.handle({ method: 'subscribe', params: { channel: chatUriFor(URI) } });
+  await b.client.handle({ method: 'unsubscribe', params: { channel: URI } });
+  await settle();
+  expect(removals(a.peer, URI)).toEqual([]);
+  expect(await clientsIn(a.client, URI)).toEqual(['chatty']);
+
+  await b.client.handle({ method: 'unsubscribe', params: { channel: chatUriFor(URI) } });
+  await settle();
+  expect(removals(a.peer, URI)).toMatchObject([{ clientId: 'chatty' }]);
+});
+
+/*
+ * A client that comes back has every wait called off, whichever sessions it
+ * subscribes to again, as VS Code's host disposes all of a returning client's
+ * disconnect timeouts.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1412-L1414
+ */
+it('calls off every wait of a client that comes back', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const held = host();
+  const a = await joins(held, 'watcher');
+  const OTHER = 'ahp-session:/other';
+  for (const session of [URI, OTHER]) {
+    await a.client.handle({ method: 'createSession', params: { channel: session, provider: 'echo' } });
+    await a.client.handle({ method: 'subscribe', params: { channel: session } });
+  }
+  const b = await joins(held, 'traveller');
+  for (const session of [URI, OTHER]) {
+    await b.client.handle({ method: 'subscribe', params: { channel: session } });
+    await b.client.handle({
+      method: 'dispatchAction',
+      params: { channel: session, action: { type: 'session/activeClientSet', activeClient: { clientId: 'traveller', tools: [] } } },
+    });
+  }
+  b.client.close();
+  await settle();
+  await vi.advanceTimersByTimeAsync(10_000);
+
+  // Back on a new connection, watching the first session alone.
+  const again = await joins(held, 'traveller');
+  await again.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await settle();
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(removals(a.peer, URI)).toEqual([]);
+  expect(removals(a.peer, OTHER)).toEqual([]);
+  expect(await clientsIn(a.client, OTHER)).toEqual(['traveller']);
+});
+
 it('leaves no wait running when the host closes', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const { agent } = watched();
@@ -624,11 +737,12 @@ it('leaves no wait running when the host closes', async () => {
 });
 
 /*
- * The sessions not disposed, said as a session is made and disposed: a turn
- * starting and ending moves nothing.
- * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/state.ts#L39
+ * The sessions running a turn, said as a turn starts and ends, as VS Code's
+ * host says them: a session made with nothing running, and its disposal after
+ * its turn, move nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3162-L3188
  */
-it('says how many sessions there are when that changes', async () => {
+it('says how many sessions are running a turn when that changes, as VS Code\'s host', async () => {
   const held = host();
   const a = await joins(held, 'one');
   await a.client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
@@ -642,8 +756,8 @@ it('says how many sessions there are when that changes', async () => {
   const said = (): unknown[] => actions(a.peer, 'ahp-root://')
     .filter((one) => one.type === 'root/activeSessionsChanged')
     .map((one) => one.activeSessions);
-  // The session made, and its turn's start and end moving nothing.
-  expect(said()).toEqual([1]);
+  // The turn's start and its end.
+  expect(said()).toEqual([1, 0]);
   await a.client.handle({ method: 'disposeSession', params: { channel: URI } });
   expect(said()).toEqual([1, 0]);
 });

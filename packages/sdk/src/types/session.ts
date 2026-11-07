@@ -740,14 +740,24 @@ export interface Session {
   /**
    * Answer a tool call the agent is waiting on.
    *
-   * `optionId` is the `id` of the `ConfirmationOption` the person picked, when
-   * this backend offered options on the call and the client sent one as
+   * A backend asks with a `chat/toolCallReady` carrying a `confirmationTitle`,
+   * and the host puts the question: VS Code's options where the backend put
+   * none of its own, Allow Once and Skip for a tool the operator's
+   * `eligibleForAutoApproval` names, and an "Allow in this Session" answer
+   * kept in the session's `permissions`, which every backend is handed. A
+   * question about a tool those `permissions` allow or deny is answered by the
+   * host, here, with no `optionId`. A backend keeps no answer of its own for
+   * the host's options.
+   *
+   * `optionId` is the `id` of the `ConfirmationOption` the person picked, the
+   * host's or the backend's own, when the client sent one as
    * `selectedOptionId`; absent, the answer is a plain approve or deny.
    *
    * Handed over once the chat's state has the call pending a confirmation,
-   * which is the protocol's condition for taking one. The backend says the
-   * `chat/toolCallConfirmed` back, and the host sends the client's own
-   * decision in its place. False when no call by that id waits on a
+   * which is the protocol's condition for taking one. The host has said the
+   * client's own decision by then, so a `chat/toolCallConfirmed` the backend
+   * says for the call it moved is not said again, as VS Code's host says a
+   * client's confirmation once. False when no call by that id waits on a
    * confirmation here, and the host then says the decision itself, since
    * every client holds the call the state says.
    */
@@ -785,11 +795,13 @@ export interface Session {
    * those is handed them. `text` is the blocks' words joined, which is what a
    * harness that takes only text reads.
    *
-   * Handed over once the host has found the call running under that client in
-   * the chat's state. False when no call by that id waits on that client here,
-   * a second result for a call among them, and the host refuses it. On true
-   * the host says the client's result to every client of the chat, and what
-   * the backend says of the call afterwards is not said again.
+   * Handed over once the host has said the client's result to every client of
+   * the chat, and for a result its client asks to have confirmed, once a
+   * client has approved it or denied it, a denial handed as a failure. False
+   * when no call by that id waits on that client here, a second result for a
+   * call among them, which the host logs. What the backend says of the call
+   * afterwards is said, and the protocol's reducer leaves the completed call
+   * as it was.
    */
   completeToolCall?(
     toolCallId: string,
@@ -799,9 +811,11 @@ export interface Session {
   /**
    * A client that was running tool calls here has gone.
    *
-   * Its outstanding calls are failed rather than left open: the agent is
-   * waiting on a promise that nothing can settle any more, and a turn that
-   * hangs for ever is worse than a tool that says it could not run.
+   * @deprecated The host fails each call a gone client still owes itself, in
+   * VS Code's words, once the client's window runs out or it leaves the
+   * session, and hands the backend the failure through `completeToolCall`, as
+   * VS Code's host does; it calls no backend's `clientGone`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
    */
   clientGone?(clientId: string): void;
   /**

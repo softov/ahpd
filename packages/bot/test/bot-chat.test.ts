@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import { createHost, ROOT } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
+import { chatUriFor, subagentChatUri } from '../../sdk/src/host/channels.js';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { foldHostOptions, pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
@@ -315,9 +315,11 @@ it('holds a turn open until the handle answers it', async () => {
     responseParts: [{ id: 't1:reply', kind: 'markdown', content: 'hello yourself' }],
   }]);
   // A part, then the turn it belongs to: a part after the end is a part of a
-  // turn nobody is holding any more.
+  // turn nobody is holding any more. The turn's end says the chat unread, as
+  // VS Code's markUnread does at every turn's end.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
   const answered = actions(notes, CHAT).map((one) => one['type']);
-  expect(answered.slice(answered.indexOf('chat/responsePart'))).toEqual(['chat/responsePart', 'chat/turnComplete']);
+  expect(answered.slice(answered.indexOf('chat/responsePart'))).toEqual(['chat/responsePart', 'chat/turnComplete', 'chat/isReadChanged']);
 
   // The second line is the turn as it ended, and it is what a restart reads.
   const kept = lines(configDir, 'one');
@@ -752,10 +754,11 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
     { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
     { session: HELD, chat: CHAT, turnId: String(next['id']), text: 'and then this' },
   ]);
-  // And the client is told both ways a queued entry ends: taken out of its
-  // queue, and named on the turn it became.
-  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/pendingMessageRemoved'))
-    .toMatchObject([{ kind: 'queued', id: 'q1' }]);
+  // And the client is told of it by the turn it became, which names the entry
+  // its reducer takes out of the queue, as VS Code's queue drain says only the
+  // turn's start.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L288-L297
+  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/pendingMessageRemoved')).toEqual([]);
   expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted').map((one) => one['queuedMessageId']))
     .toEqual([undefined, 'q1']);
 
@@ -1154,11 +1157,14 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
     },
   });
   expect(parts[1]).toMatchObject({ kind: 'markdown', content: 'done' });
+  // The turn's end says the chat unread, as VS Code's markUnread does.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
   const kinds = actions(notes, CHAT).map((one) => one['type']);
-  expect(kinds.slice(-3)).toEqual([
+  expect(kinds.slice(-4)).toEqual([
     'chat/toolCallComplete',
     'chat/responsePart',
     'chat/turnComplete',
+    'chat/isReadChanged',
   ]);
   expect(kinds.filter((one) => one === 'chat/responsePart')).toHaveLength(1);
   // And the line a restart reads holds the same two parts, as JSON writes
@@ -1236,7 +1242,7 @@ it('ends a main turn at once when its back turn ended while it opened', async ()
   // The end arrives while the start is still reading.
   const listeners = contribution.events as unknown as Record<string, { handle: (event: Bag) => unknown }[]>;
   void listeners['turn_start']?.[0]?.handle({ type: 'turn_start', session: backSession, chat: backChat, turn: 'b1' });
-  void listeners['turn_end']?.[0]?.handle({ type: 'turn_end', session: backSession, chat: backChat, turn: 'b1', status: 'complete' });
+  void listeners['turn_end']?.[0]?.handle({ type: 'turn_end', session: backSession, channel: backChat, turnId: 'b1', reason: { kind: 'success' } });
 
   const ended = await vi.waitFor(async () => {
     const state = await stateOf(client);
@@ -1252,6 +1258,70 @@ it('ends a main turn at once when its back turn ended while it opened', async ()
     { kind: 'toolCall', toolCall: { toolName: 'subagent', status: 'completed', _meta: { subagentChatUri: backChat } } },
     { kind: 'markdown', content: said },
   ]);
+});
+
+/**
+ * A main turn held open on a back turn that is still running: a back session
+ * whose agent answers slowly, a turn begun in its chat, and the plugin told of
+ * the turn's start. What the plugin is then told of turn ends is the case's.
+ */
+async function heldOnBack() {
+  const { host, records, contribution } = made({
+    agents: [{ ...echo({ path: tmpdir(), pace: 400 }), provider: 'base', displayName: 'Base' }],
+  });
+  const client = await anyone(host);
+  await talkTo(client);
+  const backSession = 'ahp-session:/back';
+  const backChat = chatUriFor(backSession);
+  await client.handle({ method: 'createSession', params: { channel: backSession, provider: 'base' } });
+  await client.handle({ method: 'subscribe', params: { channel: backChat } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: backChat, action: { type: 'chat/turnStarted', turnId: 'b1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'a slow answer of several words' } } },
+  });
+  await (await records.collection(sessionsOf('backer'))).put({
+    id: rowId(['backer', 'test', 'work']), bot: 'backer', user: 'test', name: 'work', session: backSession,
+  });
+  await (await records.collection(chatsOf('backer'))).put({ id: rowId(['backer', 'root:test']), chat: HELD });
+  const listeners = contribution.events as unknown as Record<string, { handle: (event: Bag) => unknown }[]>;
+  void listeners['turn_start']?.[0]?.handle({ type: 'turn_start', session: backSession, chat: backChat, turn: 'b1' });
+  await vi.waitFor(async () => { expect((await stateOf(client))['activeTurn']).toBeDefined(); });
+  const turnEnded = (event: Bag): unknown => listeners['turn_end']?.[0]?.handle({ type: 'turn_end', session: backSession, ...event });
+  return { client, backSession, backChat, turnEnded };
+}
+
+/*
+ * A worker's chat inside the back session raises its own `turn_end`, as every
+ * chat's turn does; its end is the worker's, not the back session's answer, so
+ * the main turn goes on waiting for the back chat's own turn.
+ */
+it('leaves a main turn waiting when a worker\'s turn in its back session ends', async () => {
+  const { client, backSession, backChat, turnEnded } = await heldOnBack();
+  void turnEnded({ channel: subagentChatUri(backSession, 'call-w'), turnId: 'w1', reason: { kind: 'success' } });
+  await new Promise((done) => { setTimeout(done, 200); });
+  expect((await stateOf(client))['activeTurn']).toBeDefined();
+
+  void turnEnded({ channel: backChat, turnId: 'b1', reason: { kind: 'success' } });
+  await vi.waitFor(async () => { expect((await stateOf(client))['activeTurn']).toBeUndefined(); });
+});
+
+/*
+ * A start the back session's host refused ends that turn `rejected`, with the
+ * refusal's words, and the main turn fails in them, as a turn that failed
+ * fails it.
+ */
+it('fails a main turn whose back start the host refused, in the refusal\'s words', async () => {
+  const { client, backChat, turnEnded } = await heldOnBack();
+  void turnEnded({
+    channel: backChat, turnId: 'r1', reason: { kind: 'rejected', error: { errorType: 'rejected', message: 'This host is stopping' }, recoverable: true },
+  });
+  const failed = await vi.waitFor(async () => {
+    const state = await stateOf(client);
+    expect(state['activeTurn']).toBeUndefined();
+    return (state['turns'] as Bag[]).at(-1) as Bag;
+  });
+  expect(failed).toMatchObject({ state: 'error' });
+  expect((failed['responseParts'] as Bag[]).at(-1)).toMatchObject({ kind: 'error', error: { message: 'This host is stopping' } });
 });
 
 it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
@@ -1290,7 +1360,7 @@ it('refuses a chat with a bot that is not there', async () => {
   }));
 
   // The host's own code for what a backend refused `create` with, and the
-  // backend's sentence: `openSession` answers every one of them the same way.
+  // backend's sentence: `createProviderSession` answers every one of them the same way.
   expect(refusal.code).toBe(-32602);
   expect(refusal.message).toBe('There is no bot nobody.');
 });

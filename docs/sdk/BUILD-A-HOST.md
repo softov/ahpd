@@ -45,7 +45,7 @@ runs without a network.
 ## A complete host
 
 ```ts
-import { createHost, listen, fileResources, shellTerminals, gitChanges, gitBranches, memoryAutomations } from '@ahpd/sdk';
+import { createHost, listen, fileResources, ripgrepFiles, shellTerminals, gitChanges, gitBranches, memoryAutomations } from '@ahpd/sdk';
 import { claude } from '@ahpd/agent-claude';
 
 const path = process.cwd();
@@ -54,6 +54,7 @@ const host = createHost({
   path,
   agents: [claude({ paths: [path] })],
   resources: fileResources(),
+  workspaceFiles: ripgrepFiles(),
   terminals: shellTerminals(),
   changes: gitChanges(),
   directories: gitBranches(),
@@ -72,12 +73,13 @@ would fail part-way through instead.
 
 | port | what it is | left out | the one that ships |
 | --- | --- | --- | --- |
-| `resources` | files a client may read, what `@` completes into, and the write half | no `resource*` command is served | `fileResources()` |
+| `resources` | files a client may read, and the write half | no `resource*` command is served | `fileResources()` |
+| `workspaceFiles` | the files under a working directory, which `@` completes into, listed as VS Code's host lists them | no completion offers a file | `ripgrepFiles()`, which runs `rg` from the path |
 | `terminals` | how a shell is opened | no terminal can be created | `shellTerminals()` |
 | `changes` | what the working tree has that HEAD does not | no session advertises a changeset, and the changes screen is honestly empty rather than emptily wrong | `gitChanges()` |
-| `directories` | facts about a served directory - the branch it is on | sessions carry their project and nothing more | `gitBranches()` |
+| `directories` | facts about a served directory - the repository it is in and the branch it is on | sessions carry no project and no `_meta.git` | `gitBranches()` |
 | `github` | what GitHub knows about that branch - its pull request and the state of it | no row carries `_meta.github`, and no backend advertises a GitHub resource | `githubPullRequests()` |
-| `users` | who may sign in, and what a role may do | no sign-in resource is advertised, every gate the host has stays inert, and no `_meta['ahpd.owner']` on a row is sent | `fileUsers({ path })` |
+| `users` | who may sign in, and what a role may do | no sign-in resource is advertised, every gate the host has stays inert, and no `_meta['ahpd.owner']` on a row and no `_meta['ahpd.sender']` on a turn is sent | `fileUsers({ path })` |
 | `automations` | agents on a trigger | no `ahp-automations://` channel is advertised | `memoryAutomations()`, without a clock; the clock store is the daemon's |
 
 ### `resources`
@@ -150,7 +152,12 @@ the scope keeps no review. `gitChanges()` keeps none for the working tree.
 `meta(dir)` returns whatever this host can say about a directory, and
 `gitBranches()` returns `{ git: { branchName, ... } }` - which becomes
 `_meta.git` on every session row in that directory, under the reference host's
-field names. Cached per directory and re-read when a turn ends, so a host with
+field names. `project(dir)` is the session's `project`: `gitBranches()` answers
+the primary checkout of the repository the directory is in, named by its
+basename, and nothing outside git, as VS Code's agents name a session's project
+([copilotGitProject.ts#L18-L30](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotGitProject.ts#L18-L30)).
+Read when a session is made in the directory, so the session is announced with
+its project, cached per directory and re-read when a turn ends, so a host with
 ninety-eight sessions in one repository asks git once.
 
 ### `github`
@@ -178,7 +185,10 @@ cron in a named time zone, one Markdown file per definition under
 `<configDir>/automations`, and one catch-up run for what was missed while the
 host was down. A program that wants a clock writes its own `AutomationStore`
 over `memoryAutomations()`, with `parseCron` and `nextOccurrence` from this
-package.
+package. One that keeps the definitions somewhere passes `persist`, which is
+handed each change to a definition before the store holds it and says it, as
+VS Code's automation service persists before it publishes: a throw there fails
+the change and leaves the store as it was.
 A run reads `running` while any session it started is executing or waiting on a
 person, and the host says the execution ended through `settle`: a store that
 implements it records the terminal `completed`, `failed` or `cancelled` and
@@ -203,7 +213,7 @@ to every backend that can take tools, and replaced whole with `host.setTools()`
 `set_workspace`), with its names, input schemas and answers, so a skill written
 against VS Code's host calls them here unchanged; and two of this host's own,
 `ahp_resource` and `ahp_terminals`, both read-only, answering what an agent
-inside one session cannot see for itself - a client's published resource and
+inside one session cannot see for itself - a client's resource and
 the terminals a person is watching; and the reference host's three artifact
 tools (`add_artifact_or_reference`, `remove_artifact_or_reference`,
 `list_artifacts_and_references`), which write the session's
@@ -238,11 +248,13 @@ own for the host it runs - `shutdown`, `getNetworkDiagnosticsInfo`,
 `vscode/getAgentHostSessionStateFile`, `vscode/collectAgentHostDebugLogs` and
 `vscode/readAgentHostDebugLogsChunk` - and this is what the host answers them
 from: `version` goes into `serverInfo` and the network report, `logs()` names
-the files a "collect logs" packs up under `agenthost/`, and `shutdown()` is
-run once the request has been answered. Leave it out and the host still
-answers the network and log requests with what it has; `shutdown` alone
-answers `-32601`. The session's own file comes from the agent's `stateFile`,
-and the endpoints to probe from its `endpoints()`.
+the files a "collect logs" packs up under `agenthost/`, and `shutdown()` is run
+once the request has closed the host, every backend stopped and every store
+closed, and been answered: the daemon's stops it the way `ahpd stop` does.
+Leave it out and the host still answers the network and log requests with what
+it has, and a `shutdown` closes the host and answers, the process left running.
+The session's own file comes from the agent's `stateFile`, and the endpoints
+to probe from its `endpoints()`.
 
 ## The agents
 
@@ -278,6 +290,7 @@ import {
   createPeer, receive, RpcError,          // JSON-RPC, holding no socket
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
   fileResources, shellTerminals,          // the resources and terminals ports
+  ripgrepFiles,                           // the files `@` completes, by ripgrep
   gitChanges, gitBranches, gitWorktrees,  // the git-backed ports
   githubPullRequests,                     // the pull request beside a branch
   memoryAutomations,                      // automations, without a clock

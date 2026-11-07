@@ -94,9 +94,16 @@ An unknown key is logged and ignored:
 | `connectionTokenFile` | `--connection-token-file` | | See [Remote access](REMOTE.md#the-connection-token) |
 | `sleepAfterMinutes` | `--sleep-after-minutes` | `30` | Unload a quiet session after this |
 | `sessionResidencyLimit` | `--session-residency-limit` | `10` | Most sessions resident at once, running or with their state held |
+| `attachmentFetchLimitBytes` | `--attachment-fetch-limit-bytes` | `33554432` | The largest file a client is asked for when a message attaches one the daemon has no copy of; `0` sets no limit |
+| `toolResultResourceLimitBytes` | `--tool-result-resource-limit-bytes` | `8388608` | The most bytes kept of one content a tool result or an agent's message carries inline, which a client reads back by a `session-db-resource` URI; larger content is left out, as VS Code keeps nothing over its bound; `0` sets no limit |
 | `closedChats` | `--closed-chats` | `hidden` | `delete` removes a closed chat from the backend |
+| `unofferedModel` | `--unoffered-model` | `fail` | `keep` keeps a chat's model when a turn names one its agent does not offer, as VS Code does |
+| `turnSenders` | `--turn-senders` | `said` | `kept` keeps each turn's sender on the host and says it in no action, as VS Code does |
+| `backendBackgroundWork` | `--backend-background-work` | `drop` | `say` says a backend's own background work actions as the host's, as VS Code does |
+| `agentOrchestrationLimitsScope` | `--agent-orchestration-limits-scope` | `sessionTree` | `session` keeps the session tools' counts per session, as VS Code does |
 | `automations` | `--automations` | `file` | `memory` keeps automations until exit, and fires no schedule |
 | `terminalAutoApproveDefaults` | `--terminal-auto-approve-defaults` | `vscode` | The rules for a session whose window pushed none; `none` approves no command. See [Terminal rules](#terminal-rules) |
+| `managedSettingsPermissions` | (file only) | none | VS Code's managed permissions: `deny` and `ask` rules in the managed grammar (`Shell`, `Read`, `Write`, `Domain`), `disableBypassPermissionsMode: "disable"` to take Allow All away, and `limitTo`, the `Domain` and `Domain(<host>)` rules a fetch stays within. A `Domain` rule names its host whatever a URL's scheme, port or path. A rule the managed grammar refuses stops the start. The host checks each rule on the tool questions of its kind and hands the whole to every backend. See [A question about a tool call](../plugins/PLUGINS.md#a-question-about-a-tool-call) |
 | `wire` | `--wire` | | Log every frame to this file, for debugging |
 
 Keys with no flag: `httpApi`, `mcpTools`, `modelProxy`, `usage`, `policies`, `service`, `mcpServers`, `commandParser`, `tunnelHosts`. Flags with no key: `--no-plugins`, `--no-cwd`, `--plugin-option`, `--stdio`, `--config-file`.

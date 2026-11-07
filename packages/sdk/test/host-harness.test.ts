@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
 import type { SessionState } from '@microsoft/agent-host-protocol';
 import {
-  SIGNED_IN, resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk,
+  SIGNED_IN, resetSdk, actions, claude, createHost, echo, emit, firstMessage, hello, machine, open, peer, sdk,
   sendAnswered, serving, settle, running,
 } from './support/host.js';
 
@@ -82,6 +82,110 @@ describe('what the harness offers', () => {
     // models before any client has connected, so the change is dispatched to
     // nobody - and the snapshot above is how every client actually finds out.
     expect(p.notes.length).toBeGreaterThanOrEqual(0);
+  });
+
+  /*
+   * VS Code publishes its agents when the whole list differs from the last one
+   * published, a model renamed under its id among the changes, and publishes
+   * an empty catalog a source answered.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L575-L606
+   */
+  it('says the agent list when a handshake moves it whole, a rename and an empty answer among the moves', async () => {
+    let models: { id: string; name: string }[] = [{ id: 'a', name: 'A' }];
+    let handshake: (() => void) | undefined;
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...base,
+        create: (start) => {
+          handshake = start.onHandshake;
+          return { ...base.create(start), models: () => models };
+        },
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/m', provider: 'echo' } });
+    const said = () => p.notes.filter((n) => n.method === 'action'
+      && (n.params as { action: { type: string } }).action.type === 'root/agentsChanged')
+      .map((n) => ((n.params as { action: { agents: { models: { id: string; name: string }[] }[] } }).action.agents[0]?.models ?? [])
+        .map((one) => `${one.id}:${one.name}`));
+
+    handshake?.();
+    expect(said().at(-1)).toEqual(['a:A']);
+    models = [{ id: 'a', name: 'A renamed' }];
+    handshake?.();
+    expect(said().at(-1)).toEqual(['a:A renamed']);
+    const before = said().length;
+    handshake?.();
+    expect(said()).toHaveLength(before);
+    models = [];
+    handshake?.();
+    expect(said().at(-1)).toEqual([]);
+    await host.close();
+  });
+
+  /*
+   * A backend whose handshake is reported inside `create`, before the host
+   * holds the session it answers, as one does that opens its server before it
+   * answers: the models it answered are learned once the session is held, as
+   * VS Code's host seeds a session's offers before its first state is served.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
+   */
+  it('learns the models a handshake reported before the host held its session', async () => {
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...base,
+        create: (start) => {
+          start.onHandshake?.();
+          return { ...base.create(start), models: () => [{ id: 'early', name: 'Early' }] };
+        },
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/e', provider: 'echo' } });
+    const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { models: { id: string; name: string }[] }[] } };
+    }).snapshot.state;
+    expect(root.agents[0]?.models.map((one) => `${one.id}:${one.name}`)).toEqual(['early:Early']);
+    await host.close();
+  });
+
+  /*
+   * A probe that finds what the root already lists says nothing, as VS Code
+   * publishes its agents only when the list differs from the last one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L602-L606
+   */
+  it('says nothing when a probe finds the agent list as it was', async () => {
+    let changed: (() => void) | undefined;
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...base,
+        probe: async () => ({ models: [{ id: 'a', name: 'A' }], commands: [], customizations: [] }),
+        probeChanged: (onChange) => { changed = onChange; return () => {}; },
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await settle(8);
+    const said = () => p.notes.filter((n) => n.method === 'action'
+      && (n.params as { action: { type: string } }).action.type === 'root/agentsChanged').length;
+    const before = said();
+    changed?.();
+    await settle(8);
+    changed?.();
+    await settle(8);
+    expect(said()).toBe(before);
+    await host.close();
   });
 
   it('gives each model its own thinking control, from what that model supports', async () => {
@@ -441,7 +545,9 @@ describe('what the harness offers', () => {
 
   it('opens the session even when the CLI will not answer yet', async () => {
     sdk.init = {};
-    const { client, uri } = await running();
+    const { client, uri, chatUri } = await running();
+    // Ready from its first message, as a session made fresh is.
+    await firstMessage(client, chatUri);
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: { type: string; children?: unknown[] }[]; lifecycle: string } };
     }).snapshot.state;
@@ -854,9 +960,10 @@ describe('turning a customization on and off', () => {
      * draws the switch from has to carry it or the switch would be drawn back
      * on by the very report that says the switch worked.
      */
-    const lists = actions(p, 'ahp-session:/live').filter((e) => e.action.type === 'session/customizationsChanged');
-    const container = (lists.at(-1)?.action.customizations as Record<string, unknown>[] | undefined)
-      ?.find((one) => one.id === 'plugin:cc-plugin-agents-md');
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } }) as {
+      snapshot: { state: { customizations: Record<string, unknown>[] } };
+    }).snapshot.state;
+    const container = state.customizations.find((one) => one.id === 'plugin:cc-plugin-agents-md');
     expect(container?.enablement).toEqual([{ kind: 'session', enabled: false }]);
   });
 

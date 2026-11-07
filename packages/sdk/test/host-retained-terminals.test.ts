@@ -166,7 +166,7 @@ describe('a command typed into the conversation', () => {
     expect(rebuilt.cwd).toBeUndefined();
     expect(rebuilt.content).toEqual([{ type: 'unclassified', value: expect.stringContaining('rebuilt-output') }]);
     expect(rebuilt.lifecycle).toEqual({ status: 'exited', exitCode: 3 });
-    expect(rebuilt.exitCode).toBe(3);
+    expect(rebuilt.exitCode).toBeUndefined();
     expect(rebuilt.isPty).toBe(false);
     // Held by the chat and the call, as the live one was; the turn is not part
     // of a rebuilt claim, as it is not of the reference's.
@@ -177,15 +177,16 @@ describe('a command typed into the conversation', () => {
 
   it('says a terminal ran under a pseudoterminal when it did', async () => {
     // A shell under a pty prints VT sequences, and a client reads `isPty` to
-    // know to parse them.
+    // know to parse them. This one prints them as its prompt and exits on
+    // the first line it is given.
     const printing: SpawnPty = () => {
       let data: ((text: string) => void) | undefined;
       let exit: ((ended: { exitCode: number }) => void) | undefined;
-      setTimeout(() => { data?.('\u001b[1mbold\u001b[0m'); exit?.({ exitCode: 0 }); }, 20);
+      setTimeout(() => { data?.('\u001b[1mbold\u001b[0m'); }, 20);
       return {
         onData: (listen) => { data = listen; },
         onExit: (listen) => { exit = listen; },
-        write: () => {},
+        write: () => { exit?.({ exitCode: 0 }); },
         resize: () => {},
         kill: () => {},
       };
@@ -229,12 +230,15 @@ describe('a command typed into the conversation', () => {
     await emit({ type: 'assistant', uuid: 'reply-1', message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } });
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
     await ran(client, p, chatUri, 't2', 'echo dropped-one');
-    expect(keptIn(store, 'banged').map((one) => String(one.output).trim()).sort()).toEqual(['dropped-one', 'kept-one']);
+    // The first line of each: a shell on pipes marks no command's end, so the
+    // line it echoes after the command is in what it printed too.
+    const printed = (): string[] => keptIn(store, 'banged').map((one) => String(one.output).split('\n')[0] ?? '');
+    expect(printed().sort()).toEqual(['dropped-one', 'kept-one']);
 
     void client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } } });
     await settle();
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/truncated')).toBe(true);
-    expect(keptIn(store, 'banged').map((one) => String(one.output).trim())).toEqual(['kept-one']);
+    expect(printed()).toEqual(['kept-one']);
   });
 });
 
@@ -305,6 +309,14 @@ const hostAt = async (k: Knobs, store: SessionStore) => {
   return { host, client, p };
 };
 
+/** Moving chats on, as a VS Code window with its move setting on turns it on. */
+const movesOn = async (client: Awaited<ReturnType<typeof hostAt>>['client']): Promise<void> => {
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+  });
+};
+
 /** The start the host made for one chat, the latest of them. */
 const startOf = (k: Knobs, chat: string): Start => {
   const start = k.starts.filter((one) => one.chatUri === chat).at(-1);
@@ -341,6 +353,7 @@ describe('a terminal a backend opens', () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
+    await movesOn(client);
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
@@ -394,6 +407,18 @@ describe('an output a backend keeps', () => {
     outputs.keep('toolu_code', 'out', 1);
     k.turns.set(chat, [naming('t1', 'toolu_code', outputs.uri('toolu_code'), { exitCode: 2 })]);
     expect((await stateOf(client, outputs.uri('toolu_code'))).lifecycle).toEqual({ status: 'exited', exitCode: 2 });
+  });
+
+  /*
+   * A rebuilt terminal is VS Code's five fields, the exit code in its
+   * lifecycle alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L273-L284
+   */
+  it('rebuilds a terminal with VS Code\'s five fields', async () => {
+    const { k, client, chat, outputs } = await kept();
+    outputs.keep('toolu_five', 'out', 0);
+    k.turns.set(chat, [naming('t1', 'toolu_five', outputs.uri('toolu_five'), { exitCode: 0 })]);
+    expect(Object.keys(await stateOf(client, outputs.uri('toolu_five'))).sort()).toEqual(['claim', 'content', 'isPty', 'lifecycle', 'title']);
   });
 
   it('is not kept over 10 MB, counted in bytes', async () => {
@@ -474,6 +499,7 @@ describe('an output a backend keeps', () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
+    await movesOn(client);
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
@@ -492,25 +518,30 @@ describe('an output a backend keeps', () => {
     expect((rebuilt.claim as Bag).session).toBe('echo:/two');
   });
 
-  it('stays with its chat when the move is refused', async () => {
+  /*
+   * A move starts nothing: the chat's runtime goes on until its next turn
+   * boundary relaunches it under the destination, as VS Code moves only
+   * ownership, so a destination whose backend would not start the chat does
+   * not refuse the move, and the outputs go with the chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L374
+   */
+  it('goes with its chat on a move to a session whose backend would not start it yet', async () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
+    await movesOn(client);
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
     }
     await settle();
-    startOf(k, PEER).terminalOutputs?.keep('toolu_1', 'stays', 0);
+    startOf(k, PEER).terminalOutputs?.keep('toolu_1', 'goes', 0);
     k.refuses = (start) => start.chatUri === PEER && start.uri === TWO;
 
-    await expect(client.handle({
-      method: 'moveChat',
-      params: { channel: PEER, destination: { kind: 'session', session: TWO } },
-    })).rejects.toThrow(/will not work there/);
+    await client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'session', session: TWO } } });
     await settle(20);
-    expect(keptIn(store, 'live').map((one) => one.output)).toEqual(['stays']);
-    expect(keptIn(store, 'two')).toEqual([]);
+    expect(keptIn(store, 'live')).toEqual([]);
+    expect(keptIn(store, 'two').map((one) => one.output)).toEqual(['goes']);
   });
 
   it('is not offered where the store keeps no folder', async () => {
@@ -576,24 +607,23 @@ describe('a host started again on the same store', () => {
     await after.host.close();
   });
 
-  it('answers nothing for a first chat a client closed, though the session\'s transcript still names it', async () => {
+  it('answers nothing for a peer chat a client closed, though its transcript still names the call', async () => {
     const dir = join(temp(), 'sessions');
     const first = knobs();
     const before = await hostAt(first, fileSessions({ dir }));
     await before.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
-    const own = String((await stateOf(before.client, LIVE)).defaultChat);
     await before.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
     await settle();
-    const address = String(startOf(first, own).terminalOutputs?.uri('toolu_first'));
-    await before.client.handle({ method: 'disposeChat', params: { channel: own } });
+    const address = String(startOf(first, PEER).terminalOutputs?.uri('toolu_peer'));
+    await before.client.handle({ method: 'disposeChat', params: { channel: PEER } });
     await before.host.close();
 
-    // Closed and not deleted, so the backend still holds the conversation the
-    // session is, and that conversation still holds the call and its preview.
+    // Closed and not deleted, so the backend still holds the peer's
+    // conversation, and that conversation still holds the call and its preview.
     const second = knobs();
     second.listed = [row('live')];
-    second.transcript = (id, given) => (id === 'live'
-      ? [naming('t1', 'toolu_first', String(given?.uri('toolu_first')), { preview: 'the first\'s' })]
+    second.transcript = (id, given) => (id === PEER.slice('ahp-chat:/'.length)
+      ? [naming('t1', 'toolu_peer', String(given?.uri('toolu_peer')), { preview: 'the peer\'s' })]
       : []);
     const after = await hostAt(second, fileSessions({ dir }));
     await expect(stateOf(after.client, address)).rejects.toThrow(/No agent for session/);
@@ -608,8 +638,6 @@ describe('a host started again on the same store', () => {
     const own = String((await stateOf(before.client, LIVE)).defaultChat);
     for (const chat of [PEER, TAIL]) await before.client.handle({ method: 'createChat', params: { channel: LIVE, chat } });
     await settle();
-    // The first chat closed, so the session comes back as a peer of it.
-    await before.client.handle({ method: 'disposeChat', params: { channel: own } });
     await before.host.close();
 
     const second = knobs();
@@ -624,9 +652,9 @@ describe('a host started again on the same store', () => {
       method: 'dispatchAction',
       params: { channel: TAIL, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'wake up' } } },
     });
-    for (let i = 0; i < 200 && second.starts.length < 2; i += 1) await settle(1);
-    // Woken as the peer that took the default, with the other peer beside it.
-    expect(second.starts.map((one) => one.chatUri)).toEqual([PEER, TAIL]);
+    for (let i = 0; i < 200 && second.starts.length < 3; i += 1) await settle(1);
+    // Woken as its first chat, with the peers beside it.
+    expect(second.starts.map((one) => one.chatUri)).toEqual([own, PEER, TAIL]);
 
     // The session's own conversation is its first chat's; each peer's is its own.
     const byId = new Map([['live', own], [PEER.slice('ahp-chat:/'.length), PEER], ['tail', TAIL]]);

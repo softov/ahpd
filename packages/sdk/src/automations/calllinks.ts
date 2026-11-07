@@ -23,6 +23,14 @@ export interface CallLinks {
   contentOf(chat: string, toolCallId: string): Bag[] | undefined;
   /** The chat a call's `subagent` content links, when it names one. */
   linkOf(chat: string, toolCallId: string): string | undefined;
+  /**
+   * Whether a call's `_meta`, as a client reduced it, names its worker's chat.
+   *
+   * The protocol's reducer replaces a call's bag with each tool call action's
+   * `_meta`, a start's even when it carries none, so the last action that
+   * carried one decides.
+   */
+  stampedOn(chat: string, toolCallId: string): boolean;
   /** Set a call's content, which also makes it one the index keeps. */
   hold(chat: string, toolCallId: string, content: Bag[]): void;
   /** Drop one call. */
@@ -65,11 +73,14 @@ const aboutCall = (chat: string, toolCallId: string): string => `${chat}\u0000${
  * spawning call's `content` last held, by chat and call, which is what a
  * `subagent` content is appended to. A call is a spawning call when its start
  * or ready action carries `_meta.toolKind: 'subagent'`, or when a link was
- * written onto it; no other call's content is kept.
+ * written onto it; no other call's content is kept. `stamped` is the calls
+ * whose bag, as a client reduced it, names a worker's chat.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L49-L54
  */
 export function createCallLinks(): CallLinks {
   const turns = new Map<string, string>();
   const calls = new Map<string, Bag[]>();
+  const stamped = new Set<string>();
   return {
     observe(chat, action) {
       if (action.type === 'chat/turnStarted' && typeof action.turnId === 'string') {
@@ -82,6 +93,12 @@ export function createCallLinks(): CallLinks {
       const named = typeof action.toolCallId === 'string' ? action.toolCallId : undefined;
       if (named === undefined) return;
       const key = aboutCall(chat, named);
+      if (typeof action.type === 'string' && action.type.startsWith('chat/toolCall')
+        && (action.type === 'chat/toolCallStart' || action._meta !== undefined)) {
+        const meta = action._meta;
+        if (typeof meta === 'object' && meta !== null && typeof (meta as Bag).subagentChatUri === 'string') stamped.add(key);
+        else stamped.delete(key);
+      }
       if ((action.type === 'chat/toolCallStart' || action.type === 'chat/toolCallReady')
         && isSpawning(action)) {
         if (!calls.has(key)) calls.set(key, []);
@@ -99,16 +116,19 @@ export function createCallLinks(): CallLinks {
     turnOf: (chat) => turns.get(chat),
     contentOf: (chat, toolCallId) => calls.get(aboutCall(chat, toolCallId)),
     linkOf: (chat, toolCallId) => linkIn(calls.get(aboutCall(chat, toolCallId))),
+    stampedOn: (chat, toolCallId) => stamped.has(aboutCall(chat, toolCallId)),
     hold(chat, toolCallId, content) {
       calls.set(aboutCall(chat, toolCallId), content);
     },
     forget(chat, toolCallId) {
       calls.delete(aboutCall(chat, toolCallId));
+      stamped.delete(aboutCall(chat, toolCallId));
     },
     forgetChat(chat) {
       turns.delete(chat);
       const prefix = `${chat}\u0000`;
       for (const key of [...calls.keys()]) if (key.startsWith(prefix)) calls.delete(key);
+      for (const key of [...stamped]) if (key.startsWith(prefix)) stamped.delete(key);
     },
     get size() { return calls.size; },
   };

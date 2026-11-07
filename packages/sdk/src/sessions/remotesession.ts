@@ -20,7 +20,7 @@
  */
 
 import type { Bag } from '../types/common.js';
-import type { CreatedBy, RemoteOrigin } from '../types/sessions.js';
+import type { CreatedBy, MultiRoot, RemoteOrigin } from '../types/sessions.js';
 
 /** The key on the root `_meta` that says this host takes a session from another window. */
 export const REMOTE_SESSIONS_META = 'vscode.remoteSessions';
@@ -33,6 +33,9 @@ export const SPAWN_DEPTH_META = 'agentHost/sessionSpawnDepth';
 
 /** The key the session that made this one is read and written under. */
 export const CREATED_BY_META = 'agentHost/createdBySession';
+
+/** The key the multi-root workspace a session was made from is read and written under. */
+export const MULTI_ROOT_META = 'multiRoot';
 
 /** The tool the agent reports back with, which a client has to offer for it to be told to. */
 export const SEND_REMOTE_MESSAGE = 'send_remote_message';
@@ -125,18 +128,34 @@ export const asCreatedBy = (value: unknown): CreatedBy | undefined => {
 export const readCreatedBy = (source: unknown): CreatedBy | undefined => asCreatedBy(metaOf(source)?.[CREATED_BY_META]);
 
 /**
+ * The multi-root workspace a session was made from, or nothing where the value
+ * is not one: a workspace file named by a URI of at most 4096 characters, as
+ * the window's host reads it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1152-L1168
+ */
+export const asMultiRoot = (value: unknown): MultiRoot | undefined => {
+  const file = bag(value)?.workspaceFile;
+  if (typeof file !== 'string' || file.length === 0 || file.length > 4096 || !URL.canParse(file)) return undefined;
+  return { workspaceFile: file };
+};
+
+/** The multi-root workspace a config or a state carries, or nothing where it carries none. */
+export const readMultiRoot = (source: unknown): MultiRoot | undefined => asMultiRoot(metaOf(source)?.[MULTI_ROOT_META]);
+
+/**
  * The config a `createSession` request opens its session with, holding the
- * window's keys where `openSession` reads them.
+ * window's keys where `createProviderSession` reads them.
  *
- * VS Code sends the origin and the creator on the request's own `_meta`, the
- * protocol's place for request metadata, and leaves `config` to the agent's
- * settings. Every road into a session reads them off the config, so they are
- * moved there, and a key on the request wins over one in the config.
+ * VS Code sends the origin, the creator and the multi-root workspace on the
+ * request's own `_meta`, the protocol's place for request metadata, and leaves
+ * `config` to the agent's settings. Every road into a session reads them off
+ * the config, so they are moved there, and a key on the request wins over one
+ * in the config.
  */
 export const configOf = (params: Bag): Bag => {
   const config = bag(params.config) ?? {};
   const sent = metaOf(params);
-  const carried = Object.fromEntries([REMOTE_ORIGIN_META, CREATED_BY_META]
+  const carried = Object.fromEntries([REMOTE_ORIGIN_META, CREATED_BY_META, MULTI_ROOT_META]
     .filter((key) => sent?.[key] !== undefined)
     .map((key) => [key, sent?.[key]]));
   return Object.keys(carried).length === 0 ? config : { ...config, _meta: { ...metaOf(config), ...carried } };

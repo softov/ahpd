@@ -3,9 +3,10 @@ import { createHost } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import { memoryAutomations } from '../src/automations/automations.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
+import { shellTerminals } from '../src/machines/terminals.js';
 import { sdkVersion } from '../src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
-import type { Agent } from '../src/types/agent.js';
+import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { EventName, HostEvent } from '../src/types/events.js';
 import type { HostOptions, HostTool } from '../src/types/host.js';
@@ -111,9 +112,10 @@ const tooler = (outcome: (said: string) => void): Agent => {
  * A backend that hands its emitter to the test, so the test decides when a
  * session begins and stops waiting on a person.
  */
-function asker(): { agent: Agent; say: (action: Bag) => void } {
+function asker(): { agent: Agent; say: (action: Bag) => void; ask: (action: Bag) => void; chat: () => string } {
   const inner = echo({ path: DIR, pace: 0 });
   let emit: Emit | undefined;
+  let chatUri = '';
   return {
     agent: {
       ...inner,
@@ -121,10 +123,13 @@ function asker(): { agent: Agent; say: (action: Bag) => void } {
       displayName: 'Asker',
       create: (start) => {
         emit = start.emit;
+        chatUri = start.chatUri;
         return inner.create(start);
       },
     },
     say: (action) => { emit?.('session', action); },
+    ask: (action) => { emit?.('chat', action); },
+    chat: () => chatUri,
   };
 }
 
@@ -150,6 +155,17 @@ const failer = (): Agent => {
         },
       };
     },
+  };
+};
+
+/** A backend whose every send throws before it runs the turn. */
+const thrower = (): Agent => {
+  const inner = echo({ path: DIR, pace: 0 });
+  return {
+    ...inner,
+    provider: 'thrower',
+    displayName: 'Thrower',
+    create: (start) => ({ ...inner.create(start), sendMessage: () => { throw new Error('the CLI is gone'); } }),
   };
 };
 
@@ -194,7 +210,8 @@ const directory = (): Users => ({
 
 /** A turn event as the two facts a turn carries: which one, and who sent it. */
 const asked = (event: HostEvent): { turn: string; sender?: string } => {
-  const { turn, sender } = event as { turn: string; sender?: string };
+  const { sender } = event as { sender?: string };
+  const turn = event.type === 'turn_end' ? event.turnId : (event as { turn: string }).turn;
   return sender === undefined ? { turn } : { turn, sender };
 };
 
@@ -322,12 +339,15 @@ it('fires message, turn_start and turn_end once each, and nothing per delta', as
 
   const about = seen.filter((event) => event.type === 'message' || event.type === 'turn_start' || event.type === 'turn_end');
   expect(about.map((event) => event.type)).toEqual(['message', 'turn_start', 'turn_end']);
-  // The host's own session and chat URIs, not the client's aliases for them:
+  // The host's own session and chat URIs, whatever a client spells them as:
   // the event carries what the host calls the channel, which is the identity
   // it uses everywhere, and a session is held under its provider's name.
   expect(about[0]).toMatchObject({ session: 'ahp-session:/turn', chat: expect.stringMatching(/^ahp-chat:/), turn: 'turn-1', text: 'hello there' });
   expect(about[1]).toMatchObject({ turn: 'turn-1' });
-  expect(about[2]).toMatchObject({ turn: 'turn-1', status: 'complete' });
+  // VS Code's ITurnEnd: the session, the channel the turn ran on, its id and why it ended.
+  expect(about[2]).toEqual({
+    type: 'turn_end', session: 'ahp-session:/turn', channel: (about[0] as { chat: string }).chat, turnId: 'turn-1', reason: { kind: 'success' },
+  });
 });
 
 /*
@@ -369,10 +389,10 @@ it('fires turn_end cancelled when a running turn is stopped', async () => {
 
   const ended = of(seen, 'turn_end');
   expect(ended).toHaveLength(1);
-  expect(ended[0]).toMatchObject({ turn: 'turn-c', status: 'cancelled' });
+  expect(ended[0]).toMatchObject({ turnId: 'turn-c', reason: { kind: 'cancelled' } });
 });
 
-it('fires turn_end error, with the message, when a turn ends in chat/error', async () => {
+it('fires turn_end error, with the message and its type, when a turn ends in chat/error', async () => {
   const { seen, client } = watched({ agents: [failer()] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/fail', provider: 'failer' } });
@@ -385,7 +405,116 @@ it('fires turn_end error, with the message, when a turn ends in chat/error', asy
 
   const ended = of(seen, 'turn_end');
   expect(ended).toHaveLength(1);
-  expect(ended[0]).toMatchObject({ turn: 'turn-f', status: 'error', error: 'the model refused' });
+  expect(ended[0]).toMatchObject({
+    turnId: 'turn-f', reason: { kind: 'error', error: { errorType: 'turnFailed', message: 'the model refused' }, resumable: false },
+  });
+});
+
+/*
+ * The ends this host says itself raise `turn_end` as its backend's do, each
+ * with how it ended: a start refused before any backend ran it is `rejected`,
+ * with the refusal's words and a sender still holding the message, a send
+ * that failed is an `error`, and a `!` command the host ran is a
+ * `localCommand`, as VS Code's host offers each to its contributions'
+ * `onTurnEnd`. A refused start was handed to nobody, so no `turn_start` comes
+ * before it; a send that failed was handed to its backend first, and a
+ * command to its chat.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L19-L49
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L111
+ */
+it('fires turn_end rejected, with the refusal, for a start the host refuses before any backend runs it', async () => {
+  const { seen, client } = watched();
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/filed', provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/filed') } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-session:/filed', clientSeq: 1, action: { type: 'session/isArchivedChanged', isArchived: true } },
+  });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/filed'), clientSeq: 2, action: { type: 'chat/turnStarted', turnId: 'turn-r', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
+  await wait(100);
+
+  expect(of(seen, 'turn_start')).toEqual([]);
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
+    session: 'ahp-session:/filed',
+    channel: chatUriFor('ahp-session:/filed'),
+    turnId: 'turn-r',
+    reason: {
+      kind: 'rejected',
+      error: { errorType: 'archived', message: 'This session is archived and read-only. Restore the session to continue the conversation.' },
+      recoverable: true,
+    },
+  })]);
+});
+
+it('fires turn_end rejected for a queued message the host will not run, naming the message its sender still holds', async () => {
+  const { seen, client, host } = watched();
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/stopping', provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/stopping') } });
+  host.refuseTurns('This host is stopping');
+  await send(client, chatUriFor('ahp-session:/stopping'), 'q-1', 'later', 'chat/pendingMessageSet');
+  await wait(100);
+
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
+    reason: { kind: 'rejected', error: { errorType: 'rejected', message: 'This host is stopping' }, recoverable: true },
+    queuedMessageId: 'q-1',
+  })]);
+});
+
+/*
+ * A worker's chat raises its turn's end as every chat does, on the worker's
+ * chat, as VS Code's host offers a subagent chat's turn end on the channel it
+ * ran on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L39-L49
+ */
+it('fires turn_end for a worker\'s turn, on the worker\'s chat', async () => {
+  let start: Start | undefined;
+  const inner = echo({ path: DIR, pace: 0 });
+  const agent: Agent = { ...inner, create: (given) => { start = given; return inner.create(given); } };
+  const { seen, client } = watched({ agents: [agent] });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/lead', provider: 'echo' } });
+  const worker = start?.subagent?.('call-1', { title: 'A worker', prompt: 'go' });
+  if (worker === undefined) throw new Error('the host offered no subagent seam');
+  worker.end('error', 'the worker gave up');
+  await wait(50);
+
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
+    session: 'ahp-session:/lead',
+    channel: worker.uri,
+    turnId: worker.turnId,
+    reason: { kind: 'error', error: { errorType: 'subagentFailed', message: 'the worker gave up' }, resumable: false },
+  })]);
+});
+
+it('fires turn_end error, with the failure, for a turn whose send fails before its backend runs it', async () => {
+  const { seen, client } = watched({ agents: [thrower()] });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/gone', provider: 'thrower' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/gone') } });
+  await send(client, chatUriFor('ahp-session:/gone'), 'turn-s', 'hello');
+  await wait(100);
+
+  expect(of(seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-s' }]);
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({
+    turnId: 'turn-s', reason: { kind: 'error', error: { errorType: 'sendFailed', message: 'the CLI is gone' }, resumable: false },
+  })]);
+});
+
+it('fires turn_end localCommand for a ! command the host ran as the turn', async () => {
+  const { seen, client } = watched({ terminals: shellTerminals() });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/bang', provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/bang') } });
+  await send(client, chatUriFor('ahp-session:/bang'), 'turn-b', '!echo here');
+  for (let i = 0; i < 200 && of(seen, 'turn_end').length === 0; i++) await wait(25);
+
+  expect(of(seen, 'turn_end')).toEqual([expect.objectContaining({ turnId: 'turn-b', reason: { kind: 'localCommand' } })]);
+  expect(of(seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-b' }]);
 });
 
 it('names who sent each turn, and a queued message keeps its sender when it runs', async () => {
@@ -422,12 +551,15 @@ it('names who sent each turn, and a queued message keeps its sender when it runs
 });
 
 /*
- * Who sent a turn is this host's own record, which the events above read, and
+ * Who sent a turn rides its start on the wire, as upstream decided (Softov,
+ * 2026-10-02: "`_meta` on the wire"): `ahpd.sender` on the action and on its
+ * message, the spec's `_meta` place for a fact it does not define. The rest of
  * a client's start goes out as the client sent it, as the reference host
  * applies a client's action and says it with the client's origin.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L779-L789
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
  */
-it('says a client\'s start on the wire as the client sent it, on a host with somebody to name', async () => {
+it('says a client\'s start on the wire with its sender, on a host with somebody to name', async () => {
   /** The `chat/turnStarted` frame a client was sent, out of what it saw. */
   const started = (notes: { method: string; params: unknown }[]): Bag | undefined => notes
     .filter((note) => note.method === 'action')
@@ -445,8 +577,35 @@ it('says a client\'s start on the wire as the client sent it, on a host with som
   const action = said('turn-who', 'hello there', 'chat/turnStarted');
   await ana.handle({ method: 'dispatchAction', params: { channel: chat, action } });
   await wait(100);
-  expect(started(on.notes)).toEqual(action);
+  const sender = { 'ahpd.sender': 'user:ana' };
+  expect(started(on.notes)).toEqual({ ...action, _meta: sender, message: { ...(action.message as Bag), _meta: sender } });
   expect(of(named.seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-who', sender: 'user:ana' }]);
+});
+
+/*
+ * The daemon's `turnSenders` at `kept`, VS Code's: the host keeps who sent a
+ * turn, for its events and its store, and says it in no action and no turn a
+ * client reads back.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L183-L199
+ */
+it('keeps a turn\'s sender off the wire and in its events, where the daemon keeps senders', async () => {
+  const named = watched({ agents: [echo({ path: DIR, pace: 0 })], users: directory(), turnSenders: 'kept' });
+  const chat = chatUriFor('ahp-session:/kept');
+  const on = peer();
+  const ana = named.host.accept(on, PEOPLE.ana);
+  await hello(ana);
+  await ana.handle({ method: 'createSession', params: { channel: 'ahp-session:/kept', provider: 'echo' } });
+  await ana.handle({ method: 'subscribe', params: { channel: chat } });
+  const action = said('turn-kept', 'hello there', 'chat/turnStarted');
+  await ana.handle({ method: 'dispatchAction', params: { channel: chat, action } });
+  await wait(100);
+
+  const frames = on.notes.filter((note) => note.method === 'action').map((note) => (note.params as { action: Bag }).action);
+  expect(frames.find((one) => one.type === 'chat/turnStarted')).toEqual(action);
+  const read = await ana.handle({ method: 'subscribe', params: { channel: chat } }) as { snapshot: { state: { turns: Bag[] } } };
+  expect(read.snapshot.state.turns.map((turn) => (turn.message as Bag)._meta)).toEqual([undefined]);
+  expect(of(named.seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-kept', sender: 'user:ana' }]);
+  expect(of(named.seen, 'turn_end').map(asked)).toEqual([{ turn: 'turn-kept', sender: 'user:ana' }]);
 });
 
 it('names the maker of an automation as the sender of the turn it started', async () => {
@@ -579,6 +738,7 @@ it('fires terminal_open once the terminal exists', async () => {
       title: () => options.name ?? 'Terminal',
       claim: () => options.claim,
       lifecycle: () => ({ status: 'running' }),
+      state: () => ({ isPty: false }),
     }),
   } as unknown as TerminalStore;
   const { seen, client } = watched({ terminals: store });
@@ -619,55 +779,57 @@ it('fires automation_fire when an automation starts a session', async () => {
   expect(fired[0]).toMatchObject({ automation: 'ahp-automation:/nightly' });
 });
 
-it('fires input_needed_set and input_needed_removed as the backend asks and answers', async () => {
-  const { agent, say } = asker();
+/*
+ * The session's entries are the host's, raised from the chat's state under
+ * VS Code's ids, and each is told to the plugins as it is said.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L51-L101
+ */
+it('fires input_needed_set and input_needed_removed as the host raises a question\'s entry and takes it down', async () => {
+  const { agent, ask, chat } = asker();
   const { seen, client } = watched({ agents: [agent] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/ask', provider: 'asker' } });
   await settle();
 
-  const request = { id: 'ask-1', chat: 'ahp-chat:/ask', kind: 'chatInput' };
-  say({ type: 'session/inputNeededSet', request });
-  // The protocol's action is an upsert keyed by `id`, so a backend that sets
-  // the same entry again says it again; the handler is what dedupes.
-  say({ type: 'session/inputNeededSet', request });
-  say({ type: 'session/inputNeededRemoved', id: 'ask-1' });
+  ask({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } });
+  ask({ type: 'chat/inputRequested', request: { id: 'ask-1', message: 'Which one?' } });
+  ask({ type: 'chat/inputCompleted', requestId: 'ask-1', response: 'cancel' });
   await settle();
 
-  // Both ends repeat an action the client also received, and both are here
-  // because a plugin that says so watches nothing else. In the order sent.
+  // A plugin that says so watches nothing else. In the order said.
   const about = seen.filter((event) => event.type === 'input_needed_set' || event.type === 'input_needed_removed');
-  expect(about.map((event) => event.type)).toEqual(['input_needed_set', 'input_needed_set', 'input_needed_removed']);
-  expect(about[0]).toMatchObject({ session: 'ahp-session:/ask', chat: 'ahp-chat:/ask', id: 'ask-1', kind: 'chatInput' });
-  expect(about[2]).toMatchObject({ session: 'ahp-session:/ask', id: 'ask-1' });
+  const id = `chatInput:${chat()}:ask-1`;
+  expect(about.map((event) => event.type)).toEqual(['input_needed_set', 'input_needed_removed']);
+  expect(about[0]).toMatchObject({ session: 'ahp-session:/ask', chat: chat(), id, kind: 'chatInput' });
+  expect(about[1]).toMatchObject({ session: 'ahp-session:/ask', id });
 });
 
-it('leaves the event out when the backend sends no id to raise it about', async () => {
+it('says no entry a backend raises itself, nor its event', async () => {
   const { agent, say } = asker();
   const { seen, client } = watched({ agents: [agent] });
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/bare', provider: 'asker' } });
   await settle();
 
-  say({ type: 'session/inputNeededSet', request: { chat: 'ahp-chat:/bare', kind: 'chatInput' } });
-  say({ type: 'session/inputNeededRemoved' });
+  say({ type: 'session/inputNeededSet', request: { id: 'own', chat: 'ahp-chat:/bare', kind: 'chatInput' } });
+  say({ type: 'session/inputNeededRemoved', id: 'own' });
   await settle();
 
-  // An event carrying empty strings is a notifier told about a session it
-  // cannot name, and the client already has the action.
   expect(of(seen, 'input_needed_set')).toHaveLength(0);
   expect(of(seen, 'input_needed_removed')).toHaveLength(0);
 });
 
 it('reports a handler that throws on input_needed_set and still reaches the client', async () => {
-  const { agent, say } = asker();
+  const { agent, ask } = asker();
   const { lines, client, peer: p } = watched({ agents: [agent] }, 'input_needed_set');
   await hello(client);
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/broken', provider: 'asker' } });
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/broken' } });
   await settle();
 
-  say({ type: 'session/inputNeededSet', request: { id: 'ask-2', chat: 'ahp-chat:/broken', kind: 'toolConfirmation' } });
+  ask({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } });
+  ask({ type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'c1', toolName: 'write', displayName: 'Write' });
+  ask({ type: 'chat/toolCallReady', turnId: 't1', toolCallId: 'c1', invocationMessage: 'Write a file' });
   await settle();
 
   expect(lines.filter((line) => line.includes('probe failed at input_needed_set: probe broke'))).toHaveLength(1);

@@ -743,17 +743,20 @@ export const apply: Plugin['apply'] = (host, options) => {
   /*
    * The end of a turn: the words it ended with, read off the session's chat.
    *
-   * Every turn of the daemon raises the event, so one no main chat is waiting
-   * on is left alone rather than read. The session is asked again after the
-   * read, because a message that arrived meanwhile woke it again and holds a
-   * turn of its own: answering that turn with these words would answer a
-   * message nobody sent. A read that fails is reported and the main turn ends
-   * with no text, so a person waiting on it is not left waiting on an error
-   * they cannot see.
+   * Every turn of the daemon raises the event, every chat's, so one no main
+   * chat is waiting on is left alone rather than read: a turn of another
+   * session, and a turn of a worker's chat inside the back session, whose end
+   * is not the answer. The session is asked again after the read, because a
+   * message that arrived meanwhile woke it again and holds a turn of its own:
+   * answering that turn with these words would answer a message nobody sent.
+   * A turn that failed, or whose start the host refused, fails the main turn in
+   * its own words. A read that fails is reported and the main turn ends with
+   * no text, so a person waiting on it is not left waiting on an error they
+   * cannot see.
    */
   function ended(event: TurnEndEvent): void {
     const held = wake.main(event.session);
-    if (held === undefined) return;
+    if (held === undefined || event.channel !== held.chat) return;
     /*
      * Whether this is still the main turn waiting when the read comes back: a
      * message that arrived meanwhile holds its own turn in the same chat, and
@@ -766,21 +769,27 @@ export const apply: Plugin['apply'] = (host, options) => {
     };
     const read = (async (): Promise<string> => {
       const { conn } = await connection();
-      const answered = await conn.request('subscribe', { channel: event.chat }) as { snapshot?: { state?: unknown } };
-      return textOf(answered.snapshot?.state, event.turn);
+      const answered = await conn.request('subscribe', { channel: event.channel }) as { snapshot?: { state?: unknown } };
+      return textOf(answered.snapshot?.state, event.turnId);
     })();
     read.then((text) => {
       if (!still()) return;
-      wake.finished(event.session, text, event.status === 'error' ? event.error ?? 'The turn failed' : undefined);
+      const failed = event.reason.kind === 'error' || event.reason.kind === 'rejected' ? event.reason.error.message : undefined;
+      wake.finished(event.session, text, failed);
     }, (error: unknown) => {
-      host.problem(`${name}: the end of turn ${event.turn} in ${event.chat} was not read: ${reason(error)}`);
+      host.problem(`${name}: the end of turn ${event.turnId} in ${event.channel} was not read: ${reason(error)}`);
       if (!still()) return;
       wake.finished(event.session, '');
     });
   }
-  /* A back turn `turn_start` is still reading keeps its end for that read. */
+  /*
+   * A back turn `turn_start` is still reading keeps its end for that read. A
+   * start the host refused had no `turn_start` to say which queued message it
+   * took up, so its end says it, and the message waits no more.
+   */
   host.on('turn_end', (event) => {
-    const note = opening.get(openingKey(event.session, event.turn));
+    if (event.reason.kind === 'rejected' && event.queuedMessageId !== undefined) wake.taken(event.session, event.turnId, event.queuedMessageId);
+    const note = opening.get(openingKey(event.session, event.turnId));
     if (note !== undefined) {
       note.ended = event;
       return;

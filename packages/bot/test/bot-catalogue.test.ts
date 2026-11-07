@@ -286,8 +286,9 @@ it('sends the bots a membership change gives and takes, to that reader alone', a
 it('sends a membership change only to the person it concerns on a shared client id', async () => {
   const members: Record<string, string[]> = { ana: ['crew'], bo: [] };
   const { host, changed } = made({ ana: PERSON, bo: PERSON }, members);
-  const ana = await as(host, 'ana', 'anonymous');
-  const bo = await as(host, 'bo', 'anonymous');
+  // The empty id, which every client that gives none shares.
+  const ana = await as(host, 'ana', '');
+  const bo = await as(host, 'bo', '');
   await write(ana, 'crews', { name: 'Crews', owner: 'team:crew' });
   await write(bo, 'his', { name: 'His' });
   await write(ana, 'hers', { name: 'Hers' });

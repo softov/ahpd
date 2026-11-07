@@ -137,23 +137,23 @@ it('ends a turn that stopped after a tool result at its last assistant message',
   expect(session.endPoint?.('u2')).toBeUndefined();
 });
 
-/** A turn whose steering message the CLI ran after its last answer, as a prompt of its own, and a turn after it. */
-const STEERED = [
+/** A turn run again, its prompt written down a second time under a new uuid, and a turn after it. */
+const RUN_TWICE = [
   prompt('u1', 'look around'),
   said('a1', 'm1', [{ type: 'text', text: 'Three files.' }]),
-  prompt('s1', 'and count them'),
-  said('a2', 'm2', [{ type: 'text', text: 'Three.' }]),
+  prompt('s1', 'look around'),
+  said('a2', 'm2', [{ type: 'text', text: 'Three files, again.' }]),
   prompt('u3', 'and now'),
   said('a3', 'm3', [{ type: 'text', text: 'Done.' }]),
 ];
 
-/** The turns a host reads that conversation back as, its record putting the steering message inside the turn it steered. */
+/** The turns a host reads that conversation back as, its record making the turn run twice the one turn it is. */
 const JOINED = [{ id: 'u1', message: { text: 'look around' } }, { id: 'u3', message: { text: 'and now' } }];
 
 it('ends a turn the host read back with another inside it where that other one ended', async () => {
   const agent = claude({ paths: [FOLDER] });
   const id = '0a0a0a0a-2222-4222-8222-000000000006';
-  sdk.messages = STEERED;
+  sdk.messages = RUN_TWICE;
   written(id);
   await agent.transcript?.(id, { workingDirectory: FOLDER });
   const session = agent.create({ ...START, resume: id, seed: JOINED });
@@ -165,10 +165,10 @@ it('ends a turn the host read back with another inside it where that other one e
 it('keeps a turn the host read back with another inside it to the rewind point, past which nothing is kept', async () => {
   const agent = claude({ paths: [FOLDER] });
   const id = '0a0a0a0a-2222-4222-8222-000000000007';
-  sdk.messages = STEERED;
+  sdk.messages = RUN_TWICE;
   written(id);
   await agent.transcript?.(id, { workingDirectory: FOLDER });
-  // Cut back to the end of the first turn, which is the end of the message inside it.
+  // Cut back to the end of the first turn, which is the end of its later run.
   const session = agent.create({ ...START, resume: id, seed: JOINED.slice(0, 1), rewindAt: 'a2' });
   expect(session.endPoint?.('u1')).toBe('a2');
   expect(session.endPoint?.('u3')).toBeUndefined();

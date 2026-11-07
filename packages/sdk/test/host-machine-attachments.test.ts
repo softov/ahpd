@@ -173,8 +173,9 @@ it('puts the file into the machine after it is written and before the turn', asy
   const copy = first(said.put);
   expect(copy.id).toBe('box');
   expect(copy.paths).toHaveLength(1);
-  // The path the message names, which is the one the host wrote the bytes to.
-  expect(dirname(first(copy.paths))).toBe(join(dir, 'attachments', 'one'));
+  // The path the message names, which is the one the host wrote the bytes to,
+  // in a folder of its own inside the session's.
+  expect(dirname(dirname(first(copy.paths)))).toBe(join(dir, 'attachments', 'one'));
   expect(first(copy.paths).endsWith('.png')).toBe(true);
   expect(first(copy.hex)).toBe(PNG.toString('hex'));
 

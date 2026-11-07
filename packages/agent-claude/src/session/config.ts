@@ -38,6 +38,42 @@ export const EFFORT_DESCRIPTIONS: Record<typeof EFFORTS[number], string> = {
   max: 'Absolute maximum capability with no constraints',
 };
 
+/**
+ * How hard *this* model can be told to think, as its own config schema.
+ *
+ * Per model: the CLI reports a different `supportedEffortLevels` for each -
+ * some take all five, some take one, and some take none - and a control lists
+ * what its model has. A model that supports none gets no schema and a client
+ * draws no control, which is the honest form of "this one does not think
+ * harder on request". The boot probe and every session's handshake read a
+ * model this one way, so the list a handshake answers is the list the probe
+ * did.
+ *
+ * `thinkingLevel` is the key, because that is the one the reference client's
+ * picker writes into `ModelSelection.config` for both of its providers, and
+ * the property is VS Code's Claude schema for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L107-L126
+ */
+export const thinkingFor = (efforts: string[]): { configSchema?: Record<string, unknown> } => {
+  if (efforts.length === 0) return {};
+  return {
+    configSchema: {
+      type: 'object',
+      properties: {
+        thinkingLevel: {
+          type: 'string',
+          title: 'Effort Level',
+          description: 'Controls how much reasoning effort Claude uses.',
+          enum: [...efforts],
+          enumLabels: efforts.map((one) => EFFORT_LABELS[one as typeof EFFORTS[number]] ?? one),
+          enumDescriptions: efforts.map((one) => EFFORT_DESCRIPTIONS[one as typeof EFFORTS[number]] ?? ''),
+          ...(efforts.includes('high') ? { default: 'high' } : {}),
+        },
+      },
+    },
+  };
+};
+
 /** One client-generated script, sourced before every shell command. */
 interface ShellInitScript { shell: 'bash' | 'powershell'; script: string }
 

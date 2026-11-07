@@ -150,7 +150,7 @@ function load(hostOptions: HostOptions, state: string, more: Record<string, unkn
 /** The provider as this host serves it, which is where every state change goes. */
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
   write(uri: string, content: { data: string; encoding: string }, owner?: string): Promise<void>;
-  remove(uri: string): Promise<void>;
+  delete(uri: string): Promise<void>;
 };
 
 /** What a body is, as a client writes it. */
@@ -195,8 +195,10 @@ const directory = (): Users => ({
   mint: async () => 'nonsense',
 });
 
+/** A window's peer, which vouches for a folder it asks a dev container in. */
 const peer = (): Peer => ({
-  send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
+  send: () => {}, notify: () => {}, answered: () => {}, close: () => {},
+  request: async (method: string) => (method === 'vscode/requestWorkspaceTrust' ? { trusted: true } : {}),
 });
 
 /** A host opened on one connection, signed in as ana. */
@@ -505,7 +507,7 @@ it('records an adopted container, lists, inspects and meters it, and forgets it 
     list(uri: string): Promise<{ name: string }[]>;
     read(uri: string): Promise<unknown>;
     write(uri: string, content: { data: string; encoding: string }): Promise<void>;
-    remove(uri: string): Promise<void>;
+    delete(uri: string): Promise<void>;
   };
   expect((await provider.list('computer://')).map((one) => one.name)).toEqual([id]);
   await expect(provider.read(`computer://${id}/status`)).resolves.toBeDefined();
@@ -528,7 +530,7 @@ it('records an adopted container, lists, inspects and meters it, and forgets it 
     pools: ['user:ana'],
   }]);
 
-  await provider.remove(`computer://${id}`);
+  await provider.delete(`computer://${id}`);
   expect(dockerHeld(held).machines).toEqual([]);
   expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toEqual({});
   /*
@@ -579,7 +581,7 @@ it('writes nothing, and fails nothing, on a host with no usage port', async () =
   await provider.write('computer://box', said(JSON.stringify({ image: 'node:22' })), 'user:ana');
   await until(() => dockerHeld(held).machines.length === 1);
   await provider.write('computer://box/state', said('stopped'));
-  await provider.remove('computer://box');
+  await provider.delete('computer://box');
 
   expect(dockerHeld(held).calls.map((one) => one[0])).toContain('stop');
   expect(dockerHeld(held).machines).toEqual([]);

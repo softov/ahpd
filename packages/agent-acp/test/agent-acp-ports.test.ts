@@ -398,8 +398,11 @@ it('sends calls as the protocol declares them, and a late client reads them the 
 
 /*
  * A terminal shown as what it is: a server's, and a person's command's while
- * it runs, as the reference host names its own.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
+ * it runs, as the reference host names its own once its shell has printed, the
+ * command typed into that shell and ended by the shell integration's mark that
+ * it finished.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L117
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L224-L285
  */
 it('says a pseudoterminal runs a terminal, and names a command\'s while it runs', async () => {
   const pty = fakePty();
@@ -420,23 +423,26 @@ it('says a pseudoterminal runs a terminal, and names a command\'s while it runs'
   const painted = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.toolCallId === 'call-paint');
   expect(((painted?.action.result as Bag).content as Bag[])[0]).toMatchObject({ ...named, title: 'Paint and preview' });
 
-  // A person's command names its terminal as soon as it opens.
+  // A person's command names its terminal once its shell has printed its
+  // prompt, and the command is typed in.
+  const shells = pty.started.length;
   begin('t2', '!make preview');
   const changed = (): Bag | undefined => actions(p, chatUri)
     .find((e) => e.action.type === 'chat/toolCallContentChanged' && e.action.turnId === 't2')?.action;
-  await until(() => changed() !== undefined);
+  await until(() => pty.started.length > shells);
+  pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
+  await until(() => changed() !== undefined && pty.typed.at(-1) === ' make preview\r');
   expect(changed()?.content).toEqual([named]);
   expect(changed()).not.toHaveProperty('_meta');
   const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 
-  pty.say('built\r\n');
-  pty.exit(0);
+  pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
   await endedTurn(p, chatUri, 2);
   const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.turnId === 't2');
   expect((done?.action.result as Bag).content).toEqual([
-    { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
-    { type: 'text', text: 'built\r\n' },
+    { ...named, result: { exitCode: 0, preview: 'built' } },
+    { type: 'text', text: 'built' },
   ]);
   const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
@@ -690,9 +696,11 @@ it('asks a form the server is blocked on, and answers it with what was filled in
   });
 
   // The session says somebody is needed, as a permission does, and the entry is
-  // the chat input kind: it names the chat rather than a turn.
+  // the chat input kind under VS Code's id for it: it names the chat rather
+  // than a turn.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L157
   const entry = needing(p, uri);
-  expect(entry).toMatchObject({ id: 'call-elicit:elicitation', kind: 'chatInput' });
+  expect(entry).toMatchObject({ id: `chatInput:${String(entry?.chat)}:call-elicit:elicitation`, kind: 'chatInput' });
   // The chat it names is this conversation's, under the host's own name for it
   // rather than the alias this window subscribed with: the entry is what a
   // client that never subscribed to the chat answers on.
@@ -734,7 +742,7 @@ it('asks a form the server is blocked on, and answers it with what was filled in
   // And the entry is withdrawn, so nothing is left asking a question the server
   // has already been answered.
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved'
-    && e.action.id === 'call-elicit:elicitation')).toBe(true);
+    && e.action.id === entry?.id)).toBe(true);
 });
 
 it('answers a declined form with a decline, and carries no content', async () => {
@@ -980,7 +988,9 @@ it('carries a page rather than a form, and the server\'s own completion ends it'
   // No completion in nobody's name, as the reference host says none: the page
   // stays in its turn, and its entry went with the turn that ended.
   expect(actions(p, chatUri).some((e) => e.action.type === 'chat/inputCompleted')).toBe(false);
-  expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === 'url-1'))
+  const entry = needing(p, uri);
+  expect(entry?.id).toBe(`chatInput:${String(entry?.chat)}:url-1`);
+  expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry?.id))
     .toBe(true);
 });
 
@@ -1076,8 +1086,10 @@ it('moves nothing for a withdrawal that arrives after the question was answered'
    * a question nobody is holding, and the server told twice about one request.
    */
   expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/inputCompleted')).toHaveLength(1);
+  const entry = needing(p, uri);
+  expect(entry?.id).toBe(`chatInput:${String(entry?.chat)}:call-wd-after:elicitation`);
   expect(actions(p, uri).filter((e) => e.action.type === 'session/inputNeededRemoved'
-    && e.action.id === 'call-wd-after:elicitation')).toHaveLength(1);
+    && e.action.id === entry?.id)).toHaveLength(1);
 });
 
 it('answers the question a stopped turn left standing with `cancel`', async () => {
@@ -1100,8 +1112,10 @@ it('answers the question a stopped turn left standing with `cancel`', async () =
   expect(readFileSync(log, 'utf8')).toContain('"action":"cancel"');
   // The entry goes with the turn the stop ended, so a client is not left asking
   // a question that can no longer be answered.
+  const entry = needing(p, uri);
+  expect(entry?.id).toBe(`chatInput:${String(entry?.chat)}:elicitation:1`);
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved'
-    && e.action.id === 'elicitation:1')).toBe(true);
+    && e.action.id === entry?.id)).toBe(true);
   expect(types(p, uri).at(-1)).not.toBe('session/inputNeededSet');
   // And no completion in nobody's name: the stop is the ending, and the turn it
   // ends closes the question in every client's state.

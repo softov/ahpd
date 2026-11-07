@@ -11,11 +11,19 @@ beforeEach(resetSdk);
  * The order a session's settings come in.
  *
  * A client draws the form in the order the properties arrive, so the order is
- * the form: the computer a session runs on, then where it works and from which
- * branch, then the agent's own settings. The same order is reported on a
- * running session, whose schema comes from the other fold and is drawn as the
- * chips above the box.
+ * the form. The reference host composes it as isolation, then the agent's own
+ * settings, then the branch and the worktree keys; the computer a session runs
+ * on leads with isolation. The same order is reported on a running session,
+ * whose schema comes from the other fold and is drawn as the chips above the
+ * box.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11018-L11034
  */
+
+/** This host's keys after the agent's, in the order the reference host adds them. */
+const TAIL = [
+  'branch', 'worktreeBranchPrefix', 'worktreeIncludeFiles', 'worktreeSymlinkFolders',
+  'worktreeCreateNewBranch', 'worktreeBranchTrack',
+];
 
 /** A repository the form can read, without git: nothing here makes a tree. */
 const repository = (): Worktrees => ({
@@ -39,17 +47,18 @@ const form = async (over: Partial<HostOptions> = {}): Promise<string[]> => {
   return Object.keys(cfg.schema.properties);
 };
 
-it('starts the new session form with the computer, then isolation and branch', async () => {
+it('composes the new session form as the reference host does: the computer and isolation, the agent\'s settings, then the branch and worktree keys', async () => {
   const keys = await form({ worktrees: repository(), sessionConfig: COMPUTER });
-  expect(keys.slice(0, 3)).toEqual(['computer', 'isolation', 'branch']);
-  // The agent's own settings come after the host's, in the order it declared.
-  expect(keys).toContain('permissionMode');
-  expect(keys.indexOf('permissionMode')).toBeGreaterThan(keys.indexOf('branch'));
+  expect(keys.slice(0, 2)).toEqual(['computer', 'isolation']);
+  expect(keys.slice(-TAIL.length)).toEqual(TAIL);
+  // The agent's own settings sit between, in the order it declared them.
+  expect(keys.slice(2, -TAIL.length)).toContain('permissionMode');
 });
 
 it('starts with isolation on a host that serves no computer plugin', async () => {
   const keys = await form({ worktrees: repository() });
-  expect(keys.slice(0, 2)).toEqual(['isolation', 'branch']);
+  expect(keys[0]).toBe('isolation');
+  expect(keys.slice(-TAIL.length)).toEqual(TAIL);
 });
 
 it('reports a running session in the same order', async () => {
@@ -65,5 +74,8 @@ it('reports a running session in the same order', async () => {
   const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { config: { schema: { properties: Record<string, unknown> } } } };
   }).snapshot.state;
-  expect(Object.keys(state.config.schema.properties).slice(0, 3)).toEqual(['computer', 'isolation', 'branch']);
+  const keys = Object.keys(state.config.schema.properties);
+  expect(keys.slice(0, 2)).toEqual(['computer', 'isolation']);
+  expect(keys.slice(-TAIL.length)).toEqual(TAIL);
+  expect(keys.slice(2, -TAIL.length)).toContain('permissionMode');
 });

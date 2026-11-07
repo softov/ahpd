@@ -1,18 +1,21 @@
 /*
  * What a `shutdown` request reaches in the daemon.
  *
- * The method belongs to the host, which answers and then calls what it was
- * given; what the daemon gives it is what is here - the way down once the
- * lifecycle exists, and the signal a shutdown sent itself before that. Nothing
- * in this file signals a process: the signal is a spy and the way down is
- * driven with a fake exit, so no case can stop the process running the suite
- * or reach a real daemon to take down.
+ * The method belongs to the host, which shuts its backends down, answers and
+ * then calls what it was given; what the daemon gives it is what is here -
+ * the service manager's stop where one holds the daemon, the way down once
+ * the lifecycle exists, and the signal a shutdown sent itself before that.
+ * Nothing in this file signals a process or asks a real manager: the signal
+ * is a spy, the manager records what it was asked and the way down is driven
+ * with a fake exit, so no case can stop the process running the suite or
+ * reach a real daemon to take down.
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { lifecycle } from '../src/commands/restart.js';
 import { daemonShutdown } from '../src/commands/run.js';
 import type { Lifecycle } from '../src/commands/restart.js';
+import type { Service } from '../src/service.js';
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -40,7 +43,7 @@ const settled = (): Promise<void> => new Promise((done) => { setTimeout(done, 0)
 describe('the shutdown a request is given', () => {
   it('runs the way down, which raises stopping, and exits only after it', async () => {
     const { way, ran } = driving();
-    daemonShutdown(() => way.shutdown)();
+    void daemonShutdown(() => way.shutdown)();
     // Answered by the way down before it settles, so a request cannot exit
     // ahead of the stopping handlers a plugin is still running in.
     expect(ran).toEqual(['log stopping', 'raise stopping']);
@@ -53,17 +56,35 @@ describe('the shutdown a request is given', () => {
   it('sends no signal to this daemon\'s own process', async () => {
     const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
     const { way, ran } = driving();
-    daemonShutdown(() => way.shutdown)();
+    void daemonShutdown(() => way.shutdown)();
     await settled();
     expect(kill).not.toHaveBeenCalled();
     expect(ran).toEqual(['log stopping', 'raise stopping', 'log stopped', 'forget', 'exit 0']);
   });
 
-  it('keeps the signal while there is no way down yet', () => {
+  it('keeps the signal while there is no way down yet', async () => {
     const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
     // The window between the host being built with a shutdown and the
     // lifecycle being made, which the bound socket lets a request land in.
-    daemonShutdown(() => undefined)();
+    await daemonShutdown(() => undefined)();
     expect(kill).toHaveBeenCalledWith(process.pid, 'SIGTERM');
+  });
+
+  /*
+   * A daemon a service manager holds is stopped through the manager, as `ahpd
+   * stop` stops one: a unit that starts its daemon again whenever it exits
+   * answers the manager's stop by leaving it stopped, and an exit of the
+   * daemon's own by starting another.
+   */
+  it('asks the service manager that holds the daemon to stop it, and runs no way down of its own', async () => {
+    const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
+    const { way, ran } = driving();
+    const asked: [Service, string | undefined][] = [];
+    const manager = { stop: async (service: Service, name?: string) => { asked.push([service, name]); } };
+    await daemonShutdown(() => way.shutdown, { service: 'systemd', name: 'ahpd-work', manager })();
+    await settled();
+    expect(asked).toEqual([['systemd', 'ahpd-work']]);
+    expect(ran).toEqual([]);
+    expect(kill).not.toHaveBeenCalled();
   });
 });

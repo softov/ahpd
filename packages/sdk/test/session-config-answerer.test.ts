@@ -121,15 +121,48 @@ it('answers the picker only for the provider the ask names', async () => {
   expect(picker.asked).toEqual([]);
 });
 
-it('gives an empty picker when the answerer throws', async () => {
+/*
+ * The answerer's failure is the request's, as VS Code's host lets a
+ * provider's completions fail the request.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11070-L11081
+ */
+it('fails the request when the answerer throws', async () => {
   const agent = pickerBackend(() => { throw new Error('no bot list today'); });
   const client = await serving([agent]);
 
-  const answer = await client.handle({
+  await expect(client.handle({
     method: 'sessionConfigCompletions',
     params: { channel: ROOT, provider: 'picker', property: 'bot', query: '' },
-  }) as { items: unknown };
-  expect(answer.items).toEqual([]);
+  })).rejects.toThrow('no bot list today');
+});
+
+/*
+ * `branch` is the host's for every agent, as VS Code's host answers it from
+ * its own list before asking a provider anything.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11070-L11075
+ */
+it('answers branch from the host\'s own list, whatever the backend would say', async () => {
+  const agent = pickerBackend(() => [], {
+    completions: { branch: () => [{ value: 'the-backends', label: 'the-backends' }] },
+  });
+  const host = createHost({
+    path: DIR, agents: [agent], sessions: memorySessions(),
+    worktrees: {
+      repository: async (where) => where,
+      branches: async () => ['main', 'feature'],
+      create: async () => {},
+      dirty: async () => false,
+      remove: async () => {},
+    },
+  });
+  const client = host.accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+
+  const answer = await client.handle({
+    method: 'sessionConfigCompletions',
+    params: { channel: ROOT, provider: 'picker', property: 'branch', query: '' },
+  }) as { items: { value: string }[] };
+  expect(answer.items.map((one) => one.value)).toEqual(['main', 'feature']);
 });
 
 it('leaves a key the schema does not declare alone', async () => {

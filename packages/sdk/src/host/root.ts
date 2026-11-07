@@ -1,4 +1,5 @@
 import { availableParallelism, totalmem } from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
 import { seesAccount, seesConfig } from './gate.js';
 import { OPERATIONS, operationsOf } from '../access/users.js';
 import { REMOTE_SESSIONS_META } from '../sessions/remotesession.js';
@@ -15,12 +16,10 @@ import type { ResourceProvider } from '../types/resources.js';
  * The provider's method names, and the words a grant is made of.
  *
  * The order lists what a scheme does and the lookup says how: a provider
- * implements `read`, `write` and `remove` and a role grants `get`, `put`
+ * implements `read`, `write` and `delete` and a role grants `get`, `put`
  * and `delete`, so the advertised word is the one a client can put in a
- * `role://` body and have it mean the method the host will call. They were
- * `read` and `write` before, which named a group rather than an act, and
- * a client that wrote `policy:read` into a role was naming a group the gate
- * never asked for.
+ * `role://` body and have it mean the method the host will call. Each names
+ * an act, as the gate asks for one.
  */
 const ORDER = ['get', 'list', 'resolve', 'watch', 'put', 'delete', 'mkdir', 'move', 'copy'] as const;
 
@@ -30,7 +29,7 @@ const METHOD_OF: Record<typeof ORDER[number], string> = {
   resolve: 'resolve',
   watch: 'watch',
   put: 'write',
-  delete: 'remove',
+  delete: 'delete',
   mkdir: 'mkdir',
   move: 'move',
   copy: 'copy',
@@ -189,6 +188,13 @@ export const accountKey = (provider: string): string =>
  */
 export const RESTART_KEY = 'ahpd.restartNeeded';
 
+/**
+ * The root's `_meta` key the providers' settings pages are listed under,
+ * VS Code's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentCustomizationSettings.ts#L8
+ */
+export const PROVIDER_SETTINGS_META = 'vscode.agentCustomizationSettings';
+
 /** What the root channel advertises, and the config a client pushes to it. */
 export interface Root {
   rootConfig: Record<string, unknown>;
@@ -224,13 +230,22 @@ export interface Root {
    */
   keptOnReplace(pushed: Record<string, unknown>): Record<string, unknown>;
   /**
+   * Whether a root config change leaves the values the root holds as they
+   * are: a merge whose every value is held already, or a replace with the
+   * values held. Such a change is neither applied nor said, as VS Code's host
+   * neither reduces nor emits one: said, it would have every client watching
+   * the root react to a change that is not one, and send it back.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2882-L2894
+   */
+  changesNothing(config: Record<string, unknown>, replace: boolean): boolean;
+  /**
    * Say each daemon value that moved since the root's state last said it.
    *
    * For a write to the daemon's file that no client's `root/configChanged`
    * made, which is what a plugin command and a served paths command do.
    * Nothing when the root is not held yet: its first snapshot reads the port.
    */
-  daemonValuesMoved(): Promise<void>;
+  daemonValuesChanged(): Promise<void>;
 }
 
 export function createRoot(ctx: HostContext): Root {
@@ -309,8 +324,8 @@ export function createRoot(ctx: HostContext): Root {
      * "what does this harness offer" that could disagree is worse than one
      * answer that arrives a moment after boot.
      */
-    ...(ctx.about(agent.provider).seeds.length > 0
-      ? { customizations: ctx.about(agent.provider).seeds }
+    ...(ctx.about(agent.provider).customizations.length > 0
+      ? { customizations: ctx.about(agent.provider).customizations }
       : {}),
     capabilities: {
       /*
@@ -546,7 +561,7 @@ export function createRoot(ctx: HostContext): Root {
   const daemonKey = (key: string): boolean => Object.hasOwn(daemonProperties(), key);
   /**
    * Every key the daemon's port has declared or answered since the root
-   * opened, filled by `rootSeed` and `daemonValuesMoved`.
+   * opened, filled by `rootSeed` and `daemonValuesChanged`.
    *
    * A plugin removed while the daemon runs keeps its property in the root's
    * schema and its `null` in the values, and they are the daemon's still,
@@ -567,7 +582,23 @@ export function createRoot(ctx: HostContext): Root {
    * exists and a push of it is a write this host may make, so `seesConfig`
    * decides what a connection is shown and this decides what is real.
    */
-  const declaresConfigKey = (key: string): boolean => Object.hasOwn(ROOT_CONFIG_SCHEMA.properties, key) || daemonKey(key);
+  const declaresConfigKey = (key: string): boolean =>
+    Object.hasOwn(ROOT_CONFIG_SCHEMA.properties, key) || Object.hasOwn(providerProperties(), key) || daemonKey(key);
+  /**
+   * The root config properties the providers' configurations declare, as VS
+   * Code adds a registered provider's properties to the root config's schema;
+   * a key this host's own schema declares stays the host's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1319-L1340
+   */
+  const providerProperties = (): Record<string, Record<string, unknown>> => Object.fromEntries(
+    (options.providerConfigurations ?? []).flatMap((one) => Object.entries(one.properties))
+      .filter(([key]) => !Object.hasOwn(ROOT_CONFIG_SCHEMA.properties, key)),
+  );
+  /** Each provider property's `default`, held where nothing set the key, as VS Code fills one. */
+  const providerDefaults = (): Record<string, unknown> => Object.fromEntries(
+    Object.entries(providerProperties()).filter(([, property]) => property.default !== undefined)
+      .map(([key, property]) => [key, property.default]),
+  );
   /**
    * What this host serves beside `file:`, as one map a client reads.
    *
@@ -655,7 +686,7 @@ export function createRoot(ctx: HostContext): Root {
    * daemon's file is what they are, so the root's state opens with what the
    * port answers. A write a client pushes moves the state through its own
    * `root/configChanged`, and a write no client pushed through
-   * `daemonValuesMoved`.
+   * `daemonValuesChanged`.
    */
   const daemonValues = async (): Promise<Record<string, unknown>> =>
     (Object.keys(daemonProperties()).length === 0 || options.rootConfig === undefined
@@ -666,7 +697,7 @@ export function createRoot(ctx: HostContext): Root {
     for (const key of [...Object.keys(daemonProperties()), ...Object.keys(daemon)]) daemonSeen.add(key);
     return {
       agents: descriptors(),
-      // Every session this host has and has not disposed, as its catalogue lists them.
+      // The sessions running a turn, as VS Code's host counts them.
       activeSessions: ctx.activeCount(),
       ...(terminals.size > 0 ? { terminals: ctx.terminalInfo() } : {}),
       /*
@@ -677,8 +708,8 @@ export function createRoot(ctx: HostContext): Root {
        * no-op on every client - including the one that had just pushed it.
        */
       config: {
-        schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...daemonProperties() } },
-        values: { ...rootConfig, ...daemon, ...accountValues(), ...(ctx.restartNeeded ? { [RESTART_KEY]: true } : {}) },
+        schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...providerProperties(), ...daemonProperties() } },
+        values: { ...providerDefaults(), ...rootConfig, ...daemon, ...accountValues(), ...(ctx.restartNeeded ? { [RESTART_KEY]: true } : {}) },
       },
     };
   };
@@ -693,7 +724,14 @@ export function createRoot(ctx: HostContext): Root {
       .filter(([key]) => !Object.hasOwn(pushed, key) && (daemonKey(key) || isAccountKey(key) || key === RESTART_KEY)));
   };
 
-  const daemonValuesMoved = async (): Promise<void> => {
+  const changesNothing = (config: Record<string, unknown>, replace: boolean): boolean => {
+    const held = ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined;
+    if (held === undefined) return false;
+    const values = held.values ?? {};
+    return isDeepStrictEqual(replace ? config : { ...values, ...config }, values);
+  };
+
+  const daemonValuesChanged = async (): Promise<void> => {
     if (ctx.stateOf(ROOT) === undefined) return;
     const now = await daemonValues();
     for (const key of [...Object.keys(daemonProperties()), ...Object.keys(now)]) daemonSeen.add(key);
@@ -721,22 +759,24 @@ export function createRoot(ctx: HostContext): Root {
   const rootFor = (held: Bag, connection?: Connection): Bag => {
     const config = (held.config ?? { schema: ROOT_CONFIG_SCHEMA, values: {} }) as { schema: Bag; values: Bag };
     /*
-     * The daemon's own keys for a connection that may read them and nobody
-     * else, and the account each backend bills to likewise: the operator's
-     * own, so it is `account:read`'s and the host's - decision
-     * `an-agent-account-is-shown-to-account-readers`. A connection without the
-     * grant is handed neither, which is the same absence a backend nothing has
-     * reported an account for has.
+     * Under a people directory, the daemon's own keys for a connection that
+     * may read them and nobody else, and the account each backend bills to
+     * likewise: the operator's own, so it is `account:read`'s and the host's -
+     * decision `an-agent-account-is-shown-to-account-readers`. A connection
+     * without the grant is handed neither, which is the same absence a backend
+     * nothing has reported an account for has. A host with no directory hands
+     * every connection the whole config, as the reference host does.
      */
-    const reads = seesConfig(connection);
+    const directory = options.users !== undefined;
+    const reads = seesConfig(connection, directory);
     const values = Object.fromEntries(Object.entries(config.values).filter(([key]) =>
-      (reads || !daemonHeld(key)) && (seesAccount(connection) || !isAccountKey(key))));
+      (reads || !daemonHeld(key)) && (seesAccount(connection, directory) || !isAccountKey(key))));
     const properties = (config.schema.properties ?? {}) as Bag;
     const meta = metaFor(connection);
     return {
       ...held,
-      // The host's list, rewritten for the one connection asking when it is
-      // already somebody: the sign-in resource is the one field that differs.
+      // The host's list for the one connection asking: an agent it may not
+      // use is listed with no models.
       agents: connection === undefined ? held.agents : ctx.agentsFor(connection, held.agents),
       config: {
         schema: reads
@@ -790,6 +830,15 @@ export function createRoot(ctx: HostContext): Root {
        * strength of a number it does not have.
        */
       ...(build === 'unknown' ? {} : { hostBuild: { version: build } }),
+      /*
+       * Each provider's settings page, the registration without its
+       * properties, which the root config's schema carries, as VS Code records
+       * a registered provider's configuration in root state's `_meta`.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentCustomizationSettings.ts#L8
+       */
+      ...((options.providerConfigurations ?? []).length === 0 ? {} : {
+        [PROVIDER_SETTINGS_META]: (options.providerConfigurations ?? []).map(({ properties: _properties, ...entry }) => entry),
+      }),
       ...(schemes === undefined ? {} : { 'ahpd.resourceProviders': schemes }),
       ...(channels === undefined ? {} : { 'ahpd.channels': channels }),
       ...(methods === undefined ? {} : { 'ahpd.methods': methods }),
@@ -809,6 +858,6 @@ export function createRoot(ctx: HostContext): Root {
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
     daemonKey, daemonHeld, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
-    daemonValues, rootSeed, rootFor, keptOnReplace, daemonValuesMoved,
+    daemonValues, rootSeed, rootFor, keptOnReplace, changesNothing, daemonValuesChanged,
   };
 }

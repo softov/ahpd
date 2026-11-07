@@ -298,14 +298,20 @@ it('lists a restored session\'s worker chats and serves each one read-only', asy
   const drawn = (worker.snapshot.state.turns as Bag[]) ?? [];
   expect(JSON.stringify(drawn)).toContain('Found three files.');
 
+  /*
+   * A start sent to it is said and ended at its admission in VS Code's words
+   * for a read-only chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
+   */
   void client.handle({
     method: 'dispatchAction',
     params: { channel: workerUri, action: { type: 'chat/turnStarted', turnId: 'no', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle();
-  const refused = notes.filter((one) => one.method === 'action'
-    && (one.params as Bag).channel === workerUri && typeof (one.params as Bag).rejectionReason === 'string');
-  expect(refused).toHaveLength(1);
+  const ended = notes.filter((one) => one.method === 'action' && (one.params as Bag).channel === workerUri
+    && ((one.params as Bag).action as Bag).type === 'chat/error' && ((one.params as Bag).action as Bag).turnId === 'no')
+    .map((one) => (((one.params as Bag).action as Bag).part as Bag).error);
+  expect(ended).toEqual([{ errorType: 'readOnly', message: 'This chat is read-only.' }]);
 
   // And the spawning call in the main transcript carries the link.
   const main = await client.handle({ method: 'subscribe', params: { channel: `ahp-chat://default/${Buffer.from(`ahp-session:/${SESSION}`, 'utf8').toString('base64url')}` } }) as { snapshot: { state: Bag } };

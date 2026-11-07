@@ -1,4 +1,5 @@
 import { isAbsolute, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { idOf, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
 import { frozenCopy } from '../utils/frozen.js';
@@ -8,14 +9,15 @@ import { partsOf, rulesOf } from '../plugins/pluginparts.js';
 import { bodyText } from '../resources/records.js';
 import { BINDINGS_KEY } from '../connectors/bindings.js';
 import { actionTools } from '../connectors/actions.js';
-import { SEND_REMOTE_MESSAGE } from '../sessions/remotesession.js';
+import { CREATED_BY_META, SEND_REMOTE_MESSAGE } from '../sessions/remotesession.js';
 import { SESSION_TOOL_NAMES } from '../tools/session.js';
 import { bag, ownerOfPrincipal, reason, str } from '../utils/values.js';
 import { groupOf } from '../access/users.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
-import { ROOT, chatIdFor, chatUriFor } from './channels.js';
-import { NO_AGENT, need } from './common.js';
-import { asksForTool } from './spawn.js';
+import { chatIdFor, chatUriFor, schemeOf } from './channels.js';
+import { AGENT_CLIENT_SCHEME } from './clienturi.js';
+import { need, noProvider } from './common.js';
+import { asksForTool } from './permissions.js';
 import { preambleOf } from './preamble.js';
 import { readAggregate, startsRead } from './chatactions.js';
 import { refusalReason } from './gate.js';
@@ -23,9 +25,10 @@ import type { Bag } from '../types/common.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { Owner } from '../types/usage.js';
 import type { ClientPlugins, SyncedPlugin } from '../types/clientplugins.js';
-import type { HostTool, SessionlessToolCall, ToolCall, ToolCaller, TitleStrategy } from '../types/host.js';
+import type { HostTool, SessionlessToolCall, ToolCall, ToolCaller, TitleStrategy, ToolSession } from '../types/host.js';
 import type { Agent, BoundTool, McpServer } from '../types/agent.js';
 import type { Session, TurnOptions } from '../types/session.js';
+import type { DiscardedFileEdits } from '../types/changes.js';
 import type { ChatSummary, ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { ToolsEndpoint } from '../tools/server.js';
 import type { Held } from './state.js';
@@ -43,13 +46,13 @@ import type { HostContext } from './context.js';
  */
 const MAX_SPAWN_DEPTH = 3;
 
-/** VS Code's `maxCreatedSessions`: how many sessions one tree may make. */
+/** VS Code's `maxCreatedSessions`: how many sessions one budget may make. */
 const MAX_CREATED_SESSIONS = 50;
 
-/** VS Code's `maxCreatedChats`: how many chats one tree may make, by either tool. */
+/** VS Code's `maxCreatedChats`: how many chats one budget may make, by either tool. */
 const MAX_CREATED_CHATS = 50;
 
-/** VS Code's `maxSentMessages`: how many messages one tree may send. */
+/** VS Code's `maxSentMessages`: how many messages one budget may send. */
 const MAX_SENT_MESSAGES = 100;
 
 /**
@@ -64,32 +67,29 @@ const MAX_SENT_MESSAGES = 100;
 const RULE_MOST = 4096;
 
 /**
- * What one session tree may make, and what it is told when it has.
- *
- * VS Code's three counters and its refusal words, from `sessionServerTools.ts`
- * - `createdSessionCount`, `createdChatCount` and `sentMessageCount`, refused
- * as "Refusing to create/send more than N ... from server tools in this
- * process." One process is what VS Code bounds; here it is one session tree,
- * so the sentence says the tree, which is what is true of it - the plan's own
- * answer to what the counts are kept per.
+ * VS Code's `orchestrationLimitWindowMs`: the sliding window each count is
+ * taken over, so room frees up as older actions leave it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L43-L44
  */
-const TREE_LIMITS = {
-  sessions: {
-    max: MAX_CREATED_SESSIONS,
-    words: `Refusing to create more than ${MAX_CREATED_SESSIONS} sessions from server tools in this session tree.`,
-  },
-  chats: {
-    max: MAX_CREATED_CHATS,
-    words: `Refusing to create more than ${MAX_CREATED_CHATS} chats from server tools in this session tree.`,
-  },
-  messages: {
-    max: MAX_SENT_MESSAGES,
-    words: `Refusing to send more than ${MAX_SENT_MESSAGES} messages from server tools in this session tree.`,
-  },
+const LIMIT_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * What one budget may make in the window, and the action its refusal names.
+ *
+ * VS Code's three limiters and its refusal, from `sessionServerTools.ts`, each
+ * counted over the window. A budget is one session tree, the plan's own answer
+ * to what the counts are kept per, or one session, VS Code's, by the daemon's
+ * `agentOrchestrationLimitsScope`, and the sentence names whichever it is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L46-L94
+ */
+const ORCHESTRATION_LIMITS = {
+  sessions: { max: MAX_CREATED_SESSIONS, action: 'create more sessions' },
+  chats: { max: MAX_CREATED_CHATS, action: 'create more chats' },
+  messages: { max: MAX_SENT_MESSAGES, action: 'send more messages' },
 } as const;
 
-/** Which of the three a tree is being asked about. */
-type Made = keyof typeof TREE_LIMITS;
+/** Which of the three a budget is being asked about. */
+type Made = keyof typeof ORCHESTRATION_LIMITS;
 
 /**
  * What a host says about a client's plugin when it has nowhere to keep one.
@@ -162,8 +162,12 @@ interface HeldPlugin {
   load: Bag;
   /** The directory the copy landed in, once one has. */
   path?: string;
-  /** What the copy holds, read when it landed: the parts a client reads under this plugin. */
-  parts?: Bag[] | undefined;
+  /**
+   * What the copy holds, read when it landed: the plugin's children, as the
+   * protocol calls what a client reads under a plugin.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L893-L911
+   */
+  children?: Bag[] | undefined;
   /**
    * The session's own decision about this plugin, and nothing else.
    *
@@ -194,6 +198,8 @@ export interface Tooling {
   shapedDefinition(one: HostTool, uri: string): ToolDefinition | undefined;
   /** The definitions alone for one session, which is the half that goes on the wire. */
   toolDefinitions(uri: string): ToolDefinition[];
+  /** Say a session's server tools where its list moved. */
+  serverToolsMoved(uri: string): void;
   /** The tools the clients in a session provide, as tools to offer the model. */
   clientTools(uri: string): BoundTool[];
   /**
@@ -227,14 +233,16 @@ export interface Tooling {
    */
   customizationUnder(uri: string, id: string): Carried | undefined;
   /**
-   * The folder a session's decisions for a customization are kept under.
+   * The working directory a session's decisions for a customization are kept
+   * under at the workspace scope, as VS Code reads a session's working
+   * directory state.
    *
    * Its first working directory as a `file://` URI, which is what a scope
    * outside the session names: the same folder in two sessions is one decision,
    * and a window that keeps a folder open reads it back under the same spelling.
-   * Nothing for a session that works nowhere, which has no folder scope at all.
+   * Nothing for a session that works nowhere, which has no workspace scope.
    */
-  folderOf(uri: string): string | undefined;
+  workingDirectoryOf(uri: string): string | undefined;
   /**
    * One customization as a session reads it, with its decisions on it.
    *
@@ -258,14 +266,19 @@ export interface Tooling {
   /** Forget what a session's backends were told, called where a chat starts. */
   forgetTold(uri: string): void;
   /**
-   * Keep what a session decided about one of its backend's customizations.
+   * Keep what a session decided for itself about one of its backend's
+   * customizations: the session entry a client's switch carried, or none,
+   * which clears it.
    *
-   * Called where the backend answered a switch and took it, which is the only
-   * moment this host learns the decision: the backend goes on reporting what
-   * it reports, so this is what a session's list reads it from until the next
-   * report says otherwise.
+   * The backend goes on reporting what it reports, so this is what a session's
+   * list reads its own decision from until the next report says otherwise.
    */
-  keepDecision(uri: string, id: string, enabled: boolean): void;
+  recordCustomizationEnablement(uri: string, id: string, enabled: boolean | undefined): void;
+  /**
+   * Say a session's customizations again where resolving them moved them, as
+   * VS Code republishes them after an enablement changes.
+   */
+  publishSessionCustomizations(uri: string): void;
   /**
    * Tell a session's chats what they may offer, after the clients moved.
    *
@@ -295,6 +308,11 @@ export interface Tooling {
    * say so, unless a client's rename on that channel was `said` already.
    */
   renameSession(uri: string, title: string, said?: boolean): void;
+  /**
+   * Keep the session's title as its default chat's own where the chat holds
+   * none, as the session gains another chat.
+   */
+  snapshotDefaultChatTitle(uri: string): void;
   /** What a host tool sees of this host, from inside one chat. */
   toolContext(uri: string, chatUri: string, provider?: string): ToolCall;
   /**
@@ -358,10 +376,16 @@ export interface Tooling {
   /**
    * What one turn of a session is given, for the backend to read when it begins.
    *
-   * Empty for every session this host began itself, and for one another window
-   * sent here whose clients offer nothing to report back with.
+   * What the session's clients undid of its agent's edits since its last turn,
+   * told once, and for a session another window sent here whose clients can
+   * report back, how to report.
    */
   turnInstructions(uri: string): TurnOptions;
+  /**
+   * An agent's changes to a file that an operation on `session`'s changeset
+   * undid, told to the session's agent with its next turn.
+   */
+  reportDiscarded(session: string, edits: DiscardedFileEdits): void;
   /**
    * A second chat in a running session, on the backend it is asked for.
    *
@@ -370,7 +394,7 @@ export interface Tooling {
    * where absent; `config` is checked against that backend's schema, and the
    * session's keys no backend owns are added from the session. `calling` is
    * the turn a tool call is made from, where there is one: the chat is counted
-   * against that session's tree, as a tool's chat always has been.
+   * against that session's budget, its tree's or its own.
    */
   openChat(session: string, asked: ChatStart, calling?: { uri: string; chatUri: string }): Promise<{ chat: string }>;
 }
@@ -394,11 +418,12 @@ interface ChatStart {
 export function createTooling(ctx: HostContext): Tooling {
   const {
     options, sessions, byChat, kept, terminals, learned, rootConfig, sentBy, about,
-    activeClientsOf, leadOf, ownerOf, allRows, setArtifacts, forWhom,
+    activeClientsOf, leadOf, clientResources, allRows, setArtifacts, forWhom,
     principalFor, senderOf, senders,
-    chatSummary, keepTitle, summaryMoved, operationsMoved, dispatch, log, fire,
-    isolated, settle, openSession, backendsOwn, removeSession, spawn,
+    chatSummary, persistChatTitle, markSummaryDirty, operationsMoved, dispatch, log, fire,
+    resolveCreatedSessionConfig, createProviderSession, backendsOwn, removeSession, spawn,
   } = ctx;
+  ctx.agentOrchestrationLimitsScope = options.agentOrchestrationLimitsScope ?? 'sessionTree';
   /**
    * Where a decision that outlives one session is kept, or nothing for a host
    * that keeps none: one embedded in a single session has nowhere to put a
@@ -498,11 +523,9 @@ export function createTooling(ctx: HostContext): Tooling {
       && (sessionToolsFor(uri, provider) || !SESSION_TOOL_NAMES.includes(one.definition.name)));
   };
   /**
-   * The title strategy every session runs under, which is the deferred one.
-   *
-   * No root config key selects another strategy, as in VS Code's agent host.
-   * A session this host is only browsing answers the same, where VS Code
-   * answers `utility` for a session with no persisted strategy.
+   * The title strategy every session runs under, which is the deferred one: a
+   * chat is named from its first message, and the rename tool is offered for
+   * an explicit rename. A session this host is only browsing answers the same.
    */
   const strategyOf = (_uri: string): TitleStrategy => 'deferred';
   /**
@@ -565,17 +588,23 @@ export function createTooling(ctx: HostContext): Tooling {
       onProblem: (message) => log(message),
     });
   ctx.contributing = permitted([...ctx.contributed, ...ctx.actionTools]);
+  /** What one session brings to a tool asking about it. */
+  const toolSession = (uri: string): ToolSession => ({
+    titleStrategy: strategyOf(uri),
+    config: kept.config(idOf(uri)),
+    bindings: sessionBindings(uri),
+  });
   /**
-   * One tool's definition for a session, after the strategy's shaping, or
-   * nothing where the strategy withholds the tool.
+   * One tool's definition for a session, shaped for it, or nothing where the
+   * session does not support the tool: VS Code's host offers a tool to a
+   * session its `isEnabledForSession` allows, and tailors it with
+   * `getDefinitionForSession`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L213-L216
    */
   const shapedDefinition = (one: HostTool, uri: string): ToolDefinition | undefined => {
-    const asked = one.forSession?.({
-      titleStrategy: strategyOf(uri),
-      config: kept.config(idOf(uri)),
-      bindings: sessionBindings(uri),
-    });
-    if (asked?.offered === false) return undefined;
+    const session = toolSession(uri);
+    if (one.isEnabledForSession?.(session) === false) return undefined;
+    const asked = one.forSession?.(session);
     return asked?.definition === undefined ? one.definition : { ...one.definition, ...asked.definition };
   };
   /**
@@ -587,6 +616,16 @@ export function createTooling(ctx: HostContext): Tooling {
     const shaped = shapedDefinition(one, uri);
     return shaped === undefined ? [] : [shaped];
   });
+  /*
+   * A session's server tools, said whole and only where the list moved, as
+   * VS Code's host compares a session's tools with the ones its state holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L232-L247
+   */
+  const serverToolsMoved = (uri: string): void => {
+    const tools = toolDefinitions(uri);
+    if (isDeepStrictEqual(tools, ctx.stateOf(uri)?.serverTools ?? [])) return;
+    dispatch(uri, { type: 'session/serverToolsChanged', tools });
+  };
   /**
    * The tools the clients in a session provide, as tools to offer the model.
    *
@@ -626,8 +665,13 @@ export function createTooling(ctx: HostContext): Tooling {
    * client's plugins leave with the client.
    */
   const plugins = new Map<string, Map<string, HeldPlugin[]>>();
-  /** The session being reconciled, one at a time: a second announcement waits for the first copy. */
-  const copying = new Map<string, Promise<void>>();
+  /**
+   * The sessions whose client plugins are syncing, one sync at a time: a
+   * second announcement waits for the first copy, as VS Code's plugin manager
+   * syncs a client's customizations.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentPluginManager.ts#L74
+   */
+  const syncing = new Map<string, Promise<void>>();
 
   /** Whether two announcements are the same plugin at the same revision. */
   const samePlugin = (a: Bag, b: Bag): boolean =>
@@ -662,7 +706,7 @@ export function createTooling(ctx: HostContext): Tooling {
   const keyOf = (one: HeldPlugin, at: number): string | undefined => {
     const source = str(one.announced.uri) ?? '';
     if (at === -1) return enablementKeyOf({ type: 'plugin', uri: source });
-    return enablementKeyOf({ type: 'mcpServer', name: str(bag((one.parts ?? [])[at]).name) ?? '' }, source);
+    return enablementKeyOf({ type: 'mcpServer', name: str(bag((one.children ?? [])[at]).name) ?? '' }, source);
   };
 
   /**
@@ -679,7 +723,8 @@ export function createTooling(ctx: HostContext): Tooling {
    * clients hold are read in exactly that moment, when the backend is handed
    * the set it starts with.
    */
-  const folderOf = (uri: string): string | undefined => {
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostCustomizationEnablementService.ts#L238
+  const workingDirectoryOf = (uri: string): string | undefined => {
     const held = sessions.get(uri);
     if (held === undefined) return undefined;
     const lead = leadOf(held)?.workingDirectories()[0];
@@ -708,7 +753,7 @@ export function createTooling(ctx: HostContext): Tooling {
       out.push(...rest);
       return out;
     }
-    const dir = folderOf(uri);
+    const dir = workingDirectoryOf(uri);
     const inFolder = dir === undefined ? undefined : store.folder(dir, key);
     if (dir !== undefined && inFolder !== undefined) out.push({ kind: 'workspace', uri: dir, enabled: inFolder });
     else out.push(...rest.filter((entry) => str(entry.kind) === 'workspace'));
@@ -803,7 +848,7 @@ export function createTooling(ctx: HostContext): Tooling {
 
   /** The same for one of a plugin's servers, which a client may also have decided about. */
   const partDecisions = (uri: string, one: HeldPlugin, at: number): Bag[] => {
-    const carried = enablementOf(bag((one.parts ?? [])[at]).enablement);
+    const carried = enablementOf(bag((one.children ?? [])[at]).enablement);
     return entriesFor(uri, keyOf(one, at), carried, ownIn(carried));
   };
 
@@ -839,37 +884,40 @@ export function createTooling(ctx: HostContext): Tooling {
   const decisionOf = (uri: string, id: string): boolean | undefined => decided.get(uri)?.get(id);
 
   /**
-   * Keep a session's own decision about one customization.
+   * Record a session's own decision about one customization, or clear it, as
+   * VS Code records a customization's enablement.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2120
    *
-   * Called where a backend answered a switch, which is the only moment this
-   * host learns that a customization it did not hold is off: the backend has
-   * no entry to read it off, and what it keeps is its own to report.
+   * The backend has no entry to read a session's decision off, and what it
+   * keeps is its own to report.
    */
-  const keepDecision = (uri: string, id: string, enabled: boolean): void => {
+  const recordCustomizationEnablement = (uri: string, id: string, enabled: boolean | undefined): void => {
     const held = decided.get(uri) ?? new Map<string, boolean>();
     decided.set(uri, held);
-    held.set(id, enabled);
+    if (enabled === undefined) held.delete(id);
+    else held.set(id, enabled);
   };
 
   /**
-   * The parts of a copy that has just landed, with a client's decisions on them.
+   * The children of a copy that has just landed, with a client's decisions on
+   * them.
    *
-   * Read once, when the copy settles, rather than on every read of a session's
-   * customizations: the directory is on this host's disk and does not move, and
-   * a client reads the list far more often than a plugin is copied.
+   * Read once, when the copy settles: the directory is on this host's disk and
+   * does not move, and a client reads the list far more often than a plugin is
+   * copied.
    *
-   * `childEnablement` is a client's decisions, keyed by a part's name, and the
+   * `childEnablement` is a client's decisions, keyed by a child's name, and the
    * protocol lets one hang on an MCP server alone: a skill, an agent, a rule
    * and a hook load with the plugin they arrived in. So a server the client
    * named carries what it decided, most specific first, and one it did not is
    * left with none - which every reader of the field takes as on.
    *
-   * Nothing at all for a copy whose format this host does not read, which is
-   * *not* the same answer as no parts: the protocol reads `children` absent as
-   * a container nobody has parsed, and an empty list as one that was parsed and
+   * Nothing at all for a copy whose format this host does not read, an answer
+   * apart from an empty list: the protocol reads `children` absent as a
+   * container nobody has parsed, and an empty list as one that was parsed and
    * contributes nothing.
    */
-  const partsWith = (one: HeldPlugin, path: string): Bag[] | undefined => {
+  const childrenAt = (one: HeldPlugin, path: string): Bag[] | undefined => {
     const parts = partsOf(path, uriOf(path));
     if (parts === undefined) return undefined;
     const named = bag(one.announced.childEnablement);
@@ -905,9 +953,9 @@ export function createTooling(ctx: HostContext): Tooling {
       name: str(one.announced.name) ?? uri,
       clientId,
       load: one.load,
-      // The parts a client reads under the plugin, absent while the copy is
+      // The children a client reads under the plugin, absent while the copy is
       // still coming and after one nobody could read.
-      ...(one.parts === undefined ? {} : { children: one.parts }),
+      ...(one.children === undefined ? {} : { children: one.children }),
       ...(decisions.length === 0 ? {} : { enablement: decisions }),
       ...(version === undefined ? {} : { version }),
     };
@@ -937,7 +985,7 @@ export function createTooling(ctx: HostContext): Tooling {
         if (id === idOfPlugin(clientId, one) || id === str(one.announced.id) || id === str(one.announced.uri)) {
           return { clientId, one, at: -1 };
         }
-        const at = (one.parts ?? []).findIndex((part) => part.type === 'mcpServer' && str(part.id) === id);
+        const at = (one.children ?? []).findIndex((part) => part.type === 'mcpServer' && str(part.id) === id);
         if (at !== -1) return { clientId, one, at };
       }
     }
@@ -967,25 +1015,23 @@ export function createTooling(ctx: HostContext): Tooling {
   const toggleClientPlugin = (uri: string, id: string, enablement: Bag[]): Toggled | undefined => {
     const found = heldBy(uri, id);
     if (found === undefined) return undefined;
-    const { clientId, one, at } = found;
+    const { one, at } = found;
     const decisions = byScope(enablementOf(enablement));
     /*
-     * A decision equal to what this session would inherit is not kept, as the
-     * store keeps none either: it would shadow the next decision and hold the
-     * session still when the scope it was inheriting from moved. A host with
-     * no store has nothing to inherit from, so what the caller sent stands -
-     * without a store the array is the whole of this session's answer.
+     * The session's own decision is the caller's session entry as it was sent,
+     * as the reference host records a client's enablement whole. A host with
+     * no store has nowhere to keep a decision about a folder or about every
+     * session, so there the most specific entry stands for the session.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2120-L2125
      */
-    const inherited = store === undefined ? undefined : entriesFor(uri, keyOf(one, at), [], undefined)[0]?.enabled !== false;
-    const said = ownIn(decisions) ?? (store === undefined ? decisions[0]?.enabled !== false : undefined);
-    const own = said === undefined || said === inherited ? undefined : said;
+    const own = ownIn(decisions) ?? (store === undefined ? decisions[0]?.enabled !== false : undefined);
     const asked: Bag[] = own === undefined ? [] : [{ kind: 'session', enabled: own }];
     let part: Bag | undefined;
     if (at === -1) {
       one.decision = asked;
     }
     else {
-      part = bag((one.parts ?? [])[at]);
+      part = bag((one.children ?? [])[at]);
       /*
        * The client's own decisions for this server, read again from what it
        * announced rather than from the list as it stands: what this host wrote
@@ -993,12 +1039,28 @@ export function createTooling(ctx: HostContext): Tooling {
        */
       const fromClient = enablementOf(bag(one.announced.childEnablement)[str(part.name) ?? ''])
         .filter((entry) => str(entry.kind) !== 'session');
-      one.parts = (one.parts ?? []).map((other, position) => (position === at
+      one.children = (one.children ?? []).map((other, position) => (position === at
         ? { ...other, enablement: byScope([...asked, ...fromClient]) }
         : other));
     }
-    dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(uri, clientId, one) });
     return part === undefined ? {} : { server: str(part.name) ?? '' };
+  };
+
+  /*
+   * A session's customizations said again where resolving them moved them, as
+   * the reference host republishes a session's after an enablement changes:
+   * only a session whose state holds a list, and nothing when the list
+   * resolved is the one its state holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L376-L385
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L609-L647
+   */
+  const publishSessionCustomizations = (uri: string): void => {
+    const current = ctx.stateOf(uri)?.customizations;
+    if (current === undefined) return;
+    const reported = reportedBy(uri);
+    const resolved = [...reported.map((one) => withEntries(uri, bag(one))), ...clientPluginsOf(uri)];
+    if (isDeepStrictEqual(current, resolved)) return;
+    dispatch(uri, { type: 'session/customizationsChanged', customizations: reported });
   };
 
   /**
@@ -1016,7 +1078,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const { one, at } = found;
       const key = keyOf(one, at);
       if (key === undefined) return undefined;
-      const own = at === -1 ? ownIn(one.decision) : ownIn(bag((one.parts ?? [])[at]).enablement as Bag[] | undefined);
+      const own = at === -1 ? ownIn(one.decision) : ownIn(bag((one.children ?? [])[at]).enablement as Bag[] | undefined);
       return { key, of: at === -1 ? 'plugin' : 'server', ...(own === undefined ? {} : { own }) };
     }
     /** The reported customization with this id, looked for under the one that declared it. */
@@ -1055,7 +1117,7 @@ export function createTooling(ctx: HostContext): Tooling {
     // whose it is. A session no row claims belongs to no backend here, and
     // reports nothing.
     const provider = kept.provider(idOf(name)) ?? held?.agent.provider;
-    return provider === undefined ? [] : about(provider).seeds as Bag[];
+    return provider === undefined ? [] : about(provider).customizations as Bag[];
   };
 
   /** Copy one client's plugins, answering one state per plugin and never throwing. */
@@ -1084,10 +1146,14 @@ export function createTooling(ctx: HostContext): Tooling {
   /**
    * Copy what a session's clients announced, and say what happened.
    *
-   * The entries go out before the copies are made: a copy is a client's whole
-   * plugin tree read over its connection, and a session whose list waited for
-   * it would show nothing at all for as long as that took - while `loading` is
-   * exactly what the field is for.
+   * As the reference host's plugin controller says a client's plugins: the
+   * session's list whole first, each new plugin in it `loading`, and then each
+   * plugin on its own as its copy settles. The list goes out before the copies
+   * are made: a copy is a client's whole plugin tree read over its
+   * connection, and a session whose list waited for it would show nothing at
+   * all for as long as that took - while `loading` is exactly what the field
+   * is for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L11243-L11330
    */
   const reconcile = async (uri: string): Promise<void> => {
     const at = idOf(uri);
@@ -1113,42 +1179,36 @@ export function createTooling(ctx: HostContext): Tooling {
     if (signatureOf(fresh) === signatureOf(before)) return;
     if (fresh.size === 0) plugins.delete(at);
     else plugins.set(at, fresh);
+    dispatch(uri, { type: 'session/customizationsChanged', customizations: reportedBy(uri) });
 
-    const settled: { clientId: string; one: HeldPlugin }[] = [];
+    /** One plugin whose copy settled, said on its own. */
+    const settle = (clientId: string, one: HeldPlugin): void => {
+      dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(uri, clientId, one) });
+    };
     const port = options.clientPlugins;
-    if (port === undefined) {
-      // A host with nowhere to put a copy is a host that keeps none, and each
-      // plugin is owed the reason rather than a promise that never settles.
-      for (const [clientId, list] of added) {
+    for (const [clientId, list] of added) {
+      if (port === undefined) {
+        // A host with nowhere to put a copy is a host that keeps none, and each
+        // plugin is owed the reason rather than a promise that never settles.
         for (const one of list) {
           one.load = { kind: 'error', message: KEEPS_NONE };
-          settled.push({ clientId, one });
+          settle(clientId, one);
         }
+        continue;
       }
-    } else {
-      for (const [clientId, list] of added) {
-        for (const one of list) dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(uri, clientId, one) });
-      }
-      for (const [clientId, list] of added) {
-        const answers = await copyOf(port, clientId, list);
-        list.forEach((one, position) => {
-          const answer = answers[position];
-          if (answer !== undefined && 'path' in answer) {
-            one.path = answer.path;
-            one.parts = partsWith(one, answer.path);
-            one.load = { kind: 'loaded' };
-          } else {
-            one.load = { kind: 'error', message: answer !== undefined && 'error' in answer ? answer.error : `${String(one.announced.uri ?? '')} was not copied` };
-          }
-          settled.push({ clientId, one });
-        });
-      }
+      const answers = await copyOf(port, clientId, list);
+      list.forEach((one, position) => {
+        const answer = answers[position];
+        if (answer !== undefined && 'path' in answer) {
+          one.path = answer.path;
+          one.children = childrenAt(one, answer.path);
+          one.load = { kind: 'loaded' };
+        } else {
+          one.load = { kind: 'error', message: answer !== undefined && 'error' in answer ? answer.error : `${String(one.announced.uri ?? '')} was not copied` };
+        }
+        settle(clientId, one);
+      });
     }
-    for (const { clientId, one } of settled) dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(uri, clientId, one) });
-    // One list for the whole batch, after every copy it contains has settled:
-    // the actions above carry the one plugin that changed, and this carries the
-    // session's customizations as they now are.
-    dispatch(uri, { type: 'session/customizationsChanged', customizations: reportedBy(uri) });
   };
 
   /**
@@ -1179,47 +1239,72 @@ export function createTooling(ctx: HostContext): Tooling {
    * told not to run it however else it might hear of one.
    */
   const deniedMcpServers = (uri: string): string[] => heldCopies(uri).flatMap((one) =>
-    (one.parts ?? []).flatMap((part, at) => (part.type === 'mcpServer' && partOff(uri, one, at)
+    (one.children ?? []).flatMap((part, at) => (part.type === 'mcpServer' && partOff(uri, one, at)
       ? [str(part.name) ?? '']
       : [])));
 
   /**
-   * What each session tree has made, by the id of the session at its top.
+   * When each budget made each of the three, inside the window, by the id it
+   * is kept under.
    *
-   * VS Code keeps its three counters in the tool group, which one process
-   * shares between every session and every person on it. Kept per tree here:
-   * one tree is a session somebody started and everything the `create` tool
-   * grew from it, so a runaway agent exhausts its own budget and not the
-   * host's, and a second tree is made from nothing.
-   *
-   * In memory, as VS Code's are. A restart is a new process with new counters,
-   * which is a bound on a runaway and not a quota: an install that wants a
-   * tree to make fifty more sessions restarts.
+   * Kept per tree by default: one tree is a session somebody started and
+   * everything the `create` tool grew from it, so a runaway agent exhausts its
+   * own budget and not the host's, and a second tree is made from nothing.
+   * Kept per session where the daemon's `agentOrchestrationLimitsScope` is
+   * `session`, as VS Code's limiter counts each session. A time older than the
+   * window is dropped as the budget is next asked about, so one that hit a
+   * limit recovers, as VS Code's limiter frees room. In memory, as VS Code's
+   * are.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L46-L94
    */
-  const counted = new Map<string, Record<Made, number>>();
-  const NOTHING_COUNTED: Record<Made, number> = { sessions: 0, chats: 0, messages: 0 };
+  const counted = new Map<string, Record<Made, number[]>>();
 
   /**
-   * The session at the top of one session's tree, which is the id its counts
-   * are kept under.
+   * The id one session's counts are kept under: the session at the top of its
+   * tree, or the session itself where the daemon counts each session.
    *
    * A store that keeps no parent links holds no tree, and every session in it
    * is a root of its own - which is what the store that does keep them answers
    * for a session nothing started.
    */
-  const treeOf = (id: string): string => kept.rootOf?.(id) ?? id;
+  const budgetOf = (id: string): string => (ctx.agentOrchestrationLimitsScope === 'session' ? id : kept.rootOf?.(id) ?? id);
 
-  const countsIn = (tree: string): Record<Made, number> => counted.get(tree) ?? NOTHING_COUNTED;
+  /** A budget's times for one of the three that are still inside the window. */
+  const recentIn = (budget: string, what: Made): number[] => {
+    const cutoff = Date.now() - LIMIT_WINDOW_MS;
+    return (counted.get(budget)?.[what] ?? []).filter((time) => time > cutoff);
+  };
 
-  /** Refuse one more of something a tree has no room for, in the host's words. */
-  const room = (tree: string, what: Made): void => {
-    const limit = TREE_LIMITS[what];
-    if (countsIn(tree)[what] >= limit.max) throw new Error(limit.words);
+  /**
+   * Whether the limits are enforced: VS Code's `agentOrchestrationLimits`, the
+   * root key this host declares, `on` unless a client turned it `off`. It
+   * covers the spawn depth as well as the three counts.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L2306
+   */
+  const enforced = (): boolean => ctx.rootConfig.agentOrchestrationLimits !== 'off';
+
+  /**
+   * Refuse one more of something a budget has no room for, in VS Code's words,
+   * the tree named where the budget is one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L86-L94
+   */
+  const room = (budget: string, what: Made): void => {
+    if (!enforced()) return;
+    const limit = ORCHESTRATION_LIMITS[what];
+    const recent = recentIn(budget, what);
+    if (recent.length < limit.max) return;
+    const retryAfterSeconds = Math.max(1, Math.ceil(((recent[0] ?? Date.now()) + LIMIT_WINDOW_MS - Date.now()) / 1000));
+    const per = ctx.agentOrchestrationLimitsScope === 'session' ? 'session' : 'session tree';
+    throw new Error(`Refusing to ${limit.action}: this ${per} already used ${recent.length} of ${limit.max}`
+      + ` allowed in the last ${Math.round(LIMIT_WINDOW_MS / 60000)} minutes. The limit applies to each ${per}`
+      + ' separately and frees up as older actions leave that window.'
+      + ` Retry after ${retryAfterSeconds} seconds, or turn off agent orchestration limits in settings.`);
   };
 
   /** One more, counted once the thing it counts has actually been made. */
-  const countUp = (tree: string, what: Made): void => {
-    counted.set(tree, { ...countsIn(tree), [what]: countsIn(tree)[what] + 1 });
+  const countUp = (budget: string, what: Made): void => {
+    const held = counted.get(budget) ?? { sessions: [], chats: [], messages: [] };
+    counted.set(budget, { ...held, [what]: [...recentIn(budget, what), Date.now()] });
   };
 
   /**
@@ -1262,10 +1347,10 @@ export function createTooling(ctx: HostContext): Tooling {
    * copies writing the same directory would be two answers to one question.
    */
   const reconcilePlugins = (uri: string): void => {
-    const earlier = copying.get(uri) ?? Promise.resolve();
+    const earlier = syncing.get(uri) ?? Promise.resolve();
     const done = earlier.then(() => reconcile(uri)).catch(() => {});
-    copying.set(uri, done);
-    void done.then(() => { if (copying.get(uri) === done) copying.delete(uri); });
+    syncing.set(uri, done);
+    void done.then(() => { if (syncing.get(uri) === done) syncing.delete(uri); });
   };
 
   /**
@@ -1306,7 +1391,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * what is being waited for is the copy the first of them began.
    */
   const pluginsSettled = async (uri: string): Promise<void> => {
-    const held = copying.get(uri);
+    const held = syncing.get(uri);
     if (held !== undefined) await held;
   };
 
@@ -1361,10 +1446,13 @@ export function createTooling(ctx: HostContext): Tooling {
     found.setTitle?.(title);
     // Written down here rather than at either caller, because a client's
     // `session/titleChanged` and the `rename_chat` tool both come through.
-    keepTitle(uri, chatUri, title);
+    persistChatTitle(uri, chatUri, title);
     updateChatTitle(uri, chatUri, title);
-    if (chatUri === held.defaultChat) dispatch(uri, { type: 'session/titleChanged', title });
-    summaryMoved(uri);
+    if (chatUri === held.defaultChat) {
+      ctx.persistSessionTitle(uri, title);
+      dispatch(uri, { type: 'session/titleChanged', title });
+    }
+    markSummaryDirty(uri);
     // The session's title is the subject a commit would use, so the question
     // the changeset's commit asks names a different line now.
     operationsMoved(uri);
@@ -1372,14 +1460,14 @@ export function createTooling(ctx: HostContext): Tooling {
   /**
    * Give a session a title from its own channel, and say so.
    *
-   * The session's title is its default chat's: the chat's backend is handed
-   * it and the store keeps it under that chat, and it goes out as
-   * `session/titleChanged` on the session. A session that counts one chat or
-   * none in its `readAggregate` has its default chat's held state and row
-   * take the title after, as the reference host carries a session's rename
-   * down onto a sole default chat; with peer chats, the default chat's held
-   * state and row keep the title they have.
-   * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
+   * The session's backend is handed it through the default chat, the store
+   * keeps it as the session's, and it goes out as `session/titleChanged` on
+   * the session. A session that counts one chat or none in its
+   * `readAggregate` has its default chat take it as its own after, in its
+   * held state, its row and its record, as the reference host carries a
+   * session's rename down onto a sole default chat; with peer chats, the
+   * default chat keeps the title it has.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
    *
    * `said` when a client's rename on the session's channel was said there
    * already, as its own action.
@@ -1389,11 +1477,36 @@ export function createTooling(ctx: HostContext): Tooling {
     const found = held?.chats.get(held.defaultChat);
     if (held === undefined || found === undefined) throw new Error(`${uri} is not a session this host is running`);
     found.setTitle?.(title);
-    keepTitle(uri, held.defaultChat, title);
+    ctx.persistSessionTitle(uri, title);
     if (!said) dispatch(uri, { type: 'session/titleChanged', title });
-    if (readAggregate(ctx, uri).length <= 1) updateChatTitle(uri, held.defaultChat, title);
-    summaryMoved(uri);
+    if (readAggregate(ctx, uri).length <= 1) {
+      persistChatTitle(uri, held.defaultChat, title);
+      updateChatTitle(uri, held.defaultChat, title);
+    }
+    markSummaryDirty(uri);
     operationsMoved(uri);
+  };
+  /**
+   * The session's title kept as its default chat's own, where the chat holds
+   * none, as the session gains another chat: from then on the two are
+   * independent, and a rename of the session with peer chats leaves the chat
+   * as it is. The reference host snapshots a default chat's title whenever a
+   * chat is added to its session, and keeps the snapshot.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1855-L1862
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2161-L2171
+   */
+  const snapshotDefaultChatTitle = (uri: string): void => {
+    const held = sessions.get(uri);
+    const lead = held === undefined ? undefined : leadOf(held);
+    if (held === undefined || lead === undefined || ctx.titleOf(uri, held.defaultChat) !== undefined) return;
+    const title = String(ctx.stateOf(uri)?.title ?? lead.title());
+    if (title === '') return;
+    persistChatTitle(uri, held.defaultChat, title);
+    // The session's own title kept beside it, an empty one where it has none:
+    // a record holding one hands its backend that, and the chat's stays the
+    // chat's.
+    if (kept.customTitle?.(idOf(uri)) === undefined) kept.setCustomTitle?.(idOf(uri), '');
+    if (ctx.stateOf(held.defaultChat)?.title !== title) updateChatTitle(uri, held.defaultChat, title);
   };
 
   /**
@@ -1404,7 +1517,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * The catalogue is `allRows()`, which is what `listSessions` answers; a
    * message is a turn this host starts, or a message it queues on the chat,
    * which is what `chat/turnStarted` and `chat/pendingMessageSet` come to; a
-   * session is `openSession`, which is what `createSession` comes to. Nothing is reachable from here that is not
+   * session is `createProviderSession`, which is what `createSession` comes to. Nothing is reachable from here that is not
    * reachable from a client, and the reverse is nearly true.
    */
   /**
@@ -1605,30 +1718,60 @@ export function createTooling(ctx: HostContext): Tooling {
    * `calling` is the turn a tool call is made from and nothing for a plugin:
    * a tool is counted where it runs, and a plugin has no turn to be charged.
    */
+  /**
+   * What a chat or session a session tool makes takes from the chat the tool
+   * runs in, as VS Code's `getCreationDefaults`: that chat's agent; its model,
+   * the running turn's, else its draft's, else its last turn's; and the
+   * settings its agent names as inherited from its config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2566-L2600
+   */
+  const creationDefaults = (calling: { uri: string; chatUri: string }): { agent?: Agent; model?: string; config?: Record<string, unknown> } => {
+    const held = sessions.get(calling.uri);
+    const agent = held?.backends.get(calling.chatUri)?.agent ?? held?.agent;
+    const state = (ctx.stateOf(calling.chatUri) ?? {}) as Bag;
+    const turns = Array.isArray(state.turns) ? state.turns as Bag[] : [];
+    const message = (bag(state.activeTurn)?.message ?? state.draft ?? turns.at(-1)?.message) as Bag | undefined;
+    const model = str(bag(message?.model)?.id);
+    // The calling chat's own config in force, which its backend answers.
+    const values = byChat.get(calling.chatUri)?.chat.settings() ?? {};
+    const config = agent?.inheritedChatConfig?.(values);
+    return {
+      ...(agent === undefined ? {} : { agent }),
+      ...(model === undefined ? {} : { model }),
+      ...(config === undefined ? {} : { config }),
+    };
+  };
+
   const openChat = async (
     at: string, asked: ChatStart, calling?: { uri: string; chatUri: string },
   ): Promise<{ chat: string }> => {
     const held = sessions.get(at);
     if (!held) throw new Error(`${at} is not a session this host is running`);
     /*
-     * The tree the call is made from, which is the one it is counted against.
+     * The budget of the session the call is made from, which is the one it is
+     * counted against.
      *
-     * A chat has no tree of its own, and the session named need not be the
+     * A chat has no budget of its own, and the session named need not be the
      * one this tool was called from. A tool is counted where it runs, so a
      * chat added to another session still spends the calling session's
      * budget - the same answer `send` gives, and for the same reason: the
      * session an agent is running in is the one whose spending is bounded.
      */
-    const tree = calling === undefined ? undefined : treeOf(idOf(calling.uri));
-    if (tree !== undefined) room(tree, 'chats');
+    const budget = calling === undefined ? undefined : budgetOf(idOf(calling.uri));
+    if (budget !== undefined) room(budget, 'chats');
     /*
      * Which backend serves it. A name this host does not hold is refused
      * rather than quietly started on the session's own: the plugin asked for
      * a harness, and one it did not get would be a chat it never asked for.
      */
     const agent = asked.provider === undefined ? held.agent : ctx.agents.get(asked.provider);
-    if (agent === undefined) throw new Error(`No provider called ${asked.provider}`);
+    if (agent === undefined) throw new Error(noProvider(asked.provider));
     const config = chatConfigOf(agent, held, checkedConfig(agent, asked.config));
+    // Asked for no model, a tool's chat runs the calling chat's where the two
+    // run one agent, as VS Code's create-chat takes it.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1375-L1378
+    const defaults = calling === undefined ? undefined : creationDefaults(calling);
+    const model = asked.model ?? (defaults?.agent === agent ? defaults.model : undefined);
     const chatUri = `ahp-chat:/${crypto.randomUUID()}`;
     // What the plugins give a chat a tool opens, ahead of the tool's prompt.
     const preambles = options.chatPreambles ?? [];
@@ -1646,16 +1789,22 @@ export function createTooling(ctx: HostContext): Tooling {
     if (asked.title !== undefined) kept.setChatTitle(idOf(at), chatUri, asked.title);
     const chat = await spawn(agent, at, chatUri, chatIdFor(at, chatUri), config, preamble === undefined ? undefined : { context: preamble }, held.workingDirectory, undefined, held.additional);
     log(`opened ${chatUri} in ${at}`);
-    if (asked.title !== undefined) keepTitle(at, chatUri, asked.title);
+    if (asked.title !== undefined) persistChatTitle(at, chatUri, asked.title);
+    // The default chat takes its own title from here, before the new chat is said.
+    snapshotDefaultChatTitle(at);
     dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
     // And the row: a client listing sessions reads a session's chats there.
-    summaryMoved(at);
+    markSummaryDirty(at);
     if (asked.prompt !== undefined) {
       const firstTurn = crypto.randomUUID();
-      remember(chatUri, firstTurn);
-      void ctx.startTurn(chat, firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
+      // Written down as the calling turn's, so it runs for whoever sent that
+      // turn, as VS Code's host runs a delegated prompt with the calling
+      // chat's credentials.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1373
+      if (calling !== undefined) remember(calling.chatUri, firstTurn);
+      void ctx.startTurn(chat, firstTurn, asked.prompt, model === undefined ? undefined : { id: model }, asked.from);
     }
-    if (tree !== undefined) countUp(tree, 'chats');
+    if (budget !== undefined) countUp(budget, 'chats');
     return { chat: chatUri };
   };
 
@@ -1732,7 +1881,8 @@ export function createTooling(ctx: HostContext): Tooling {
     context: contextOf,
     send: async (at, chatId, text, from) => {
       /*
-       * The tree the call is made from, which is the one it is counted against.
+       * The budget of the session the call is made from, which is the one it
+       * is counted against.
        *
        * The session the message goes to is not asked. A tool is counted where
        * it runs: the session that asked for the message is the one whose budget
@@ -1740,8 +1890,8 @@ export function createTooling(ctx: HostContext): Tooling {
        * runaway send a hundred messages into each of any number of sessions
        * without ever meeting a limit.
        */
-      const tree = treeOf(idOf(uri));
-      room(tree, 'messages');
+      const budget = budgetOf(idOf(uri));
+      room(budget, 'messages');
       // A session asleep in the catalogue is woken for the message, and held
       // awake until it has begun.
       const release = ctx.hold(at);
@@ -1758,13 +1908,13 @@ export function createTooling(ctx: HostContext): Tooling {
           const calling = activeTurnOf(chatUri);
           ctx.enqueue(found.chat.chatUri, crypto.randomUUID(), text, from,
             calling === undefined ? undefined : { owner: senderOf(calling), connection: sentBy.get(calling) });
-          countUp(tree, 'messages');
+          countUp(budget, 'messages');
           return 'queued';
         }
         const started = crypto.randomUUID();
         remember(chatUri, started);
         void ctx.startTurn(found.chat, started, text, undefined, from);
-        countUp(tree, 'messages');
+        countUp(budget, 'messages');
         return 'sent';
       } finally {
         release();
@@ -1772,25 +1922,35 @@ export function createTooling(ctx: HostContext): Tooling {
     },
     create: async (asked) => {
       /*
-       * The chain this session is part of, and the tree it grows.
+       * The chain this session is part of, and the budget it spends.
        *
        * The session made here is a child of the calling one, so it is the
        * calling session that is asked both questions: how deep it already sits
-       * in its chain, and how much its tree has made.
+       * in its chain, and how much its budget has made.
        */
-      const tree = treeOf(idOf(uri));
-      room(tree, 'sessions');
+      const budget = budgetOf(idOf(uri));
+      room(budget, 'sessions');
       const depth = kept.depthOf?.(idOf(uri)) ?? 0;
-      if (depth >= MAX_SPAWN_DEPTH) {
+      if (enforced() && depth >= MAX_SPAWN_DEPTH) {
         throw new Error(
           `Refusing to create a session: recursion limit reached (max spawn depth ${MAX_SPAWN_DEPTH}).`
           + ` This session was itself created ${depth} level(s) deep.`,
         );
       }
-      const provider = asked.provider ?? sessions.get(uri)?.agent.provider ?? ctx.first?.provider;
-      if (provider === undefined) throw new Error(NO_AGENT);
+      /*
+       * What the calling chat hands it, as VS Code's create-session takes it:
+       * that chat's agent where the call names none, and where the new session
+       * runs that agent, its model where the call names none and the settings
+       * the agent says a new chat inherits.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1208-L1233
+       */
+      const defaults = creationDefaults({ uri, chatUri });
+      const provider = asked.provider ?? defaults.agent?.provider ?? ctx.first?.provider;
+      if (provider === undefined) throw new Error(noProvider(provider));
       const agent = ctx.agents.get(provider);
-      if (agent === undefined) throw new Error(`No provider called ${provider}`);
+      if (agent === undefined) throw new Error(noProvider(provider));
+      const inherits = defaults.agent === agent;
+      const model = asked.model ?? (inherits ? defaults.model : undefined);
       /*
        * Named for the client whose turn made it: `<provider>:/<uuid>` when an
        * older VS Code window sent the running turn, so that window sees the
@@ -1808,20 +1968,26 @@ export function createTooling(ctx: HostContext): Tooling {
        * the tool arguing with which session it asked for.
        */
       const config: Record<string, unknown> = {
+        ...(inherits ? defaults.config ?? {} : {}),
         ...(checkedConfig(agent, asked.config) ?? {}),
         ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
-        ...(asked.model !== undefined ? { model: asked.model } : {}),
+        ...(model !== undefined ? { model } : {}),
       };
       // The same steps `createSession` takes for a client, in the same order:
-      // the tree before anything runs in it, the host's keys kept apart from
-      // the backend's.
-      const where = await isolated(made, config, asked.workingDirectory);
-      await settle(made, asked.workingDirectory, config);
+      // the host's keys kept apart from the backend's, and a worktree made at
+      // the first send.
+      const where = asked.workingDirectory;
+      await resolveCreatedSessionConfig(made, asked.workingDirectory, config);
       // The owner of the session this one was made inside, which is what a
       // tool acting for somebody means: the work is theirs whichever session
-      // it ends up running in.
-      await openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
-        forWhom(kept.owner(idOf(uri))));
+      // it ends up running in. And the session, chat and turn it was made
+      // from, which `createProviderSession` writes down beside the record so the summary
+      // carries them from its announcement, as the reference host's create
+      // carries its creation reference.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1236-L1242
+      const madeFrom = { session: uri, chat: chatUri, ...(turn === undefined ? {} : { turnId: turn }) };
+      await createProviderSession(made, provider, { ...config, _meta: { [CREATED_BY_META]: madeFrom } }, where, undefined, undefined, undefined,
+        asked.title, forWhom(kept.owner(idOf(uri))));
       /*
        * The session this one was made inside, kept with its record.
        *
@@ -1831,12 +1997,13 @@ export function createTooling(ctx: HostContext): Tooling {
        * whichever scheme this host is publishing it by then.
        */
       kept.setParent?.(idOf(made), idOf(uri));
+      ctx.oweTree(made, {}, undefined, () => ({}));
       const lead = byChat.get(chatUriFor(made));
       if (lead === undefined) throw new Error(`${made} did not start`);
       const firstTurn = crypto.randomUUID();
       remember(chatUri, firstTurn);
-      void ctx.startTurn(lead.chat, firstTurn, asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
-      countUp(tree, 'sessions');
+      void ctx.startTurn(lead.chat, firstTurn, asked.prompt, model === undefined ? undefined : { id: model }, asked.from);
+      countUp(budget, 'sessions');
       return { session: made, chat: chatUriFor(made) };
     },
     createChat: async (session, asked) => await openChat(session, asked, { uri, chatUri }),
@@ -1914,12 +2081,13 @@ export function createTooling(ctx: HostContext): Tooling {
       running: held.exitCode() === undefined,
     })),
     read: async (asked) => {
-      // The client that published it, if one did - that is the only thing
-      // that can read it - and this host's own store otherwise.
-      const owner = ownerOf(asked);
-      const answer = owner === undefined
-        ? await need(options.resources, 'resourceRead').read(asked)
-        : await owner.peer.request('resourceRead', { channel: ROOT, uri: asked });
+      // A client's resource from the client the client scheme names, about
+      // the URI as it knows it, as VS Code's host reads one through its client
+      // filesystem, and this host's own store otherwise.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13851-L13867
+      const answer = schemeOf(asked) === AGENT_CLIENT_SCHEME
+        ? await clientResources.read(asked)
+        : await need(options.resources, 'resourceRead').read(asked);
       const held = (typeof answer === 'object' && answer !== null ? answer : {}) as {
         data?: unknown; encoding?: unknown;
       };
@@ -1974,7 +2142,8 @@ export function createTooling(ctx: HostContext): Tooling {
    * somebody who is not in a chat: what a tool does to another session - a
    * message, a chat, a session, a title, a deletion - is done as the caller,
    * and what it does to its own chat throws instead of guessing one. Nothing
-   * is counted against a tree, because a person with no session is not a tree.
+   * is counted against a budget, because a person with no session spends
+   * none.
    */
   const sessionlessContext = (caller: ToolCaller): SessionlessToolCall => {
     const sender = ownerOfCaller(caller);
@@ -2016,12 +2185,12 @@ export function createTooling(ctx: HostContext): Tooling {
         }
       },
       create: async (asked) => {
-        // No chain and no tree: a session made here belongs to the caller, has
-        // no parent, and spends no budget kept for one.
+        // No chain and no budget: a session made here belongs to the caller,
+        // has no parent, and spends nothing a budget keeps.
         const provider = asked.provider ?? ctx.first?.provider;
-        if (provider === undefined) throw new Error(NO_AGENT);
+        if (provider === undefined) throw new Error(noProvider(provider));
         const agent = ctx.agents.get(provider);
-        if (agent === undefined) throw new Error(`No provider called ${provider}`);
+        if (agent === undefined) throw new Error(noProvider(provider));
         const made = uriFor(crypto.randomUUID());
         // The backend's own settings, checked, and the two keys this call owns
         // over them, as a session made from a turn builds them.
@@ -2030,10 +2199,11 @@ export function createTooling(ctx: HostContext): Tooling {
           ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
           ...(asked.model !== undefined ? { model: asked.model } : {}),
         };
-        const where = await isolated(made, config, asked.workingDirectory);
-        await settle(made, asked.workingDirectory, config);
-        await openSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
+        const where = asked.workingDirectory;
+        await resolveCreatedSessionConfig(made, asked.workingDirectory, config);
+        await createProviderSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
           sender === undefined ? undefined : forWhom(sender, caller.principal));
+        ctx.oweTree(made, {}, undefined, () => ({}));
         const lead = byChat.get(chatUriFor(made));
         if (lead === undefined) throw new Error(`${made} did not start`);
         const first = crypto.randomUUID();
@@ -2079,8 +2249,9 @@ export function createTooling(ctx: HostContext): Tooling {
       if (one.grant !== undefined && !callerMay(caller, one.grant)) return [];
       // No session means no strategy of its own: the deferred one this host
       // gives every session is the one a person is offered.
-      const asked = one.forSession?.({ titleStrategy: strategyOf('') });
-      if (asked?.offered === false) return [];
+      const session: ToolSession = { titleStrategy: strategyOf('') };
+      if (one.isEnabledForSession?.(session) === false) return [];
+      const asked = one.forSession?.(session);
       const definition = asked?.definition === undefined ? one.definition : { ...one.definition, ...asked.definition };
       const person = callerPerson(caller);
       return [{
@@ -2191,7 +2362,7 @@ export function createTooling(ctx: HostContext): Tooling {
    */
   const mcpFor = (uri: string): Record<string, McpServer> => frozenCopy(heldCopies(uri)
     .reduce<Record<string, McpServer>>((all, one) => {
-      const held = new Set((one.parts ?? [])
+      const held = new Set((one.children ?? [])
         .flatMap((part, at) => (part.type === 'mcpServer' && partOff(uri, one, at) ? [str(part.name) ?? ''] : [])));
       for (const [name, server] of Object.entries(serversOf(one.path as string))) {
         if (!held.has(name)) all[name] = server;
@@ -2329,11 +2500,7 @@ export function createTooling(ctx: HostContext): Tooling {
     return [
       ...ctx.contributing.flatMap((one) => {
         if (one.optIn === true && !named.includes(one.definition.name)) return [];
-        if (one.forSession?.({
-          titleStrategy: strategyOf(uri),
-          config: kept.config(idOf(uri)),
-          bindings: sessionBindings(uri),
-        })?.offered === false) return [];
+        if (one.isEnabledForSession?.(toolSession(uri)) === false) return [];
         return one.instruction === undefined ? [] : [one.instruction];
       }),
       ...rulesTold(uri),
@@ -2341,27 +2508,55 @@ export function createTooling(ctx: HostContext): Tooling {
   };
 
   /**
-   * What a turn of a session another window delegated here is told.
+   * What a turn of a session is told.
    *
-   * Report back to the chat the work came from, given only where such a
-   * session has a client that can report - the window's own rule over the
-   * origin it wrote and the tool it names. Handed to the backend as the words
-   * to read when the turn begins rather than as the words themselves, because
-   * this is the instruction that cannot be settled once: a client that joins,
-   * or leaves, reaches the next turn and not the one already running.
+   * What its clients undid of its agent's edits since the turn before, told
+   * once. And for a session another window delegated here, report back to the
+   * chat the work came from, given only where such a session has a client
+   * that can report - the window's own rule over the origin it wrote and the
+   * tool it names. Handed to the backend as the words to read when the turn
+   * begins rather than as the words themselves, because neither can be
+   * settled once: an undo meanwhile, or a client that joins or leaves,
+   * reaches the next turn and not the one already running.
    */
   const turnInstructions = (uri: string): TurnOptions => ({
-    instructions: () => (kept.remoteOrigin?.(idOf(uri)) === undefined || !offersSendRemoteMessage(uri)
-      ? []
-      : [REMOTE_SESSION_ORIGIN_INSTRUCTION]),
+    instructions: () => {
+      const undone = discardedNotes.get(uri) ?? [];
+      discardedNotes.delete(uri);
+      return [
+        ...undone,
+        ...(kept.remoteOrigin?.(idOf(uri)) === undefined || !offersSendRemoteMessage(uri) ? [] : [REMOTE_SESSION_ORIGIN_INSTRUCTION]),
+      ];
+    },
   });
 
+  /*
+   * What a session's clients undid of its agent's edits, kept until the
+   * agent's next turn reads it, once, in VS Code's words: the agent reads the
+   * file again before it edits it, and does not redo what was undone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostFileEditCoordinator.ts#L40-L56
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L2287-L2291
+   */
+  const discardedNotes = new Map<string, string[]>();
+  const reportDiscarded = (session: string, edits: DiscardedFileEdits): void => {
+    const path = edits.resource.startsWith('file:') ? localPath(edits.resource) : edits.resource;
+    const lines = edits.lines;
+    const where = lines === undefined ? ''
+      : lines.endLineNumberExclusive - lines.startLineNumber > 1 ? ` on lines ${lines.startLineNumber}-${lines.endLineNumberExclusive - 1}`
+        : lines.endLineNumberExclusive > lines.startLineNumber ? ` on line ${lines.startLineNumber}`
+          : ` near line ${lines.startLineNumber}`;
+    const note = edits.deleted
+      ? `The user undid your creation of ${path}, so the file no longer exists. Don't create it again unless the user asks you to.`
+      : `The user undid your changes to ${path}${where}. Read the file again before you edit it, and don't make those changes again unless the user asks you to.`;
+    discardedNotes.set(session, [...(discardedNotes.get(session) ?? []), note]);
+  };
+
   return {
-    permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions,
-    clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, folderOf, withEntries, tellOff, forgetTold, keepDecision,
-    retool, pluginsSettled, chatMeant, renameChat, renameSession, toolContext, sessionlessContext,
+    permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions, serverToolsMoved,
+    clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, workingDirectoryOf, withEntries, tellOff, forgetTold, recordCustomizationEnablement, publishSessionCustomizations,
+    retool, pluginsSettled, chatMeant, renameChat, renameSession, snapshotDefaultChatTitle, toolContext, sessionlessContext,
     pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,
-    toolsServersGone, boundTools, sessionlessTools, instructions, turnInstructions, openChat,
+    toolsServersGone, boundTools, sessionlessTools, instructions, turnInstructions, reportDiscarded, openChat,
     moving, served,
   };
 }

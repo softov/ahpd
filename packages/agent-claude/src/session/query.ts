@@ -102,12 +102,11 @@ export interface Query {
  * Where each turn a resumed session opens with ended, from where each turn of
  * its transcript's read ended, in the read's order.
  *
- * The host reads a turn back with the ones the chat never began inside it, as
- * a steering message the CLI ran after the turn's last answer, so such a turn
- * ends where the last of those ends: they follow it in the read, before the
- * next turn the session opens with. Nothing is taken past a rewind's point,
- * which is the last entry the conversation keeps. A session that opens with no
- * turns named takes the read as it is.
+ * The host reads one turn run twice back as one turn, under its first run's
+ * id, so such a turn ends where its later run ends: that run follows it in the
+ * read, before the next turn the session opens with. Nothing is taken past a
+ * rewind's point, which is the last entry the conversation keeps. A session
+ * that opens with no turns named takes the read as it is.
  */
 function endsOf(seed: readonly Bag[] | undefined, read: ReadonlyMap<string, string> | undefined, rewindAt: string | undefined): Map<string, string> {
   if (seed === undefined) return new Map(read ?? []);

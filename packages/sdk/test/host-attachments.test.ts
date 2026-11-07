@@ -16,9 +16,9 @@
  * state does.
  */
 
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { posix } from '../../../tools/posix.ts';
 import { WAIT_MS } from '../../../tools/wait.ts';
@@ -28,6 +28,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
+import type { HostOptions } from '../src/types/host.js';
 import type { MessageAttachment, MessageFrom, Session, SteeringMessage } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -153,10 +154,10 @@ const scripted = (dir: string, said: Said, pace = 0, held = false): Agent => {
   };
 };
 
-/** One client, one session, watching both its channels. */
-async function serving(said: Said, dir = temp(), store = true, pace = 0, held = false) {
+/** One client, one session, watching both its channels, on a host given `over` too. */
+async function serving(said: Said, dir = temp(), store = true, pace = 0, held = false, over: Partial<HostOptions> = {}) {
   const sessions = store ? fileSessions({ dir }) : memorySessions();
-  const host = createHost({ path: dir, agents: [scripted(dir, said, pace, held)], sessions });
+  const host = createHost({ path: dir, agents: [scripted(dir, said, pace, held)], sessions, ...over });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
@@ -176,15 +177,21 @@ async function serving(said: Said, dir = temp(), store = true, pace = 0, held = 
   return { host, client, peer: p, chatUri, dir, turn, state };
 }
 
+/** A folder a snapshot is written in, which a UUID names. */
+const SNAPSHOT_FOLDER = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /**
- * The files in the one session's folder, by name, which are its attachments.
+ * The files in the one session's folder which are its attachments, each in a
+ * folder of its own named by a UUID, by its path inside the session's folder.
  * The host keeps what is its own there, such as the turns a chat began, in
  * folders beside them.
  */
 const written = (dir: string): { folder: string; names: string[] } => {
   const folder = join(dir, 'attachments');
   const session = join(folder, first(readdirSync(folder)));
-  const names = readdirSync(session, { withFileTypes: true }).filter((one) => one.isFile()).map((one) => one.name);
+  const names = readdirSync(session, { withFileTypes: true })
+    .filter((one) => one.isDirectory() && SNAPSHOT_FOLDER.test(one.name))
+    .flatMap((one) => readdirSync(join(session, one.name)).map((file) => join(one.name, file)));
   return { folder: session, names };
 };
 
@@ -214,14 +221,15 @@ it.skipIf(!posix)('writes an embedded image to a file the message names', async 
   // Read-only, because nobody edits what somebody pasted.
   expect(statSync(file).mode & 0o777).toBe(0o400);
 
-  const attachment = first(sent(first(said.begun)));
-  expect(attachment.type).toBe('resource');
-  expect(attachment.uri).toBe(uriOf(file));
-  expect(attachment.label).toBe('pasted.png');
-  expect(attachment.contentType).toBe('image/png');
-  expect((attachment._meta as Bag)[TAG]).toEqual({ isSnapshot: true, contentType: 'image/png' });
-  // The bytes are gone from the message: what travels is the path.
-  expect('data' in attachment).toBe(false);
+  // The bytes are gone from the message: what travels is the path, with the
+  // label and the tag that says what type the bytes are in, which is what
+  // VS Code's host makes of a pasted picture.
+  expect(first(sent(first(said.begun)))).toEqual({
+    type: 'resource',
+    uri: uriOf(file),
+    label: 'pasted.png',
+    _meta: { [TAG]: { isSnapshot: true, contentType: 'image/png' } },
+  });
 
   // And the turn a client reads carries the same resource, which is the chip.
   const chat = await state();
@@ -262,21 +270,24 @@ it('writes each attachment of a message to its own file', async () => {
   expect(note.uri).toBe(uriOf(join(folder, text)));
 });
 
-it('names the file inside the folder whatever the label says', async () => {
+/*
+ * The label is one path segment in a folder of its own, the characters a
+ * segment cannot hold replaced, as VS Code's host names a snapshot.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13868-L13907
+ */
+it('names the file inside the folder whatever the label says, as VS Code\'s host', async () => {
   const said = saidNothing();
   const { dir, turn } = await serving(said);
   await turn({
     type: 'chat/turnStarted',
     turnId: 't1',
     startedAt: new Date().toISOString(),
-    message: { text: 'here', origin: { kind: 'user' }, attachments: [png('../../outside.png')] },
+    message: { text: 'here', origin: { kind: 'user' }, attachments: [png('../../outside.png'), png('notes')] },
   });
   await until(() => said.begun.length > 0);
 
   const { names } = written(dir);
-  expect(names).toHaveLength(1);
-  // The label's basename, inside the folder: no path from the client is one.
-  expect(first(names)).toMatch(/-outside\.png$/);
+  expect(names.map((one) => one.split(sep).at(-1)).sort()).toEqual(['.._.._outside.png', 'notes.png']);
   expect(readdirSync(join(dir, 'attachments'))).toHaveLength(1);
 });
 
@@ -314,6 +325,89 @@ it('reads a file only the client has, and leaves one this host has as it came', 
   expect((elsewhere._meta as Bag)[TAG]).toEqual({ isSnapshot: true, contentType: 'image/png' });
   // A file this host already holds is the user's own and is left where it is.
   expect(mine).toEqual({ type: 'resource', label: 'mine.png', uri: uriOf(here), contentType: 'image/png' });
+});
+
+it('tags a copy from the session\'s own folder where it stands, and leaves a tagged one as it came', async () => {
+  const said = saidNothing();
+  const { dir, turn, peer: p } = await serving(said);
+  // Two files this host wrote for an earlier message, which a client opened
+  // and attached again.
+  const folder = fileSessions({ dir }).attachmentsDir?.('one') as string;
+  const copy = join(folder, '00000000-0000-4000-8000-000000000001', 'copy.png');
+  const kept = join(folder, '00000000-0000-4000-8000-000000000002', 'kept.png');
+  mkdirSync(dirname(copy), { recursive: true });
+  mkdirSync(dirname(kept), { recursive: true });
+  writeFileSync(copy, PNG);
+  writeFileSync(kept, PNG);
+  const untagged = { type: 'resource', label: 'copy.png', uri: uriOf(copy), contentType: 'image/png', sizeHint: 1 };
+  const tagged = {
+    type: 'resource', label: 'kept.png', uri: uriOf(kept),
+    _meta: { [TAG]: { isSnapshot: true, contentType: 'image/png' } },
+  };
+  await turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again', attachments: [untagged, tagged] } });
+  await until(() => said.begun.length > 0);
+
+  // Both files are here already, so nothing was asked for or written.
+  expect(p.asked).toEqual([]);
+  expect(written(dir).names.map((one) => one.split(sep).at(-1)).sort()).toEqual(['copy.png', 'kept.png']);
+  // The one without the tag is the attachment as sent with the tag added,
+  // and the one carrying it is the attachment as sent.
+  expect(sent(first(said.begun))).toEqual([
+    { ...untagged, _meta: { [TAG]: { isSnapshot: true, contentType: 'image/png' } } },
+    tagged,
+  ]);
+});
+
+/*
+ * A resource on a scheme this host does not hold is read through the client
+ * that sent it, as VS Code's host snapshots any attachment it lacks; a
+ * directory is left as it was sent.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13703-L13720
+ */
+it('reads a resource on another scheme through the client that sent it, and leaves a directory as it came', async () => {
+  const said = saidNothing();
+  const { dir, turn, peer: p } = await serving(said);
+  const remote = { type: 'resource', label: 'remote.png', uri: 'vscode-remote://box/home/a/remote.png', contentType: 'image/png' };
+  const folder = { type: 'resource', label: 'src', uri: 'vscode-remote://box/home/a/src', displayKind: 'directory' };
+  await turn({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'these', attachments: [remote, folder] } });
+  await until(() => said.begun.length > 0);
+
+  expect(p.asked).toEqual([{ method: 'resourceRead', params: { channel: 'ahp-root://', uri: remote.uri } }]);
+  const { folder: kept, names } = written(dir);
+  expect(names).toHaveLength(1);
+  const handed = sent(first(said.begun));
+  expect(handed[0]?.uri).toBe(uriOf(join(kept, first(names))));
+  expect((handed[0]?._meta as Bag)[TAG]).toEqual({ isSnapshot: true, contentType: 'image/png' });
+  expect(handed[1]).toEqual(folder);
+});
+
+/*
+ * The daemon's `attachmentFetchLimitBytes`: a file hinted over it is left as
+ * it was sent, one under it is fetched, and `0` fetches any size, as VS Code's
+ * host does.
+ */
+it('asks a client for a file up to the size it is set to fetch, and for any size at 0', async () => {
+  const hinted = (label: string, sizeHint: number): Bag => ({
+    type: 'resource', label, uri: `file:///nowhere/${label}`, contentType: 'application/octet-stream', sizeHint,
+  });
+  const capped = saidNothing();
+  const small = await serving(capped, temp(), true, 0, false, { attachmentFetchLimitBytes: 1024 });
+  await small.turn({
+    type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(),
+    message: { origin: { kind: 'user' }, text: 'two', attachments: [hinted('over.bin', 2048), hinted('under.bin', 512)] },
+  });
+  await until(() => capped.begun.length > 0);
+  expect(small.peer.asked.map((one) => one.params.uri)).toEqual(['file:///nowhere/under.bin']);
+  expect(sent(first(capped.begun))[0]).toEqual(hinted('over.bin', 2048));
+
+  const unbounded = saidNothing();
+  const any = await serving(unbounded, temp(), true, 0, false, { attachmentFetchLimitBytes: 0 });
+  await any.turn({
+    type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(),
+    message: { origin: { kind: 'user' }, text: 'huge', attachments: [hinted('huge.bin', 33 * 1024 * 1024)] },
+  });
+  await until(() => unbounded.begun.length > 0);
+  expect(any.peer.asked.map((one) => one.params.uri)).toEqual(['file:///nowhere/huge.bin']);
 });
 
 it('asks no client for a file above the size it will fetch', async () => {

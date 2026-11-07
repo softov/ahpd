@@ -3,7 +3,7 @@ import { reason } from '@ahpd/sdk';
 import { parsed } from './record.js';
 import { answer } from './route.js';
 import { findThread, threadId } from './thread.js';
-import type { RecordCollection } from '@ahpd/sdk';
+import type { RecordCollection, TurnEndEvent } from '@ahpd/sdk';
 import type { Call } from './call.js';
 import type { Endpoint } from './record.js';
 import type { Target } from './route.js';
@@ -118,16 +118,24 @@ const ended = (done: TurnEnd): Record<string, unknown> => ({
  * `heard` takes every `turn_end` the host raises, and `wait` gives the end of
  * one turn by chat and turn id. A wait is made before its turn is sent, and
  * `forget` drops it when the host refuses the turn.
+ *
+ * A turn's end is said in the three words a reply says: a turn that
+ * succeeded, or a `!` command the host ran, `complete`; one stopped
+ * `cancelled`; one that failed, or whose start the host refused, `error` with
+ * its error's message.
  */
 export function turnEnds() {
   const waiting = new Map<string, (ending: Ending) => void>();
   const key = (chat: string, turn: string): string => `${chat}\n${turn}`;
   return {
-    heard(event: { chat: string; turn: string } & Ending): void {
-      const done = waiting.get(key(event.chat, event.turn));
+    heard(event: TurnEndEvent): void {
+      const done = waiting.get(key(event.channel, event.turnId));
       if (done === undefined) return;
-      waiting.delete(key(event.chat, event.turn));
-      done(event.error === undefined ? { status: event.status } : { status: event.status, error: event.error });
+      waiting.delete(key(event.channel, event.turnId));
+      const { reason } = event;
+      done(reason.kind === 'error' || reason.kind === 'rejected'
+        ? { status: 'error', error: reason.error.message }
+        : { status: reason.kind === 'cancelled' ? 'cancelled' : 'complete' });
     },
     wait(chat: string, turn: string): Promise<Ending> {
       return new Promise((resolve) => { waiting.set(key(chat, turn), resolve); });

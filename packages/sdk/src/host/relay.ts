@@ -1,28 +1,52 @@
-import { INVALID_PARAMS, RpcError } from '../rpc.js';
-import { Claiming } from './state.js';
-import type { Clients, Connection } from '../types/host.js';
+import { INTERNAL_ERROR, RpcError } from '../rpc.js';
+import { bag } from '../utils/values.js';
 import { ROOT } from './channels.js';
+import { fromAgentClientUri, toAgentClientUri } from './clienturi.js';
+import type { Clients, Connection } from '../types/host.js';
+import type { Entry, Metadata, Read, ResourceChange, ResourceProvider, Watcher } from '../types/resources.js';
 import type { HostContext } from './context.js';
 
-/** A URI a client published, and the client it is answered by. */
+/**
+ * How long a request for a client whose last connection has closed waits for
+ * it to come back: VS Code's client filesystem holds a client's slot for this
+ * long, so an operation in a reconnect's window waits for the replacement.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostFileSystemProvider.ts#L205-L216
+ */
+const CONNECTION_GRACE_MS = 5_000;
+
+/** A client's resources as the store their scheme is served by, with the access request a client answers. */
+export type ClientResources = Required<Pick<ResourceProvider, 'list' | 'resolve' | 'watch' | 'write' | 'delete' | 'mkdir' | 'move' | 'copy'>>
+  & Pick<ResourceProvider, 'read'>
+  & { request(uri: string, access: { read?: boolean; write?: boolean }): Promise<unknown> };
+
+/** The connected clients, as places a resource can come from. */
 export interface Relay {
   readonly clients: Clients;
-  readonly relayed: Claiming<{ owner: Connection; state: Record<string, unknown> }>;
+  /** The resources clients serve, under VS Code's client scheme. */
+  readonly clientResources: ClientResources;
   ownId(clientId: string): boolean;
   claimsId(one: Connection): boolean;
-  ownerOf(uri: string): Connection | undefined;
-  ask(client: string, method: string, params: Record<string, unknown>): Promise<unknown>;
-  elsewhere(method: string, params: Record<string, unknown>): Promise<{ result: unknown } | undefined>;
+  /** An action envelope a client sent on a watch channel this host subscribed to on that connection. */
+  heard(connection: Connection, envelope: Record<string, unknown>): void;
+  /** A connection that has closed: what it reported stops, and a request for its client waits out the grace. */
+  clientGone(connection: Connection): void;
+  /** A connection that answers for its client's id: every request and watch waiting on that client goes on. */
+  clientBack(clientId: string): void;
+  /**
+   * The host closing: no client comes back to it, so every grace ends now and
+   * whatever waited on one settles with no connection.
+   */
+  stopLapses(): void;
 }
 
 export function createRelay(ctx: HostContext): Relay {
-  const { connections, claims, holders, log } = ctx;
+  const { connections, holders, log } = ctx;
 
   /**
    * Whether a client id is one a person can hold: a client that names none
-   * is `anonymous` (or empty), which is every such client and nobody's.
+   * has the empty one, which is every such client's and nobody's.
    */
-  const ownId = (clientId: string): boolean => clientId !== '' && clientId !== 'anonymous';
+  const ownId = (clientId: string): boolean => clientId !== '';
   /**
    * Whether a connection answers for its client id: always with no users
    * directory and for the door, never for a connection with no id of its
@@ -37,149 +61,256 @@ export function createRelay(ctx: HostContext): Relay {
     const who = one.principal;
     return who !== undefined && who.id === holder && (who.standing === undefined || who.standing());
   };
+  /** The connection answering for a client id now, the newest where it has several. */
+  const connectedAs = (clientId: string): Connection | undefined =>
+    [...connections].reverse().find((one) => one.clientId === clientId && claimsId(one));
   /**
-   * Which client published a URI, if a connected one did.
-   *
-   * `<scheme>://<clientId>/…` is how the reference host addresses a
-   * client-served resource, and reading the authority is the whole of the
-   * routing. `file:` is never one - it is this machine's, and this host has a
-   * filesystem for it - and neither is an `ahp-` channel, whose authority is
-   * part of a channel name and not a client id.
+   * The clients whose last connection closed inside the grace, each with what
+   * waits on its return: a request settles with the connection that comes
+   * back, or with nothing once the grace is out.
    */
-  const ownerOf = (uri: string): Connection | undefined => {
-    const found = /^([a-zA-Z][\w+.-]*):\/\/([^/]+)/.exec(uri);
-    const scheme = found?.[1];
-    const who = found?.[2];
-    if (scheme === undefined || who === undefined || scheme === 'file' || scheme.startsWith('ahp-')) return undefined;
-    return [...connections].find((one) => one.clientId === who && claimsId(one));
-  };
-  /** Ask one client one of the ten, in its own words. */
-  const ask = async (client: string, method: string, params: Record<string, unknown>): Promise<unknown> => {
-    const held = [...connections].find((one) => one.clientId === client && claimsId(one));
-    if (held === undefined) throw new RpcError(-32008, `${client} is not a client this host has seen`);
-    // The channel last, not first: every one of the ten declares it as the
-    // literal `ahp-root://`, and this host refuses a client that names another
-    // - so a caller here cannot be the thing that gets it wrong either.
-    return await held.peer.request(method, { ...params, channel: ROOT });
+  const lapsing = new Map<string, { timer: ReturnType<typeof setTimeout>; waits: ((one: Connection | undefined) => void)[] }>();
+  /** What reattaches each client's watches once a connection answers for it again. */
+  const reattach = new Map<string, Set<() => void>>();
+  /** The watch channels this host subscribed to on each connection, and whom each change goes to. */
+  const listening = new Map<Connection, Map<string, (changes: ResourceChange[]) => void>>();
+
+  /**
+   * The connection to ask for a client's resource.
+   *
+   * A client whose connection closed inside the grace is waited for, and one
+   * that is not back by its end, or was never here, is refused in VS Code's
+   * words, as its client filesystem refuses an authority it has no
+   * connection for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostFileSystemProvider.ts#L598-L624
+   */
+  const connectionFor = async (clientId: string): Promise<Connection> => {
+    const now = connectedAs(clientId);
+    if (now !== undefined) return now;
+    const held = lapsing.get(clientId);
+    const back = held === undefined ? undefined : await new Promise<Connection | undefined>((resolve) => { held.waits.push(resolve); });
+    if (back === undefined) throw new RpcError(INTERNAL_ERROR, `No connection for authority: ${clientId}`);
+    return back;
   };
   /**
-   * The connected clients, as places a resource can come from.
+   * One request to a client, with the channel every one of the ten declares,
+   * as VS Code's host sends a reverse request to a client.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2574
    *
-   * Ten named methods over one `peer.request`, so a caller writes what it
-   * means rather than a method name and a bag - and so the params each takes
-   * are checked here rather than at the other end.
+   * The client's refusal goes back as the client said it, and is written down
+   * here: `-32009` from a client that published a directory read-only and
+   * `-32009` from one that has not finished working out who is asking are the
+   * same three digits to whoever asked, and the only place the method, the
+   * URI and the client are visible together is this log.
+   */
+  const sendReverseRequest = async (client: string, method: string, params: Record<string, unknown>): Promise<unknown> => {
+    const held = await connectionFor(client);
+    const about = String(params.uri ?? params.source ?? '');
+    return await held.peer.request(method, { ...params, channel: ROOT }).catch((error: unknown) => {
+      const code = (error as { code?: unknown }).code;
+      const said = error instanceof Error ? error.message : String(error);
+      log(`${client} refused ${method} for ${about}${typeof code === 'number' ? ` (${String(code)})` : ''}: ${said}`);
+      throw error;
+    });
+  };
+  /** The client a URI under the client scheme names and the URI as that client knows it. */
+  const addressed = (uri: string): { client: string; original: string } => {
+    const at = fromAgentClientUri(uri);
+    if (at === undefined) throw new RpcError(INTERNAL_ERROR, `${uri} names no client`);
+    return at;
+  };
+
+  /**
+   * A client's resources, as VS Code's host reaches them: each request goes to
+   * the client the URI's authority names, about the URI as that client knows
+   * it, and a move or a copy goes to the source's client with both URIs as it
+   * knows them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostFileSystemProvider.ts#L432-L561
+   */
+  const clientResources: ClientResources = {
+    read: async (uri, wanted) => {
+      const at = addressed(uri);
+      return await sendReverseRequest(at.client, 'resourceRead', { uri: at.original, ...(wanted !== undefined ? { encoding: wanted } : {}) }) as Read;
+    },
+    list: async (uri) => {
+      const at = addressed(uri);
+      const entries = bag(await sendReverseRequest(at.client, 'resourceList', { uri: at.original })).entries;
+      return Array.isArray(entries) ? entries as Entry[] : [];
+    },
+    /*
+     * The answer under the URI it was asked about, as VS Code's host reports a
+     * stat it reads through a client, and a client's root a directory without
+     * asking, as its client filesystem answers one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostFileSystemProvider.ts#L432-L464
+     */
+    resolve: async (uri, followSymlinks) => {
+      const at = addressed(uri);
+      const path = URL.canParse(at.original) ? new URL(at.original).pathname : '';
+      if (path === '/' || path === '') {
+        const epoch = new Date(0).toISOString();
+        return { uri, type: 'directory', size: 0, mtime: epoch, ctime: epoch };
+      }
+      const answer = await sendReverseRequest(at.client, 'resourceResolve', { uri: at.original, ...(followSymlinks !== undefined ? { followSymlinks } : {}) });
+      return { ...bag(answer), uri } as unknown as Metadata;
+    },
+    write: async (uri, content) => {
+      const at = addressed(uri);
+      await sendReverseRequest(at.client, 'resourceWrite', { ...content, uri: at.original });
+    },
+    delete: async (uri, recursive) => {
+      const at = addressed(uri);
+      await sendReverseRequest(at.client, 'resourceDelete', { uri: at.original, ...(recursive !== undefined ? { recursive } : {}) });
+    },
+    mkdir: async (uri) => {
+      const at = addressed(uri);
+      await sendReverseRequest(at.client, 'resourceMkdir', { uri: at.original });
+    },
+    move: async (source, destination, failIfExists) => {
+      const at = addressed(source);
+      await sendReverseRequest(at.client, 'resourceMove', {
+        source: at.original, destination: fromAgentClientUri(destination)?.original ?? destination,
+        ...(failIfExists !== undefined ? { failIfExists } : {}),
+      });
+    },
+    copy: async (source, destination, failIfExists) => {
+      const at = addressed(source);
+      await sendReverseRequest(at.client, 'resourceCopy', {
+        source: at.original, destination: fromAgentClientUri(destination)?.original ?? destination,
+        ...(failIfExists !== undefined ? { failIfExists } : {}),
+      });
+    },
+    request: async (uri, access) => {
+      const at = addressed(uri);
+      return await sendReverseRequest(at.client, 'resourceRequest', { uri: at.original, ...access });
+    },
+    /**
+     * A watch on a client's resource, as the protocol runs one this host is
+     * the caller of: the client is asked for a watch and answers its channel,
+     * this host subscribes to that channel on the client's connection, and
+     * the client sends each batch back over the action envelope, which is
+     * said here under the client scheme. Unsubscribed at the close. A client
+     * that drops and comes back is asked again on its new connection, as VS
+     * Code's client filesystem attaches a watch again across a reconnect.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/resource-watch-channel.md#L32-L54
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/resource-watch-channel.md#L83
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostFileSystemProvider.ts#L309-L415
+     */
+    watch: async (uri, options, onChange): Promise<Watcher> => {
+      const at = addressed(uri);
+      let live: { connection: Connection; channel: string } | undefined;
+      let closed = false;
+      const told = (changes: ResourceChange[]): void => {
+        onChange(changes.map((one) => ({ ...one, uri: toAgentClientUri(one.uri, at.client) })));
+      };
+      const attach = async (): Promise<void> => {
+        const owner = await connectionFor(at.client);
+        const channel = String(bag(await owner.peer.request('createResourceWatch', {
+          channel: ROOT,
+          uri: at.original,
+          recursive: options.recursive === true,
+          ...(options.excludes !== undefined && options.excludes.length > 0 ? { excludes: { items: options.excludes } } : {}),
+          ...(options.includes !== undefined && options.includes.length > 0 ? { includes: { items: options.includes } } : {}),
+        })).channel ?? '');
+        if (channel === '') throw new RpcError(INTERNAL_ERROR, `${at.client} answered no watch channel for ${at.original}`);
+        const heard = listening.get(owner) ?? new Map<string, (changes: ResourceChange[]) => void>();
+        listening.set(owner, heard.set(channel, told));
+        await owner.peer.request('subscribe', { channel });
+        if (closed) {
+          heard.delete(channel);
+          owner.peer.notify('unsubscribe', { channel });
+          return;
+        }
+        live = { connection: owner, channel };
+      };
+      const again = (): void => {
+        if (closed || (live !== undefined && connections.has(live.connection))) return;
+        live = undefined;
+        attach().catch((error: unknown) => { log(`${at.client} would not watch ${at.original} again: ${String(error)}`); });
+      };
+      await attach();
+      reattach.set(at.client, (reattach.get(at.client) ?? new Set<() => void>()).add(again));
+      return {
+        close: () => {
+          closed = true;
+          reattach.get(at.client)?.delete(again);
+          if (live === undefined) return;
+          listening.get(live.connection)?.delete(live.channel);
+          if (connections.has(live.connection)) live.connection.peer.notify('unsubscribe', { channel: live.channel });
+        },
+      };
+    },
+  };
+
+  const heard = (connection: Connection, envelope: Record<string, unknown>): void => {
+    const action = bag(envelope.action);
+    if (action.type !== 'resourceWatch/changed') return;
+    const told = listening.get(connection)?.get(String(envelope.channel ?? ''));
+    const items = bag(action.changes).items;
+    if (told === undefined || !Array.isArray(items) || items.length === 0) return;
+    told(items.filter((one): one is ResourceChange => typeof bag(one).uri === 'string' && typeof bag(one).type === 'string'));
+  };
+
+  const clientGone = (connection: Connection): void => {
+    listening.delete(connection);
+    const { clientId } = connection;
+    if (ctx.closed || !ownId(clientId) || connectedAs(clientId) !== undefined || lapsing.has(clientId)) return;
+    const timer = setTimeout(() => {
+      const held = lapsing.get(clientId);
+      lapsing.delete(clientId);
+      for (const wait of held?.waits ?? []) wait(undefined);
+    }, CONNECTION_GRACE_MS);
+    lapsing.set(clientId, { timer, waits: [] });
+  };
+
+  const stopLapses = (): void => {
+    for (const [clientId, held] of lapsing) {
+      clearTimeout(held.timer);
+      lapsing.delete(clientId);
+      for (const wait of held.waits) wait(undefined);
+    }
+  };
+
+  const clientBack = (clientId: string): void => {
+    const one = connectedAs(clientId);
+    if (one === undefined) return;
+    const held = lapsing.get(clientId);
+    if (held !== undefined) {
+      clearTimeout(held.timer);
+      lapsing.delete(clientId);
+      for (const wait of held.waits) wait(one);
+    }
+    for (const again of reattach.get(clientId) ?? []) again();
+  };
+
+  /**
+   * The connected clients, for a plugin: ten named methods over one request,
+   * each to the client it names and about the URI as that client knows it.
    */
   const clients: Clients = {
     ids: () => [...connections].filter(claimsId).map((one) => one.clientId).filter((one) => one !== ''),
-    owner: (uri) => ownerOf(uri)?.clientId,
-    read: async (client, uri, encoding) => await ask(client, 'resourceRead', {
+    owner: (uri) => {
+      const client = fromAgentClientUri(uri)?.client;
+      return client === undefined || connectedAs(client) === undefined ? undefined : client;
+    },
+    read: async (client, uri, encoding) => await sendReverseRequest(client, 'resourceRead', {
       uri, ...(encoding !== undefined ? { encoding } : {}),
     }),
-    list: async (client, uri) => await ask(client, 'resourceList', { uri }),
-    resolve: async (client, uri) => await ask(client, 'resourceResolve', { uri }),
-    write: async (client, uri, content) => await ask(client, 'resourceWrite', { uri, ...content }),
-    remove: async (client, uri, recursive) => await ask(client, 'resourceDelete', {
+    list: async (client, uri) => await sendReverseRequest(client, 'resourceList', { uri }),
+    resolve: async (client, uri) => await sendReverseRequest(client, 'resourceResolve', { uri }),
+    write: async (client, uri, content) => await sendReverseRequest(client, 'resourceWrite', { uri, ...content }),
+    delete: async (client, uri, recursive) => await sendReverseRequest(client, 'resourceDelete', {
       uri, ...(recursive !== undefined ? { recursive } : {}),
     }),
-    move: async (client, source, destination, failIfExists) => await ask(client, 'resourceMove', {
+    move: async (client, source, destination, failIfExists) => await sendReverseRequest(client, 'resourceMove', {
       source, destination, ...(failIfExists !== undefined ? { failIfExists } : {}),
     }),
-    copy: async (client, source, destination, failIfExists) => await ask(client, 'resourceCopy', {
+    copy: async (client, source, destination, failIfExists) => await sendReverseRequest(client, 'resourceCopy', {
       source, destination, ...(failIfExists !== undefined ? { failIfExists } : {}),
     }),
-    mkdir: async (client, uri) => await ask(client, 'resourceMkdir', { uri }),
-    watch: async (client, uri, watching) => await ask(client, 'createResourceWatch', { uri, ...watching }),
-    request: async (client, uri, access) => await ask(client, 'resourceRequest', { uri, ...access }),
-  };
-  /**
-   * A watch channel a client minted, and the client that minted it.
-   *
-   * `createResourceWatch` on a URI another client publishes is answered by
-   * that client, and what comes back is a channel *it* will report changes
-   * on. So the channel is remembered here: its owner is allowed to dispatch
-   * `resourceWatch/changed` onto it, which this host then relays to whoever
-   * subscribed - and nobody else is, because a change to somebody else's
-   * files is not a thing a third client may claim happened.
-   */
-  const relayed = new Claiming<{ owner: Connection; state: Record<string, unknown> }>(claims, 'watch');
-  /**
-   * One `resource*` request, answered by the client that published its URI.
-   *
-   * `undefined` means nobody else's: the URI is this machine's, or the client
-   * that published it has hung up - and then the host's own handler answers as
-   * it always did. Wrapped in an object so an owner answering `undefined` is
-   * still an answer.
-   *
-   * Called only for the ten, and only from there: every other request must
-   * reach its handler in the same turn of the event loop it arrived in, and
-   * an `await` here would put a microtask between the two - which is enough
-   * to lose an action dispatched while a `subscribe` is in flight.
-   */
-  const elsewhere = async (
-    method: string,
-    params: Record<string, unknown>,
-  ): Promise<{ result: unknown } | undefined> => {
-    const uri = String(params.uri ?? params.source ?? '');
-    const owner = ownerOf(uri);
-    if (owner === undefined) return undefined;
-    /*
-     * Both ends of a move or a copy, or neither.
-     *
-     * The two methods that name two URIs are the two that could ask one
-     * client to write into another's files, and neither peer could carry
-     * that out: the owner of the source cannot reach the destination. Said
-     * rather than half-done.
-     */
-    const to = params.destination === undefined ? undefined : ownerOf(String(params.destination));
-    if (params.destination !== undefined && to?.clientId !== owner.clientId) {
-      throw new RpcError(INVALID_PARAMS, `${uri} and ${String(params.destination)} are not the same client's`);
-    }
-    /*
-     * The owner's refusal is the owner's, and it is written down here.
-     *
-     * What goes back to the asking client is whatever the owner said, code
-     * and all - this host has no standing to soften somebody else's refusal.
-     * But a refusal that crossed a connection is one the asking client cannot
-     * attribute: `-32009` from a client that published a directory read-only
-     * and `-32009` from one that has not finished working out who is asking
-     * are the same three digits, and the only place both are visible at once
-     * is this log.
-     */
-    const answer = await owner.peer.request(method, params).catch((error: unknown) => {
-      const code = (error as { code?: unknown }).code;
-      const said = error instanceof Error ? error.message : String(error);
-      log(`${owner.clientId} refused ${method} for ${uri}${typeof code === 'number' ? ` (${String(code)})` : ''}: ${said}`);
-      throw error;
-    });
-    /*
-     * A watch the owner minted, remembered so its reports can be relayed.
-     *
-     * The asking client subscribes to the channel that comes back, and the
-     * owner dispatches `resourceWatch/changed` onto it - which this host
-     * would otherwise refuse, because that action is a host's to say.
-     */
-    if (method === 'createResourceWatch') {
-      const channel = String((answer as { channel?: unknown } | undefined)?.channel ?? '');
-      // The same `ResourceWatchState` a watch of this host's own reports: what
-      // the watch *is*, which is the params it was made with. The owner keeps
-      // no state this host could ask for, and the protocol's reducer keeps no
-      // history - a client arriving later has missed what it was not there for.
-      if (channel !== '') {
-        ctx.claimable(channel, 'watch');
-        relayed.set(channel, {
-          owner,
-          state: {
-            root: uri,
-            recursive: params.recursive === true,
-            ...(params.excludes !== undefined ? { excludes: params.excludes } : {}),
-            ...(params.includes !== undefined ? { includes: params.includes } : {}),
-          },
-        });
-      }
-    }
-    log(`${owner.clientId} answered ${method} for ${uri}`);
-    return { result: answer };
+    mkdir: async (client, uri) => await sendReverseRequest(client, 'resourceMkdir', { uri }),
+    watch: async (client, uri, watching) => await sendReverseRequest(client, 'createResourceWatch', { uri, ...watching }),
+    request: async (client, uri, access) => await sendReverseRequest(client, 'resourceRequest', { uri, ...access }),
   };
 
-  return { clients, relayed, ownId, claimsId, ownerOf, ask, elsewhere };
+  return { clients, clientResources, ownId, claimsId, heard, clientGone, clientBack, stopLapses };
 }

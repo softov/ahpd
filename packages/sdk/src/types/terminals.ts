@@ -19,16 +19,28 @@ export interface CommandTerminal {
   isPty?: boolean;
 }
 
-/** What a `!` command did, once it has run to its exit. */
-export interface Ran {
-  /** Everything it printed. Empty when it printed nothing. */
-  output: string;
-  /** The terminal it ran in. */
-  terminal: string;
-  /** Whether a pseudoterminal ran it, as `CommandTerminal.isPty` says. */
-  isPty?: boolean;
-  /** What it exited with. */
-  code: number;
+/**
+ * How a command run in a shell finished, in VS Code's five words: it ran to
+ * its end, it ran past the time it was given, a client took the terminal's
+ * claim off the call (to let it go on in the background), it switched to the
+ * alternate screen, or the shell itself exited.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L160-L169
+ */
+export type ShellCommandStatus = 'completed' | 'timeout' | 'background' | 'altBuffer' | 'shellExited';
+
+/**
+ * What a command run in a shell did, as VS Code's shell command runner says
+ * it: how it finished, its exit code where one is known, and what it printed,
+ * with the terminal's escape sequences taken out.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L171-L183
+ */
+export interface ShellCommandResult {
+  /** How it finished. */
+  readonly status: ShellCommandStatus;
+  /** Its exit code, once it ran to its end or the shell exited. */
+  readonly exitCode?: number;
+  /** What it printed. Empty when it went on in the background or opened a full-screen program. */
+  readonly output: string;
 }
 
 /** Who currently holds a terminal: a connected client, or a session. */
@@ -82,9 +94,8 @@ export interface TerminalOptions {
    *
    * Present, `command` and these are one argv: each word is quoted and the
    * shell runs exactly that program. Absent, `command` is a shell line and
-   * reaches the shell untouched, because a `!` command typed by a person is
-   * already shell syntax and quoting it would look for a program named after
-   * the whole line.
+   * reaches the shell untouched, because a line is already shell syntax and
+   * quoting it would look for a program named after the whole line.
    */
   args?: string[];
   /**
@@ -380,6 +391,12 @@ export interface OpenTerminal {
   env?: Record<string, string | undefined>;
   /** Display name. The process's own if none is given. */
   name?: string;
+  /**
+   * The tool call the terminal runs for, which its claim names beside the
+   * turn running in its chat, as VS Code's shell tool claims an agent's
+   * terminal.
+   */
+  toolCallId?: string;
 }
 
 /**
@@ -414,9 +431,8 @@ export interface OpenedTerminal {
   /**
    * End the process and let go of it.
    *
-   * The terminal stays on the root list, exited, the way a `!` command's does:
-   * a transcript may still point at the channel. `release` is what takes it
-   * off the list.
+   * The terminal stays on the root list, exited: a transcript may still point
+   * at the channel. `release` is what takes it off the list.
    */
   kill(): void;
   /**

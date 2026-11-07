@@ -116,7 +116,7 @@ A spec is a package name or a path. A path is tried from the working directory, 
 
 ## Language
 
-A client that sends a `locale` reads the new session form and the plugins screen in that language. The host and each first-party plugin ship `pt` and `es`. A string with no translation shows in English. A client that changes its language connects again. See [Text in the client's language](../plugins/PLUGINS.md#text-in-the-client-s-language) to ship a catalog with a plugin.
+A client that sends a `locale` reads the new session form and the plugins screen in that language. The host and each first-party plugin ship `pt` and `es`. A string with no translation shows in English, and so does every string for a tag longer than 35 characters, which is read as no locale sent. A client that changes its language connects again. See [Text in the client's language](../plugins/PLUGINS.md#text-in-the-client-s-language) to ship a catalog with a plugin.
 
 ## Where a plugin keeps its records
 

@@ -1,22 +1,25 @@
 import { WAIT_MS } from '../../../tools/wait.ts';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, type FSWatcher } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync, type FSWatcher } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { gitChanges } from '../src/sessions/changes.js';
 import { gitBranches } from '../src/repo/git.js';
 import { gitWorktrees } from '../src/repo/worktrees.js';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { fileResources, uriOf } from '../src/resources/resources.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
+import { BASELINE_TURN } from '../src/types/changes.js';
 import type { ChangesetSource } from '../src/types/changes.js';
 import type { Peer } from '../src/types/rpc.js';
+import type { Session } from '../src/types/session.js';
 
 /*
  * The source opens a real `fs.watch` handle, and one case below asks what it
@@ -136,6 +139,32 @@ const open = async (dir: string, changes: ChangesetSource, agent: Agent = echo({
   return { client, peer: p, dir };
 };
 
+/**
+ * The echo agent serving `path`, each turn of which writes a file named after
+ * the turn into `dir` before it answers, saying the edit as a backend does.
+ */
+const writingTurns = (path: string, dir: string): Agent => {
+  const base = echo({ path, pace: 5 });
+  return {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return {
+        ...session,
+        sendMessage: (turnId, ...rest) => {
+          const file = join(dir, `${turnId}.txt`);
+          void (async () => {
+            await start.onFileEdit?.(turnId, file, 'before');
+            writeFileSync(file, 'made\n');
+            await start.onFileEdit?.(turnId, file, 'after');
+            await session.sendMessage(turnId, ...rest);
+          })();
+        },
+      };
+    },
+  };
+};
+
 /** A source that wraps the real one and counts what the host asks of it. */
 interface Calls {
   /** Re-reads begun. */
@@ -207,6 +236,10 @@ const FILE_ACTIONS = [
 const kindsOf = (actions: Record<string, unknown>[]): string[] => actions
   .map((one) => (one.type === 'changeset/statusChanged' ? `status:${String(one.status)}` : String(one.type)));
 
+/** A changeset said empty: its whole set, with no files in it. */
+const emptied = (one: Record<string, unknown>): boolean =>
+  one.type === 'changeset/contentChanged' && Array.isArray(one.files) && one.files.length === 0;
+
 /**
  * The git source with its watch the test fires, and a re-read that always says
  * something moved.
@@ -256,12 +289,40 @@ it('says recomputing before a re-read that finds the same files, and ready after
   await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:ready'));
 
   const after = channelActions(p, CHANGESET).slice(before);
-  // The status is the whole of what moved, so the two are all that arrives.
-  expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:ready']);
+  // The files are as they were, so the status and the operations are all that
+  // arrives, the status after the operations as VS Code's host says it after a
+  // recompute's content.
+  expect(kindsOf(after).slice(0, 3)).toEqual(['status:recomputing', 'changeset/operationsChanged', 'status:ready']);
   expect(after.filter((one) => FILE_ACTIONS.includes(String(one.type)))).toEqual([]);
 });
 
-it('says recomputing before a re-read that finds a file, and the old files stay until ready', async () => {
+/*
+ * The session's list of changesets is said only where it differs from the one
+ * its state holds, as VS Code's state manager skips an equal catalogue.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2587-L2609
+ */
+it('says no changeset list to the session for a re-read that finds the same files', async () => {
+  const dir = repository();
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  const { calls, source } = reReads();
+  const { client, peer: p } = await open(dir, source);
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/s' } });
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+  const before = channelActions(p, 'ahp-session:/s').length;
+
+  calls.watched?.();
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET)).includes('status:ready') && calls.finished === calls.refresh);
+
+  expect(channelActions(p, 'ahp-session:/s').slice(before).filter((one) => one.type === 'session/changesetsChanged')).toEqual([]);
+});
+
+/*
+ * The new files are said before the changeset is ready again, as VS Code's
+ * host publishes a recompute's content and then its status.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2323-L2339
+ */
+it('says recomputing before a re-read that finds a file, keeps the old files while it runs, and says ready after the new ones', async () => {
   const dir = repository();
   writeFileSync(join(dir, 'a.txt'), 'a\n');
   const { calls, source } = counting();
@@ -282,8 +343,9 @@ it('says recomputing before a re-read that finds a file, and the old files stay 
   const recomputing = kinds.indexOf('status:recomputing');
   const ready = kinds.indexOf('status:ready');
   const file = kinds.findIndex((one) => FILE_ACTIONS.includes(one));
-  expect(kinds.slice(recomputing, ready + 1)).toEqual(['status:recomputing', 'status:ready']);
-  expect(file).toBeGreaterThan(ready);
+  expect(recomputing).toBeGreaterThanOrEqual(0);
+  expect(file).toBeGreaterThan(recomputing);
+  expect(ready).toBeGreaterThan(file);
 
   // A client replaying these keeps the files it had while the read ran, which
   // is what `recomputing` is for.
@@ -319,7 +381,13 @@ const reReadAnswering = (source: ChangesetSource, next: () => Promise<undefined>
   };
 };
 
-it('says a re-read that fails as the error the protocol names, with its cause', async () => {
+/*
+ * A read that fails ends a computation with no new result, as the reference
+ * ends one: the earlier result kept and its status said again, and
+ * `computeFailed` with the cause only where there is no earlier result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L2251-L2271
+ */
+it('keeps the earlier result when a re-read fails, saying its status again', async () => {
   const dir = repository();
   writeFileSync(join(dir, 'a.txt'), 'a\n');
   const { calls, source } = reReads();
@@ -330,15 +398,12 @@ it('says a re-read that fails as the error the protocol names, with its cause', 
   const before = channelActions(p, CHANGESET).length;
 
   calls.watched?.();
-  await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:error'));
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:ready'));
 
-  // `error` is the status of a computation that failed, its cause beside it,
-  // and the files stay the last completed result.
-  // https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-changeset/state.ts#L119-L141
   const after = channelActions(p, CHANGESET).slice(before);
   expect(reads()).toBeGreaterThan(1);
-  expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:error']);
-  expect(after.find((one) => one.status === 'error')?.error).toEqual({ errorType: 'computeFailed', message: 'the read failed' });
+  expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:ready']);
+  expect(kindsOf(after)).not.toContain('status:error');
   expect(after.filter((one) => FILE_ACTIONS.includes(String(one.type)))).toEqual([]);
 });
 
@@ -405,7 +470,18 @@ it('moves the changeset when a client writes a file through the host', async () 
   await waitFor(() => channelActions(p, CHANGESET).some((one) => JSON.stringify(one.files ?? '').includes('fresh.txt')));
 });
 
-it('moves the changeset when a tool call completes mid-turn', async () => {
+/**
+ * A tool call's result naming the file it wrote, in the protocol's file edit
+ * content: what the reference recomputes a session's changesets on mid-turn.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1118-L1124
+ */
+const editing = (path: string): Record<string, unknown> => ({
+  success: true,
+  pastTenseMessage: 'Wrote it',
+  content: [{ type: 'fileEdit', after: { uri: uriOf(path), content: { uri: uriOf(path) } } }],
+});
+
+it('moves the changeset when a tool call that edited a file completes mid-turn', async () => {
   const dir = repository();
   const held: { emit?: Start['emit'] } = {};
   const base = echo({ path: dir });
@@ -421,10 +497,25 @@ it('moves the changeset when a tool call completes mid-turn', async () => {
   await settle(8);
 
   writeFileSync(join(dir, 'from-tool.txt'), 'made\n');
-  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: editing(join(dir, 'from-tool.txt')) });
   await waitFor(() => channelActions(p, CHANGESET).some((one) => JSON.stringify(one.files ?? '').includes('from-tool.txt')));
   // And nothing has ended the turn, which is what used to be the only trigger.
   expect(channelActions(p, URI).some((one) => one.type === 'chat/turnComplete')).toBe(false);
+});
+
+it('reads nothing again for a tool call whose result names no file edit', async () => {
+  const dir = repository();
+  const { held, agent } = endable(dir);
+  const { calls, source } = counting();
+  const { client } = await open(dir, source, agent);
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+  const before = calls.refresh;
+
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: { success: true, pastTenseMessage: 'Read it' } });
+  await settle(20);
+  await new Promise((r) => { setTimeout(r, 200); });
+  expect(calls.refresh).toBe(before);
 });
 
 /** An echo backend whose emitter the test holds, so it can end a turn itself. */
@@ -460,11 +551,10 @@ it('pushes the files of a watched changeset when a turn ends', async () => {
   await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
   await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
 
-  // A tool call that wrote nothing: its own mid-turn re-read finds the same
-  // files, so the turn's end is the only thing left that can push these.
-  const before = calls.refresh;
+  // A tool call that names no file edit reads nothing again, so the turn's end
+  // is the only thing left that can push these.
   held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
-  await waitFor(() => calls.finished >= before + 1);
+  await settle(8);
 
   writeFileSync(join(dir, 'from-turn.txt'), 'made\n');
   held.emit?.('chat', { type: 'chat/turnComplete', turnId: 't1', duration: 1 });
@@ -527,7 +617,7 @@ it('runs no git for tool calls or writes when no client watches the directory', 
   // Ten tool calls that each wrote a file, with nobody subscribed.
   for (let i = 0; i < 10; i++) {
     writeFileSync(join(dir, `t${String(i)}.txt`), 'x\n');
-    held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: `c${String(i)}`, result: {} });
+    held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: `c${String(i)}`, result: editing(join(dir, `t${String(i)}.txt`)) });
   }
   await settle(10);
   expect(calls.refresh).toBe(0);
@@ -564,7 +654,7 @@ it('moves the changeset when a terminal that committed in the directory exits', 
     params: { channel: terminal, action: { type: 'terminal/input', data: 'git commit -am x\nexit\n' } },
   });
   await waitFor(() => channelActions(p, terminal).some((one) => one.type === 'terminal/exited'), 8000);
-  await waitFor(() => channelActions(p, CHANGESET).some((one) => one.type === 'changeset/cleared'), 4000);
+  await waitFor(() => channelActions(p, CHANGESET).some(emptied), 4000);
 }, 20000);
 
 it('coalesces a burst of triggers into at most two re-reads', async () => {
@@ -699,7 +789,7 @@ it('sees a commit made right after the first read, before the watch is armed', a
   await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
 
   git(dir, 'commit', '-q', '-m', 'x');
-  await waitFor(() => channelActions(p, CHANGESET).some((one) => one.type === 'changeset/cleared'));
+  await waitFor(() => channelActions(p, CHANGESET).some(emptied));
 });
 
 it('moves the changeset when a branch moves with no index or HEAD write', async () => {
@@ -711,7 +801,7 @@ it('moves the changeset when a branch moves with no index or HEAD write', async 
 
   const seen = (): Record<string, unknown>[] => channelActions(p, CHANGESET);
   git(dir, 'commit', '-q', '-m', 'x');
-  await waitFor(() => seen().some((one) => one.type === 'changeset/cleared'));
+  await waitFor(() => seen().some(emptied));
 
   // `reset --soft` moves the branch and writes neither the index nor HEAD.
   const beforeReset = seen().length;
@@ -723,7 +813,7 @@ it('moves the changeset when a branch moves with no index or HEAD write', async 
   // with it, with the working tree untouched either way.
   const beforeCommit = seen().length;
   git(dir, 'commit', '--allow-empty', '-q', '-m', 'y');
-  await waitFor(() => seen().slice(beforeCommit).some((one) => one.type === 'changeset/cleared'));
+  await waitFor(() => seen().slice(beforeCommit).some(emptied));
 });
 
 it('ends quietly a re-read whose directory is removed while it runs', async () => {
@@ -871,7 +961,7 @@ const firstOperations = async (dir: string, github?: ReturnType<typeof noRequest
   const answer = await client.handle({ method: 'subscribe', params: { channel: CHANGESET } }) as {
     snapshot: { state: { files: unknown[]; operations?: { id: string }[] } };
   };
-  return { peer: p, state: answer.snapshot.state, ids: (answer.snapshot.state.operations ?? []).map((one) => one.id) };
+  return { client, peer: p, state: answer.snapshot.state, ids: (answer.snapshot.state.operations ?? []).map((one) => one.id) };
 };
 
 it('offers the pull request pair on the first subscribe in a directory outside the path', async () => {
@@ -892,13 +982,89 @@ it('offers no pull request on the first subscribe when there is no GitHub to ask
   expect(ids).not.toContain('prepare-pull-request');
 });
 
-it('announces the session\'s counts on the first subscribe in a directory outside the path', async () => {
+/*
+ * A session made in a directory outside the path is announced at its first
+ * message with none of its folder's counts, as VS Code's host sets a row's
+ * changes from the session's own changesets: the uncommitted file that was
+ * there before the session began is nobody's in particular.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L480-L493
+ */
+it('announces a session made in a directory outside the path with none of its folder\'s counts', async () => {
   const dir = onGitHub();
-  const { peer: p } = await firstOperations(dir);
-  // The row is published under its provider's name, and its last move holds
-  // the counts once the folder was read.
-  const counted = rowsMoved(p, 'ahp-session:/s').at(-1);
-  expect((counted?.changes as { files?: number } | undefined)?.files).toBe(1);
+  const { client, peer: p } = await firstOperations(dir);
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
+  await vi.waitFor(() => { expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(true); }, { timeout: WAIT_MS });
+  await settle(20);
+  await new Promise((r) => { setTimeout(r, 200); });
+  const added = p.notes.filter((n) => n.method === 'root/sessionAdded')
+    .map((n) => (n.params as { summary: Record<string, unknown> }).summary)
+    .find((one) => one.resource === URI);
+  // Every count the row said, at its announcement and since: the session's
+  // own, which are none.
+  const said = [added?.changes, ...rowsMoved(p, URI).map((one) => one.changes)]
+    .filter((one): one is { files?: number } => one !== undefined);
+  expect(said.filter((one) => (one.files ?? 0) !== 0)).toEqual([]);
+});
+
+/*
+ * Each listed chat carries its own counts on its entry, as VS Code's changeset
+ * service sets a chat's aggregate: the default chat the session's own work, any
+ * other chat the edits tracked in its own turns.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1724-L1828
+ */
+it('puts each chat\'s own counts on its entry: the session\'s on its default chat, its own turns\' edits on another', async () => {
+  const dir = repository();
+  const { client, peer: p } = await open(dir, gitChanges(), writingTurns(dir, dir), dir);
+  const PEER = 'ahp-chat:/peer';
+  await client.handle({ method: 'createChat', params: { channel: URI, chat: PEER } });
+  const countsOf = (chat: string): unknown => channelActions(p, URI)
+    .filter((one) => one.type === 'session/chatUpdated' && one.chat === chat && (one.changes as Record<string, unknown>).changes !== undefined)
+    .map((one) => (one.changes as Record<string, unknown>).changes).at(-1);
+  const turn = async (chat: string, turnId: string): Promise<void> => {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+    });
+  };
+
+  await turn(chatUriFor(URI), 't1');
+  await waitFor(() => JSON.stringify(countsOf(chatUriFor(URI))) === JSON.stringify({ files: 1, additions: 1, deletions: 0 }));
+  await turn(PEER, 't2');
+  await waitFor(() => JSON.stringify(countsOf(PEER)) === JSON.stringify({ files: 1, additions: 1, deletions: 0 }));
+  await waitFor(() => JSON.stringify(countsOf(chatUriFor(URI))) === JSON.stringify({ files: 2, additions: 2, deletions: 0 }));
+
+  const opened = await client.handle({ method: 'subscribe', params: { channel: URI } }) as { snapshot: { state: { chats: Record<string, unknown>[] } } };
+  expect(Object.fromEntries(opened.snapshot.state.chats.map((one) => [one.resource, one.changes]))).toEqual({
+    [chatUriFor(URI)]: { files: 2, additions: 2, deletions: 0 },
+    [PEER]: { files: 1, additions: 1, deletions: 0 },
+  });
+});
+
+/*
+ * A session's project is read when it is made, as VS Code's host builds a new
+ * session's summary with the project its creation resolved: the primary
+ * checkout of the repository its folder is in, and none outside git.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10662-L10714
+ */
+it('names a session\'s project the repository its folder is in from its first snapshot, and none outside git', async () => {
+  const repo = realpathSync(onGitHub());
+  const inside = join(repo, 'src');
+  mkdirSync(inside);
+  const plain = elsewhere();
+  const home = elsewhere();
+  const host = createHost({ path: home, agents: [echo({ path: home })], directories: gitBranches() });
+  const client = host.accept(peer());
+  await client.handle(hello);
+  const projectOf = async (channel: string, dir: string): Promise<unknown> => {
+    await client.handle({ method: 'createSession', params: { channel, provider: 'echo', workingDirectories: [uriOf(dir)] } });
+    const opened = await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: { project?: unknown } } };
+    return opened.snapshot.state.project;
+  };
+  expect(await projectOf(URI, inside)).toEqual({ uri: uriOf(repo), displayName: basename(repo) });
+  expect(await projectOf('ahp-session:/plain', plain)).toBeUndefined();
 });
 
 it('answers a subscribe in a directory that is not a repository, when its facts fail', async () => {
@@ -948,7 +1114,14 @@ const perDirectory = (): { reads: Map<string, number>; source: ChangesetSource }
   };
 };
 
-it('lists a stored session outside the path with its counts, with no turn and no subscribe', async () => {
+/*
+ * A stored session's row carries the session's own counts and none of its
+ * folder's, as VS Code's host sets a row's changes from the session's own
+ * changesets and its recorded summary alone: a folder's uncommitted work is
+ * nobody's in particular.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L480-L493
+ */
+it('lists a stored session outside the path with no counts of its folder\'s, its folder read once', async () => {
   const dir = onGitHub();
   const home = elsewhere();
   const { reads, source } = perDirectory();
@@ -962,23 +1135,25 @@ it('lists a stored session outside the path with its counts, with no turn and no
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: { resource: string; changes?: { files?: number } }[];
   };
-  expect(listed.items.find((one) => one.resource === 'ahp-session:/stored')?.changes?.files).toBe(1);
+  expect(listed.items.find((one) => one.resource === 'ahp-session:/stored')).not.toHaveProperty('changes');
   expect(reads.get(dir)).toBe(1);
 });
 
-it('tells a client already connected that a stored session\'s counts arrived', async () => {
+it('says nothing of a stored session\'s folder counts to a client already connected', async () => {
   const dir = onGitHub();
   const home = elsewhere();
+  const { source } = perDirectory();
   const host = createHost({
     path: home, agents: [storing(home, dir)], resources: fileResources(), terminals: shellTerminals(),
-    changes: gitChanges(), directories: gitBranches(),
+    changes: source, directories: gitBranches(),
   });
   const p = peer();
   const client = host.accept(p);
   await client.handle(hello);
-  await waitFor(() => rowsMoved(p, 'ahp-session:/stored').length > 0);
-  const moved = rowsMoved(p, 'ahp-session:/stored').at(-1);
-  expect((moved?.changes as { files?: number } | undefined)?.files).toBe(1);
+  await waitFor(() => source.summary(dir) !== undefined);
+  await settle(20);
+  await new Promise((r) => { setTimeout(r, 200); });
+  expect(rowsMoved(p, 'ahp-session:/stored')).toEqual([]);
 });
 
 it('does not read a second time a stored session\'s directory that is already served', async () => {
@@ -1020,7 +1195,7 @@ it('tells a client watching a stored session\'s changeset that a commit cleared 
   expect(answer.snapshot.state.files).toHaveLength(1);
 
   git(dir, 'commit', '-q', '-m', 'x');
-  await waitFor(() => channelActions(p, changeset).some((one) => one.type === 'changeset/cleared'));
+  await waitFor(() => channelActions(p, changeset).some(emptied));
 });
 
 it('keeps a stored session\'s git watch while its changeset is watched, and closes it after', async () => {
@@ -1103,6 +1278,11 @@ const openInTree = async (repository_: string, changes: ChangesetSource, agent: 
       config: { isolation: 'worktree', branch: 'main' },
     },
   });
+  // Its first message, at which its tree is cut and it is announced.
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
   await waitFor(() => git(repository_, 'worktree', 'list', '--porcelain').includes('refs/heads/agents/'));
   return { client, peer: p, where: cutTree(repository_) };
 };
@@ -1117,12 +1297,18 @@ it('moves a session row at a tool call, from its baseline, before the turn ends'
   const dir = repository();
   const { held, agent } = endable(dir);
   const { client, peer: p } = await open(dir, gitChanges(), agent, dir);
-  // The baseline is written and read before the row can move from it.
-  await waitFor(() => rowsMoved(p, SESSION).length > 0);
+  // Announced at its first message, and the baseline written and read before
+  // the row can move from it.
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+  });
+  await waitFor(() => p.notes.some((n) => n.method === 'root/sessionAdded'));
+  await settle(8);
   const from = rowsMoved(p, SESSION).length;
 
   writeFileSync(join(dir, 'from-tool.txt'), 'made\n');
-  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: editing(join(dir, 'from-tool.txt')) });
 
   await waitFor(() => countsMoved(p, from)?.files === 1);
   expect(countsMoved(p, from)).toEqual({ files: 1, additions: 1, deletions: 0 });
@@ -1134,11 +1320,12 @@ it('moves a worktree row at a tool call, from its branch, before the turn ends',
   const project = insideAProject();
   const { held, agent } = endable(project);
   const { client, peer: p, where } = await openInTree(project, gitChanges(), agent);
-  await waitFor(() => rowsMoved(p, SESSION).length > 0);
+  await waitFor(() => p.notes.some((n) => n.method === 'root/sessionAdded'));
+  await settle(8);
   const from = rowsMoved(p, SESSION).length;
 
   writeFileSync(join(where, 'from-tool.txt'), 'made\n');
-  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: editing(join(where, 'from-tool.txt')) });
 
   await waitFor(() => countsMoved(p, from)?.files === 1);
   expect(countsMoved(p, from)).toEqual({ files: 1, additions: 1, deletions: 0 });
@@ -1169,7 +1356,7 @@ it('runs at most two summary reads for a burst of ten tool calls', async () => {
 
   for (let i = 0; i < 10; i++) {
     writeFileSync(join(dir, `t${String(i)}.txt`), 'x\n');
-    held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: `c${String(i)}`, result: {} });
+    held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: `c${String(i)}`, result: editing(join(dir, `t${String(i)}.txt`)) });
   }
   await waitFor(() => reads.finished >= 2 && reads.finished === reads.started);
   // One read running and one waiting behind it, as `refreshWatched` does.
@@ -1177,7 +1364,7 @@ it('runs at most two summary reads for a burst of ten tool calls', async () => {
   expect(reads.started).toBeLessThanOrEqual(2);
 });
 
-it('sends no row for a tool call that changes nothing', async () => {
+it('sends no row for a tool call whose edit changes nothing', async () => {
   const dir = repository();
   const { held, agent } = endable(dir);
   const base = gitChanges();
@@ -1199,9 +1386,63 @@ it('sends no row for a tool call that changes nothing', async () => {
   const before = rowsMoved(p, SESSION).length;
   const finishedBefore = reads.finished;
 
-  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: {} });
+  held.emit?.('chat', { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'c1', result: editing(join(dir, 'unchanged.txt')) });
   // The read still runs; it is what it finds that says nothing new.
   await waitFor(() => reads.finished > finishedBefore);
   await settle(10);
   expect(rowsMoved(p, SESSION).length).toBe(before);
+});
+
+/*
+ * A turn's checkpoint is written when the turn ended well or failed for good.
+ * A cancelled turn's edits stay in the session's changes with no checkpoint of
+ * their own, its counts read all the same, and a turn that broke with an error
+ * the client may resume is left as it is, as VS Code's host captures them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/checkpointAndChangeset/checkpointAndChangesetContribution.ts#L30-L54
+ */
+it('writes no checkpoint for a cancelled turn or one that broke resumably, as VS Code\'s host', async () => {
+  const dir = repository();
+  const { held, agent } = endable(dir);
+  const base = gitChanges();
+  const written: string[] = [];
+  const reads = { started: 0, finished: 0 };
+  const changes: ChangesetSource = {
+    ...base,
+    // Written down by name alone, so what follows a turn's checkpoint follows
+    // it at once.
+    checkpoint: async (_at, _session, turn) => { written.push(turn); },
+    sessionSummary: async (at, session, running) => {
+      reads.started += 1;
+      try {
+        return await base.sessionSummary?.(at, session, running) ?? { files: 0, additions: 0, deletions: 0 };
+      }
+      finally {
+        reads.finished += 1;
+      }
+    },
+  };
+  await open(dir, changes, agent, dir);
+  await waitFor(() => reads.finished >= 1 && reads.finished === reads.started);
+  await settle(10);
+
+  // A cancelled turn's counts are read, with no checkpoint written for it.
+  const before = reads.started;
+  held.emit?.('chat', { type: 'chat/turnCancelled', turnId: 't1', duration: 1 });
+  await waitFor(() => reads.started > before && reads.finished === reads.started);
+  await settle(10);
+  const quiet = reads.started;
+
+  // A turn that broke resumably is left as it is: nothing is read or written.
+  held.emit?.('chat', {
+    type: 'chat/error',
+    turnId: 't2',
+    duration: 1,
+    part: { kind: 'error', error: { errorType: 'turnFailed', message: '429 rate limited' }, resumable: true },
+  });
+  await settle(20);
+  expect(reads.started).toBe(quiet);
+
+  held.emit?.('chat', { type: 'chat/turnComplete', turnId: 't3', duration: 1 });
+  await waitFor(() => written.includes('t3') && reads.started > quiet);
+  expect(written.filter((one) => one !== BASELINE_TURN)).toEqual(['t3']);
 });

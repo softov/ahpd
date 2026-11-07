@@ -200,6 +200,9 @@ it('lets a caller holding session:* delete a session that is not theirs', async 
 it('refuses a member who is neither the owner nor a session:* holder, and deletes nothing', async () => {
   const { back, clients } = await serving(['ana', 'bob']);
   await open(clients.ana!, 'theirs');
+  // Its first message, which lists it.
+  await saying(clients.ana!, 'theirs', 'hi');
+  await settle();
 
   // Bob holds `session:write`, so the gate admits him and this check is the
   // only thing standing between a colleague and a permanent delete.
@@ -230,8 +233,11 @@ it('lets the delete_session tool delete a session its own owner made', async () 
   const { back, clients } = await serving(['ana'], 40);
   // Two of Ana's sessions: one runs the tools, one is the target. The one that
   // runs them starts last, because a backend is handed the tools of the session
-  // it is starting and `delete_session` refuses to delete its own.
+  // it is starting and `delete_session` refuses to delete its own. The target
+  // has had its first message, which is when a tool can name a session.
   await open(clients.ana!, 'doomed');
+  await saying(clients.ana!, 'doomed', 'hi');
+  await settle();
   await open(clients.ana!, 'runner');
   await settle();
 
@@ -249,8 +255,11 @@ it('lets the delete_session tool delete a session its own owner made', async () 
 it('refuses the delete_session tool for a session its owner does not own', async () => {
   const { back, clients } = await serving(['ana', 'bob'], 40);
   // Ana's session is the target; Bob's is the one whose tools would run the
-  // delete, so the tool acts for Bob and the target is not his.
+  // delete, so the tool acts for Bob and the target is not his. The target
+  // has had its first message, which is when a tool can name a session.
   await open(clients.ana!, 'theirs');
+  await saying(clients.ana!, 'theirs', 'hi');
+  await settle();
   await open(clients.bob!, 'runner');
   await settle();
 

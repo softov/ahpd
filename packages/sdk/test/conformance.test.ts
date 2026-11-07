@@ -473,6 +473,11 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
 
 it('reduces a chat reordered inside its session', async () => {
   const { client, peer: p, uri, opened } = await running();
+  // Moving chats on, as a VS Code window with its move setting on turns it on.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+  });
   const other = 'ahp-chat:/other';
   await client.handle({ method: 'createChat', params: { channel: uri, chat: other } });
   await settle();
@@ -742,7 +747,9 @@ it('opens a terminal on the shell a client asked for', async () => {
     method: 'createTerminal',
     params: { channel: 'ahp-terminal:/a', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///home/softov' },
   });
-  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: '/usr/bin/fish' } });
+  // A shell this machine can run, which is the one a pushed shell is taken as:
+  // the executable this test runs under.
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: process.execPath } });
   await settle();
   await client.handle({
     method: 'createTerminal',
@@ -750,7 +757,7 @@ it('opens a terminal on the shell a client asked for', async () => {
   });
 
   // The store's own choice before anybody said, and the client's after.
-  expect(asked).toEqual([undefined, '/usr/bin/fish']);
+  expect(asked).toEqual([undefined, process.execPath]);
 });
 
 /*
@@ -970,6 +977,8 @@ it("says a session's chats in its row as the session's own state says them", asy
   await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
   dispatch(client, second, started('t1', 'go'));
   await settle();
+  // Past the catalogue's 100 ms debounce, which says a session's moves together.
+  await new Promise((r) => { setTimeout(r, 120); });
 
   let row: Record<string, unknown> | undefined;
   for (const note of p.notes) {

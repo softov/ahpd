@@ -13,7 +13,7 @@
  * of a turn is a client.
  */
 
-import type { SessionInputRequestKind } from '@microsoft/agent-host-protocol';
+import type { ErrorInfo, SessionInputRequestKind } from '@microsoft/agent-host-protocol';
 
 import type { PluginContext } from './plugin.js';
 import type { PlanUpdate } from './session.js';
@@ -94,7 +94,13 @@ export interface SessionOpenedEvent {
   client: string;
 }
 
-/** A turn that began. */
+/**
+ * A turn a session's chat began: a start this host handed the chat's
+ * backend, one the backend opened itself, or a `!` command this host runs as
+ * the turn. A start this host ends before handing it over, refused or failed
+ * in its preparation, ends with no start before it, and so does a worker's
+ * turn, which begins inside a call of its lead chat's turn.
+ */
 export interface TurnStartEvent {
   type: 'turn_start';
   /** The session channel URI. */
@@ -112,22 +118,51 @@ export interface TurnStartEvent {
   queuedMessageId?: string;
 }
 
-/** A turn that ended, and how. */
+/**
+ * Why a turn ended, in VS Code's host's words for it.
+ *
+ * `success` when the turn finished, `cancelled` when a client or the agent
+ * stopped it, `error` when it ended in `chat/error`, a send or its preparation
+ * failing included, with the error and whether the turn can be resumed,
+ * `rejected` when this host refused the start before handing it over, so no
+ * turn began and nothing of one is left to finish, with the refusal and
+ * whether whoever sent the message still holds it, and `localCommand` when
+ * this host ran it as its own `!` command.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L19-L37
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L44-L49
+ */
+export type TurnEndReason =
+  | { kind: 'success' }
+  | { kind: 'cancelled' }
+  | { kind: 'error'; error: ErrorInfo; resumable: boolean }
+  | { kind: 'rejected'; error: ErrorInfo; recoverable: boolean }
+  | { kind: 'localCommand' };
+
+/**
+ * A turn that ended, on any chat of a session, a worker's among them, and
+ * why: every way one ends, its backend's ends and the ones this host says
+ * itself, a start it refused before any backend ran it among them, in the
+ * shape of VS Code's `ITurnEnd`, which its host offers its chat contributions
+ * after a turn ends. A plugin waiting on one chat's turn reads `channel`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L39-L49
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatContributionsService.ts#L258-L270
+ */
 export interface TurnEndEvent {
   type: 'turn_end';
-  /** The session channel URI. */
+  /** The session channel URI, the session that owns the chat. */
   session: string;
-  /** The chat channel URI. */
-  chat: string;
+  /** The chat channel the turn ran on: the session's default chat, a peer chat, or a worker's. */
+  channel: string;
   /** The turn's id. */
-  turn: string;
+  turnId: string;
+  /** Why the turn ended. */
+  reason: TurnEndReason;
   /**
-   * `complete` when the backend finished it, `cancelled` when somebody stopped
-   * it, `error` when it ended in `chat/error`.
+   * The queued message the turn took up, where the queue drain that began the
+   * turn ended it itself: a start refused there comes with no `turn_start` to
+   * name the message.
    */
-  status: 'complete' | 'cancelled' | 'error';
-  /** The message of the `chat/error` that ended it, on `error` only. */
-  error?: string;
+  queuedMessageId?: string;
   /** Who sent it, as `TurnStartEvent.sender` says: the same name or nothing. */
   sender?: Owner;
 }
@@ -238,7 +273,7 @@ export interface ClientConnectEvent {
 /** A client whose connection went away. */
 export interface ClientDisconnectEvent {
   type: 'client_disconnect';
-  /** The id it had given, or `anonymous` where it never introduced itself. */
+  /** The id it had given, or `anonymous` where it gave none. */
   client: string;
 }
 

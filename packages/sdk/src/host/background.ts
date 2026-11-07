@@ -9,7 +9,6 @@
 
 import type { BackgroundShellWork, BackgroundSubagentWork, BackgroundWork } from '@microsoft/agent-host-protocol';
 import type { Bag } from '../types/common.js';
-import { reason } from './common.js';
 import type { BackgroundTask, BackgroundTasks } from '../types/background.js';
 import type { HostContext } from './context.js';
 
@@ -132,21 +131,17 @@ export function createBackground(ctx: HostContext): Background {
    * for, an id it never had and a task the backend gave no `stop` are the same
    * answer, `false`, because a client is not told which of the three it was.
    *
-   * A `stop` that rejects is a task this host could not end, and it is answered
-   * as one. The row stays where it is either way: removing it is the backend's
-   * report to make, through `remove`, when the work has actually ended - a
-   * host that took the row down here would show a task gone while it ran.
+   * A `stop` that rejects fails the request with its own failure, as the
+   * reference host lets its runtime's rejection through. The row stays where
+   * it is either way: removing it is the backend's report to make, through
+   * `remove`, when the work has actually ended - a host that took the row down
+   * here would show a task gone while it ran.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3444
    */
   const stop = async (chat: string, id: string): Promise<boolean> => {
     const act = records.get(chat)?.get(id)?.task.stop;
     if (act === undefined) return false;
-    try {
-      return await act();
-    }
-    catch (error) {
-      log(`could not stop ${id} in ${chat}: ${reason(error)}`);
-      return false;
-    }
+    return await act();
   };
 
   const forgetSession = (uri: string): void => {

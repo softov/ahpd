@@ -65,14 +65,14 @@ it('passes on the RpcError handle throws', async () => {
   expect(await call(ana.one, 'x-test/echo', {})).toMatchObject({ code: -32602, message: 'say is required' });
 });
 
-it('answers -32601 before initialize, and for a method nobody serves', async () => {
+it('answers -32601 before initialize, and for a method nobody serves, in VS Code\'s words', async () => {
   const { made } = served();
   const early = made.accept(peer());
   expect(await call(early, 'x-test/echo', {}))
-    .toMatchObject({ code: -32601, message: 'This host does not serve x-test/echo before initialize' });
+    .toMatchObject({ code: -32601, message: 'Method not found: x-test/echo' });
   const ana = await client(made, 'ana');
   expect(await call(ana.one, 'x-test/other', {}))
-    .toMatchObject({ code: -32601, message: 'This host does not serve x-test/other yet' });
+    .toMatchObject({ code: -32601, message: 'Method not found: x-test/other' });
 });
 
 it('answers -32601 for a method named like an Object built-in, signed in or not', async () => {
@@ -80,13 +80,13 @@ it('answers -32601 for a method named like an Object built-in, signed in or not'
   const { made } = served();
   const ana = await client(made, 'ana');
   for (const method of BUILT_INS) {
-    expect(await call(ana.one, method, {})).toMatchObject({ code: -32601, message: `This host does not serve ${method} yet` });
+    expect(await call(ana.one, method, {})).toMatchObject({ code: -32601, message: `Method not found: ${method}` });
   }
   const users = directory({ ana: ['session:list' as Grant] });
   const gated = served({}, { users });
   const signed = await client(gated.made, 'ana', 'ana');
   for (const method of BUILT_INS) {
-    expect(await call(signed.one, method, {})).toMatchObject({ code: -32601, message: `This host does not serve ${method} yet` });
+    expect(await call(signed.one, method, {})).toMatchObject({ code: -32601, message: `Method not found: ${method}` });
   }
 });
 

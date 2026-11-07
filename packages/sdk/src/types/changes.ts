@@ -297,6 +297,52 @@ export interface ChangesetOperationResult {
    * branch it pushed to.
    */
   pullRequest?: { url: string; title: string; branch: string };
+  /**
+   * The agent's changes to files that the operation undid, so the session's
+   * agent is told before it edits them again, as VS Code's host reports the
+   * changes a discard undid to the agent that made them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostDiscardChangesOperationHandler.ts#L496-L504
+   */
+  discarded?: DiscardedFileEdits[];
+}
+
+/**
+ * An agent's changes to one file that an operation undid, as VS Code's host
+ * reports them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostFileEditCoordinator.ts#L19-L31
+ */
+export interface DiscardedFileEdits {
+  /** The file's URI. */
+  resource: string;
+  /**
+   * The one-based lines of the undone changes in the file as the agent last
+   * wrote it, or none when every change to it was undone.
+   */
+  lines?: { startLineNumber: number; endLineNumberExclusive: number };
+  /** Whether undoing the changes deleted the file, which the agent had created. */
+  deleted: boolean;
+}
+
+/**
+ * One feature area's changeset operations, beside the changes source's own:
+ * the operations it advertises on a changeset and the handler of each, as a
+ * VS Code changeset operation contribution registers its handlers one by one
+ * and answers the operations it offers in a context.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChangesetOperationService.ts#L140-L157
+ */
+export interface ChangesetOperationContribution {
+  /**
+   * The operations this contribution offers on one scope of a session's
+   * changeset, in the order to draw them, or nothing where it has none to
+   * offer there. Asked with the same arguments the source's `operations` is.
+   */
+  operations(dir: string, session: string, scope: string, context?: ChangesetOperationContext): ChangesetOperation[] | undefined;
+  /**
+   * The handler of each operation this contribution offers, by operation id:
+   * run once the host has checked the invocation as it checks every one, and
+   * throwing where it did not work, as the source's `invoke` does.
+   */
+  handlers: Record<string, (request: ChangesetOperationRequest) => Promise<ChangesetOperationResult>>;
 }
 
 /**
@@ -383,6 +429,18 @@ export interface ChangesetSource {
    * not a repository, which is the same case as `sessionSummary`.
    */
   branchSummary?(dir: string, base?: string): Promise<ChangesSummary | undefined>;
+  /**
+   * And the roll-up of some of a session's turns, from the edits the tracker
+   * saw in them: each file's first `before` and last `after` across those
+   * turns, counted as a row's counts are. Nothing where the tracker saw none
+   * of them.
+   *
+   * What a chat of the session other than its default chat carries, as VS
+   * Code's host computes such a chat's aggregate from the edits tracked in
+   * that chat; the turns are the chat's own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1777-L1808
+   */
+  chatSummary?(session: string, turns: readonly string[]): ChangesSummary | undefined;
   /**
    * Content behind a ref this source minted.
    *
