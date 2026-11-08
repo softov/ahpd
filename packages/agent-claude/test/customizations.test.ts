@@ -210,6 +210,20 @@ describe('where a customization came from', () => {
   });
 
   /*
+   * The CLI reports a plugin's server as `plugin:<plugin>:<server>`, a third
+   * form beside the two VS Code's sets register, and the server is listed under
+   * its plugin alone all the same.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L291-L321
+   * https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.301/sdk.d.ts (SDKControlReloadPluginsResponse.cache_impact)
+   */
+  it('lists a plugin\'s server under the plugin alone when the CLI reports it as plugin:<plugin>:<server>', () => {
+    const { plugin: acme } = pluginWith({ '.mcp.json': JSON.stringify({ mcpServers: { notes: { command: 'notes' } } }) });
+    const out = customizationsOf({}, [{ name: 'plugin:acme:notes', status: 'connected' }], [], undefined, [acme]);
+    expect(children(byType(out, 'plugin')).map((one) => [one.type, one.name])).toEqual([['mcpServer', 'notes']]);
+    expect(out.filter((one) => one.type === 'mcpServer')).toEqual([]);
+  });
+
+  /*
    * A plugin's skill, command or agent the CLI reported with no file in the
    * plugin, listed where VS Code's Claude lists one its disk scan found no file
    * for: a skill or a command among the built-in skills, read-only, and an

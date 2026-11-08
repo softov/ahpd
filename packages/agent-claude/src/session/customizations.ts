@@ -228,8 +228,12 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    * name is listed under its plugin and nowhere else, as VS Code's discovery
    * registers both forms of each component its parse found; a name its parse
    * found nothing for is listed where VS Code lists one the CLI reported with
-   * no file: a skill among the built-in skills, an agent among the agents.
+   * no file: a skill among the built-in skills, an agent among the agents. The
+   * CLI names a plugin's server in a third form, `plugin:<plugin>:<server>`,
+   * which is registered too, so that server is listed under its plugin alone
+   * as the sets intend.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L291-L321
+   * https://unpkg.com/@anthropic-ai/claude-agent-sdk@0.3.301/sdk.d.ts (SDKControlReloadPluginsResponse.cache_impact)
    */
   const inPlugins = { agent: new Set<string>(), skill: new Set<string>(), mcpServer: new Set<string>() };
   const pluginContainers = new Map<string, Bag>();
@@ -243,6 +247,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
       const own = str(part.name) ?? '';
       names?.add(own);
       names?.add(`${str(plugin.name) ?? ''}:${own}`);
+      if (part.type === 'mcpServer') names?.add(`plugin:${str(plugin.name) ?? ''}:${own}`);
     }
     pluginContainers.set(id, {
       type: 'plugin',
