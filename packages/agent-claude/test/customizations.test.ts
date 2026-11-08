@@ -84,15 +84,21 @@ describe('where a customization came from', () => {
     expect(out[0]).not.toHaveProperty('version');
   });
 
-  it('gives each plugin built into the CLI a uri of its own, though the SDK reports one path for all', () => {
-    // As the SDK reported them: `builtin` is every built-in's path, and only
-    // `source` tells them apart. A shared uri is a shared enablement key.
-    const out = customizationsOf({}, [], [], undefined, [
+  /*
+   * A plugin the CLI ships has no root, the SDK reporting `builtin` as the path
+   * of every one of them, and VS Code lists a native plugin it resolves to a
+   * root: no row, and what the CLI reports of it is listed as the CLI's own,
+   * as no plugin's parse holds it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeNativePluginScan.ts#L230-L250
+   */
+  it('lists no row for a plugin the CLI ships, which has no root, and what it reports of one among the built-in skills', () => {
+    const out = customizationsOf({}, [], [{ name: 'cc-plugin-agents-md:agents-md' }], undefined, [
       { name: 'cc-plugin-agents-md', path: 'builtin', source: 'cc-plugin-agents-md@builtin' },
       { name: 'cc-plugin-telemetry', path: 'builtin', source: 'cc-plugin-telemetry@builtin' },
       PLUGIN,
     ]);
-    expect(out.map((one) => one.uri)).toEqual(['cc-plugin-agents-md@builtin', 'cc-plugin-telemetry@builtin', uriOf('/plugins/acme')]);
+    expect(out.filter((one) => one.type === 'plugin').map((one) => one.uri)).toEqual([uriOf('/plugins/acme')]);
+    expect(children(out.find((one) => one.id === 'agent-builtin:/skills')).map((one) => one.name)).toEqual(['cc-plugin-agents-md:agents-md']);
   });
 
   it('answers the builtin skills and agents directories when there is no disk and the SDK reported no plugins', () => {

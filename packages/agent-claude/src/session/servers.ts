@@ -7,7 +7,7 @@ import { protectedResource, urlOf } from '../mcp.js';
 import { flagSettingsOf } from '../options.js';
 import { SDK_DEFAULT_MODEL_VALUE, thinkingFor } from './config.js';
 import { isHostInjectedMcpServerName } from './clienttools.js';
-import { customizationsOf, pluginIdOf, pluginUriOf } from './customizations.js';
+import { customizationsOf, pluginIdOf, pluginRootOf } from './customizations.js';
 import { configDirOf, diskBoundsOf, diskOf, managedDirOf } from './disk.js';
 import { createClaudeCustomizationWatcher } from './watch.js';
 import type { Published } from './customizations.js';
@@ -323,16 +323,15 @@ export function createServers(ctx: SessionContext): Servers {
   };
 
   /**
-   * Switch a plugin this session offered, the CLI's own built-ins included.
+   * Switch a plugin this session offered.
    *
    * The CLI has no call for it. What it takes is an `enabledPlugins` setting,
-   * named by the plugin's `enabledPlugins` id - `<name>@<marketplace>`, and
-   * `<name>@builtin` for one the CLI ships itself - which the plugin's row is
-   * named by, and it reads that when it loads its plugins, so the switch is the
-   * setting and then a reload to make it now. The reload is also the answer: a
-   * plugin gone from the list is one that stopped being loaded, and one still
-   * in it is a switch the CLI did not take, which is what a person is entitled
-   * to be told.
+   * named by the plugin's `enabledPlugins` id, `<name>@<marketplace>`, which the
+   * plugin's row is named by, and it reads that when it loads its plugins, so
+   * the switch is the setting and then a reload to make it now. The reload is
+   * also the answer: a plugin gone from the list is one that stopped being
+   * loaded, and one still in it is a switch the CLI did not take, which is what
+   * a person is entitled to be told.
    *
    * The rest of the flag settings go with it rather than the one setting
    * alone: `applyFlagSettings` merges into the layer, and a set written from
@@ -350,14 +349,16 @@ export function createServers(ctx: SessionContext): Servers {
     /*
      * The plugin as the CLI described it, as this session kept it at an
      * earlier switch, or, for a row no CLI of this session has described, as
-     * the row says it: its root's path, or the CLI's own `builtin`.
+     * the row says it: its root, which the row is id'd by.
      */
-    const plugin = lastPlugins.find((one) => pluginUriOf(one) === id) ?? switched.get(id)?.plugin ?? {
+    const plugin = lastPlugins.find((one) => pluginRootOf(one) === id) ?? switched.get(id)?.plugin ?? (id.startsWith('file:') ? {
       name: key,
       source: key,
-      path: id.startsWith('file:') ? fileURLToPath(id) : 'builtin',
+      path: fileURLToPath(id),
       ...(str(held.version) !== undefined ? { version: str(held.version) } : {}),
-    };
+    } : undefined);
+    if (plugin === undefined)
+      return false;
     const to = ctx.query;
     if (to === undefined) {
       switched.set(id, { plugin, enabled });

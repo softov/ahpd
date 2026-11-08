@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
 import type { SessionState } from '@microsoft/agent-host-protocol';
+import { uriOf } from '../src/resources/fileuri.js';
 import {
   SIGNED_IN, resetSdk, actions, claude, createHost, echo, emit, firstMessage, hello, machine, open, peer, sdk,
   sendAnswered, serving, settle, running,
@@ -924,10 +925,11 @@ describe('turning a customization on and off', () => {
 
   it('takes a plugin toggle, and keeps the row after the CLI stops reporting it', async () => {
     const said: string[] = [];
-    // A plugin the CLI is loading, named by the source a switch moves. The
-    // session's list is read from `reloadPlugins`, so a switch that took takes
-    // it out of the CLI's own answer as well.
-    sdk.plugins = [{ name: 'cc-plugin-agents-md', path: 'builtin', source: 'cc-plugin-agents-md@builtin' }];
+    // A plugin the CLI is loading from its root, its row named by the source a
+    // switch moves. The session's list is read from `reloadPlugins`, so a switch
+    // that took takes it out of the CLI's own answer as well.
+    sdk.plugins = [{ name: 'acme', path: '/plugins/acme', source: 'acme@market' }];
+    const root = uriOf('/plugins/acme');
     const host = createHost({
       path: '/home/softov',
       agents: [claude({ paths: ['/home/softov'] })],
@@ -943,15 +945,15 @@ describe('turning a customization on and off', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'session/customizationToggled', id: 'cc-plugin-agents-md@builtin', enablement: [{ kind: 'session', enabled: false }] } },
+      params: { channel: 'ahp-session:/live', action: { type: 'session/customizationToggled', id: root, enablement: [{ kind: 'session', enabled: false }] } },
     });
     await settle(8);
 
     expect(said.filter((line) => line.includes('has no runtime switch'))).toEqual([]);
     // The switch reached the CLI as the setting it reads when it loads its
-    // plugins, named by the plugin's source rather than by its id.
+    // plugins, named by the plugin's source, which the row is named by.
     expect(sdk.flags.at(-1)?.enabledPlugins as Record<string, boolean> | undefined)
-      .toEqual({ 'cc-plugin-agents-md@builtin': false });
+      .toEqual({ 'acme@market': false });
     /*
      * And the row is on the list all the same.
      *
@@ -963,7 +965,7 @@ describe('turning a customization on and off', () => {
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
     }).snapshot.state;
-    const container = state.customizations.find((one) => one.id === 'cc-plugin-agents-md@builtin');
+    const container = state.customizations.find((one) => one.id === root);
     expect(container?.enablement).toEqual([{ kind: 'session', enabled: false }]);
   });
 

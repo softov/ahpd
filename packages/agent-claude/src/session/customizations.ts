@@ -19,23 +19,24 @@ export type Published = Bag & { resource: string };
 
 /**
  * A plugin's `enabledPlugins` id, `<name>@<marketplace>`, which the SDK reports
- * as its `source` (`<name>@builtin` for one the CLI ships), or its name where
- * it reports none. A plugin's container is named by it, as VS Code names one by
- * its `enabledPlugins` id, and a switch is the setting under it.
+ * as its `source`, or its name where it reports none. A plugin's container is
+ * named by it, as VS Code names one by its `enabledPlugins` id, and a switch is
+ * the setting under it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeNativePluginScan.ts#L14-L24
  */
 export const pluginIdOf = (plugin: Bag): string => str(plugin.source) ?? str(plugin.name) ?? '';
 
 /**
- * A plugin's container id and uri: its root's URI, `customizationId` of it as
- * VS Code's Claude discovery ids a plugin. A plugin built into the CLI has no
- * root, the SDK reporting `builtin` as the path of every one of them, and is
- * id'd by its `enabledPlugins` id.
+ * A plugin's root as a URI, its container's id and uri as VS Code's Claude
+ * discovery ids a plugin, or nothing for a plugin with no root on this disk,
+ * which is no container: VS Code lists a native plugin it resolves to a root,
+ * and the SDK reports `builtin` as the path of every plugin the CLI ships.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L65-L88
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeNativePluginScan.ts#L230-L250
  */
-export const pluginUriOf = (plugin: Bag): string => {
+export const pluginRootOf = (plugin: Bag): string | undefined => {
   const path = str(plugin.path) ?? '';
-  return isAbsolute(path) ? uriOf(path) : pluginIdOf(plugin);
+  return isAbsolute(path) ? uriOf(path) : undefined;
 };
 
 /**
@@ -212,13 +213,13 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   const handedOf = (name: string): Bag | undefined =>
     handed.find((plugin) => name.startsWith(`${str(plugin.name) ?? ''}:`));
   /*
-   * The plugins the SDK reported, each as its own top-level container holding
-   * what its directory holds, as VS Code's Claude discovery projects a plugin
-   * the live session loaded: its agents, skills, rules, hooks and MCP servers,
-   * read off its manifest and the places the manifest names, each named and
-   * id'd by its file's URI. The container's id and uri are the plugin root's
-   * URI, its name the plugin's `enabledPlugins` id (`pluginUriOf`,
-   * `pluginIdOf`).
+   * The plugins the SDK reported with a root on this disk, each as its own
+   * top-level container holding what its directory holds, as VS Code's Claude
+   * discovery projects a plugin the live session loaded: its agents, skills,
+   * rules, hooks and MCP servers, read off its manifest and the places the
+   * manifest names, each named and id'd by its file's URI. The container's id
+   * and uri are the plugin root's URI, its name the plugin's `enabledPlugins`
+   * id (`pluginRootOf`, `pluginIdOf`).
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L54-L91
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentPlugins/common/pluginParsers.ts#L1456-L1525
    *
@@ -234,14 +235,14 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
   const pluginContainers = new Map<string, Bag>();
   for (const plugin of reportedPlugins) {
     const id = pluginIdOf(plugin);
-    if (pluginContainers.has(id)) continue;
-    const path = str(plugin.path) as string;
-    const uri = pluginUriOf(plugin);
-    const parts = isAbsolute(path) ? pluginPartsOf(path, uri) ?? [] : [];
+    const uri = pluginRootOf(plugin);
+    if (uri === undefined || pluginContainers.has(id)) continue;
+    const parts = pluginPartsOf(str(plugin.path) as string, uri) ?? [];
     for (const part of parts) {
       const names = inPlugins[str(part.type) as keyof typeof inPlugins] as Set<string> | undefined;
-      names?.add(str(part.name) ?? '');
-      names?.add(`${str(plugin.name) ?? ''}:${str(part.name) ?? ''}`);
+      const own = str(part.name) ?? '';
+      names?.add(own);
+      names?.add(`${str(plugin.name) ?? ''}:${own}`);
     }
     pluginContainers.set(id, {
       type: 'plugin',
