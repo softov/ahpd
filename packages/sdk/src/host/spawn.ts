@@ -2014,7 +2014,11 @@ export function createSpawn(ctx: HostContext): Spawn {
      * of nothing and the right answer for a session that has done nothing yet.
      */
     if (held.workingDirectory !== undefined) {
-      void checkpointOf(held.workingDirectory, uri, BASELINE_TURN).then(() => refreshSessionChangesSummary(uri));
+      // Held until written, which a turn waits on before its backend is handed it.
+      const written = checkpointOf(held.workingDirectory, uri, BASELINE_TURN)
+        .finally(() => { if (ctx.baselineCheckpoints.get(uri) === written) ctx.baselineCheckpoints.delete(uri); });
+      ctx.baselineCheckpoints.set(uri, written);
+      void written.then(() => refreshSessionChangesSummary(uri));
     }
     /*
      * The name it had before, when it is being created again.
