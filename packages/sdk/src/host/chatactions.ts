@@ -2322,6 +2322,7 @@ export function chatAction(
             owner.workingDirectory,
             undefined,
             beside.get(chatUri) ?? owner.additional,
+            connection,
           );
           if (failed !== undefined) throw failed;
           log(`started ${chatUri} over`);

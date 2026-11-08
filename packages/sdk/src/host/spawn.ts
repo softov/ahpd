@@ -36,6 +36,7 @@ import type { Bag } from '../types/common.js';
 import type { Agent, BoundTool, Start } from '../types/agent.js';
 import type { TurnEndEvent, TurnEndReason } from '../types/events.js';
 import type { Owner } from '../types/usage.js';
+import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
@@ -105,7 +106,7 @@ export interface Spawn {
    * Start one backend's session, and the worker chats it goes on to ask for.
    *
    * `sender` is the connection that sent the turn this start is for, when a
-   * client sent it.
+   * client sent it, whose principal is the start's `reader`.
    *
    * `askedInstructions` is what the request that asked for this session says,
    * added to `Start.instructions` after what the host's tools say. It is not
@@ -128,6 +129,7 @@ export interface Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
+    sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
   ): Promise<Session>;
@@ -1019,6 +1021,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
+    sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
   ): Promise<Session> => {
