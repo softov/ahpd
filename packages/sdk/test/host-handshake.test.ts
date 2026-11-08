@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@microsoft/agent-host-protocol';
 import { ROOT } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { sdkVersion } from '../src/version.js';
 import {
-  resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk, sendTurn, serving, sessionQueries,
+  resetSdk, actions, claude, createHost, defaultChatOf, emit, hello, machine, open, peer, sdk, sendTurn, serving, sessionQueries,
   settle, running,
 } from './support/host.js';
 import type { Start } from '../src/types/agent.js';
@@ -209,6 +208,11 @@ describe('the handshake', () => {
      * are checked as one.
      */
     expect(result._meta['vscode.ahpSessionUris']).toBe(true);
+    // And a chat whose URI names no session, as VS Code's host says it
+    // addresses one, so a window mints a session's next chat in the format of
+    // that session's default chat.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostExtensionProtocol.ts#L158-L163
+    expect(result._meta['vscode.ahpChatUris']).toBe(true);
   });
 
   it('still connects when a channel it was asked for is gone', async () => {
@@ -397,7 +401,8 @@ describe('a client that dropped, coming back', () => {
     const a = host.accept(first);
     await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
-    const read = await a.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/live') } }) as { snapshot: { fromSeq: number } };
+    const LIVE = await defaultChatOf(a, 'ahp-session:/live');
+    const read = await a.handle({ method: 'subscribe', params: { channel: LIVE } }) as { snapshot: { fromSeq: number } };
 
     const upTo = cursorOf(first, read.snapshot.fromSeq);
 
@@ -406,7 +411,7 @@ describe('a client that dropped, coming back', () => {
     a.close();
     a.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'while away' } } },
+      params: { channel: LIVE, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'while away' } } },
     });
     await settle();
 
@@ -418,7 +423,7 @@ describe('a client that dropped, coming back', () => {
         channel: 'ahp-root://',
         clientId: 'probe',
         lastSeenServerSeq: upTo,
-        subscriptions: ['ahp-root://', 'ahp-session:/live', chatUriFor('ahp-session:/live')],
+        subscriptions: ['ahp-root://', 'ahp-session:/live', LIVE],
       },
     }) as { type: string; actions: { serverSeq: number; action: { type: string } }[]; missing: string[] };
 
@@ -453,10 +458,10 @@ describe('a client that dropped, coming back', () => {
         },
       },
     });
-    const chat = chatUriFor('ahp-session:/live');
     const other = host.accept(peer());
     await other.handle(hello(['0.9.0'], { clientId: 'other' }));
     await other.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    const chat = await defaultChatOf(other, 'ahp-session:/live');
     const first = peer();
     const a = host.accept(first);
     await a.handle(hello(['0.9.0']));
@@ -508,6 +513,7 @@ describe('a client that dropped, coming back', () => {
     const setup = host.accept(peer());
     await setup.handle(hello(['0.9.0']));
     await setup.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    const LIVE = await defaultChatOf(setup, 'ahp-session:/live');
 
     const p = peer();
     const back = host.accept(p);
@@ -518,15 +524,15 @@ describe('a client that dropped, coming back', () => {
         channel: 'ahp-root://',
         clientId: 'probe',
         lastSeenServerSeq: 0,
-        subscriptions: [chatUriFor('ahp-session:/live')],
+        subscriptions: [LIVE],
       },
     });
     back.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'after' } } },
+      params: { channel: LIVE, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'after' } } },
     });
     await settle();
-    expect(actions(p, chatUriFor('ahp-session:/live')).some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
+    expect(actions(p, LIVE).some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
   });
 
   it('hands back snapshots when the gap is longer than the buffer', async () => {

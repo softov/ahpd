@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { canvasResource, chatUriFor, subagentChatUri } from '../src/host/channels.js';
+import { canvasResource, chatUriFor } from '../src/host/channels.js';
+import { buildSubagentChatUri, chatUriFormatOf, subagentChatUri } from '../src/vscode/chatminting.js';
 import { posixUriOf, uriOf } from '../src/resources/fileuri.js';
 import { createPeer, receive } from '../src/rpc.js';
 import { machinePathOf } from '../src/machines/machine.js';
@@ -56,6 +57,10 @@ const until = async (check: () => boolean, times = 600): Promise<void> => {
 const settleInner = async (): Promise<void> => {
   for (let i = 0; i < 20; i++) await new Promise((resolve) => { setTimeout(resolve, 0); });
 };
+
+/** The chat the host outside minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: { handle(request: unknown): Promise<unknown> }, session: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
 /** A peer that keeps what the host told it, for the host-level case. */
 const watching = (): Peer & { seen: { method: string; params: Bag }[] } => {
@@ -760,10 +765,11 @@ it('gives a turn on a nested session the origin of the client outside that sent 
   const client = host.accept(peer);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/outer', provider: PROVIDER, config: { computer: 'computer://box' } } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/outer') } });
+  const chat = await mintedChat(client, 'ahp-session:/outer');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/outer'), clientSeq: 3, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello world' } } },
+    params: { channel: chat, clientSeq: 3, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello world' } } },
   });
   const said = (type: string): Bag | undefined =>
     peer.seen.find(({ method, params }) => method === 'action' && params?.action?.type === type)?.params;
@@ -786,14 +792,14 @@ const outside = async (inner: ReturnType<typeof innerHost>) => {
   const client = host.accept(peer);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/outer', provider: PROVIDER, config: { computer: 'computer://box' } } });
-  await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/outer' } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/outer') } });
-  const dispatch = (clientSeq: number, action: Bag, channel = chatUriFor('ahp-session:/outer')): Promise<unknown> =>
+  const chat = await mintedChat(client, 'ahp-session:/outer');
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  const dispatch = (clientSeq: number, action: Bag, channel = chat): Promise<unknown> =>
     client.handle({ method: 'dispatchAction', params: { channel, clientSeq, action } });
   const told = (type: string): Bag[] => peer.seen
     .filter(({ method, params }) => method === 'action' && params?.action?.type === type)
     .map(({ params }) => params);
-  return { host, client, dispatch, told };
+  return { host, client, chat, dispatch, told };
 };
 
 /*
@@ -844,8 +850,7 @@ it('answers a background request on a nested session to the client outside that 
  */
 it('carries a read of the lead chat to the host inside, which answers it, and refuses an archive of it', async () => {
   const inner = innerHost(backend());
-  const { host, client, dispatch, told } = await outside(inner);
-  const chat = chatUriFor('ahp-session:/outer');
+  const { host, client, chat, dispatch, told } = await outside(inner);
   await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
   await until(() => told('chat/turnComplete').length > 0 || told('session/creationFailed').length > 0);
   expect(told('session/creationFailed')).toEqual([]);
@@ -1649,8 +1654,8 @@ it('a nested session moved to this host before its first turn shows its history'
   const first = await daemon();
   const uri = 'ahp-session:/moved';
   await first.client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
-  await first.client.handle({ method: 'subscribe', params: { channel: uri } });
-  await first.client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
+  const chat = await mintedChat(first.client, uri);
+  await first.client.handle({ method: 'subscribe', params: { channel: chat } });
   // Its backend comes up at its first turn, as VS Code's provider materializes
   // a session at its first send, so nothing has been asked of the machine yet.
   // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
@@ -1665,14 +1670,14 @@ it('a nested session moved to this host before its first turn shows its history'
    */
   await first.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'session/configChanged', config: { computer: '' } } },
+    params: { channel: chat, clientSeq: 1, action: { type: 'session/configChanged', config: { computer: '' } } },
   });
   await until(() => first.peer.seen.some(({ params }) => params?.action?.type === 'session/configChanged'), 1000);
 
   // Its first turn, and its only one: said here, to the backend on this host.
   await first.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    params: { channel: chat, clientSeq: 2, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => first.peer.seen.some(({ params }) => params?.action?.type === 'chat/turnComplete'), 1000);
   await first.host.close();
@@ -1688,7 +1693,7 @@ it('a nested session moved to this host before its first turn shows its history'
   const second = await daemon();
   const [row] = await rowsOf(second.client);
   expect(row?.resource).toBe('ahp-session:/moved');
-  const opened = await second.client.handle({ method: 'subscribe', params: { channel: chatUriFor(String(row?.resource)) } }) as {
+  const opened = await second.client.handle({ method: 'subscribe', params: { channel: await mintedChat(second.client, String(row?.resource)) } }) as {
     snapshot: { state: { turns: Bag[] } };
   };
   expect(opened.snapshot.state.turns.map((turn) => turn.message?.text)).toEqual(['hello']);
@@ -1776,14 +1781,14 @@ it('a truncate of a nested session is said, its backend keeping its history, and
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   const uri = 'ahp-session:/cut';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
+  const chat = await mintedChat(client, uri);
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
   // A first message, which brings the session up in the machine, as VS Code's
   // provider materializes a session at its first send.
   // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    params: { channel: chat, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await until(() => port.read().length > 0, 1000);
   /*
@@ -1793,7 +1798,7 @@ it('a truncate of a nested session is said, its backend keeping its history, and
    * nothing, which says nothing about what a rewind would do.
    */
   const shown = async (): Promise<Bag[]> =>
-    ((await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } })) as {
+    ((await client.handle({ method: 'subscribe', params: { channel: chat } })) as {
       snapshot: { state: { turns: Bag[] } };
     }).snapshot.state.turns;
   for (let i = 0; i < 200 && !(await shown()).some((turn) => turn.id === 't1'); i++) await new Promise((resolve) => { setTimeout(resolve, 5); });
@@ -1801,7 +1806,7 @@ it('a truncate of a nested session is said, its backend keeping its history, and
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/truncated', turnId: 't1' } },
+    params: { channel: chat, clientSeq: 2, action: { type: 'chat/truncated', turnId: 't1' } },
   });
   const truncated = (): Bag | undefined => peer.seen.find(({ method, params }) => method === 'action' && params?.action?.type === 'chat/truncated')?.params;
   await until(() => truncated() !== undefined, 1000);
@@ -1841,8 +1846,8 @@ it('a command typed into a nested session runs in the host inside, and in no ter
   const client = host.accept(peer);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   const uri = 'ahp-session:/banged';
-  const chat = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, workingDirectories: [uriOf(dir)], config: { computer: 'computer://box' } } });
+  const chat = await mintedChat(client, uri);
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   await client.handle({
     method: 'dispatchAction',
@@ -2075,21 +2080,25 @@ const workingAgent = (): Agent => scriptedAgent((session, turnId) => {
   }, 30);
 }).agent;
 
-/** A `subagent` seam that keeps what it was asked and what was written to each chat. */
+/**
+ * A `subagent` seam that keeps what it was asked and what was written to each
+ * chat, with the name it gives a worker's chat before it opens.
+ */
 const seam = (session: string) => {
   const asked: { toolCallId: string; request: Bag }[] = [];
   const written: Bag[] = [];
   const ended: string[] = [];
+  const subagentChatOf = (toolCallId: string): string => buildSubagentChatUri(session, toolCallId);
   const subagent = (toolCallId: string, request: Bag) => {
     asked.push({ toolCallId, request });
     return {
-      uri: subagentChatUri(session, toolCallId),
+      uri: subagentChatOf(toolCallId),
       turnId: 'outer-turn',
       emit: (action: Bag) => { written.push(action); },
       end: (state: string) => { ended.push(state); },
     };
   };
-  return { asked, written, ended, subagent };
+  return { asked, written, ended, subagent, subagentChatOf };
 };
 
 it('an inner subagent chat is opened outside through the subagent seam, and its actions reach it on the outer turn', async () => {
@@ -2097,7 +2106,7 @@ it('an inner subagent chat is opened outside through the subagent seam, and its 
   const { emit } = recorder();
   const outside = seam('ahp-session:/outer');
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
-    .create({ ...start(emit), subagent: outside.subagent } as unknown as Start);
+    .create({ ...start(emit), subagent: outside.subagent, subagentChatOf: outside.subagentChatOf } as unknown as Start);
   session.sendMessage('t1', 'go');
   await until(() => outside.ended.length > 0);
   expect(outside.asked).toEqual([{ toolCallId: 'call-1', request: { title: 'Explore', prompt: 'look around' } }]);
@@ -2132,7 +2141,11 @@ it('a worker chat the outer seam cannot open is logged, and the session runs on'
       timeoutMs: 500,
       log: (line: string) => { lines.push(line); },
     })
-      .create({ ...start(emit), subagent: () => { throw new Error('the outer chat is gone'); } } as unknown as Start);
+      .create({
+        ...start(emit),
+        subagent: () => { throw new Error('the outer chat is gone'); },
+        subagentChatOf: (toolCallId: string) => buildSubagentChatUri('ahp-session:/outer', toolCallId),
+      } as unknown as Start);
     session.sendMessage('t1', 'go');
     await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
     // A rejection nobody holds is raised on a later turn of the loop than the
@@ -2153,12 +2166,15 @@ it('a link to an inner subagent chat in the lead chat names the outer chat', asy
   const { seen, emit } = recorder();
   const outside = seam('ahp-session:/outer');
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
-    .create({ ...start(emit), subagent: outside.subagent } as unknown as Start);
+    .create({ ...start(emit), subagent: outside.subagent, subagentChatOf: outside.subagentChatOf } as unknown as Start);
   session.sendMessage('t1', 'go');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
-  const links = JSON.stringify(seen.filter(({ channel }) => channel === 'chat')).match(/ahp-chat:\/\/subagent\/[^"\\]+/g) ?? [];
+  // Every chat the lead chat names besides its own, in either format, is the
+  // outer worker's: the host inside mints its own name for the worker.
+  const links = (JSON.stringify(seen.filter(({ channel }) => channel === 'chat')).match(/ahp-chat:[^"\\]+/g) ?? [])
+    .filter((one) => one !== 'ahp-chat:/outer');
   expect(links.length).toBeGreaterThan(0);
-  expect([...new Set(links)]).toEqual([subagentChatUri('ahp-session:/outer', 'call-1')]);
+  expect([...new Set(links)]).toEqual([outside.subagentChatOf('call-1')]);
   session.close();
 });
 
@@ -2174,17 +2190,20 @@ it('the catalogue rows of an inner subagent chat reach a client outside under th
   const uri = 'ahp-session:/nested';
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   await client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
-  await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
-  await client.handle({ method: 'dispatchAction', params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
-  await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/turnComplete' && params?.channel === chatUriFor(uri)));
-  const worker = subagentChatUri(uri, 'call-1');
+  const chat = await mintedChat(client, uri);
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  await client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
+  await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/turnComplete' && params?.channel === chat));
+  // The worker's chat as the host outside mints it, from its own lead chat and
+  // the call, as VS Code's host mints one.
+  const worker = subagentChatUri(chatUriFormatOf(chat), uri, chat, 'call-1');
   const added = peer.seen.find(({ params }) => params?.action?.type === 'session/chatAdded')?.params.action;
   expect(added?.summary.resource).toBe(worker);
   expect(added?.summary.title).toBe('Explore');
-  expect(added?.summary.origin).toEqual({ kind: 'tool', chat: chatUriFor(uri), toolCallId: 'call-1' });
-  // Every subagent chat a client was told of is the outer one.
-  const named = JSON.stringify(peer.seen).match(/ahp-chat:\/\/subagent\/[^"\\]+/g) ?? [];
+  expect(added?.summary.origin).toEqual({ kind: 'tool', chat, toolCallId: 'call-1' });
+  // Every chat a client was told of besides the lead is the outer worker: the
+  // host inside mints its own name for it, in either format.
+  const named = (JSON.stringify(peer.seen).match(/ahp-chat:[^"\\]+/g) ?? []).filter((one) => one !== chat);
   expect([...new Set(named)]).toEqual([worker]);
   await host.close();
 });
@@ -2212,10 +2231,11 @@ const throughHost = async (inside: Partial<HostOptions>, outside: Partial<HostOp
   });
   const read = async (channel: string): Promise<Bag> =>
     ((await client.handle({ method: 'subscribe', params: { channel } })) as { snapshot: { state: Bag } }).snapshot.state;
-  await read(uri);
-  await read(chatUriFor(uri));
-  // Up inside: the inner host has said the session it runs.
-  await until(() => inner.messages.some((message) => message.method === 'subscribe' && message.params?.channel === chatUriFor(uri)));
+  // The chat the host outside minted for the session.
+  const chat = String((await read(uri)).defaultChat);
+  await read(chat);
+  // Up inside: the inner host has said the session it runs, and its chat there is read.
+  await until(() => inner.messages.some((message) => message.method === 'subscribe' && String(message.params?.channel).startsWith('ahp-chat:')));
   await settleInner();
   /** Close both, the process inside going as its stop is sent. */
   const close = async (): Promise<void> => {
@@ -2223,7 +2243,7 @@ const throughHost = async (inside: Partial<HostOptions>, outside: Partial<HostOp
     inner.crash(null, 'SIGTERM');
     await closing;
   };
-  return { inner, host, peer, client, uri, read, close };
+  return { inner, host, peer, client, uri, chat, read, close };
 };
 
 /*
@@ -2274,18 +2294,21 @@ it('lists a nested session\'s changesets as the host inside does, and serves and
  */
 it('lists a nested chat\'s canvases as the host inside does, and serves each from there', async () => {
   const served: ServedCanvases = { by: 'fixture' };
-  const { inner, peer, uri, read, close } = await throughHost({ pluginCanvases: [served] });
+  const { inner, peer, uri, chat, read, close } = await throughHost({ pluginCanvases: [served] });
   // Canvases are a key a window turns on, on the host that serves them.
   const local = inner.host.accept(watching());
   await local.handle({ method: 'initialize', params: { clientId: 'inside', protocolVersions: ['1.0.0'] } });
   await local.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { canvasesEnabled: true } } } });
   const state = { instanceId: 'board-1', extensionId: 'com.brbyte.canvas', canvasId: 'board', title: 'Board', url: 'https://canvas.test/board' };
-  const resource = await served.open?.(chatUriFor(uri), state) ?? '';
+  // Opened on the chat the host inside holds for the session, and named out
+  // here under the chat the host outside holds, the same canvas id after it.
+  const inside = await served.open?.(await mintedChat(local, uri), state) ?? '';
+  const resource = canvasResource(chat, inside.split('/').at(-1) ?? '');
   await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/canvasesChanged'));
 
-  expect((await read(chatUriFor(uri))).canvases).toEqual([{ resource }]);
+  expect((await read(chat)).canvases).toEqual([{ resource }]);
   expect(await read(resource)).toMatchObject({ title: 'Board' });
-  served.update?.(resource, { ...state, title: 'Drawn again' });
+  served.update?.(inside, { ...state, title: 'Drawn again' });
   await until(() => peer.seen.some(({ params }) => params?.channel === resource && params?.action?.canvas?.title === 'Drawn again'));
   await close();
 });

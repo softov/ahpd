@@ -83,7 +83,10 @@ function late(provider = 'echo'): Agent {
 }
 
 const uri = 'ahp-session:/made';
-const chatUri = chatUriFor(uri);
+
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const minted = async (client: { handle(request: unknown): Promise<unknown> }, session = uri): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
 /**
  * The example backend, which keeps each chat under the id it was handed.
@@ -169,7 +172,7 @@ it('records the harness a session is resumed on after a restart', async () => {
   await first.client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   first.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    params: { channel: await minted(first.client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await first.client.handle({ method: 'disposeSession', params: { channel: uri } });
@@ -184,7 +187,7 @@ it('records the harness a session is resumed on after a restart', async () => {
   await second.client.handle({ method: 'listSessions', params: { channel: ROOT } });
   second.client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
+    params: { channel: await minted(second.client), action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
   });
   await settle();
   expect(store.provider('made')).toBe('echo');
@@ -199,12 +202,12 @@ it('records the harness a fork was cut on, under the id the new transcript is wr
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    params: { channel: await minted(client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await client.handle({
     method: 'createChat',
-    params: { channel: uri, chat: 'ahp-chat:/copy', source: { kind: 'fork', chat: chatUri, turnId: 't1' } },
+    params: { channel: uri, chat: 'ahp-chat:/copy', source: { kind: 'fork', chat: await minted(client), turnId: 't1' } },
   });
   await settle();
   await talk(client, 'ahp-chat:/copy', 't2');
@@ -219,10 +222,10 @@ it('records a fork under its own id once the first turn that names it ends', asy
   const { client } = serving(store, [late()]);
   await settle();
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-  await talk(client, chatUri, 't1');
+  await talk(client, await minted(client), 't1');
   await client.handle({
     method: 'createChat',
-    params: { channel: uri, chat: 'ahp-chat:/copy', source: { kind: 'fork', chat: chatUri, turnId: 't1' } },
+    params: { channel: uri, chat: 'ahp-chat:/copy', source: { kind: 'fork', chat: await minted(client), turnId: 't1' } },
   });
   await settle();
 
@@ -246,7 +249,7 @@ it('records a session the host named itself under the id its backend picks', asy
   expect(store.provider('plain')).toBe('echo');
   expect(store.provider('own-plain')).toBeUndefined();
 
-  await talk(client, chatUriFor('ahp-session:/plain'), 't1');
+  await talk(client, await minted(client, 'ahp-session:/plain'), 't1');
   expect(store.provider('own-plain')).toBe('echo');
 });
 
@@ -256,12 +259,12 @@ it('records the transcript id once, and writes nothing on the turns after', asyn
   await settle();
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/plain', provider: 'echo' } });
   await settle();
-  await talk(client, chatUriFor('ahp-session:/plain'), 't1');
+  await talk(client, await minted(client, 'ahp-session:/plain'), 't1');
   expect(store.writes).toEqual(['plain', 'own-plain']);
 
   // Every turn ends the same way, and the answer does not change: a store
   // rewritten per turn is a store being written to for nothing.
-  await talk(client, chatUriFor('ahp-session:/plain'), 't2');
+  await talk(client, await minted(client, 'ahp-session:/plain'), 't2');
   expect(store.writes).toEqual(['plain', 'own-plain']);
 });
 
@@ -272,7 +275,7 @@ it('keeps the harness a session runs on through a change of directory', async ()
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    params: { channel: await minted(client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
   });
   await settle();
   await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/second' } });
@@ -497,7 +500,7 @@ describe('a row two harnesses both list', () => {
     expect(await catalogue(client)).toEqual(['two:/shared']);
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+      params: { channel: await minted(client, 'two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
 
@@ -619,7 +622,7 @@ describe('a row two harnesses both list', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+      params: { channel: await minted(client, 'two:/shared'), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
 

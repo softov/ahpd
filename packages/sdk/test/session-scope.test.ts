@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
@@ -159,10 +158,11 @@ async function colleague(host: ReturnType<typeof createHost>, token: string) {
 }
 
 const uri = 'ahp-session:/scoped';
-const chatUri = chatUriFor(uri);
 
 /** A turn sent on the session's chat, which the client sending it watches. */
 const turn = async (client: Client, text = 'go') => {
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return client.handle({
     method: 'dispatchAction',

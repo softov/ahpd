@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { uriOf } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { acpAgent } from '../src/index.js';
@@ -169,7 +168,6 @@ async function talking(options: {
   });
   await signIn(client);
   const uri = 'ahp-session:/ports';
-  const chatUri = chatUriFor(uri);
   // The window says which folders it trusts, and a session of a folder nobody
   // vouched for is refused rather than started.
   await client.handle({
@@ -190,7 +188,9 @@ async function talking(options: {
     method: 'createSession',
     params: { channel: uri, provider: 'acp', workingDirectories: [`file://${path}`] },
   });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat: string } } };
+  const chatUri = opened.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   running.push({ client, uri });
   return { host, client, peer: p, uri, chatUri, path, log };
@@ -371,6 +371,7 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   // and the backend says nothing more of.
   client.handle({
     method: 'dispatchAction',
+    // As the protocol declares an approval: with how it was confirmed.
     params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't2', toolCallId: 'call-perm', approved: true, confirmed: 'user-action' } },
   });
   await endedTurn(p, chatUri, 2);
@@ -414,7 +415,8 @@ it('says a pseudoterminal runs a terminal, and names a command\'s while it runs'
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } } },
     });
   };
-  const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
+  // Named by VS Code's link for a call's terminal, which the host serves.
+  const named = { type: 'terminal', resource: expect.stringMatching(/^agenthost-terminal:\/\/shell\//), title: 'Terminal', isPty: true };
 
   // A call whose content names a terminal the server opened through the host,
   // titled by the call it belongs to.

@@ -343,7 +343,7 @@ The refusal names the need or the mount and where the value came from, and never
 
 ### A backend's worker chats
 
-A backend that runs a subagent inside one of its tool calls asks the host for a chat of its own through the `Start` it was handed: `start.subagent(toolCallId, { title, agentName?, description?, prompt?, parentToolCallId? })`. The host is the only thing that knows what a chat URI looks like, so it mints `ahp-chat://subagent/<session>/<call>`, announces the row read-only, opens its turn with the prompt, links the spawning call with a `subagent` content and hands back `{ uri, turnId, emit, end }`. The backend writes the worker's parts through `emit` and closes its turn with `end`. A backend without it draws a worker's output inline, and the member is optional, so a backend written before this existed keeps working unchanged.
+A backend that runs a subagent inside one of its tool calls asks the host for a chat of its own through the `Start` it was handed: `start.subagent(toolCallId, { title, agentName?, description?, prompt?, parentToolCallId? })`. The host is the only thing that knows what a chat URI looks like, so it mints the chat in the session's format, as VS Code's host mints a worker's, announces the row read-only, opens its turn with the prompt, links the spawning call with a `subagent` content and hands back `{ uri, turnId, emit, end }`. The backend writes the worker's parts through `emit` and closes its turn with `end`. A backend that names the chat before it opens, a background task listed before its worker speaks, reads it from `start.subagentChatOf(toolCallId)`. A backend without it draws a worker's output inline, and the member is optional, so a backend written before this existed keeps working unchanged.
 
 A worker's chat is read-only, but a client may still answer what the worker asked there and stop it.
 A stop given there calls the backend's optional `Session.stopWorker(toolCallId)` with the call the chat was opened for, which stops that worker and leaves the lead turn running.
@@ -371,12 +371,12 @@ The host side of this is `HostOptions.toolsServers`, one `ToolsServers` from `to
 
 A backend that asks before a tool call sends `chat/toolCallReady` with a `confirmationTitle`, and the host decides and puts the question as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L238-L650) does.
 Beside the action the backend says what the call asks for, in host-only fields the host takes off before any client is sent it (`PendingConfirmation`, as VS Code's agents raise a pending confirmation): `permissionKind` (`shell`, `read`, `write`, `url` and VS Code's other kinds), `permissionPath` for a read or a write, `permissionUrl` for a fetch, `shellCommand` and `shellLanguage` (`bash` or `powershell`) for a shell call, `requestSandboxBypass` for a call that asks to leave its sandbox, and `managedApprovalRequired` for a call a managed rule asks about.
-A call the session's or the host's `permissions` deny is refused before any client is asked: nothing is said, and the backend is handed `confirm(toolCallId, false)`.
+A call the session's or the host's `permissions` deny is refused before any client is asked: nothing is said, and the backend is handed `confirm(toolCallId, false, undefined, 'host_policy')`.
 So is a write to a snapshot the host keeps of an attachment.
 The rules are VS Code's: a tool's name, `Shell` and `Shell(<command>)` matched against the line and each command of it, `Shell(commandLine:<pattern>)`, `WebFetch(<url pattern>)`, and `Read(<path>)` and `Edit(<path>)` matched against the path and the path it really is.
 A URL pattern is matched by VS Code's URL approval and a path pattern by VS Code's glob, vendored from VS Code with the URI they parse with.
 Otherwise the host answers the question itself where VS Code's chain does, in its order: a call that asks to leave the sandbox is never answered; global Allow All (`globalAutoApproveEnabled`), then the session's own (`autoApprove`); an `ask` rule asks, a write the edit patterns always check asks unless an exact path grant names it, an `allow` rule approves; a read inside the session's folders, of an attachment snapshot or of something attached approves; a write inside the folders the edit patterns allow approves; and a shell line the `Shell` rules and the host's command table approve approves.
-An answered call is said running with `confirmed: not-needed`, and the backend is handed `confirm(toolCallId, true)` with no option.
+An answered call is said running with `confirmed: not-needed`, and the backend is handed `confirm(toolCallId, true, undefined, 'host_policy')` with no option.
 Each option is a `ConfirmationOption` with an `id`, a `label`, a `kind` of `approve` or `deny` and a `group`.
 A question about a shell line, a fetch, a read or a write offers grants of what it asks for between `allow-once` "Allow Once" and `skip` "Skip": the commands no rule approved, by their prefixes and exactly, the host a fetch goes to, and the file or folder a read or write is of, each "in this Session" and "Always".
 Any other question offers the backend's own options where it put some, and else VS Code's three, in its words: `allow-session` "Allow in this Session", `allow-once` and `skip`.
@@ -397,7 +397,8 @@ Under `handed`, VS Code's, the host checks no managed rule and marks nothing, th
 Every backend is handed them on `Start.managedSettings` under either value, as VS Code hands its runtime `managedSettings: { permissions }`, so a runtime that enforces managed settings itself does so for the calls it never asks the host about.
 The Claude backend hands them to the CLI as Claude Code's own managed settings, each rule written in Claude Code's grammar where a Claude Code rule names the same calls, each tool the eligibility sets `false` as an `ask` rule naming it, and a tool's name set `false`, which names a client's tool no rule names, as the bypass lock beside it ([agent-claude](../../packages/agent-claude/README.md#supported)).
 The lock takes the host's Allow All away from every session under either value.
-The option a person picks arrives as the third argument of `Session.confirm(toolCallId, approved, optionId?)`, from the `selectedOptionId` a client sent, and a client that sends no option gets a plain approve or deny.
+The option a person picks arrives as the third argument of `Session.confirm(toolCallId, approved, optionId?, decisionSource?)`, from the `selectedOptionId` a client sent, and a client that sends no option gets a plain approve or deny.
+The fourth says who decided, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1696-L1765) hands its agent a permission response's decision source: `host_policy` for an answer the host's rules made, which nobody was asked, and for a client's decision the source its `_meta['agentHost.permissionDecisionSource']` names, one of `human_response`, `host_policy`, `assisted_approval` and `unattended_fallback`, or nothing where it names none.
 Claude offers none, so the host's are put, and says what each call asks for as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175) does: its kind and its path or URL by VS Code's table of the CLI's tools, a `Bash` command in `bash`, a call with `dangerouslyDisableSandbox` as `requestSandboxBypass`, and a question a policy's ask rule raised (`matchedAskRule` from `policySettings`) or one the CLI says may offer no persistent answer (`suppressAlwaysAllowRule`) as `managedApprovalRequired`.
 The CLI is given the host's answer: an approval runs the call as it was asked, and a refusal is VS Code's decline.
 Claude also hands the session's `permissions.allow` to the CLI when a query starts, and a tool it allows runs without a question.
@@ -2226,6 +2227,7 @@ turn runs:
 | `instructions` | The system prompt for this session |
 | `<provider>.reasoning` | How much every turn has the model reason, one of `off`, `low`, `medium` and `high`, cofold's own setting under the agent's provider id (`cofold.reasoning` for the agent `cofold`). The person's harness `reasoning` by default, else `off`. Session-mutable and chat-mutable |
 | `permissionMode` | How tool approvals are handled. Session-mutable, and offered only when the plugin configured no `policy` |
+| `effortLevel` | How hard the model is asked to think, one of `off`, `low`, `medium` and `high`, over `<provider>.reasoning` where it is set. Session-mutable and chat-mutable, and offered only when this backend builds the request |
 
 The approvals mode is one of six, with the meanings the harness gives them:
 `default` asks before a tool that writes, goes online or destroys anything;
@@ -2243,8 +2245,8 @@ turn. A model has those of the four (`off`, `low`, `medium` and `high`) the
 agent's `models` declares for it, else all four where the endpoint's catalogue
 lists `reasoning` among the model's parameters, else none. The property, its
 words and each level's label are VS Code's, and `off` is its default where it
-is offered. A turn whose model selection names no level runs on the session's
-`<provider>.reasoning`. The level reaches the request as `reasoning_effort`;
+is offered. A turn whose model selection names no level runs on the chat's or
+the session's `effortLevel`, else the session's `<provider>.reasoning`. The level reaches the request as `reasoning_effort`;
 `off` sends no reasoning field at all.
 
 **A key is a credential, and it is not a config key.** The backend advertises a

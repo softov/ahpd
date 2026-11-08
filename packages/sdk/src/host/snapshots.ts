@@ -3,7 +3,7 @@ import { Status, idOf } from '../sessions/catalog.js';
 import { windowOf } from '../sessions/paging.js';
 import { RpcError } from '../rpc.js';
 import { runState } from './automations.js';
-import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, ANNOTATIONS_PATH_SEGMENT, chatUriFor, servedIn, schemeOf, spaceOf, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
+import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, ANNOTATIONS_PATH_SEGMENT, chatUriFor, servedIn, schemeOf, spaceOf, toolCallOfSubagentChat } from './channels.js';
 import { ownerFilter } from '../utils/values.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
@@ -44,7 +44,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     kept, marksOf, restoredSessions, activeClientsOf,
     about, leadOf,
     LOGS, TRACES, METRICS,
-    nameOf, sessionOfChat, sessionChannel, sessionFor,
+    nameOf, sessionOfChat, sessionChannel, sessionFor, resolveChatOwner,
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
     mergedConfig, sessionSchema, storedConfig, contributedDefaults,
@@ -121,7 +121,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * record read before its backend starts, so the read is in hand.
      */
     const restored = (ctx.subHistory.get(idOf(channel)) ?? [])
-      .map((one) => ({ one, uri: subagentChatUri(channel, String(one.toolCallId ?? '')) }))
+      .map((one) => ({ one, uri: ctx.mintSubagentChatUri(channel, held.defaultChat, String(one.toolCallId ?? '')) }))
       .filter(({ uri }) => !subagents.has(uri));
     /*
      * The backend's answer with `resource` taken off it.
@@ -574,12 +574,13 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     /*
      * The session behind the channel: a session URI is one, a chat the store
      * records belongs to the session it was recorded under, and a default or
-     * worker chat to the session its URI was built for. Either way the
+     * worker chat to the session the records name for it, the catalogue read
+     * first for the session a default chat was derived from. Either way the
      * transcript is the session's, and the id is what reads it. A chat none of
-     * these places is no chat here, and its URI is never read for an id.
+     * these places is no chat here.
      */
     const chat = spaceOf(channel) === 'chat';
-    const asked = chat ? sessionFor(channel) : channel;
+    const asked = chat ? (await resolveChatOwner(channel)) ?? channel : channel;
     /*
      * Never a session's id read out of a file, a terminal, a watch or a chat.
      * A chat no session holds is a resource not found, in the reference host's
@@ -648,7 +649,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       ? undefined
       : recordedChat(id, channel);
     const stamp = moves.get(owning) ?? new Date().toISOString();
-    if (opened !== undefined && opened.uri !== chatUriFor(nameOf(id))) {
+    if (opened !== undefined && !ctx.ownChat(nameOf(id), opened.uri)) {
       const own = await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), nameOf(id), opened.uri);
       return {
         kind: 'chat',
@@ -670,10 +671,12 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * call from its recorded origin.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L801
      */
-    const one = chat ? workers.find((held) => subagentChatUri(nameOf(id), String(held.toolCallId ?? '')) === channel) : undefined;
+    const one = chat
+      ? workers.find((held) => ctx.mintSubagentChatUri(nameOf(id), ctx.defaultChatFor(nameOf(id)), String(held.toolCallId ?? '')) === channel)
+      : undefined;
     if (one !== undefined) {
       const wanted = String(one.toolCallId ?? '');
-      const parentChat = restoredParentChat(nameOf(id), chatUriFor(nameOf(id)), one);
+      const parentChat = restoredParentChat(nameOf(id), ctx.defaultChatFor(nameOf(id)), one);
       return {
         kind: 'chat',
         state: {
@@ -693,9 +696,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         },
       };
     }
-    // The session's own chat; a worker's name the record does not hold is no
-    // chat here.
-    if (sessionOfChat(channel) !== undefined && toolCallOfSubagentChat(channel) === undefined) {
+    // The session's own chat, the one its record keeps under the session's id
+    // or the default derived from it; a worker's name the record does not hold
+    // is no chat here.
+    if (opened !== undefined || (sessionOfChat(channel) !== undefined && toolCallOfSubagentChat(channel) === undefined)) {
       return {
         kind: 'chat',
         state: {
@@ -768,8 +772,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           // session's subagents openable rather than lost.
           ...workers.map((one) => restoredSubagentSummary(
             nameOf(id),
-            subagentChatUri(nameOf(id), String(one.toolCallId ?? '')),
-            restoredParentChat(nameOf(id), chatUriFor(nameOf(id)), one),
+            ctx.mintSubagentChatUri(nameOf(id), ctx.defaultChatFor(nameOf(id)), String(one.toolCallId ?? '')),
+            restoredParentChat(nameOf(id), ctx.defaultChatFor(nameOf(id)), one),
             one as unknown as { toolCallId: string; title: string; turns: Bag[] },
             listedAt,
           )),

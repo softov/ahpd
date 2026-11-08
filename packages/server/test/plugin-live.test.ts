@@ -6,7 +6,6 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { check } from '@cofold/commands';
 import type { JsonSchema } from '@cofold/commands';
 import { createHost } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { connectorsChannel } from '../../sdk/src/connectors/channel.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
 import { applyPlugins, eventFailed, type Applied } from '../src/applyplugins.js';
@@ -252,9 +251,11 @@ const root = async (host: Host): Promise<{ agents?: { provider?: string }[]; act
  * session made fresh is provisional until then.
  */
 const first = async (client: ReturnType<Host['accept']>): Promise<void> => {
+  // On the chat the host minted for the session, read off its state.
+  const chat = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
   for (let i = 0; i < 4; i++) await new Promise((r) => { setTimeout(r, 0); });
 };

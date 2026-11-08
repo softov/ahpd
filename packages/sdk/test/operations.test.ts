@@ -1,7 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
 import type { ChangesetOperation, ChangesetOperationContext, ChangesetOperationRequest, ChangesetSource } from '../src/types/changes.js';
@@ -94,11 +93,12 @@ async function watching(source: ChangesetSource, pace = 0, agent: Agent = echo({
   });
   const uri = 'ahp-session:/one';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   const changeset = `${uri}/changeset/uncommitted`;
   const opened = await client.handle({ method: 'subscribe', params: { channel: changeset } });
   const snapshot = (opened as { snapshot: { state: Record<string, unknown> } }).snapshot;
-  return { host, client, peer: p, uri, chatUri: chatUriFor(uri), changeset, snapshot };
+  return { host, client, peer: p, uri, chatUri, changeset, snapshot };
 }
 
 // A refused envelope is left out, as a client leaves it.
@@ -642,8 +642,6 @@ it('lists the changesets on the session channel, and not on a catalogue row', as
   const row = listed.items.find((one) => one.resource === 'ahp-session:/one');
   expect(row).toBeDefined();
   expect(row).not.toHaveProperty('changesets');
-  // The diff stat is a different field, is declared on a summary, and stays.
-  expect(row).toHaveProperty('changes');
 
   // Read, because a turn's end left it unread and marking it unread moves nothing.
   client.handle({

@@ -50,7 +50,7 @@ import type {
 import { idOf, Status, uriFor } from './catalog.js';
 import { posixUriOf, uriOf } from '../resources/fileuri.js';
 import { machinePathOf } from '../machines/machine.js';
-import { canvasResource, chatOfCanvas, subagentChatUri } from '../host/channels.js';
+import { canvasResource, chatOfCanvas } from '../host/channels.js';
 import { STOP_FLAG } from '../host/background.js';
 import { ANSWER_TIMEOUT } from '../rpc.js';
 import { computerId } from '../machines/computers.js';
@@ -925,18 +925,19 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
    * Whether a chat the inner session added is a worker this session serves,
    * and if so start serving it.
    *
-   * Its outer name is known at once - the host names a worker chat by the
-   * session and the call - so a link to it in the lead chat that arrives
-   * before the chat is read is already rewritten.
+   * Its outer name is known at once - the host mints a worker chat from this
+   * chat's conversation and the call - so a link to it in the lead chat that
+   * arrives before the chat is read is already rewritten.
    */
   const opensWorker = (summary: Bag): boolean => {
     const origin = (summary.origin ?? {}) as Bag;
     const inner = summary.resource;
     if (origin.kind !== 'tool' || typeof origin.toolCallId !== 'string' || typeof inner !== 'string') return false;
-    if (start.subagent === undefined || workers.has(inner)) return start.subagent !== undefined;
+    if (start.subagent === undefined || start.subagentChatOf === undefined) return false;
+    if (workers.has(inner)) return true;
     const worker: Worker = { toolCallId: origin.toolCallId, done: false };
     workers.set(inner, worker);
-    outerOf.set(inner, subagentChatUri(start.uri, origin.toolCallId));
+    outerOf.set(inner, start.subagentChatOf(origin.toolCallId));
     void openWorker(inner, worker, summary);
     return true;
   };

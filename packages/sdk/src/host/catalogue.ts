@@ -1,4 +1,4 @@
-import { ROOT, chatUriFor, subagentChatUri } from './channels.js';
+import { ROOT, chatUriFor } from './channels.js';
 import { accountKey } from './root.js';
 import { SESSION_META_EXTERNAL_KEY, Status, idFor, idOf, normalizeTitle, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
@@ -469,7 +469,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       chats: [
         ...held.chats.keys(),
         ...[...subagents].filter(([, one]) => one.session === uri).map(([one]) => one),
-        ...read.map((one) => subagentChatUri(uri, String(one.toolCallId ?? '')))
+        ...read.map((one) => ctx.mintSubagentChatUri(uri, held.defaultChat, String(one.toolCallId ?? '')))
           .filter((one) => !subagents.has(one)),
       ],
     });
@@ -1519,7 +1519,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const given = kept.customTitle?.(id);
     const named = given !== undefined
       ? given === '' ? undefined : given
-      : name === undefined ? undefined : kept.chatTitle(id, chatUriFor(name));
+      : name === undefined ? undefined : kept.chatTitle(id, ctx.defaultChatFor(name));
     const message = (first ?? turns[0])?.message;
     const said = typeof message === 'object' && message !== null ? (message as { text?: unknown }).text : undefined;
     const epoch = new Date(0).toISOString();

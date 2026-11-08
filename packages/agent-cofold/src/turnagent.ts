@@ -233,9 +233,6 @@ export const createTurnAgent = (
     chat: start.chatUri,
     emit: start.emit,
     ...(start.clientToolTimeoutMs === undefined ? {} : { timeoutMs: start.clientToolTimeoutMs }),
-    providers: (name) => ctx.offered
-      .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-      .map((one) => String(one.owner)),
   });
 
   /** Fail every held call, and forget each one's promise. */

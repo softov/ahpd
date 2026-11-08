@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -214,10 +213,13 @@ it('answers a command by the host\'s rules in a session somebody other than its 
   const first = serving('vscode', { store });
   const bo = await first.signedIn('admin-two', 'bo');
   await first.opening(bo, 'bo-one');
+  // The chat the host minted for the session, which its record keeps for the
+  // next daemon too.
+  const chat = ((await bo.handle({ method: 'subscribe', params: { channel: 'ahp-session:/bo-one' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   // One turn, so the session is one the next daemon reads back.
   await bo.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't0', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't0', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle();
 
@@ -225,6 +227,11 @@ it('answers a command by the host\'s rules in a session somebody other than its 
   const second = serving('vscode', { store, listed: true });
   const ana = await second.signedIn('admin', 'ana');
   await second.pushing(ana, { terminalAutoApproveRules: { 'make test': true } });
+  await ana.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+  });
+  await settle();
 
   expect(await second.command(ana, 'bo-one', 'make test')).toBe('approved');
 });

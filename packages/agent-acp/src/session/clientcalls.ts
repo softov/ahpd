@@ -70,17 +70,12 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
    * The calls this session has out with its clients, held in one place.
    *
    * The holder raises the entry on the session, keeps an answer that arrives
-   * before the harness asks for it, times a call out, and fails the calls of a
-   * client that goes - naming the other clients that have the tool, which is
-   * why it is handed the offering rather than a list of names.
+   * before the harness asks for it, and times a call out.
    */
   const calls = holder({
     chat: ctx.start.chatUri,
     emit: ctx.emit,
     timeoutMs: ctx.start.clientToolTimeoutMs,
-    providers: (name) => ctx.offering
-      .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-      .map((one) => String(one.owner)),
   });
 
   /**

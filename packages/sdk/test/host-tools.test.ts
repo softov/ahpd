@@ -25,7 +25,7 @@ import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import {
   startedBySend,
-  resetSdk, actions, builtServer, claude, createHost, echo, emit, firstMessage, hello, hostTools,
+  resetSdk, actions, builtServer, claude, createHost, defaultChatOf, echo, emit, firstMessage, hello, hostTools,
   machine, peer, sdk, sendAnswered, serving, sessionQueries, settle, running,
 } from './support/host.js';
 
@@ -48,7 +48,7 @@ describe('tools the host contributes', () => {
    * provisional until its first message.
    */
   const atRest = async (client: ReturnType<ReturnType<typeof createHost>['accept']>, uri: string): Promise<void> => {
-    await firstMessage(client, chatUriFor(uri));
+    await firstMessage(client, await defaultChatOf(client, uri));
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
   };
   const withTools = async (tools = hostTools()) => {
@@ -292,6 +292,8 @@ describe('tools the host contributes', () => {
     it('renames the calling chat, which is the session when it is the default one', async () => {
       const { client, peer: p, uri, held } = await withTools();
       await client.handle({ method: 'subscribe', params: { channel: uri } });
+      // What the rename says, apart from the title the first message gave.
+      p.notes.length = 0;
       expect(await call('rename_chat', { title: '  Kqueue   port ' })).toBe('Renamed chat to "Kqueue port".');
       expect(actions(p, uri).find((one) => one.action.type === 'session/titleChanged')?.action.title).toBe('Kqueue port');
       const rows = JSON.parse(await call('list_sessions', { session: held })) as { sessions: { title: string }[] };
@@ -340,7 +342,7 @@ describe('tools the host contributes', () => {
       const { client, peer: p, held } = await withTools();
       await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/doomed', provider: 'claude' } });
-      await firstMessage(client, chatUriFor('ahp-session:/doomed'));
+      await firstMessage(client, await defaultChatOf(client, 'ahp-session:/doomed'));
       expect(await call('delete_session', { session: held }, 0)).toContain('refusing to delete the current session');
       expect(await call('delete_session', { session: 'ahp-session:/doomed' }, 0))
         .toBe('Deleted session ahp-session:/doomed. Reply with one short sentence confirming the session was deleted.');
@@ -653,7 +655,8 @@ describe('tools the host contributes', () => {
       const client = host.accept(peer(), people ? ana : undefined);
       await client.handle(hello(['0.9.0']));
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/who', provider: 'claude' } });
-      await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/who') } });
+      const chat = await defaultChatOf(client, 'ahp-session:/who');
+      await client.handle({ method: 'subscribe', params: { channel: chat } });
       const person = async (): Promise<string | undefined> => {
         const host = builtServer('host') as {
           tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
@@ -661,7 +664,7 @@ describe('tools the host contributes', () => {
         const tool = host?.tools.find((one) => one.name === 'who');
         return (await tool?.handler({}))?.content[0]?.text;
       };
-      return { client, person };
+      return { client, person, chat };
     };
 
     // No turn runs yet, so the session's owner answers.
@@ -670,7 +673,7 @@ describe('tools the host contributes', () => {
 
     // A turn sent by her gives the person the host knows behind that owner.
     await plenty.client.handle({ method: 'dispatchAction', params: {
-      channel: chatUriFor('ahp-session:/who'),
+      channel: plenty.chat,
       action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'who am I' } },
     } });
     await settle();
@@ -699,7 +702,8 @@ describe('tools the host contributes', () => {
     const client = host.accept(peer(), ana);
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/teams', provider: 'claude' } });
-    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/teams') } });
+    const chat = await defaultChatOf(client, 'ahp-session:/teams');
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
     const inSession = async (): Promise<string | undefined> => {
       const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
         tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
@@ -713,7 +717,7 @@ describe('tools the host contributes', () => {
 
     // A turn she sent puts her teams on the call, each once.
     await client.handle({ method: 'dispatchAction', params: {
-      channel: chatUriFor('ahp-session:/teams'),
+      channel: chat,
       action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'which teams' } },
     } });
     await settle();
@@ -1094,14 +1098,19 @@ describe('the MCP servers a session is offered', () => {
    * with plugins of its own is - and the host's own servers are named so that
    * one of them clashes with the plugin's.
    */
-  async function withClientPlugin(pace = 0, tree: Record<string, string> = PLUGIN_TREE) {
+  async function withClientPlugin(pace = 0, tree: Record<string, string> = PLUGIN_TREE, refusedAgain?: Error) {
     const dir = mkdtempSync(join(tmpdir(), 'ahpd-host-plugins-'));
     dirs.push(dir);
     const base = echo({ path: dir, pace });
     const seen: Start[] = [];
     const agent: Agent = {
       ...base,
-      create: (start: Start) => { seen.push(start); return base.create(start); },
+      // A backend that will not start a chat a second time, where a case says so.
+      create: (start: Start) => {
+        if (refusedAgain !== undefined && seen.length > 0) throw refusedAgain;
+        seen.push(start);
+        return base.create(start);
+      },
     };
     let host: ReturnType<typeof createHost>;
     host = createHost({
@@ -1158,6 +1167,10 @@ describe('the MCP servers a session is offered', () => {
 
     return {
       dir, seen, loaded, finished,
+      /** The errors a turn ended in, as the chat says them. */
+      errors: (turnId: string): unknown[] => actions(watching, chat)
+        .filter((one) => one.action.type === 'chat/error' && one.action.turnId === turnId)
+        .map((one) => one.action),
       /** Everything this host said back to the client that asked, as a refusal. */
       refused: (): string[] => actions(holderPeer, uri)
         .map((one) => one.rejectionReason)
@@ -1229,6 +1242,23 @@ describe('the MCP servers a session is offered', () => {
       a: { type: 'stdio', command: join(at, 'bin', 'server'), args: ['--root', '.'] },
       b: { type: 'stdio', command: 'host-b' },
     });
+  });
+
+  /*
+   * The send waits for the chat that takes the running one's place, and a
+   * start again that fails ends the turn that waited on it, as a moved chat's
+   * relaunch that fails ends its turn.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L811
+   */
+  it('end the turn in the start\'s failure when the chat cannot be started again with the moved set', async () => {
+    const held = await withClientPlugin(0, PLUGIN_TREE, new Error('this backend will not start it again'));
+    await held.announce();
+    await until(() => held.loaded());
+    await held.send('t1');
+    await settle();
+
+    expect(held.seen).toHaveLength(1);
+    expect(JSON.stringify(held.errors('t1'))).toContain('this backend will not start it again');
   });
 
   it('start the chat again only when the set of plugins has moved', async () => {
@@ -2350,9 +2380,6 @@ describe('a client\'s call, held by the backend', () => {
           chat: start.chatUri,
           emit: start.emit,
           timeoutMs: start.clientToolTimeoutMs,
-          providers: (name) => current
-            .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-            .map((one) => String(one.owner)),
         });
         const inner = base.create(start);
         held = { start, calls, tools: () => current, session: inner };
@@ -3390,7 +3417,7 @@ describe('a task list a plugin serves', () => {
     await client.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/todo';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-    const chat = chatUriFor(uri);
+    const chat = await defaultChatOf(client, uri);
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     void client.handle({
       method: 'dispatchAction',
@@ -3472,7 +3499,7 @@ describe('a harness list handed to the host', () => {
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/list', provider: 'echo' } });
     // The chat a client addresses, the session's default chat.
-    const chat = chatUriFor('ahp-session:/list');
+    const chat = await defaultChatOf(client, 'ahp-session:/list');
     await client.handle({
       method: 'dispatchAction',
       params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'plan it' } } },
@@ -3493,7 +3520,7 @@ describe('a harness list handed to the host', () => {
     const client = host.accept(p, ana);
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/list', provider: 'echo' } });
-    const chat = chatUriFor('ahp-session:/list');
+    const chat = await defaultChatOf(client, 'ahp-session:/list');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     await client.handle({
       method: 'dispatchAction',

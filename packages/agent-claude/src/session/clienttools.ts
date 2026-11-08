@@ -340,11 +340,6 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     // Absent only where a session is built by hand, and then the holder's own
     // ten minutes apply - the same answer the host resolves an unset one to.
     ...(ctx.options.clientToolTimeoutMs === undefined ? {} : { timeoutMs: ctx.options.clientToolTimeoutMs }),
-    // Asked only when a client goes: the model is the one that has to know
-    // that somebody else provides the tool its call was for.
-    providers: (name) => live()
-      .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-      .map((one) => String(one.owner)),
   });
 
   /** How a handler's wait for its call ends: with the call, or with why there is none. */

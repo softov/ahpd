@@ -532,6 +532,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
            * change - decision `ahpd-says-it-is-a-native-host`.
            */
           'vscode.ahpSessionUris': true,
+          /*
+           * This host addresses a chat whose URI names no session, as VS
+           * Code's host says it does, so a client mints a session's next chat
+           * in the format of that session's default chat.
+           * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostExtensionProtocol.ts#L158-L163
+           */
+          'vscode.ahpChatUris': true,
           // The dev container surface. A client reads this before it
           // offers the flow, so it is true only where a container can
           // actually be made: a host with the launcher loaded and no

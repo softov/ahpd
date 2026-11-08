@@ -576,7 +576,9 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     session: string,
     chat: string,
   ): Promise<WireTurn<Turn>[] | undefined> => {
-    const turns = await agent.transcript?.(id, at, ctx.outputsFor(session, chat));
+    // Handed the content this host keeps for the session, by the reference it
+    // kept each under, as it is handed the outputs it keeps for the chat.
+    const turns = await agent.transcript?.(id, at, ctx.outputsFor(session, chat), (toolCallId, ordinal) => ctx.toolResults.kept(session, toolCallId, ordinal));
     // A chat whose turns are all this host's own has no transcript, and reads
     // as the turns it keeps, as a nested session opens from its record.
     if (turns === undefined) return keptIn(session, chat).length > 0 ? interleaveLocalTurns(session, chat, []) : undefined;

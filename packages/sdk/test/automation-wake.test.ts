@@ -2,7 +2,6 @@ import { WAIT_MS } from '../../../tools/wait.ts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { memoryAutomations } from '../src/automations/automations.js';
 import { uriOf } from '../src/resources/fileuri.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { wakeMessage } from '../src/automations/wakemessage.js';
 import { RECORD, directory } from './users-gate-helpers.js';
 import {
@@ -765,7 +764,8 @@ it('waits behind a turn a person is running in the chat it is pinned to', async 
 
   // Somebody is typing in the chat the automation runs in. That turn is not the
   // automation's and it is still a turn in the one chat the automation has.
-  const pinnedChat = chatUriFor(pin);
+  // Its chat, the default the host minted for the session the automation made.
+  const pinnedChat = ((await client.handle({ method: 'subscribe', params: { channel: pin } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: pinnedChat } });
   await begins(client, pinnedChat, 'p1');
 

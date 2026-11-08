@@ -418,24 +418,23 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * The relaunch each running session owes, by its own uri: a change of
    * config or of folders its backend reads only when it starts, already said,
    * and taken when the backend starts again at the session's next turn
-   * boundary, with the credentials and the connection of the change that
-   * asked for it. `folders` is set where the folders changed, and that start
-   * resumes the session's conversation in them.
+   * boundary, with the credentials of the change that asked for it.
+   * `folders` is set where the folders changed, and that start resumes the
+   * session's conversation in them.
    */
   relaunches: Map<string, {
     config: Bag;
     folders?: true;
     credentials: Record<string, string>;
-    sender: Connection | undefined;
     tokensFor: (provider: string) => Record<string, string>;
   }>;
   /**
    * The relaunch each moved chat owes, by the chat's uri: its runtime goes on
    * under the session it was launched for until the chat's next turn
    * boundary starts it again under the session that holds it now, in the
-   * folder it worked in, with the credentials and the connection of the move.
+   * folder it worked in, with the credentials of the move.
    */
-  chatRelaunches: Map<string, { credentials: Record<string, string>; sender: Connection | undefined; directory: string | undefined }>;
+  chatRelaunches: Map<string, { credentials: Record<string, string>; directory: string | undefined }>;
   /**
    * The turns a client resumed that run now, by their chat and their id: the
    * time each ran before and what it used, and when it ran again, which its
@@ -491,8 +490,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     where: string | undefined,
     chosen?: string,
   ) => Promise<{ schema: Bag; defaults: Record<string, unknown>; repository?: string }>;
-  /** The host-owned config keys a client sent, as this host reads them. */
-  hostOwnedSessionConfig: (config: Record<string, unknown>) => Record<string, unknown>;
   /** A token any connected client authenticated for a resource and the scopes asked for, unexpired, for the host's own work. */
   getAuthToken: (resource: string, scopes?: readonly string[]) => string | undefined;
   /**

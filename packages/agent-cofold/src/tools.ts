@@ -123,7 +123,7 @@ export interface ClientToolCall {
   callId: string;
   /** The client that announced the tool, by its id, and the only one that may answer: the spec's `contributor` of the call. */
   contributor: string;
-  /** The offered name, for the result a client that went away earns. */
+  /** The offered name, which the call's row and its tool name are read from. */
   name: string;
   /** The arguments, held for as long as the round trip lasts. */
   input: unknown;

@@ -12,7 +12,6 @@ import { memorySessions } from '../src/sessions/sessions.js';
 import { gitBranches } from '../src/repo/git.js';
 import { gitWorktrees } from '../src/repo/worktrees.js';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { fileResources, uriOf } from '../src/resources/resources.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -60,6 +59,10 @@ vi.mock('node:fs', async (importOriginal) => {
 
 const CHANGESET = 'ahp-session:/s/changeset/uncommitted';
 const URI = 'ahp-session:/s';
+
+/** The chat the host minted for the session, read off its state as a client reads it. */
+const mintedChat = async (client: { handle(request: unknown): Promise<unknown> }): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: URI } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
 let made: string[] = [];
 afterEach(async () => {
@@ -995,7 +998,7 @@ it('announces a session made in a directory outside the path with none of its fo
   const { client, peer: p } = await firstOperations(dir);
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+    params: { channel: await mintedChat(client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
   await vi.waitFor(() => { expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(true); }, { timeout: WAIT_MS });
   await settle(20);
@@ -1031,15 +1034,16 @@ it('puts each chat\'s own counts on its entry: the session\'s on its default cha
     });
   };
 
-  await turn(chatUriFor(URI), 't1');
-  await waitFor(() => JSON.stringify(countsOf(chatUriFor(URI))) === JSON.stringify({ files: 1, additions: 1, deletions: 0 }));
+  const LEAD = await mintedChat(client);
+  await turn(LEAD, 't1');
+  await waitFor(() => JSON.stringify(countsOf(LEAD)) === JSON.stringify({ files: 1, additions: 1, deletions: 0 }));
   await turn(PEER, 't2');
   await waitFor(() => JSON.stringify(countsOf(PEER)) === JSON.stringify({ files: 1, additions: 1, deletions: 0 }));
-  await waitFor(() => JSON.stringify(countsOf(chatUriFor(URI))) === JSON.stringify({ files: 2, additions: 2, deletions: 0 }));
+  await waitFor(() => JSON.stringify(countsOf(LEAD)) === JSON.stringify({ files: 2, additions: 2, deletions: 0 }));
 
   const opened = await client.handle({ method: 'subscribe', params: { channel: URI } }) as { snapshot: { state: { chats: Record<string, unknown>[] } } };
   expect(Object.fromEntries(opened.snapshot.state.chats.map((one) => [one.resource, one.changes]))).toEqual({
-    [chatUriFor(URI)]: { files: 2, additions: 2, deletions: 0 },
+    [LEAD]: { files: 2, additions: 2, deletions: 0 },
     [PEER]: { files: 1, additions: 1, deletions: 0 },
   });
 });
@@ -1290,7 +1294,7 @@ const openInTree = async (repository_: string, changes: ChangesetSource, agent: 
   // Its first message, at which its tree is cut and it is announced.
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+    params: { channel: await mintedChat(client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
   await waitFor(() => git(repository_, 'worktree', 'list', '--porcelain').includes('refs/heads/agents/'));
   return { client, peer: p, where: cutTree(repository_) };
@@ -1310,7 +1314,7 @@ it('moves a session row at a tool call, from its baseline, before the turn ends'
   // the row can move from it.
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(URI), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+    params: { channel: await mintedChat(client), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
   await waitFor(() => p.notes.some((n) => n.method === 'root/sessionAdded'));
   await settle(8);

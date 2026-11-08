@@ -355,9 +355,6 @@ export function piSession(
     chat: start.chatUri,
     emit,
     ...(start.clientToolTimeoutMs === undefined ? {} : { timeoutMs: start.clientToolTimeoutMs }),
-    providers: (name) => built
-      .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-      .map((one) => String(one.owner)),
   });
 
   /** The client that provides a tool, by the name pi calls it: the spec's contributor of its call. */

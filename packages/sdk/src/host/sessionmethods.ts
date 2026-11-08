@@ -10,6 +10,7 @@ import { CLOSING, noProvider } from './common.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
 import { chatIdFor, named, ROOT, schemeOf, spaceOf } from './channels.js';
 import { getAgentHostChatId } from '../vscode/chatid.js';
+import { chatUriFormatOf, isShapedChatUri } from '../vscode/chatminting.js';
 import { preambleOf, withPreamble } from './preamble.js';
 import { readAggregate, sessionFlag, settledMessage, startsRead } from './chatactions.js';
 import { needsAsyncRewrite } from './attachments.js';
@@ -224,7 +225,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     if (folders !== undefined) beside.set(chatUri, folders);
     ctx.chatRelaunches.set(chatUri, {
       credentials: conn.tokensFor(held.agent.provider),
-      sender: connection,
       directory: ctx.chatRelaunches.get(chatUri)?.directory ?? held.workingDirectory,
     });
     /*
@@ -1099,7 +1099,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * A worktree session runs in the folder the client picked until its
          * first send, which makes the tree and starts the session again in
          * it, as VS Code's host resolves a session's worktree on the first
-         * send: a folder that cannot hold one fails that send.
+         * send: a tree git cannot make fails that send.
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
          */
         const running = where;
@@ -1164,7 +1164,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           throw error;
         }
         // The tree its first send makes, owed as the start again that send runs.
-        oweTree(uri, conn.tokensFor(provider), connection, conn.tokensFor);
+        oweTree(uri, conn.tokensFor(provider), conn.tokensFor);
         if (activeClient !== undefined) {
           dispatch(uri, { type: 'session/activeClientSet', activeClient });
           retool(uri);
@@ -1260,6 +1260,11 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       if (!chatUri.startsWith('ahp-chat:'))
         throw new RpcError(INVALID_PARAMS, `Chat URI must use the ahp-chat scheme: ${chatUri}`);
+      // Nor an opaque one in a session whose default chat is shaped, which an
+      // older window that sees the session could not address.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L61-L63
+      if (chatUriFormatOf(held.defaultChat) === 'shaped' && !isShapedChatUri(chatUri))
+        throw new RpcError(INVALID_PARAMS, `Opaque chat URI is not allowed in a session with a shaped default chat: ${chatUri}`);
       // Nor one whose chat id another chat of the session has, as VS Code reads
       // a chat's id off its URI.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L64-L69
@@ -1838,18 +1843,31 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       /*
        * In the order the reference host composes the schema: the computer and
        * isolation, then whatever the backend and another plugin offered, then
-       * this host's other keys. What wins a shared name is the host's value,
-       * and then the scoped one.
+       * this host's other keys, and what wins a shared name is the host's
+       * value, and then the scoped one.
        */
+      const scopedProperties = formIn(scoped.properties, 'session', locale, hostCatalogs);
       const properties = formOrdered(
-        { ...contributed, ...hostProperties, ...formIn(scoped.properties, 'session', locale, hostCatalogs) },
+        { ...contributed, ...hostProperties, ...scopedProperties },
         [...Object.keys(hostProperties), ...Object.keys(scoped.properties)],
       );
-      // Iterative, as a real host's is: what has been answered comes back
-      // answered, so re-asking does not quietly undo a choice.
+      /*
+       * Iterative, as a real host's is: what has been answered comes back
+       * answered, so re-asking does not quietly undo a choice. The backend's
+       * defaults sit under a contributed key's, and a key this host owns comes
+       * back only where its property takes it and the default where it does
+       * not, the backend's value for it taken out, as VS Code's host sets its
+       * own values over the provider's and validates them.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11035-L11055
+       */
       return {
         schema: { ...theirs, properties },
-        values: { ...agent.defaults(), ...mine.defaults, ...scoped.defaults, ...answered },
+        values: {
+          ...ctx.omitHostOwnedSessionConfig({ ...agent.defaults(), ...ctx.contributedDefaults(), ...answered }),
+          ...mine.defaults,
+          ...scoped.defaults,
+          ...ctx.hostOwnedSessionConfig(answered, { ...hostProperties, ...scopedProperties }),
+        },
       };
     },
     /**

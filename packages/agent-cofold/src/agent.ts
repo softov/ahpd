@@ -498,11 +498,12 @@ export const modelOf = (
   const { reference, ...adapter } = adapterOptionsOf(options, settings, credentials, harness);
   /*
    * The level the turn's model selection carries, its `configSchema`'s answer,
-   * winning over the session's own `<provider>.reasoning`, which wins over the
-   * person's harness, as VS Code resolves a Codex turn's effort.
+   * winning over the chat's or the session's `effortLevel`, then the session's
+   * own `<provider>.reasoning`, which wins over the person's harness, as VS
+   * Code resolves a Codex turn's effort.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1953-L1960
    */
-  const effort = effortOf(settings[ReasoningEffortConfigKey] ?? settings[reasoningKeyOf(options)] ?? harnessReasoningOf(harness));
+  const effort = effortOf(settings[ReasoningEffortConfigKey] ?? settings.effortLevel ?? settings[reasoningKeyOf(options)] ?? harnessReasoningOf(harness));
   /*
    * A chosen level is a request param and nothing more. The adapter turns
    * reasoning on from it, so a host that also set the feature would be saying
@@ -652,6 +653,27 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
               default: 'auto',
               sessionMutable: true,
               chatMutable: true,
+            },
+          }
+        : {}),
+      // How hard it thinks, offered where this backend builds the request, since a caller's adapter keeps its own list.
+      ...(options.adapter === undefined
+        ? {
+            effortLevel: {
+              chatMutable: true,
+              type: 'string',
+              title: 'Effort',
+              description: 'How hard it thinks before answering.',
+              enum: [...EFFORT_LEVELS],
+              enumLabels: ['Off', 'Low', 'Medium', 'High'],
+              enumDescriptions: [
+                'Answers without extra thinking.',
+                'Thinks briefly.',
+                'Thinks before answering.',
+                'Thinks hard before answering.',
+              ],
+              default: 'off',
+              sessionMutable: true,
             },
           }
         : {}),

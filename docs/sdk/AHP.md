@@ -217,7 +217,7 @@ A key names one tool exactly, or every tool of a server through `<server>/*`.
 A key is the backend's own tool name, matched with its case, so Claude's `Bash` and pi's `bash` are different keys.
 A tool this host offers is `host/<name>` in every backend, after the MCP server that carries the host's tools, which is named `host` as [VS Code](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21) names it.
 A client's tool is the name its client announced, as VS Code's setting names its window's tools and the [window](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostToolUtils.ts#L24-L27) hands them to an agent host by those names.
-An MCP server's tool is `<server>/<tool>`: its server is the session's customization its call's `contributor` names, as [AHP](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1338-L1344) names an MCP tool's server on the call, and `<tool>` is the call's tool name or what ends it after a `__`. A call with no contributor is named by its full tool name alone.
+An MCP server's tool is `<server>/<tool>`: its server is the session's customization its call's `contributor` names, as [AHP](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1338-L1344) names an MCP tool's server on the call, and `<tool>` is the call's tool name or what ends it after a `__`. A call no client and no MCP server of the session contributes is a server-side tool's, as [AHP](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1321-L1346) has a call say whose tool it runs: one of the tools this host offers is `host/<name>`, its name read from the call's the same way, whatever server its backend names it on, and any other is named by its full tool name alone.
 A matched call asks whenever its backend puts the call to a person, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1698) applies its rules to the confirmations a provider raises.
 Claude's backend puts it when the CLI asks about the call, and the CLI asks about a call a key names in its grammar in every mode, `bypassPermissions` included, from the ask rules the backend hands it as Claude Code's policy tier ([agent-claude](../../packages/agent-claude/README.md)).
 The CLI names a client's tool after the client offering it, so no rule names one of those, and a tool's name set `false` turns on the bypass lock for Claude's sessions, leaving Ask Before Edits and Plan Mode, as [VS Code's bridge](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L31-L40) falls back to the lock for a tool no rule family names.
@@ -612,13 +612,16 @@ efforts, some take one, some take none, and a model that takes none carries no
 schema, so a client draws no control for it. `thinkingLevel` is the key the
 reference client's picker writes into `ModelSelection.config`, and a turn that
 arrives with one sets the effort for that turn, while a turn whose model names
-none clears it back to the model's own, as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1217-L1224)
+none goes back to the session's `effortLevel`, or to the model's own where none
+is set, as [VS Code's Claude](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1217-L1224)
 sets the effort each model selection resolves to: the CLI holds a single effort
-setting per query. The session's config has no effort key; its keys are VS
-Code's Claude's, `permissionMode` with its five modes and the SDK's `dontAsk`
-beside them (a session nobody watches refuses rather than waits on a person,
-the decision `claude-approvals-keeps-dont-ask`), `permissions` and
-`sensitiveEditLocations`, with the platform's `shellInitScripts` beside them.
+setting per query. The session's keys are VS Code's Claude's, `permissionMode`
+with its five modes and the SDK's `dontAsk` beside them (a session nobody
+watches refuses rather than waits on a person, the decision
+`claude-approvals-keeps-dont-ask`), `permissions` and `sensitiveEditLocations`,
+with the platform's `shellInitScripts` beside them. `effortLevel`, which a chat
+may set for itself, is offered only while no model carries its own schema: two
+controls reaching one setting is one too many.
 
 The other five declared fields - `maxContextWindow`, `maxOutputTokens`,
 `maxPromptTokens`, `supportsVision` and `policyState` - are absent, and are
@@ -665,15 +668,22 @@ the file. The file is this host's, so a CLI in a machine is handed none.
 
 ### Chat URIs
 
-A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, the
-shape VS Code's host builds and an older VS Code window computes from the
-session. `defaultChat`, every entry in `chats` and `ChatState.resource` name the
-chat by that one URI, so a client that computed it and a client that read it
-hold the same string.
+A new session's first chat is minted as VS Code's host mints one
+([agentService.ts#L10109-L10150](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10109-L10150)):
+`ahp-chat://default/<base64url(sessionUri)>` for an older VS Code window, one
+that names itself and declares no `vscode.ahpChatUris`, which computes that URI
+from the session; and an opaque `ahp-chat:/<uuid>` for every other client, a
+tool and an automation among them. The handshake declares
+`vscode.ahpChatUris`, so a window mints a session's next chat in the format of
+its default chat, and a session whose default chat is shaped takes no opaque
+chat: `createChat` refuses one with InvalidParams, "Opaque chat URI is not
+allowed in a session with a shaped default chat: <chat>", as VS Code's host
+does. `defaultChat`, every entry in `chats` and `ChatState.resource` name the
+chat by its one URI.
 
-That URI is the session's chat while the session records no other default
-chat, or records that one, as VS Code's host gives a derived default chat an
-owner only while the session's record agrees
+The derived URI is the session's chat while the session records no other
+default chat, or records that one, as VS Code's host gives a derived default
+chat an owner only while the session's record agrees
 ([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
 
 `default` is a **role**: it means whichever chat a client gets when it names
@@ -712,7 +722,7 @@ scheme this host serves, and `ahp-session:/<id>`, as VS Code's host answers a
 session under each identity it has and derives that session's chat from each
 of them
 ([agentHostChatOwnershipService.ts#L264-L287](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287)),
-a chat's owner coming from the records that hold it rather than from its URI
+a chat's owner coming from the records that hold it
 ([sessionState.ts#L894-L898](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/state/sessionState.ts#L894-L898)).
 A client that subscribes by one of the others watches the session: the
 subscribe is answered under the name it used, and every action goes out under
@@ -723,7 +733,17 @@ advertised them
 A derived default chat URI of any of those spellings is the session's default
 chat, while the session's record agrees that its default chat is a derived one;
 a session that moved its default to a chat of its own owns no derived chat
-([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
+([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
+The session is one registered here: running, kept in the store, or in the
+catalogue, which is read for the id a derived default chat carries when a
+client names that chat before anything here has listed its session, as VS
+Code's host registers every session its backends list and derives its index
+of default chats from those registrations
+([agentHostChatOwnershipService.ts#L267-L291](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L267-L291)).
+A derived default chat of a session nobody has is no chat: a subscribe to it
+answers `-32001`, "Resource not found: <chat>", in VS Code's words for a
+channel it finds no owner for
+([protocolServerHandler.ts#L2199](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2199)).
 
 A URI whose id no session here carries is no session: a subscribe to it answers
 `-32001`, as VS Code's host answers a URI no agent of its own serves
@@ -1074,10 +1094,10 @@ A new tree carries what git checked out and nothing else: a checkout has no
 to run, so the isolation would work and the session inside it could not build -
 a failure the person meets after choosing it rather than while choosing it.
 `worktreeIncludeFiles` is what is brought along after the checkout: a list of
-patterns, in `.gitignore` syntax, for the git-ignored files to copy in. A
-comma-separated string is read as one list. The copy is best effort, one pattern at a time - a pattern that
-matches nothing is the ordinary case, and a session that refused to start over
-a missing optional file would be worse than one without it.
+patterns, in `.gitignore` syntax, for the git-ignored files to copy in. The
+copy is best effort, one pattern at a time - a pattern that matches nothing is
+the ordinary case, and a session that refused to start over a missing optional
+file would be worse than one without it.
 `worktreeSymlinkFolders` is the same idea for folders, and reaches them by
 linking rather than copying: a list of `.gitignore` patterns for the git-ignored
 folders to point at the checkout's, which is what makes `node_modules` - the

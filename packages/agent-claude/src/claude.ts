@@ -1,6 +1,6 @@
 import { probe } from './probe.js';
 import { serversFor, toClaudeMcpServers } from './mcp.js';
-import { createSession } from './session.js';
+import { createSession, EFFORTS, EFFORT_LABELS } from './session.js';
 import { restore } from './session/savedoutput.js';
 import { configDirOf, diskBoundsOf } from './session/disk.js';
 import type { ParseYaml } from './session/disk.js';
@@ -303,9 +303,22 @@ export function claude(options: ClaudeOptions): Agent<Session> {
    * the platform's `Permissions` and `SensitiveEditLocations` unchanged, with
    * the platform's `shellInitScripts` beside them, the session key VS Code's
    * Copilot applies to its shell tool. The model is each message's, and its
-   * effort the model's own `configSchema`.
+   * effort the model's own `configSchema`, with `effortLevel` beside them
+   * while no model carries one.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
    */
+  /**
+   * Whether the models this harness offers carry effort controls of their own.
+   *
+   * A model's `configSchema` and the session-wide `effortLevel` reach the same
+   * setting, and a client draws both - so a person is shown two effort
+   * controls, on two different values, for one thing. The model's is the
+   * truthful one: it lists what that model actually supports, where the
+   * session-wide key lists all five whatever is chosen. So this backend offers
+   * the session key only while there is nothing better.
+   */
+  let perModelEffort = false;
+
   /** How many of the modes below are offered: six, or VS Code's five where the record's `dontAsk` is off. */
   const offered = (): number => ((options.presetOf?.() ?? options.preset ?? {})['dontAsk'] === false ? 5 : 6);
 
@@ -359,6 +372,19 @@ export function claude(options: ClaudeOptions): Agent<Session> {
         default: 'default',
         sessionMutable: true,
       },
+      // How hard it thinks, for the session and for each chat that sets its own.
+      ...(perModelEffort ? {} : {
+        effortLevel: {
+          chatMutable: true,
+          type: 'string',
+          title: 'Effort',
+          description: 'How hard it thinks before answering.',
+          enum: [...EFFORTS],
+          enumLabels: EFFORTS.map((one) => EFFORT_LABELS[one]),
+          default: 'high',
+          sessionMutable: true,
+        },
+      }),
       /*
        * Scripts a client generated, sourced before every shell command.
        *
@@ -435,11 +461,16 @@ export function claude(options: ClaudeOptions): Agent<Session> {
   });
 
   /*
-   * The values a session starts with: the mode alone, as VS Code's Claude
-   * resolves them, `permissions` left unset until a tool is approved.
+   * The values a session starts with: the mode, as VS Code's Claude resolves
+   * them, `permissions` left unset until a tool is approved, and the effort
+   * beside its schema or not at all, since a value with no property to draw it
+   * is a control a client cannot show and cannot change.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2311-L2317
    */
-  const defaults = (): Record<string, unknown> => ({ permissionMode: 'default' });
+  const defaults = (): Record<string, unknown> => ({
+    permissionMode: 'default',
+    ...(perModelEffort ? {} : { effortLevel: 'high' }),
+  });
 
   /**
    * How to start the CLI for a session that named a machine, or nothing.
@@ -573,7 +604,9 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       try { probed = await probe(dir, options.parseYaml, diskBoundsOf(options.presetOf?.() ?? options.preset ?? {})); }
       finally { setImmediate(() => { probing -= 1; }); }
       const { setUp, ...offered } = probed;
-      return { ...offered, models: setUp || credentialed() ? (await offer(offered.models)).map(withLearned) : [] };
+      const models = setUp || credentialed() ? (await offer(offered.models)).map(withLearned) : [];
+      perModelEffort = models.some((model) => model.configSchema !== undefined);
+      return { ...offered, models };
     },
 
     /*
@@ -833,6 +866,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // the chat. Without one, a subagent's frames stay in the turn that
       // spawned them.
       ...(start.subagent ? { subagent: start.subagent } : {}),
+      ...(start.subagentChatOf ? { subagentChatOf: start.subagentChatOf } : {}),
       // The host's background-task seam, carried through unchanged: this
       // backend reports each task the harness leaves running, and the host
       // draws the row, its stop flag and the snapshot it reaches.

@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import { createHost, ROOT } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { Status, idOf } from '../../sdk/src/sessions/catalog.js';
 import { foldHostOptions, pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
@@ -205,7 +204,12 @@ const SESSION = 'ahp-session:/one';
  * backend is started with and a message names its chat's session by.
  */
 const HELD = SESSION;
-const CHAT = chatUriFor(SESSION);
+/** The chat with the bot, which the host mints for the session: read off its state by `talkTo`. */
+let CHAT = '';
+
+/** The default chat of a session, read off its state as a client reads it. */
+const defaultChatOf = async (client: Client, session: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
 /** A bot, a chat with it, and a client watching that chat. */
 async function talkTo(client: Client): Promise<void> {
@@ -217,6 +221,7 @@ async function talkTo(client: Client): Promise<void> {
     method: 'createSession',
     params: { channel: SESSION, provider: CHAT_PROVIDER, config: { bot: 'backer' } },
   });
+  CHAT = await defaultChatOf(client, SESSION);
   await client.handle({ method: 'subscribe', params: { channel: CHAT } });
 }
 
@@ -1456,8 +1461,8 @@ it('leaves a turn somebody began in a back session in that session\'s own chat',
   const client = await anyone(host);
   await talkTo(client);
   const backSession = 'ahp-session:/back';
-  const backChat = chatUriFor(backSession);
   await client.handle({ method: 'createSession', params: { channel: backSession, provider: 'base' } });
+  const backChat = await defaultChatOf(client, backSession);
   await client.handle({ method: 'subscribe', params: { channel: backChat } });
   // The row that makes this the back session of the bot for this host.
   await (await records.collection(sessionsOf('backer'))).put({

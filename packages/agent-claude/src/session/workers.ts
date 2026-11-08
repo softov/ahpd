@@ -1,4 +1,3 @@
-import { subagentChatUri } from '@ahpd/sdk';
 import type { BackgroundTask, Bag, OutputTerminal, SubagentChat } from '@ahpd/sdk';
 import type { ClaudeSessionOptions, Scope, SessionContext } from './context.js';
 import { bag, list, str } from './common.js';
@@ -475,10 +474,11 @@ export function createWorkers(ctx: SessionContext): Workers {
   /**
    * The chat one spawning call's worker has, whether or not it is open yet.
    *
-   * The host names a worker chat from the session and the call id alone, so the
-   * name is known before the chat is. The harness reports a background task and
-   * the worker it runs speaks later, or its call's result arrives first, so a
-   * chat that is waited for before the task is listed is a task listed late.
+   * The host mints a worker chat from this chat's conversation and the call id,
+   * so the name is known before the chat is. The harness reports a background
+   * task and the worker it runs speaks later, or its call's result arrives
+   * first, so a chat that is waited for before the task is listed is a task
+   * listed late.
    *
    * A host with no seam to open one has no worker chat at all, and a call it
    * spawned is not listed: an entry whose `chat` pointed nowhere would be a row
@@ -487,7 +487,7 @@ export function createWorkers(ctx: SessionContext): Workers {
   const workerChatOf = (toolCallId: string): string | undefined => {
     const opened = spawning.get(toolCallId)?.chat;
     if (opened !== undefined) return opened;
-    return ctx.options.subagent === undefined ? undefined : subagentChatUri(ctx.options.uri, toolCallId);
+    return ctx.options.subagent === undefined ? undefined : ctx.options.subagentChatOf?.(toolCallId);
   };
 
   /**

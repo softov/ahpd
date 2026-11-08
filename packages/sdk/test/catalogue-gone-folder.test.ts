@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHost, firstMessage, flushed, hello, machine, peer, resetSdk, settle } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import type { Agent, Listed } from '@ahpd/sdk';
@@ -116,8 +115,9 @@ describe('a folder that has gone', () => {
         method: 'createSession',
         params: { channel: 'ahp-session:/live', provider: 'echo', workingDirectories: [uriOf(folder)] },
       });
-      // Announced at its first message.
-      await firstMessage(client, chatUriFor('ahp-session:/live'));
+      // Announced at its first message, on the chat the host minted for it.
+      const minted = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+      await firstMessage(client, minted);
       await settle(4);
       const added = notes.filter((one) => one.method === 'root/sessionAdded').at(-1)?.params as
         { summary?: { workingDirectories?: string[] } } | undefined;

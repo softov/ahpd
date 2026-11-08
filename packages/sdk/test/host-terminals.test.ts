@@ -12,7 +12,7 @@ import { uriOf } from '../src/resources/resources.js';
 import { localPath } from '../src/resources/fileuri.js';
 import { chatUriFor } from '../src/host/channels.js';
 import {
-  resetSdk, actions, claude, createHost, emit, hello, machine,
+  resetSdk, actions, claude, createHost, defaultChatOf, emit, hello, machine,
   peer, sdk, settle, shellTerminals,
 } from './support/host.js';
 import { fakePty } from './support/pty.js';
@@ -103,8 +103,8 @@ describe('a command typed into the conversation', () => {
     expect(result.success).toBe(true);
     expect(result.content.find((one) => one.type === 'text')?.text).toContain('ran-from-the-composer');
     // The terminal it ran in, so a client can watch the output arrive rather
-    // than wait for the whole of it.
-    expect(result.content.find((one) => one.type === 'terminal')?.resource).toMatch(/^ahp-terminal:/);
+    // than wait for the whole of it, by VS Code's link for a call's terminal.
+    expect(result.content.find((one) => one.type === 'terminal')?.resource).toMatch(/^agenthost-terminal:\/\/shell\//);
 
     // And in the snapshot, not only in the stream: a client that subscribes
     // afterwards reads the transcript rather than the actions it missed.
@@ -217,7 +217,7 @@ describe('a command typed into the conversation', () => {
     pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
     await until(() => changed() !== undefined && pty.typed.length > 0);
     // With no `_meta`, which the reducer would put in place of the call's own.
-    const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
+    const named = { type: 'terminal', resource: expect.stringMatching(/^agenthost-terminal:\/\/shell\//), title: 'Terminal', isPty: true };
     expect(changed()?.content).toEqual([named]);
     expect(changed()).not.toHaveProperty('_meta');
     expect(rootList(p).map((one) => one.resource)).toEqual([(changed()?.content as { resource: string }[])[0]?.resource]);
@@ -679,7 +679,7 @@ describe('a command typed into the conversation', () => {
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!echo said-on-pipes', origin: { kind: 'user' } } } },
     });
     const said = await ended(p, chatUri, 't1');
-    const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: false };
+    const named = { type: 'terminal', resource: expect.stringMatching(/^agenthost-terminal:\/\/shell\//), title: 'Terminal', isPty: false };
     expect(said.find((one) => one.type === 'chat/toolCallContentChanged')?.content).toEqual([named]);
     const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { content: unknown[] } | undefined;
     expect(done?.content[0]).toMatchObject({ ...named, result: { exitCode: 0 } });
@@ -1280,7 +1280,7 @@ describe('a terminal a backend opens', () => {
     // the session's - which is what makes the root list and session cleanup
     // both know about it.
     expect(listed()).toHaveLength(1);
-    expect(listed()[0]?.resource).toMatch(/^ahp-terminal:\//);
+    expect(listed()[0]?.resource).toMatch(/^agenthost-terminal:\/\/shell\//);
     expect(listed()[0]?.claim).toMatchObject({ kind: 'session', session: 'ahp-session:/shells' });
     expect(opened.uri).toBe(listed()[0]?.resource);
 
@@ -1318,16 +1318,17 @@ describe('a terminal a backend opens', () => {
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     const uri = 'ahp-session:/claimed';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    const chat = await defaultChatOf(client, uri);
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
     });
     await settle(8);
     const listed = actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').at(-1)
       ?.action.terminals as { resource: string; claim?: unknown }[] | undefined;
     expect(held).toHaveLength(1);
     expect(listed?.find((one) => one.resource === held[0]?.uri)?.claim)
-      .toEqual({ kind: 'session', session: uri, chat: chatUriFor(uri), turnId: 't1', toolCallId: 'tc-1' });
+      .toEqual({ kind: 'session', session: uri, chat, turnId: 't1', toolCallId: 'tc-1' });
     held[0]?.release();
   });
 

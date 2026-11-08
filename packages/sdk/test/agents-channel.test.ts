@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { agentsChannel } from '../src/agents/channel.js';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { fileUsers } from '../src/access/users.js';
 import { fileResources } from '../src/resources/resources.js';
 import { memoryRecords } from '../src/resources/records.js';
@@ -737,10 +736,14 @@ it('ends the sessions of a removed agent', async () => {
   });
   const uri = 'ahp-session:/on-mine';
   await cy.call('createSession', { channel: uri, provider: 'mine' });
-  await cy.call('subscribe', { channel: uri });
+  // The chat the host minted for the session, read off its state by the host's
+  // own root, since Cy may write the session and not read it.
+  const root = host.accept({ send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} }, undefined, true);
+  await root.handle({ method: 'initialize', params: { clientId: 'root', protocolVersions: ['0.9.0'] } });
+  const opened = await root.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat: string } } };
   // Its first message, which announces it, so its end is said.
   await cy.call('dispatchAction', {
-    channel: chatUriFor(uri),
+    channel: opened.snapshot.state.defaultChat,
     action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } },
   });
   await until(() => cy.seen.some((one) => one.method === 'root/sessionAdded'));

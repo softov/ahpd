@@ -184,9 +184,10 @@ export function createConfig(ctx: SessionContext): Config {
   const methods: Config['methods'] = {
     /**
      * Every key a client sets, taken as VS Code's host takes any key but its
-     * own: `permissions`, `shellInitScripts` and `permissionMode` act on the
-     * CLI, and any other is held as it was set. A value the CLI cannot take
-     * is refused, so a client never shows a session in a state it is not in.
+     * own: `permissions`, `shellInitScripts`, `effortLevel` and
+     * `permissionMode` act on the CLI, and any other is held as it was set. A
+     * value the CLI cannot take is refused, so a client never shows a session
+     * in a state it is not in.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13606-L13610
      */
     setConfig: async (key, value) => {
@@ -207,6 +208,17 @@ export function createConfig(ctx: SessionContext): Config {
         return true;
       }
       if (key === 'shellInitScripts') return setShellInit(value);
+      // The session's effort, which the CLI running takes now and a turn whose model names none runs at.
+      if (key === 'effortLevel') {
+        const found = EFFORTS.find((one) => one === value);
+        if (!found) return `Session configuration '${key}' does not offer '${String(value)}'.`;
+        ctx.config.effortLevel = found;
+        if (ctx.query !== undefined) {
+          ctx.appliedEffort = found;
+          void ctx.query.applyFlagSettings({ effortLevel: found }).catch(() => {});
+        }
+        return true;
+      }
       if (key !== 'permissionMode') {
         ctx.config[key] = value;
         return true;

@@ -399,27 +399,30 @@ it('says nothing for a push that changes nothing, a replace with the values held
 /*
  * `eligibleForAutoApproval` is the operator's daemon setting: VS Code's agent
  * host declares no root config key for it, and takes the setting's policy
- * value alone.
+ * value alone. A push of it is applied and kept as any key nobody declares is,
+ * as VS Code's host applies a root patch whatever keys it carries.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L530-L531
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2878-L2898
  */
-it('declares no eligibleForAutoApproval in root config, as VS Code\'s host declares none, and refuses a push of it', async () => {
+it('declares no eligibleForAutoApproval in root config, as VS Code\'s host declares none, and keeps a push of it as a key nobody declares', async () => {
   const { signedIn, rootOf, heardOnRoot } = served(false);
   const admin = await signedIn('admin', 'admin');
 
   const { schema } = (await rootOf(admin.client)).config as { schema: { properties: Record<string, Record<string, unknown>> } };
   expect(schema.properties).not.toHaveProperty('eligibleForAutoApproval');
 
+  const pushed = { eligibleForAutoApproval: { 'tracker/create': false } };
   await admin.client.handle({
     method: 'dispatchAction',
-    params: { channel: ROOT, action: { type: 'root/configChanged', config: { eligibleForAutoApproval: { 'tracker/create': false } } } },
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: pushed } },
   });
   await settle();
-  expect(heardOnRoot(admin.heard)).toEqual([
-    expect.objectContaining({ rejectionReason: expect.stringContaining('eligibleForAutoApproval') }),
-  ]);
+  const heard = heardOnRoot(admin.heard);
+  expect(heard).toEqual([expect.objectContaining({ action: { type: 'root/configChanged', config: pushed } })]);
+  expect(heard[0]).not.toHaveProperty('rejectionReason');
   const held = (await rootOf(admin.client)).config as { values: Record<string, unknown> };
-  expect(held.values).not.toHaveProperty('eligibleForAutoApproval');
+  expect(held.values.eligibleForAutoApproval).toEqual(pushed.eligibleForAutoApproval);
 });
 
 it('takes the three approval keys only with config:change, since they are the host\'s', async () => {

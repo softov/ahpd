@@ -6,7 +6,6 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHost, hello, machine, peer, resetSdk, settle } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { uriOf } from '../src/resources/fileuri.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import type { Agent } from '@ahpd/sdk';
 
@@ -74,6 +73,8 @@ it('keeps the record of a session a listing finds mid-restart', async () => {
   });
   const before = store.rowOf('restarting');
   expect(before?.config).toEqual({ mode: 'plain', tone: 'calm' });
+  // The chat the host minted for the session, read off its state.
+  const chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
   await client.handle({
     method: 'dispatchAction',
@@ -83,7 +84,7 @@ it('keeps the record of a session a listing finds mid-restart', async () => {
   // change owes runs.
   const turned = client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } } },
   });
   await until(() => closing > 0);
   await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });

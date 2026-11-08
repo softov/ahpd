@@ -4,6 +4,7 @@ import { answerTools, toolServers } from '../src/tools/server.js';
 import { toMcpContent } from '../src/tools/mcpcontent.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, BoundTool, Start } from '../src/types/agent.js';
+import type { HostOptions } from '../src/types/host.js';
 import type { ClientCallAnswer } from '../src/tools/clientcalls.js';
 import type { OnWire } from '../src/types/wire.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -199,7 +200,7 @@ describe('what a session is handed', () => {
    * endpoint is opened the way a backend that wants one would open it, from the
    * `Start` it was given.
    */
-  const serving = async (origin: string | undefined) => {
+  const serving = async (origin: string | undefined, over: Partial<HostOptions> = {}) => {
     const servers = toolServers({ origin: () => origin });
     const seen: Start[] = [];
     const base = echo({ path: DIR, pace: 0 });
@@ -215,6 +216,7 @@ describe('what a session is handed', () => {
       agents: [agent],
       tools: [{ definition: { name: 'peek', description: 'peek does one thing' }, run: () => 'peeked' }],
       toolsServers: servers,
+      ...over,
     });
     const client = host.accept(peerOf());
     await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
@@ -239,6 +241,30 @@ describe('what a session is handed', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
     }));
     expect(gone?.status).toBe(404);
+  });
+
+  /*
+   * The operator's rule holds on this server as at the /mcp door, where the
+   * daemon's `managedRules` is `checked` and the backend asks nothing of its
+   * own before a call runs: a call through it reaches no question, so a host
+   * tool the rule names is refused, in every list the backend hands it.
+   */
+  it('refuses a host tool the operator\'s rule names where the backend asks nothing first, and runs it under handed', async () => {
+    const ruled = await serving(ORIGIN, { eligibleForAutoApproval: { 'host/peek': false } });
+    const endpoint = ruled.start.toolsServer?.() as ToolsEndpoint;
+    const refused = (await call(ruled.servers, endpoint, 'tools/call', { name: 'peek' })).said.result as { content: { text: string }[]; isError?: boolean };
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toBe('peek asks every time: eligibleForAutoApproval names host/peek, and this session\'s tools server puts no question');
+    endpoint.setTools(ruled.start.tools ?? []);
+    expect(((await call(ruled.servers, endpoint, 'tools/call', { name: 'peek' })).said.result as { isError?: boolean }).isError).toBe(true);
+
+    // A backend that puts its own question before a call runs is the one asked.
+    const asked = (ruled.start.toolsServer?.({ mayRun: async () => true }) as ToolsEndpoint);
+    expect((await call(ruled.servers, asked, 'tools/call', { name: 'peek' })).said.result).toEqual({ content: [{ type: 'text', text: 'peeked' }] });
+
+    const handed = await serving(ORIGIN, { eligibleForAutoApproval: { 'host/peek': false }, managedRules: 'handed' });
+    const open = handed.start.toolsServer?.() as ToolsEndpoint;
+    expect((await call(handed.servers, open, 'tools/call', { name: 'peek' })).said.result).toEqual({ content: [{ type: 'text', text: 'peeked' }] });
   });
 
   it('is left out on a host with nowhere to serve one, rather than handing out a dead URL', async () => {

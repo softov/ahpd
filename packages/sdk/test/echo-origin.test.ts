@@ -15,7 +15,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { fileResources } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
@@ -25,7 +24,8 @@ import type { Peer } from '../src/types/rpc.js';
 import type { Session } from '../src/types/session.js';
 
 const SESSION = 'ahp-session:/one';
-const CHAT = chatUriFor(SESSION);
+/** The session's chat, which the host mints: read off the session's state by `serving`. */
+let CHAT = '';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ahpd-echo-origin-')); });
@@ -90,7 +90,7 @@ const serving = async (agent: Agent, more: Partial<HostOptions> = {}, config?: B
   const client = host.accept(p);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
   await client.handle({ method: 'createSession', params: { channel: SESSION, provider: 'echo', ...(config === undefined ? {} : { config }) } });
-  await client.handle({ method: 'subscribe', params: { channel: SESSION } });
+  CHAT = ((await client.handle({ method: 'subscribe', params: { channel: SESSION } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: CHAT } });
   const dispatch = (clientSeq: number, action: Bag) =>
     client.handle({ method: 'dispatchAction', params: { channel: CHAT, clientSeq, action } });

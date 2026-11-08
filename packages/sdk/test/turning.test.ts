@@ -11,7 +11,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { fileResources } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -19,7 +18,6 @@ import type { Peer } from '../src/types/rpc.js';
 const SESSION = 'ahp-session:/one';
 /** The name the host holds it under, the URI it was created with. */
 const HELD = 'ahp-session:/one';
-const CHAT = chatUriFor(SESSION);
 
 /**
  * A client that hears the chat, and answers `turning()` at the moment each
@@ -60,6 +58,8 @@ describe('turning', () => {
     const client = host.accept(peer(seen, () => host, ['chat/delta', 'chat/turnComplete']));
     await client.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.9.0'] } });
     await client.handle({ method: 'createSession', params: { channel: SESSION, provider: 'echo' } });
+    // The chat the host minted for the session, read off its state.
+    const CHAT = ((await client.handle({ method: 'subscribe', params: { channel: SESSION } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     await client.handle({ method: 'subscribe', params: { channel: CHAT } });
     expect(host.turning()).toEqual([]);
 

@@ -2,7 +2,6 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { meMethods } from '../../sdk/src/access/me.js';
 import { createHost } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { raise } from '../../sdk/src/plugins/plugins.js';
 import { idOf } from '../../sdk/src/sessions/catalog.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
@@ -36,7 +35,6 @@ const DIR = '/tmp/plugin-connect';
 const SPEC = './packages/server/test/fixtures/plugin-connect';
 /* Named as a client names them, which is how the watching client names them too. */
 const SESSION = 'ahp-session:/connect';
-const CHAT = chatUriFor(SESSION);
 /** The plugin's own id, which is what it calls its connection and its log lines. */
 const BY = 'plugin-connect';
 
@@ -195,8 +193,9 @@ it('serves a plugin that connects to its own host, and a watching client sees th
   const said = peer();
   const watcher = host.accept(said);
   await watcher.handle({ method: 'initialize', params: { clientId: 'watcher', protocolVersions: ['0.9.0'] } });
-  await watcher.handle({ method: 'subscribe', params: { channel: SESSION } });
-  await watcher.handle({ method: 'subscribe', params: { channel: CHAT } });
+  // The chat the host minted for the plugin's session, read off its state.
+  const chat = ((await watcher.handle({ method: 'subscribe', params: { channel: SESSION } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  await watcher.handle({ method: 'subscribe', params: { channel: chat } });
 
   // The plugin watching the same session, from the client side of it.
   await until(() => lines.includes(`${BY} saw chat/responsePart`), 'the turn the plugin sent');
@@ -283,8 +282,10 @@ it('lets a plugin holding session:write start a session and refuses it an automa
 });
 
 it('drops one grant that names nothing, keeps the list beside it, and says which', async () => {
+  // `session:read` beside the write group, so the plugin reads the chat the
+  // host minted for its session off the session's state.
   const { lines, problems } = await started(
-    { name: SPEC, grants: ['session:write', 'session:launch'] },
+    { name: SPEC, grants: ['session:write', 'session:read', 'session:launch'] },
     { users: directory() },
   );
 
@@ -323,8 +324,10 @@ it('tells a plugin who it is: its grants, and its own pool', async () => {
 it('records the work of a plugin as the plugin\'s own', async () => {
   const usage = keeping();
   const sessions = memorySessions();
+  // `session:read` beside the write group, so the plugin reads the chat the
+  // host minted for its session off the session's state.
   const { host, lines, problems } = await started(
-    { name: SPEC, grants: ['session:write'] },
+    { name: SPEC, grants: ['session:write', 'session:read'] },
     { users: directory(), usage, sessions, agents: [reporting()] },
   );
   expect(problems).toEqual([]);

@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { clientPluginsIn } from '../src/plugins/clientplugins.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -228,7 +227,8 @@ async function turn(
 async function withRules(tree: Record<string, string> = RULED) {
   const held = serving();
   const a = await session(held.served);
-  const chat = chatUriFor(URI);
+  // The chat the host minted for the session, read off its state.
+  const chat = ((await a.client.handle({ method: 'subscribe', params: { channel: URI } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await a.client.handle({ method: 'subscribe', params: { channel: chat } });
   const b = await joins(held.served, 'plugin', tree);
   await b.client.handle({ method: 'subscribe', params: { channel: URI } });

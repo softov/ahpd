@@ -16,12 +16,14 @@ import { meter } from '../usage/meter.js';
 import { linkIn } from '../automations/calllinks.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
-import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
+import { chatUriFor, toolCallOfSubagentChat } from './channels.js';
+import { buildSubagentChatUri, chatUriFormatOf, subagentChatUri } from '../vscode/chatminting.js';
+import { findMcpChildId } from '../vscode/mcpcustomizations.js';
 import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, startsRead } from './chatactions.js';
 import {
-  alwaysAsks, confirmationOptions, getAutoApproval as autoApprovalOf, isDeniedByPermissions, isForbiddenSnapshotWrite, managedDecision,
-  mcpServerOf, permissionRulesOf,
+  alwaysAsks, asksForTool, confirmationOptions, getAutoApproval as autoApprovalOf, isDeniedByPermissions, isForbiddenSnapshotWrite, managedDecision,
+  permissionRulesOf,
 } from './permissions.js';
 import type { ToolApproval } from './permissions.js';
 import { vscodeRootProperties } from '../vscoderootconfig.js';
@@ -31,10 +33,9 @@ import { sameFolder, trusted } from './trust.js';
 import { isWorktreeUnderRepository } from '../repo/worktrees.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
-import type { Agent, Start } from '../types/agent.js';
+import type { Agent, BoundTool, Start } from '../types/agent.js';
 import type { TurnEndEvent, TurnEndReason } from '../types/events.js';
 import type { Owner } from '../types/usage.js';
-import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
@@ -78,6 +79,18 @@ export interface Spawn {
   raiseTurnEnd(end: Omit<TurnEndEvent, 'type'>): void;
   /** The worker chat for one tool call of a backend's, made on first ask. */
   openSubagent(session: string, lead: string, toolCallId: string, request: SubagentRequest): SubagentChat;
+  /**
+   * The chat a call of `issuingChat` spawns a worker in, as VS Code's host
+   * mints one: in the session's format, from the root of the conversation.
+   */
+  mintSubagentChatUri(session: string, issuingChat: string, toolCallId: string): string;
+  /**
+   * The session and the call a worker chat runs for, from the records: a
+   * worker open here, or one a session's read record holds under the name
+   * minted for it. Nothing for a chat no record names, as VS Code's host finds
+   * a spawned chat's owner from the spawning call's records alone.
+   */
+  workerOf(chat: string): { session: string; toolCallId: string } | undefined;
   /** A chat of a session held as `<provider>:/<id>`, in the `ahp-session:/<id>` spelling it was built for, when it has one. */
   legacyChatUri(uri: string, chatUri: string): string | undefined;
   /** A chat's stored title. */
@@ -115,7 +128,6 @@ export interface Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
-    sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
   ): Promise<Session>;
@@ -253,8 +265,52 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (session === undefined) return action;
     const result = action.result as Bag | undefined;
     const linked = linkIn(action.content) ?? linkIn(result?.content) ?? links.linkOf(chat, action.toolCallId);
-    const uri = linked ?? subagentChatUri(session, action.toolCallId);
+    const uri = linked ?? mintSubagentChatUri(session, chat, action.toolCallId);
     return { ...action, _meta: { ...action._meta, subagentChatUri: uri } };
+  };
+  /**
+   * A backend's start of an MCP server's call, the server's customization
+   * stamped on it where the backend named no contributor: a server a client's
+   * plugin contributes is a customization of the list this host lays over the
+   * session, which no backend is handed, so it is stamped here, where that list
+   * lives, as VS Code's Claude session stamps a call from the list it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L420-L441
+   */
+  const withMcpContributor = (session: string, action: Bag): Bag => {
+    if (action.type !== 'chat/toolCallStart' || action.contributor !== undefined) return action;
+    const toolName = typeof action.toolName === 'string' ? action.toolName : '';
+    if (!toolName.startsWith('mcp__')) return action;
+    const serverName = toolName.split('__')[1];
+    const laid = ctx.stateOf(session)?.customizations;
+    const customizationId = serverName ? findMcpChildId(Array.isArray(laid) ? laid as Bag[] : [], serverName) : undefined;
+    return customizationId === undefined ? action : { ...action, contributor: { kind: 'mcp', customizationId } };
+  };
+  /**
+   * The chat a call spawns a worker in, as VS Code's host mints one: in the
+   * session's format, from the call and the root of the conversation the
+   * issuing chat is in, which a worker's chat names as its parent.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L103-L109
+   */
+  const mintSubagentChatUri = (session: string, issuingChat: string, toolCallId: string): string => {
+    let root = issuingChat;
+    for (let up = subagents.get(root); up !== undefined && up.parentChat !== root; up = subagents.get(root)) root = up.parentChat;
+    return subagentChatUri(chatUriFormatOf(ctx.defaultChatFor(session)), session, root, toolCallId);
+  };
+  /*
+   * A worker chat's session and call, as VS Code's host resolves a spawned
+   * chat's owner from the live registry and then the spawning calls recorded in
+   * loaded chats.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L302-L343
+   */
+  const workerOf = (chat: string): { session: string; toolCallId: string } | undefined => {
+    const live = subagents.get(chat);
+    if (live !== undefined) return { session: live.session, toolCallId: live.toolCallId };
+    for (const [id, workers] of ctx.subHistory) {
+      const session = ctx.nameOf(id);
+      const one = workers.find((held) => mintSubagentChatUri(session, ctx.defaultChatFor(session), String(held.toolCallId ?? '')) === chat);
+      if (one !== undefined) return { session, toolCallId: String(one.toolCallId ?? '') };
+    }
+    return undefined;
   };
   /**
    * A message with the attachments the client sent back on it.
@@ -348,7 +404,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         || !links.stampedOn(chat, call.toolCallId)) return part;
       touched = true;
       const linked = linkIn(call.content);
-      return { ...part, toolCall: { ...call, _meta: { ...call._meta, subagentChatUri: linked ?? subagentChatUri(session, call.toolCallId) } } };
+      return { ...part, toolCall: { ...call, _meta: { ...call._meta, subagentChatUri: linked ?? mintSubagentChatUri(session, chat, call.toolCallId) } } };
     });
     return touched ? { ...turn, responseParts: next } : turn;
   });
@@ -504,15 +560,16 @@ export function createSpawn(ctx: HostContext): Spawn {
      * `eligibleForAutoApproval` names.
      */
     const checked = options.managedRules !== 'handed';
-    // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
-    // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
+    // The operator's rule read by the call's contributor: the tools this host offered the chat and runs itself, which
+    // the rule names `host/<name>`, and an MCP server's tool against the server its contributor names among the
+    // session's customizations.
     const eligible = !checked || toolName === undefined || !alwaysAsks(options.eligibleForAutoApproval, toolName,
-      ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
-      mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
+      ctx.boundTools(session, chat, serving?.provider).filter((one) => one.owner === undefined).map((one) => one.definition.name),
+      contributor, ctx.stateOf(session)?.customizations);
     const managedSays = checked ? managedDecision(managedSettings, approval, subCommands) : undefined;
     const managed = signal.managedApprovalRequired === true || managedSays === 'ask' || !eligible;
     if (managedSays === 'deny' || isForbiddenSnapshotWrite(approval) || isDeniedByPermissions(approval, subCommands)) {
-      queueMicrotask(() => { backend()?.confirm(toolCallId, false); });
+      queueMicrotask(() => { backend()?.confirm(toolCallId, false, undefined, 'host_policy'); });
       return undefined;
     }
     const asked = { ...approval, ...(managed ? { managedApprovalRequired: true } : {}) };
@@ -526,7 +583,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       const { _meta: _given, ...rest } = action;
       return { ...rest, options: offered, ...(meta === undefined ? {} : { _meta: meta }) };
     }
-    queueMicrotask(() => { backend()?.confirm(toolCallId, true); });
+    queueMicrotask(() => { backend()?.confirm(toolCallId, true, undefined, 'host_policy'); });
     return {
       type: 'chat/toolCallReady',
       turnId: action.turnId,
@@ -544,7 +601,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
     // A question a worker's call puts is the lead chat's backend's to be answered, as a client's answer on the worker's chat is.
-    const action = toolReady(ref.session, uri, withWorkerUri(uri, given), () => {
+    const action = toolReady(ref.session, uri, withMcpContributor(ref.session, withWorkerUri(uri, given)), () => {
       const owning = sessions.get(ref.session);
       return owning === undefined ? undefined : ctx.leadOf(owning);
     });
@@ -585,14 +642,14 @@ export function createSpawn(ctx: HostContext): Spawn {
    * somebody else's turn.
    */
   const openSubagent = (session: string, lead: string, toolCallId: string, request: SubagentRequest): SubagentChat => {
-    const uri = subagentChatUri(session, toolCallId);
     /*
      * The chat the call is in. A nested worker's call is in the worker chat
      * that spawned it, which is why the parent names a call and not a chat.
      */
     const parentChat = request.parentToolCallId !== undefined && request.parentToolCallId !== ''
-      ? subagentChatUri(session, request.parentToolCallId)
+      ? mintSubagentChatUri(session, lead, request.parentToolCallId)
       : lead;
+    const uri = mintSubagentChatUri(session, parentChat, toolCallId);
     let ref = subagents.get(uri);
     if (ref === undefined) {
       const now = new Date().toISOString();
@@ -718,7 +775,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (former === uri) return undefined;
     if (chatUri === chatUriFor(uri)) return chatUriFor(former);
     const callId = toolCallOfSubagentChat(chatUri);
-    return callId !== undefined && chatUri === subagentChatUri(uri, callId) ? subagentChatUri(former, callId) : undefined;
+    return callId !== undefined && chatUri === buildSubagentChatUri(uri, callId) ? buildSubagentChatUri(former, callId) : undefined;
   };
   /** A chat's stored title: under its URI, or else under `legacyChatUri`. */
   const titleOf = (uri: string, chatUri: string): string | undefined => {
@@ -962,7 +1019,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
-    sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
   ): Promise<Session> => {
@@ -1096,6 +1152,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      * One endpoint per session, opened when the backend asks and closed when
      * the session goes, so a token reaches the tools of the session it was
      * handed to and nothing else.
+     *
+     * The operator's rule holds there as at the /mcp door, where the daemon's
+     * `managedRules` is `checked` and the backend asks nothing of its own
+     * before a call runs: a call through this server reaches no question, so a
+     * host tool the rule names is refused, and so it is in every list the
+     * backend hands the endpoint after.
      */
     const toolsServer = (ask?: {
       runClient?: RunClientTool;
@@ -1103,17 +1165,26 @@ export function createSpawn(ctx: HostContext): Spawn {
       mayRun?: MayRunTool;
     }): ToolsEndpoint | undefined => {
       if (bare) return undefined;
+      const ruled = options.managedRules !== 'handed' && ask?.mayRun === undefined;
+      const held = (tools: BoundTool[]): BoundTool[] => tools.map((one) => {
+        const name = one.definition.name;
+        if (!ruled || one.run === undefined || !asksForTool(options.eligibleForAutoApproval, `host/${name}`)) return one;
+        return {
+          ...one,
+          run: () => { throw new Error(`${name} asks every time: eligibleForAutoApproval names host/${name}, and this session's tools server puts no question`); },
+        };
+      });
       const opened = options.toolsServers?.open(
-        ctx.boundTools(uri, chatUri, agent.provider),
+        held(ctx.boundTools(uri, chatUri, agent.provider)),
         ask?.runClient,
         ask?.toolsChanged,
         ask?.mayRun,
       );
       if (opened === undefined) return undefined;
-      const held = ctx.served.get(uri) ?? [];
-      held.push(opened);
-      ctx.served.set(uri, held);
-      return opened;
+      const open = ctx.served.get(uri) ?? [];
+      open.push(opened);
+      ctx.served.set(uri, open);
+      return { ...opened, setTools: (now) => opened.setTools(held(now)) };
     };
     /*
      * What this backend is told about the folders it is handed.
@@ -1194,12 +1265,9 @@ export function createSpawn(ctx: HostContext): Spawn {
       uri,
       chatUri,
       trusted: trustedBy,
-      ...(options.managedSettingsPermissions === undefined && options.eligibleForAutoApproval === undefined ? {} : {
-        managedSettings: {
-          ...(options.managedSettingsPermissions === undefined ? {} : { permissions: options.managedSettingsPermissions }),
-          ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
-        },
-      }),
+      // The operator's policy as it stands at the start: managed settings, and
+      // the auto-approval restriction a window forwarded.
+      ...ctx.schemaPolicy(),
       ...(userSettings === undefined ? {} : { userSettings }),
       ...(sender?.principal === undefined ? {} : { reader: sender.principal }),
       /*
@@ -1310,6 +1378,7 @@ export function createSpawn(ctx: HostContext): Spawn {
        * brings the call id and the words, and everything else is this.
        */
       subagent: (toolCallId: string, request: SubagentRequest) => openSubagent(uri, chatUri, toolCallId, request),
+      subagentChatOf: (toolCallId: string) => mintSubagentChatUri(uri, chatUri, toolCallId),
       /*
        * The background tasks this backend reports.
        *
@@ -1438,7 +1507,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         // A client's decision on a call is said once, as the client's.
         if (channel === 'chat' && decidedAlready(chatUri, action)) return;
         if (channel === 'chat') {
-          const put = toolReady(uri, chatUri, action, () => sessions.get(uri)?.chats.get(chatUri));
+          const put = toolReady(uri, chatUri, withMcpContributor(uri, action), () => sessions.get(uri)?.chats.get(chatUri));
           if (put === undefined) return;
           action = put;
         }
@@ -2083,7 +2152,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   return {
     unstamped, withWorkerUri, stampedCalls, withSender, withSenderSaid, asSentChat,
     sendSubagent, endedWorkers, raiseTurnEnd,
-    openSubagent, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
+    openSubagent, mintSubagentChatUri, workerOf, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
     spawn, wirePlan, completePlan,
   };
 }

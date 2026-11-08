@@ -215,6 +215,9 @@ export const PENDING_CONFIRMATION_FIELDS = [
 ] as const;
 
 
+/** What the operator's policy says as the host asks a backend for its schema, under the names a start carries them. */
+export type SchemaPolicy = Pick<Start, 'managedSettings' | 'autoApprovePolicyRestricted'>;
+
 /**
  * One content a backend hands the host to keep, which a part then names by
  * reference: identified as VS Code identifies a tool result's embedded
@@ -296,6 +299,16 @@ export interface Start {
    * `false` asks every time, with no "always" option.
    */
   managedSettings?: { permissions?: ManagedSettingsPermissions; eligibleForAutoApproval?: Record<string, boolean> };
+  /**
+   * Whether managed policy forbids elevated auto-approval, the root config's
+   * `autoApprovePolicyRestricted` a VS Code window forwards from its policy,
+   * read as the session starts, as VS Code's agents read it when they launch a
+   * session: a backend withholds the modes that approve a call without asking.
+   * Absent where no window has said so.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostPolicySupport.ts#L46
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1579
+   */
+  autoApprovePolicyRestricted?: boolean;
   /**
    * Whether this session loads the settings of the person who runs the daemon.
    *
@@ -525,6 +538,16 @@ export interface Start {
    * turn that spawned it.
    */
   subagent?(toolCallId: string, request: SubagentRequest): SubagentChat;
+  /**
+   * The chat a worker of one of this chat's tool calls runs in, as the host
+   * mints it, whether or not it is open yet: in the session's format, from
+   * this chat's conversation and the call, as VS Code's host hands its
+   * provider the format and owner a spawned chat is minted from.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1228
+   *
+   * Present with `subagent`.
+   */
+  subagentChatOf?(toolCallId: string): string;
   /**
    * The tasks this backend is running in the background, as it learns them.
    *
@@ -795,8 +818,15 @@ export interface Agent<Started extends Session | Promise<Session> = Session | Pr
    * One schema, used before a session exists and by every session that does.
    * Two copies drift, and a composer then offers one set of controls on the
    * new-session screen and a different set the moment a session opens.
+   *
+   * `policy` is what the operator's policy says as the host asks, the values a
+   * start is handed under the same names, so a schema drawn before a session
+   * exists withholds what that session would, as VS Code's agents read the
+   * auto-approval restriction and their managed settings when they resolve a
+   * chat's config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7407-L7411
    */
-  schema(): Bag;
+  schema(policy?: SchemaPolicy): Bag;
   /** What each schema key sits at when nothing has been chosen. */
   defaults(): Record<string, unknown>;
   /**
@@ -1016,8 +1046,20 @@ export interface Agent<Started extends Session | Promise<Session> = Session | Pr
    * it keeps anything. A transcript holds what the model was sent and not what
    * a client was shown, so a backend that kept an output while the call ran
    * names it on the call read back, and the call shows its terminal again.
+   *
+   * `kept` reads back the reference the host kept a content under, by the call
+   * or part and the content's place that `storeToolResultResource` was handed,
+   * and nothing for content kept nowhere: a part read back names the bytes by
+   * the reference it named them by live, as VS Code's replay names a call's
+   * resources by what its session's database holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L617-L623
    */
-  transcript?(id: string, at?: SessionAt, outputs?: TerminalOutputs): Promise<WireTurn<Turn>[] | undefined>;
+  transcript?(
+    id: string,
+    at?: SessionAt,
+    outputs?: TerminalOutputs,
+    kept?: (toolCallId: string, ordinal: number) => Promise<ContentRef | undefined>,
+  ): Promise<WireTurn<Turn>[] | undefined>;
 
   /**
    * Read a recorded transcript identity back as the caller turn that began it.

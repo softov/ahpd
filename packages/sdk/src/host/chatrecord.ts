@@ -35,6 +35,14 @@ export interface ChatRecord {
   /** The backend's name for the session's original chat, which may differ from its container id. */
   sessionBackendId(id: string): string;
   /**
+   * Whether a chat is the session's own conversation, which a backend names by
+   * the session and is handed no name of its own: the default chat derived
+   * from the session's URI, or the chat its record keeps under the session's
+   * id where that id is not the name the chat's URI carries. A chat moved to a
+   * session named after its conversation carries that name, and keeps it.
+   */
+  ownChat(session: string, chatUri: string): boolean;
+  /**
    * Write down one chat of a session that is running, where it was opened.
    *
    * The provider and config are the chat's own where it runs on a backend of
@@ -259,9 +267,16 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
     }
   };
 
+  const ownChat = (session: string, chatUri: string): boolean => {
+    const id = idOf(session);
+    const named = chatIdFor(session, chatUri);
+    if (named === undefined) return true;
+    return named !== id && heldChats(id).some((one) => one.uri === chatUri && one.backendId === id);
+  };
+
   return {
     homeId: (chat) => chatHome.get(chat),
     chatBackings: () => chatBackings,
-    recordedChats, recordedChat, sessionBackendId, heldChats, keepChat, orderChats, dropChat, forgetChats,
+    recordedChats, recordedChat, sessionBackendId, ownChat, heldChats, keepChat, orderChats, dropChat, forgetChats,
   };
 }

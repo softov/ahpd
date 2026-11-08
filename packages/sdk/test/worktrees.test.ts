@@ -10,7 +10,6 @@ import { gitWorktrees, worktreesOf } from '../src/repo/worktrees.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { fileResources } from '../src/resources/resources.js';
 import { localPath, uriOf } from '../src/resources/fileuri.js';
-import { chatUriFor } from '../src/host/channels.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
@@ -242,6 +241,35 @@ describe('a session with a working tree of its own', () => {
   });
 
   /*
+   * A key this host owns is taken only in its property's shape: isolation only
+   * as its offer allows, the branch as a string, and the pattern keys only as
+   * lists of strings, as VS Code's host validates its own keys; anything else
+   * leaves the default.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1016-L1018
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11037-L11055
+   */
+  it('takes a key it owns only in its property\'s shape, and the default for anything else, as VS Code\'s host', async () => {
+    const root = repository();
+    const { client } = await joined(root);
+    const odd = { isolation: 'elsewhere', branch: ['main'], worktreeIncludeFiles: '.env', worktreeSymlinkFolders: ['node_modules', 7] };
+    const offered = await client.handle({
+      method: 'resolveSessionConfig',
+      params: { channel: 'ahp-root://', provider: 'echo', workingDirectories: [uriOf(project(root))], config: odd },
+    }) as { values: Record<string, unknown> };
+    expect(offered.values).toMatchObject({ isolation: 'folder', branch: 'main', worktreeIncludeFiles: [], worktreeSymlinkFolders: [] });
+
+    const uri = 'ahp-session:/shaped';
+    await client.handle({
+      method: 'createSession',
+      params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(project(root))], config: odd },
+    });
+    const created = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config?: { values: Record<string, unknown> } } };
+    }).snapshot.state;
+    expect(created.config?.values).toMatchObject({ isolation: 'folder', branch: 'main', worktreeIncludeFiles: [], worktreeSymlinkFolders: [] });
+  });
+
+  /*
    * The tree is made at the first send, as VS Code's host resolves a session's
    * worktree on the first send: until then the session reports the folder the
    * client picked.
@@ -278,7 +306,15 @@ describe('a session with a working tree of its own', () => {
     expect(said).toMatch(/^agents\//);
   });
 
-  it('makes a worktree session in a folder with no repository, and fails its first send', async () => {
+  /*
+   * A folder outside a repository is offered folder isolation alone, and a
+   * worktree asked for there is not a value that offer takes, so the session
+   * works in the folder, as VS Code's host resolves a created session's
+   * isolation against the folder's offer and its first send reads that.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1009-L1018
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1976-L1980
+   */
+  it('makes a folder session of one asked for a worktree in a folder with no repository, as VS Code\'s host', async () => {
     const root = repository();
     const plain = join(root, 'plain');
     mkdirSync(plain);
@@ -287,6 +323,30 @@ describe('a session with a working tree of its own', () => {
     expect(await client.handle({
       method: 'createSession',
       params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(plain)], config: { isolation: 'worktree' } },
+    })).toBeNull();
+    const { defaultChat, config } = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string; config: { values: Record<string, unknown> } } };
+    }).snapshot.state;
+    expect(config.values.isolation).toBe('folder');
+    await say(client, defaultChat, 't1');
+    const types = p.notes.map((one) => (one.params as { action?: { type?: string } }).action?.type);
+    expect(types).not.toContain('chat/error');
+    expect(types).toContain('session/ready');
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    expect(state.workingDirectories.map(localPath)).toEqual([plain]);
+  });
+
+  it('fails a session whose first send could not make its worktree, and announces it after', async () => {
+    const root = repository();
+    const { client, peer: p } = await joined(root);
+    const uri = 'ahp-session:/unmade';
+    // A branch is taken as any string, as VS Code's host takes it, so one the
+    // repository does not have is found out when the tree is cut.
+    expect(await client.handle({
+      method: 'createSession',
+      params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(project(root))], config: { isolation: 'worktree', branch: 'no-such-branch' } },
     })).toBeNull();
     const { defaultChat } = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { defaultChat: string } };
@@ -297,7 +357,7 @@ describe('a session with a working tree of its own', () => {
     const failed = p.notes
       .map((one) => one.params as { channel?: string; action?: { type?: string; part?: unknown } })
       .find((one) => one.channel === defaultChat && one.action?.type === 'chat/error');
-    expect(failed?.action?.part).toMatchObject({ error: { errorType: 'sendFailed', message: `${plain} is not a git repository, so it has no worktrees` } });
+    expect(failed?.action?.part).toMatchObject({ error: { errorType: 'sendFailed', message: expect.stringContaining('no-such-branch') } });
     /*
      * The session, still being created, fails its creation after the turn's
      * error and is then announced, as VS Code's host fails a session whose
@@ -351,34 +411,28 @@ describe('a session with a working tree of its own', () => {
   });
 
   it('brings along the files a checkout leaves behind', async () => {
-    // Both spellings of the same key, and both are real: the schema declares
-    // a list now and the reader still splits a comma-separated string, so a
-    // client that has not moved keeps what it asked for. A test that only sent
-    // the list would pass with the string path removed.
-    for (const sent of [['.env'], '.env']) {
-      const root = repository();
-      const { client } = await joined(root);
-      await client.handle({
-        method: 'createSession',
-        params: {
-          channel: 'ahp-session:/carried',
-          provider: 'echo',
-          workingDirectories: [uriOf(project(root))],
-          config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: sent },
-        },
-      });
-      await firstSent(client, 'ahp-session:/carried');
-      const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/carried' } }) as {
-        snapshot: { state: { workingDirectories: string[] } };
-      }).snapshot.state;
-      const where = localPath(state.workingDirectories[0] ?? '');
-      // In the worktree and not in the project it came from, which is the whole
-      // assertion: the original has a `.env` already.
-      expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
-      // Without this the isolation works and the session inside it cannot run
-      // anything - a failure the person meets after choosing it.
-      expect(readFileSync(join(where, '.env'), 'utf8')).toBe('SECRET=1\n');
-    }
+    const root = repository();
+    const { client } = await joined(root);
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/carried',
+        provider: 'echo',
+        workingDirectories: [uriOf(project(root))],
+        config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: ['.env'] },
+      },
+    });
+    await firstSent(client, 'ahp-session:/carried');
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/carried' } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    const where = localPath(state.workingDirectories[0] ?? '');
+    // In the worktree and not in the project it came from, which is the whole
+    // assertion: the original has a `.env` already.
+    expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
+    // Without this the isolation works and the session inside it cannot run
+    // anything - a failure the person meets after choosing it.
+    expect(readFileSync(join(where, '.env'), 'utf8')).toBe('SECRET=1\n');
   });
 
   it('reads a session stored with the old spelling back as the list it names', async () => {
@@ -404,7 +458,7 @@ describe('a session with a working tree of its own', () => {
       params: {
         channel: uri, provider: 'echo',
         workingDirectories: [uriOf(project(root))],
-        config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: '.env' },
+        config: { isolation: 'worktree', branch: 'main', worktreeIncludeFiles: ['.env'] },
       },
     });
     const live = (await a.handle({ method: 'subscribe', params: { channel: uri } }) as {
@@ -418,7 +472,6 @@ describe('a session with a working tree of its own', () => {
       params: { channel: live.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
     });
     await new Promise((resolve) => { setTimeout(resolve, 60); });
-    await a.handle({ method: 'disposeSession', params: { channel: uri } });
     const rows = await a.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string }[];
     };
@@ -443,12 +496,16 @@ describe('a session with a working tree of its own', () => {
     expect(state.config.values.worktreeIncludeFiles).toEqual(['.env', '.env.local']);
   });
 
-  it('makes the worktree anyway when the patterns are neither spelling', async () => {
+  /*
+   * A pattern list with an entry that is no pattern is not the property's
+   * shape, so the default applies, which brings nothing along, and the
+   * session still starts, as VS Code's host takes a pattern list only when
+   * every entry is a string.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11047-L11051
+   */
+  it('makes the worktree with the default patterns when the list holds anything but patterns, as VS Code\'s host', async () => {
     const root = repository();
     const { client } = await joined(root);
-    // A value off the wire is `unknown`, and the narrowing is where it is
-    // used: an entry that is not a pattern is dropped rather than refused, and
-    // the session still starts.
     await client.handle({
       method: 'createSession',
       params: {
@@ -464,8 +521,8 @@ describe('a session with a working tree of its own', () => {
     }).snapshot.state;
     const where = localPath(state.workingDirectories[0] ?? '');
     expect(where.startsWith(worktreesOf(project(root)))).toBe(true);
-    // The pattern that was a pattern still arrived.
-    expect(readFileSync(join(where, '.env'), 'utf8')).toBe('SECRET=1\n');
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
+    expect(existsSync(join(where, '.env'))).toBe(false);
   });
 
   it('links the ignored folders a tree is told to, rather than copying them', async () => {
@@ -769,6 +826,8 @@ describe('a session with a working tree of its own', () => {
         config: { isolation: 'folder' },
       },
     });
+    // The chat the host minted for the session, read off its state.
+    const chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     /*
      * The phase this exists for.
      *
@@ -786,7 +845,7 @@ describe('a session with a working tree of its own', () => {
     // tree there, as VS Code relaunches a runtime at its next turn boundary.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'go', origin: { kind: 'user' } } } },
     });
     // On the directory rather than the value: the answer is recorded as it
     // arrives and the tree is made after it, so a test that waited on the

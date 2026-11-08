@@ -87,18 +87,34 @@ export const mcpServerOf = (contributor: unknown, customizations: unknown): stri
  * time, read from the name the call carries by each name the rule gives that
  * tool.
  *
- * A backend's own tool is its own name, and a tool this host offered, one of
- * `offered`, is `ahp/<name>`. An MCP server's tool is `<server>/<tool>` to the
- * rule, its server the one `server` names from the call's contributor: a rule
- * names it where its tool part is the call's tool name or the end of it after
- * a `__`, the way an MCP client names a server's tool, and `<server>/*` names
- * every tool of the server. A rule naming the tool answers on its own, as
- * `asksForTool` reads an exact name before the server's `<server>/*`. A call
- * no server contributes is named by its full tool name alone.
+ * Whose tool a call runs is its `contributor`'s to say, as AHP has a call say
+ * it. A client's tool and a backend's own are named by the call's full tool
+ * name. An MCP server's tool is `<server>/<tool>` to the rule, its server the
+ * customization the contributor names among the session's: a rule names it
+ * where its tool part is the call's tool name or the end of it after a `__`,
+ * the way an MCP client names a server's tool, and `<server>/*` names every
+ * tool of the server. A call no client and no MCP server of the session
+ * contributes is a server-side tool's, and one of the tools this host offered,
+ * `offered`, is `host/<name>`, a tool of the server VS Code's Claude carries
+ * the host's tools on, its name read from the call's the same way. A rule
+ * naming the tool answers on its own, as `asksForTool` reads an exact name
+ * before the server's `<server>/*`.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1321-L1346
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
  */
-export const alwaysAsks = (rules: Readonly<Record<string, boolean>> | undefined, toolName: string, offered: readonly string[], server?: string): boolean => {
+export const alwaysAsks = (
+  rules: Readonly<Record<string, boolean>> | undefined,
+  toolName: string,
+  offered: readonly string[],
+  contributor?: unknown,
+  customizations?: unknown,
+): boolean => {
   if (asksForTool(rules, toolName)) return true;
-  if (offered.includes(toolName) && asksForTool(rules, `ahp/${toolName}`)) return true;
+  const server = mcpServerOf(contributor, customizations);
+  const hosted = server === undefined && (contributor as Bag | undefined)?.kind !== 'client'
+    ? offered.find((name) => toolName === name || toolName.endsWith(`__${name}`))
+    : undefined;
+  if (hosted !== undefined && asksForTool(rules, `host/${hosted}`)) return true;
   if (rules === undefined || server === undefined) return false;
   const named = Object.entries(rules).flatMap(([key, value]) =>
     (key.startsWith(`${server}/`) ? [{ tool: key.slice(server.length + 1), value }] : []));

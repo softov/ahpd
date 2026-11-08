@@ -243,7 +243,7 @@ it('fails a client tool call with the answer, the host\'s for a gone client amon
   session.completeToolCall?.('c1', 'editor', { text: 'it refused', ok: false, content: [] });
   await expect(refused).rejects.toThrow('it refused');
 
-  expect(session.clientGone).toBeUndefined();
+  expect('clientGone' in session).toBe(false);
   await driveCall(pi, 'c2', 'editor__open', {});
   const gone = tool.execute('c2', {} as never, undefined, undefined, undefined as never);
   await settled();

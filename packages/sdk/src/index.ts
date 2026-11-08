@@ -60,6 +60,7 @@ export {
 } from './vscode/reasoningeffort.js';
 export type { ReasoningEffortLevel } from './vscode/reasoningeffort.js';
 export { readSkillArgumentHint, withSkillArgumentHintMeta } from './vscode/skillcustomizationmeta.js';
+export type { AgentPermissionDecisionSource } from './vscode/agentpermissionresponsemeta.js';
 export { managedRuleOf } from './host/permissions.js';
 export { hostTools } from './tools/index.js';
 export { answerTools, toolServers, TOOLS_PREFIX } from './tools/server.js';

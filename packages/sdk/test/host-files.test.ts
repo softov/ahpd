@@ -15,7 +15,6 @@ import {
   resetSdk, actions, builtServer, claude, complete, createHost, emit, firstMessage, hello, hostTools, list, machine, open,
   peer, read, resolve, sendAnswered, serving, sessionQueries, settle, running, wrote,
 } from './support/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -78,8 +77,8 @@ describe('where the agent works', () => {
         workingDirectories: [uriOf(REPO)],
       },
     });
-    // Listed from its first message.
-    await firstMessage(client, chatUriFor('ahp-session:/a'));
+    // Listed from its first message, on the chat the host minted for it.
+    await firstMessage(client, ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/a' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat);
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { workingDirectories: string[] }[];
     };

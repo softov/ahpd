@@ -8,7 +8,8 @@ import { mkdir, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { worktreeFor, worktreesOf } from '../repo/worktrees.js';
-import { ROOT, chatIdFor, chatUriFor, named } from './channels.js';
+import { ROOT, chatIdFor, named } from './channels.js';
+import { mintDefaultChatUri } from '../vscode/chatminting.js';
 import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
@@ -102,14 +103,16 @@ export interface Lifecycle {
     uri: string,
     credentials: Record<string, string>,
     keeping?: { additional?: string[]; directory?: string },
-    sender?: Connection,
     before?: BeforeWorktree,
     tokensFor?: (provider: string) => Record<string, string>,
   ): Promise<void>;
   /** The move `set_workspace` asked for, once the turn that asked is over. */
   moveSession(uri: string, move: Move): Promise<void>;
-  /** Relaunch one chat, in the directories it now has, as the same conversation, as VS Code relaunches a chat's provider. */
-  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): Promise<void>;
+  /**
+   * Relaunch one chat, in the directories it now has, as the same conversation, as VS Code relaunches a chat's
+   * provider; answered once the chat that takes its place is held.
+   */
+  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>): Promise<void>;
   /** The name a backend is handed for one chat, which is the id a restart resumes it by. */
   chatIdOf(uri: string, chatUri: string, own: string | undefined): string | undefined;
   /** The backend's own copy of one chat's conversation disposed, as VS Code's provider disposes a chat. */
@@ -135,7 +138,7 @@ export interface Lifecycle {
     before?: BeforeWorktree,
   ): Promise<string | undefined>;
   /** A worktree session's tree, owed to its first send, which starts the session again in it. */
-  oweTree(uri: string, credentials: Record<string, string>, sender: Connection | undefined, tokensFor: (provider: string) => Record<string, string>): void;
+  oweTree(uri: string, credentials: Record<string, string>, tokensFor: (provider: string) => Record<string, string>): void;
   /**
    * An archived session's tree taken away once the session has stopped, with
    * its branch kept for `restoreSessionWorktree`, as VS Code requests a
@@ -214,7 +217,7 @@ export interface Lifecycle {
     credentials?: Record<string, string>,
     additional?: string[],
     title?: string,
-    by?: { owner?: Owner; principal?: Principal; sender?: Connection },
+    by?: { owner?: Owner; principal?: Principal; sender?: Connection; legacyChatUris?: boolean },
     asked?: { instructions?: string[]; tools?: string[]; userSettings?: boolean },
   ): Promise<void>;
 }
@@ -836,7 +839,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     uri: string,
     credentials: Record<string, string>,
     keeping?: { additional?: string[]; directory?: string },
-    sender?: Connection,
     before?: BeforeWorktree,
     tokensFor?: (provider: string) => Record<string, string>,
   ): Promise<void> => {
@@ -988,7 +990,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         to,
         credentialsOf(held.defaultChat),
         keeping?.additional ?? held.additional,
-        sender,
       );
       /*
        * And every other chat of the session, which comes back with it.
@@ -1020,7 +1021,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           to,
           credentialsOf(chatUri),
           beside.get(chatUri) ?? keeping?.additional ?? held.additional,
-          sender,
         );
       }
     }
@@ -1052,7 +1052,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       if (!sessions.has(uri)) {
         sessions.set(uri, held);
         for (const [chatUri, road] of roads) byChat.set(chatUri, road);
-        if (!ctx.relaunches.has(uri)) ctx.relaunches.set(uri, { config: {}, folders: true, credentials, sender, tokensFor: tokensFor ?? (() => ({})) });
+        if (!ctx.relaunches.has(uri)) ctx.relaunches.set(uri, { config: {}, folders: true, credentials, tokensFor: tokensFor ?? (() => ({})) });
       }
       throw error;
     }
@@ -1105,7 +1105,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       await requireTrust({ folder: move.directory, sender: move.sender, autoApproved: auto });
       decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
       offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
-      await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, (repository, path) =>
+      await restart(uri, {}, { additional: [], directory: move.directory }, (repository, path) =>
         requireWorktreeTrust({ folder: move.directory, repository, path, sender: move.sender, autoApproved: auto }));
     }
     catch (error) {
@@ -1117,7 +1117,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1105-L1123
        */
       const failure = (error instanceof Error ? error.message : String(error)).replace(/\.+$/, '');
-      const back = await ctx.wake(uri, chatUriFor(uri)).catch((unopened: unknown) => {
+      const back = await ctx.wake(uri, ctx.defaultChatFor(uri)).catch((unopened: unknown) => {
         log(`${uri} did not open again after its move failed: ${unopened instanceof Error ? unopened.message : String(unopened)}`);
         return undefined;
       });
@@ -1139,7 +1139,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       }
       throw error;
     }
-    const lead = byChat.get(chatUriFor(uri));
+    const lead = byChat.get(ctx.defaultChatFor(uri));
     if (lead === undefined) return;
     /*
      * The continuation in VS Code's words and under its label, the session's
@@ -1182,7 +1182,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const work = (async (): Promise<void> => {
       // In the folders the session now holds, its conversation resumed, where
       // the folders are what changed.
-      await restart(uri, due.credentials, due.folders ? { additional: owning.additional ?? [] } : undefined, due.sender, undefined, due.tokensFor);
+      await restart(uri, due.credentials, due.folders ? { additional: owning.additional ?? [] } : undefined, undefined, due.tokensFor);
       const made = Object.entries(due.config).filter(([key, value]) => owning.config[key] !== undefined && owning.config[key] !== value);
       if (made.length === 0) return;
       const machine = Object.fromEntries(made.map(([key]) => [key, owning.config[key]]));
@@ -1216,8 +1216,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * to it would be a worse answer than refusing. `directory` is the folder a
    * moved chat worked in, which it goes on working in under the session that
    * holds it now. The chat keeps its place among its session's chats.
+   *
+   * Answered once the start is, so a caller reads the chat that took this
+   * one's place after it is held, and a start that fails rejects, which ends
+   * the turn that waited on it.
    */
-  const relaunchChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection, directory?: string): Promise<void> => {
+  const relaunchChat = (uri: string, chatUri: string, credentials: Record<string, string>, directory?: string): Promise<void> => {
     const held = sessions.get(uri);
     const chat = held?.chats.get(chatUri);
     if (held === undefined || chat === undefined) return Promise.resolve();
@@ -1262,7 +1266,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       directory ?? held.workingDirectory,
       credentials,
       beside.get(chatUri) ?? held.additional,
-      sender,
     ).then(
       () => { keepPlace(); log(`restarted ${chatUri}`); },
       (error: unknown) => {
@@ -1307,23 +1310,22 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * session URI and which is never handed one.
    */
   const chatIdOf = (uri: string, chatUri: string, own: string | undefined): string | undefined =>
-    chatUri === chatUriFor(uri) ? undefined : own ?? chatIdFor(uri, chatUri);
+    ctx.ownChat(uri, chatUri) ? undefined : own ?? chatIdFor(uri, chatUri);
 
   /**
    * A worktree session's tree, owed to its first send: the start again that
    * send runs makes the tree from the config the session holds by then and
-   * starts the session in it, and one its folder cannot hold fails that send,
-   * as VS Code's host resolves a session's worktree on the first send.
+   * starts the session in it, and a tree git cannot make fails that send, as
+   * VS Code's host resolves a session's worktree on the first send.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
    */
   const oweTree = (
     uri: string,
     credentials: Record<string, string>,
-    sender: Connection | undefined,
     tokensFor: (provider: string) => Record<string, string>,
   ): void => {
     if (options.worktrees === undefined || decided.get(uri)?.isolation !== 'worktree' || worktreeOf(uri) !== undefined) return;
-    ctx.relaunches.set(uri, { config: {}, credentials, sender, tokensFor });
+    ctx.relaunches.set(uri, { config: {}, credentials, tokensFor });
   };
 
   /**
@@ -1357,14 +1359,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       : undefined;
     const base = typeof config.branch === 'string' ? config.branch : 'HEAD';
     const path = join(worktreesOf(repository, options.worktreesRoot), worktreeFor(branch ?? base));
-    // Read as either spelling: the array the schema declares, or a
-    // comma-separated string. A config value is `unknown` on the wire - the
-    // protocol declares the bag `Record<string, unknown>` and `permissions` is
-    // an object - so a key this host declared is narrowed where it is used.
+    // The files to copy, read as the array the schema declares. A config
+    // value is `unknown` - the protocol declares the bag
+    // `Record<string, unknown>` and `permissions` is an object - so a key this
+    // host declared is narrowed where it is used.
     const patterns = config.worktreeIncludeFiles;
     const include = (Array.isArray(patterns)
       ? patterns.filter((one): one is string => typeof one === 'string')
-      : typeof patterns === 'string' ? patterns.split(',') : [])
+      : [])
       .map((one) => one.trim()).filter((one) => one !== '');
     // The folders to link.
     const symlink = symlinkFolders(config);
@@ -1889,15 +1891,15 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * A chat moved since its runtime was launched starts again under the
      * session that holds it now, at its next turn boundary, which this is, as
      * the reference host relaunches a moved chat's runtime there; the turn
-     * then goes to the chat the relaunch brought back.
+     * then goes to the chat the relaunch brought back, once it holds one.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L811
      */
     const moved = ctx.chatRelaunches.get(session.chatUri);
     if (moved !== undefined) {
       ctx.chatRelaunches.delete(session.chatUri);
       const owner = byChat.get(session.chatUri)?.uri;
-      const started = owner === undefined ? Promise.resolve() : relaunchChat(owner, session.chatUri, moved.credentials, moved.sender, moved.directory);
-      return started.then(() => {
+      if (owner === undefined) throw new Error(`${session.chatUri} did not start again`);
+      return relaunchChat(owner, session.chatUri, moved.credentials, moved.directory).then(() => {
         const back = byChat.get(session.chatUri)?.chat;
         if (back === undefined) throw new Error(`${session.chatUri} did not start again`);
         return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
@@ -2242,7 +2244,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       const owning = live === undefined ? undefined : sessions.get(live.uri);
       const link = live === undefined || owning === undefined
         ? undefined
-        : openLink(live.uri, owning.agent.provider, chatIdFor(live.uri, named));
+        : openLink(live.uri, owning.agent.provider, ctx.ownChat(live.uri, named) ? undefined : chatIdFor(live.uri, named));
 
       if (live === undefined || owning === undefined || !mayRead(sender)) {
         /*
@@ -2303,7 +2305,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * `by` is who asked: whose the work belongs to, and the person behind a
    * `user:` owner, which is what a later scope change is resolved against. An
    * automation carries a name rather than a connection, so it passes the first
-   * and leaves the second to the directory.
+   * and leaves the second to the directory. `legacyChatUris` says the session
+   * was made for an older VS Code window that addresses no opaque chat, read
+   * from `sender` where it is left out.
    */
   const createProviderSession = async (
     uri: string,
@@ -2314,7 +2318,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     credentials?: Record<string, string>,
     additional?: string[],
     title?: string,
-    by?: { owner?: Owner; principal?: Principal; sender?: Connection },
+    by?: { owner?: Owner; principal?: Principal; sender?: Connection; legacyChatUris?: boolean },
     asked?: { instructions?: string[]; tools?: string[]; userSettings?: boolean },
   ): Promise<void> => {
     named(uri, 'session');
@@ -2430,7 +2434,17 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * than by each caller, so a session a tool, an automation or a client
        * starts keeps the keys the same way.
        */
-      const lead = await spawn(agent, uri, chatUriFor(uri), chatIdFor(uri, chatUriFor(uri)), backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
+      /*
+       * The session's default chat, minted as VS Code's host mints one: shaped
+       * for an older VS Code window that addresses no opaque chat, opaque for
+       * every other maker, a tool or an automation with no window among them.
+       * It is the session's own conversation, handed no name of its own.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10109-L10116
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10149-L10150
+       */
+      const legacy = by?.legacyChatUris ?? by?.sender?.legacyChatUris === true;
+      const defaultChat = mintDefaultChatUri(legacy ? 'shaped' : 'opaque', uri, undefined);
+      const lead = await spawn(agent, uri, defaultChat, undefined, backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
       // Written down for the same reason a rename is: a first name outlives a
       // restart too.
       if (title !== undefined) ctx.persistSessionTitle(uri, title);

@@ -146,27 +146,6 @@ describe('a client call, held', () => {
     await expect(calls.wait('call-1')).rejects.toThrow('call-1 is not a call a client is running here');
   });
 
-  it('fails a gone client\'s calls, and names the other client\'s tool when there is one', async () => {
-    const { calls } = holder({ providers: (name) => (name === 'openFile' ? ['a', 'b'] : []) });
-    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
-    calls.open({ turnId: 't1', toolCall: running('call-2', 'readFile'), owner: 'b' });
-
-    calls.gone('a');
-    const lost = await calls.wait('call-1');
-    expect(lost.ok).toBe(false);
-    expect(lost.text).toBe(`The client a that was running openFile is no longer here. b__openFile provides the same tool`);
-    // Only that client's calls: the other one is still running here.
-    expect(calls.entries()).toHaveLength(1);
-    expect(calls.owner('call-2')).toBe('b');
-  });
-
-  it('fails a gone client\'s call with no hint when nobody else provides the tool', async () => {
-    const { calls } = holder({ providers: () => [] });
-    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
-    calls.gone('a');
-    expect((await calls.wait('call-1')).text).toBe('The client a that was running openFile is no longer here');
-  });
-
   it('times an unanswered call out, and leaves no timer when the limit is off', async () => {
     vi.useFakeTimers();
     const { calls, removed } = holder({ timeoutMs: 50 });
@@ -295,17 +274,19 @@ describe('a client call, held', () => {
     expect(removed()).toHaveLength(2);
   });
 
-  it('answers the four session members in the shapes `Session` asks for', async () => {
-    const { calls } = holder({ providers: () => [] });
+  /*
+   * A call a gone client owes is settled through `completeToolCall` with the
+   * host's failure, as VS Code's host fails a departed client's calls, so the
+   * two members are the whole of what a session is handed.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
+   */
+  it('answers the two session members in the shapes `Session` asks for', async () => {
+    const { calls } = holder();
+    expect(Object.keys(calls.methods).sort()).toEqual(['completeToolCall', 'toolCallOwner']);
     calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
     expect(calls.methods.toolCallOwner('call-1')).toBe('a');
     expect(calls.methods.toolCallOwner('nobody')).toBeUndefined();
     expect(calls.methods.completeToolCall('call-1', 'b', answered('no'))).toBe(false);
     expect(calls.methods.completeToolCall('call-1', 'a', answered('yes'))).toBe(true);
-
-    const { calls: other } = holder();
-    other.open({ turnId: 't1', toolCall: running('call-2'), owner: 'a' });
-    other.methods.clientGone('a');
-    expect((await other.wait('call-2')).ok).toBe(false);
   });
 });

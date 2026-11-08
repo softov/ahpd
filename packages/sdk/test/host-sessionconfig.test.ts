@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
 import type { ConnectorRef } from '../src/types/connectors.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
-import { chatUriFor } from '../src/host/channels.js';
+import { chatUriFor, ROOT } from '../src/host/channels.js';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  actions, resetSdk, claude, createHost, hello, machine, open, peer,
+  actions, resetSdk, claude, createHost, echo, hello, machine, open, peer,
  sdk, sendAnswered, sendTurn, sessionQueries, serving, settle, running,
 } from './support/host.js';
 
@@ -283,7 +283,7 @@ describe('choosing a model', () => {
     await settle();
     expect(sdk.modelsSet).toEqual(['haiku']);
 
-    const chat = (await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/live') } }) as {
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { activeTurn: { message: { model?: { id: string } } } } };
     }).snapshot.state;
     // Credited on the turn, because the transcript has to say what actually
@@ -455,9 +455,11 @@ describe('a session\'s config across a restart', () => {
     await written();
     sdk.sessions.push({ sessionId: id, summary: 'Kept', lastModified: 1, cwd: '/home/softov' });
     const client = await hostOnFile();
+    // Its default chat as the file kept it, the one minted when it was made.
+    const kept = ((await client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(`ahp-session:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
+      params: { channel: kept, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'carry on' } } },
     });
     await settle(8);
     return sessionQueries().at(-1)?.options;
@@ -565,9 +567,11 @@ describe('a session\'s config across a restart', () => {
   it('keeps a key the schema scopes to one chat when it was set on the lead chat', async () => {
     const client = await hostOnFile(CHAT_SCOPED);
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/lead', provider: 'claude' } });
+    // The chat the host minted for the session, read off its state.
+    const lead = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/lead' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor('ahp-session:/lead'), action: { type: 'session/configChanged', config: { depth: 'low' } } },
+      params: { channel: lead, action: { type: 'session/configChanged', config: { depth: 'low' } } },
     });
     await settle();
     await written();
@@ -737,6 +741,108 @@ describe('a session\'s config across a restart', () => {
       expect((await resumedQuery({ sandboxEnabled: held }, { sandbox: 'on' }))?.settings, String(held))
         .toEqual({ sandbox: { enabled: true } });
       expect((await resumedQuery({ sandboxEnabled: held }))?.settings, String(held)).toBeUndefined();
+    }
+  });
+});
+
+/*
+ * A session's config is the backend's with every key this host owns taken out
+ * and this host's laid over it, and a contributed property and its default win
+ * a name the backend's schema also declares, as VS Code's host composes a
+ * session's config and publishes its own contribution in place of the
+ * provider's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11010-L11057
+ */
+describe('the keys this host owns and contributes', () => {
+  it('takes a backend\'s row and value for a key this host owns out of a session\'s config, and publishes a contributed property and its default over the backend\'s', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-owned-'));
+    try {
+      const base = echo({ path: dir, pace: 0 });
+      const agent: Agent = {
+        ...base,
+        schema: () => ({
+          type: 'object',
+          properties: {
+            mode: { type: 'string', title: 'Backend mode', enum: ['a', 'b'], default: 'a', sessionMutable: true },
+            branch: { type: 'string', title: 'Backend branch', default: 'the backend\'s' },
+          },
+        }),
+        defaults: () => ({ ...base.defaults(), mode: 'a', branch: 'the backend\'s' }),
+      };
+      const host = createHost({
+        path: dir,
+        agents: [agent],
+        sessionConfig: { mode: { type: 'string', title: 'Contributed mode', enum: ['x', 'y'], default: 'x', sessionMutable: true } },
+      });
+      const client = host.accept(peer());
+      await client.handle(hello(['0.9.0']));
+      const cfg = await client.handle({ method: 'resolveSessionConfig', params: { provider: 'echo' } }) as {
+        schema: { properties: Record<string, { title?: string }> };
+        values: Record<string, unknown>;
+      };
+      expect(cfg.schema.properties.mode?.title).toBe('Contributed mode');
+      expect(cfg.values.mode).toBe('x');
+      expect(cfg.schema.properties).not.toHaveProperty('branch');
+      expect(cfg.values).not.toHaveProperty('branch');
+
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/owned', provider: 'echo' } });
+      const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/owned' } }) as {
+        snapshot: { state: { config?: { schema: { properties: Record<string, { title?: string }> }; values: Record<string, unknown> } } };
+      }).snapshot.state;
+      expect(state.config?.schema.properties.mode?.title).toBe('Contributed mode');
+      expect(state.config?.values.mode).toBe('x');
+      expect(state.config?.schema.properties).not.toHaveProperty('branch');
+      expect(state.config?.values).not.toHaveProperty('branch');
+      await host.close();
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/*
+ * A VS Code window forwards its policy's auto-approval restriction into the
+ * root config, and VS Code's agents read it when they resolve a chat's config
+ * and when they launch a session, so a backend is handed it on the schema a
+ * client draws before any session exists and on its start.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostPolicySupport.ts#L46
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7407-L7411
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1579
+ */
+describe('the auto-approval restriction a window forwards', () => {
+  it('reaches a backend on the schema drawn before a session exists, and on its start', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-restricted-'));
+    try {
+      const base = echo({ path: dir, pace: 0 });
+      const starts: Start[] = [];
+      const agent: Agent = {
+        ...base,
+        schema: (policy) => ({
+          type: 'object',
+          properties: { mode: { type: 'string', enum: policy?.autoApprovePolicyRestricted === true ? ['ask'] : ['ask', 'auto'], sessionMutable: true } },
+        }),
+        create: (start: Start) => { starts.push(start); return base.create(start); },
+      };
+      const host = createHost({ path: dir, agents: [agent] });
+      const client = host.accept(peer());
+      await client.handle(hello(['0.9.0']));
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: ROOT, action: { type: 'root/configChanged', config: { autoApprovePolicyRestricted: true } } },
+      });
+      await settle();
+      const cfg = await client.handle({ method: 'resolveSessionConfig', params: { provider: 'echo' } }) as {
+        schema: { properties: Record<string, { enum?: string[] }> };
+      };
+      expect(cfg.schema.properties.mode?.enum).toEqual(['ask']);
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/restricted', provider: 'echo' } });
+      expect(starts.at(-1)?.autoApprovePolicyRestricted).toBe(true);
+      await host.close();
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

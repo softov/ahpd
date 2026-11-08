@@ -79,20 +79,27 @@ export const hello = (versions: unknown[], extra: Record<string, unknown> = {}) 
   params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: versions, ...extra },
 });
 
-/** A connected client with one session, subscribed to both its channels. */
 /** A host whose Claude sessions start their CLI at their first send, as VS Code's provisional session does. */
 export const startedBySend = (path = '/home/softov'): Partial<HostOptions> => ({
   agents: [claude({ paths: [path], preset: { cliStart: 'send' } })],
 });
 
-export async function running(over: Partial<HostOptions> = {}) {
+/**
+ * What an older VS Code window says at `initialize`: it names itself, and
+ * declares the `ahp-session:` URIs it addresses and no opaque chat, so a
+ * session it makes has the shaped default chat it computes from the session.
+ */
+export const OLDER_WINDOW = { clientInfo: { name: 'vscode-editor-window', title: 'VS Code' }, _meta: { 'vscode.ahpSessionUris': true } };
+
+/** A connected client with one session, subscribed to both its channels; `extra` is what the client says at `initialize`. */
+export async function running(over: Partial<HostOptions> = {}, extra: Record<string, unknown> = {}) {
   const host = serving('/home/softov', [], over);
   const p = peer();
   const client = host.accept(p);
   // Root included: a catalogue notification goes to the connections watching
   // the root channel and to no others, so a client that never subscribed to
   // it hears nothing - correctly.
-  await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+  await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'], ...extra }));
   const uri = 'ahp-session:/live';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
   // Read, not assumed. What a session calls its chat is the host's to say and
@@ -104,6 +111,18 @@ export async function running(over: Partial<HostOptions> = {}) {
   const chatUri = opened.snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { host, client, peer: p, uri, chatUri };
+}
+
+/**
+ * A session's default chat, read off the session's state as `running` reads it:
+ * the host mints a new session's, so a case reads it rather than spelling it.
+ * Subscribes the client to the session, as every client that opens one is.
+ */
+export async function defaultChatOf(client: ReturnType<ReturnType<typeof createHost>['accept']>, session: string): Promise<string> {
+  const opened = await client.handle({ method: 'subscribe', params: { channel: session } }) as {
+    snapshot: { state: { defaultChat: string } };
+  };
+  return opened.snapshot.state.defaultChat;
 }
 
 /**

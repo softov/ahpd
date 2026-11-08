@@ -10,7 +10,7 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { Request } from '../src/types/rpc.js';
 import type { HostOptions } from '../src/types/host.js';
 import {
-  claude, createHost, echo, firstMessage, flushed, machine, resetSdk, actions, emit, hello, open, peer,
+  claude, createHost, defaultChatOf, echo, firstMessage, flushed, machine, resetSdk, actions, emit, hello, open, peer,
   sdk, serving, sessionQueries, settle, showExternal, running, wrote,
 } from './support/host.js';
 import type { Agent, Listed } from '../src/types/agent.js';
@@ -338,6 +338,22 @@ describe('a session that already happened', () => {
     await client.handle(hello(['0.9.0']));
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/ghost' } }))
       .rejects.toMatchObject({ code: -32001 });
+  });
+
+  /*
+   * A default chat derived from a session nothing here registers has no owner,
+   * as the reference host's index maps the derived default chats of its
+   * registered sessions alone, and its subscribe is refused in the words that
+   * host refuses a channel it finds nothing for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L267-L291
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2199
+   */
+  it('refuses the default chat derived from a session nothing here registers', async () => {
+    const client = open();
+    await client.handle(hello(['0.9.0']));
+    const ghost = chatUriFor('ahp-session:/ghost');
+    await expect(client.handle({ method: 'subscribe', params: { channel: ghost } }))
+      .rejects.toMatchObject({ code: -32001, message: `Resource not found: ${ghost}` });
   });
 });
 
@@ -1280,7 +1296,8 @@ describe("a row lists the session's chats", () => {
     // subscribing to each session, so the list has to be on the row - and the
     // default chat is the first of them and named as well.
     expect(row?.chats?.map((one) => one.resource)).toEqual([row?.defaultChat, second]);
-    expect(row?.defaultChat).toMatch(/^ahp-chat:\/\/default\//);
+    // The chat the host minted for the session.
+    expect(row?.defaultChat).toBe(chatUri);
     expect(row?.chats?.every((one) => typeof one.status === 'number')).toBe(true);
   });
 
@@ -1642,7 +1659,8 @@ describe('a summary that did not change', () => {
       await settle();
       const added = p.notes.filter((n) => n.method === 'root/sessionAdded').length;
       await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-      await firstMessage(client, chatUri);
+      // On the chat the host minted for the session made again.
+      await firstMessage(client, await defaultChatOf(client, uri));
       // The same conversation, under the same name, added whole: what a client
       // that watched it go now holds, and what the next move is a change from.
       expect(p.notes.filter((n) => n.method === 'root/sessionAdded')).toHaveLength(added + 1);
@@ -2029,7 +2047,7 @@ describe('a session made outside this host', () => {
     sdk.sessions.push({ sessionId: 'theirs', summary: 'Theirs', ...at(HOUR) });
     const { client, listed } = await watching();
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/mine', provider: 'claude' } });
-    await firstMessage(client, chatUriFor('ahp-session:/mine'));
+    await firstMessage(client, await defaultChatOf(client, 'ahp-session:/mine'));
     expect((await listed()).map((one) => one.resource)).toEqual(['ahp-session:/mine']);
   });
 

@@ -2,7 +2,6 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { Status } from '../src/sessions/catalog.js';
 import { ROOT, createHost } from '../src/host.js';
@@ -37,6 +36,10 @@ beforeEach(resetSdk);
  * in `host.test.ts`, where the backend is faked.
  */
 
+/** The chat the host minted for a session, read off its state as a client reads it. */
+const mintedChat = async (client: { handle(request: { method: string; params: Record<string, unknown> }): Promise<unknown> }, uri: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+
 /**
  * A session's first turn, answered by the CLI that turn starts, so it is
  * announced and at rest: a session made fresh is provisional until its first
@@ -48,7 +51,7 @@ beforeEach(resetSdk);
 const answeredFirst = async (client: { handle(request: { method: string; params: Record<string, unknown> }): Promise<unknown> }, uri: string): Promise<void> => {
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
+    params: { channel: await mintedChat(client, uri), action: { type: 'chat/turnStarted', turnId: 'first', startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' } } } },
   });
   await settle(8);
   const cli = sessionQueries().at(-1);
@@ -674,7 +677,7 @@ describe("VS Code's limits on spawning and messaging", () => {
       .filter((note) => note.method === 'root/sessionAdded')
       .map((note) => (note.params as { summary: { resource: string; _meta?: Record<string, unknown> } }).summary)
       .find((summary) => summary.resource !== first.held);
-    expect(added?._meta?.['agentHost/createdBySession']).toEqual({ session: first.held, chat: chatUriFor(first.held) });
+    expect(added?._meta?.['agentHost/createdBySession']).toEqual({ session: first.held, chat: await mintedChat(client, first.held) });
   });
 
   /*
@@ -686,7 +689,7 @@ describe("VS Code's limits on spawning and messaging", () => {
   it('runs a session it makes on the model the calling chat holds, when the call names none', async () => {
     const client = await top();
     const first = await started(client, 'first');
-    const chat = chatUriFor(first.held);
+    const chat = await mintedChat(client, first.held);
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     await client.handle({
       method: 'dispatchAction',
@@ -1148,8 +1151,10 @@ describe('a tool a person calls with no session', () => {
       sessionless: true,
       run: () => { calls.push(name); return name; },
     });
-    // The operator's rule, the daemon's setting.
-    const { users, host } = hosting([probe('notify'), probe('ping')], undefined, undefined, { eligibleForAutoApproval: { 'ahp/notify': false } });
+    // The operator's rule, the daemon's setting, naming a host tool `host/<name>`, a tool of the server VS Code's
+    // Claude carries the host's tools on.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+    const { users, host } = hosting([probe('notify'), probe('ping')], undefined, undefined, { eligibleForAutoApproval: { 'host/notify': false } });
     const member = await principal(users, 'member');
 
     await expect(run(host, { principal: member }, 'notify', {})).rejects.toThrow('eligibleForAutoApproval');
@@ -1171,7 +1176,7 @@ describe('a tool a person calls with no session', () => {
       sessionless: true,
       run: () => { calls.push('notify'); return 'notify'; },
     };
-    const { users, host } = hosting([notify], undefined, undefined, { eligibleForAutoApproval: { 'ahp/notify': false }, managedRules: 'handed' });
+    const { users, host } = hosting([notify], undefined, undefined, { eligibleForAutoApproval: { 'host/notify': false }, managedRules: 'handed' });
     expect(await run(host, { principal: await principal(users, 'member') }, 'notify', {})).toBe('notify');
     expect(calls).toEqual(['notify']);
   });

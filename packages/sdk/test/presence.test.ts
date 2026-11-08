@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -664,17 +663,18 @@ it('keeps a client in while it watches one of the session\'s chats', async () =>
   const held = host();
   const a = await joins(held, 'watcher');
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
-  await a.client.handle({ method: 'subscribe', params: { channel: URI } });
+  // The chat the host minted for the session, read off its state.
+  const chat = ((await a.client.handle({ method: 'subscribe', params: { channel: URI } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 
   const b = await joins(held, 'chatty');
   await enter(b.client, 'chatty');
-  await b.client.handle({ method: 'subscribe', params: { channel: chatUriFor(URI) } });
+  await b.client.handle({ method: 'subscribe', params: { channel: chat } });
   await b.client.handle({ method: 'unsubscribe', params: { channel: URI } });
   await settle();
   expect(removals(a.peer, URI)).toEqual([]);
   expect(await clientsIn(a.client, URI)).toEqual(['chatty']);
 
-  await b.client.handle({ method: 'unsubscribe', params: { channel: chatUriFor(URI) } });
+  await b.client.handle({ method: 'unsubscribe', params: { channel: chat } });
   await settle();
   expect(removals(a.peer, URI)).toMatchObject([{ clientId: 'chatty' }]);
 });

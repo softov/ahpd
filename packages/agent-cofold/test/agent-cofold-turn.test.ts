@@ -12,6 +12,10 @@ import type { Bag } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
+
+/** The chat the host minted for a session, read off the session's state as a client reads it. */
+const defaultChatOf = async (client: { handle(request: unknown): Promise<unknown> }, session: string): Promise<string> =>
+  ((await client.handle({ method: 'subscribe', params: { channel: session } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { cofoldAgent, cofoldTools, sessionIdOf } from '../src/index.js';
@@ -83,9 +87,8 @@ async function talking(
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  const chatUri = chatUriFor('ahp-session:/one');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  const chatUri = await defaultChatOf(client, uri);
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   return { host, client, peer: p, uri, chatUri, agent };
 }
@@ -225,15 +228,16 @@ it('runs a turn on the model the turn names, with no model in the session config
       params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
     });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/picked', provider: 'cofold' } });
-    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/picked') } });
+    const picked = await defaultChatOf(client, 'ahp-session:/picked');
+    await client.handle({ method: 'subscribe', params: { channel: picked } });
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: chatUriFor('ahp-session:/picked'),
+        channel: picked,
         action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model: { id: 'moonshot/moonshotai/kimi-k3.1-pro' } } },
       },
     });
-    await until(() => ended(p, chatUriFor('ahp-session:/picked')));
+    await until(() => ended(p, picked));
     expect(sent.at(-1)?.url).toBe('https://api.moonshot.ai/v1/chat/completions');
     expect(sent.at(-1)?.body.model).toBe('moonshotai/kimi-k3.1-pro');
     expect(sent.at(-1)?.authorization).toBe('Bearer k-moon');
@@ -947,9 +951,8 @@ it('runs a !command in a shell rather than asking a model', async () => {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/bang';
-  const chatUri = chatUriFor('ahp-session:/bang');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  const chatUri = await defaultChatOf(client, uri);
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
 
   begin(client, chatUri, 't1', '!echo cofold-ran-it');
@@ -999,9 +1002,8 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/bang';
-  const chatUri = chatUriFor('ahp-session:/bang');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  const chatUri = await defaultChatOf(client, uri);
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   void client.handle({
     method: 'dispatchAction',
@@ -1017,7 +1019,8 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
   expect(actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart')?.action.intention).toBe('make preview');
   expect(actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallReady')?.action)
     .toMatchObject({ invocationMessage: 'make preview', toolInput: 'make preview', confirmed: 'not-needed' });
-  const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
+  // Named by VS Code's link for a call's terminal, which the host serves.
+  const named = { type: 'terminal', resource: expect.stringMatching(/^agenthost-terminal:\/\/shell\//), title: 'Terminal', isPty: true };
   expect(changed()?.content).toEqual([named]);
   expect(changed()).not.toHaveProperty('_meta');
   // A client that subscribes while the command runs reads the running call a
@@ -1054,9 +1057,10 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
       params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
     });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/none', provider: 'cofold' } });
-    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/none') } });
-    begin(client, chatUriFor('ahp-session:/none'), 't1', 'hi');
-    const failure = () => actions(p, chatUriFor('ahp-session:/none')).find((e) => e.action.type === 'chat/error');
+    const none = await defaultChatOf(client, 'ahp-session:/none');
+    await client.handle({ method: 'subscribe', params: { channel: none } });
+    begin(client, none, 't1', 'hi');
+    const failure = () => actions(p, none).find((e) => e.action.type === 'chat/error');
     await until(() => failure() !== undefined);
     const part = failure()?.action.part as { error?: { errorType?: string; message?: string }; resumable?: unknown };
     const message = String(part?.error?.message);
@@ -1392,11 +1396,11 @@ it('resumes a conversation\'s first turn by dropping the session and starting it
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/first';
-  const chatUri = chatUriFor('ahp-session:/first');
   await client.handle({
     method: 'createSession',
     params: { channel: uri, provider: 'cofold', workingDirectories: [work] },
   });
+  const chatUri = await defaultChatOf(client, uri);
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/error'));
@@ -1562,8 +1566,8 @@ it('announces the session idle with the turnComplete that ends a !command', asyn
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/bang';
-  const chatUri = chatUriFor('ahp-session:/bang');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
+  const chatUri = await defaultChatOf(client, uri);
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   // A first message the model answers, which announces the session: one made
   // fresh is provisional until its first send, as VS Code's host keeps it.

@@ -1,22 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   resetSdk, actions, claude, createHost, hello, machine, open,
-  peer, sdk, sendTurn, serving, sessionQueries, settle, showExternal, running, wrote, firstMessage,
+  peer, sdk, sendTurn, serving, sessionQueries, settle, showExternal, running, wrote, firstMessage, defaultChatOf, OLDER_WINDOW,
 } from './support/host.js';
 import { memorySessions } from '../src/sessions/sessions.js';
+import { getCanonicalOpaqueChatUuid } from '../src/vscode/chatid.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
 beforeEach(resetSdk);
 
 /*
- * A session's default chat, by the one URI it has.
+ * The default chat of a session an older VS Code window made, by the one URI it
+ * has.
  *
  * `ahp-chat://default/<base64url(session)>`, the shape the reference host
- * builds and an older VS Code window computes from the session. It is the only
- * name the chat answers to: `ahp-chat:/<id>` is a chat of its own URI, never
- * the default chat of session `<id>`, as the reference host keys a chat by the
- * URI a client sends.
+ * mints for such a window and the window computes from the session. It is the
+ * only name the chat answers to: `ahp-chat:/<id>` is a chat of its own URI,
+ * never the default chat of session `<id>`, as the reference host keys a chat
+ * by the URI a client sends.
  * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
  */
 describe('a chat asked for by the name a client computed', () => {
@@ -24,7 +26,7 @@ describe('a chat asked for by the name a client computed', () => {
     `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
 
   it('answers about a live session\'s chat, under the name that was used', async () => {
-    const { client, uri, chatUri } = await running();
+    const { client, uri, chatUri } = await running({}, OLDER_WINDOW);
     const alias = derived(uri);
 
     const own = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
@@ -41,7 +43,7 @@ describe('a chat asked for by the name a client computed', () => {
   });
 
   it('sends the conversation on under the name it was asked for', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, uri, chatUri } = await running({}, OLDER_WINDOW);
     const alias = derived(uri);
     await client.handle({ method: 'subscribe', params: { channel: alias } });
 
@@ -67,7 +69,7 @@ describe('a chat asked for by the name a client computed', () => {
   });
 
   it('answers ahp-chat:/<id> as no chat of session <id>', async () => {
-    const { client, uri, chatUri } = await running();
+    const { client, uri, chatUri } = await running({}, OLDER_WINDOW);
     // `ahp-session:/live`, whose default chat is the derived one alone.
     expect(uri).toBe('ahp-session:/live');
     expect(chatUri).toBe(derived(uri));
@@ -109,7 +111,8 @@ describe('a session a client names', () => {
     const id = '39c2a6f0-8c1e-4d7a-9b6e-2f1d3c4b5a69';
     const p = peer();
     const client = serving('/home/softov').accept(p);
-    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    // An older window, whose session's default chat is the derived one.
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'], ...OLDER_WINDOW }));
     await client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'claude' } });
     await firstMessage(client, `ahp-chat://default/${Buffer.from(`ahp-session:/${id}`, 'utf8').toString('base64url')}`);
 
@@ -139,7 +142,7 @@ describe('a session a client names', () => {
     const client = serving('/home/softov').accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: `claude:/${id}`, provider: 'claude' } });
-    await firstMessage(client, `ahp-chat://default/${Buffer.from(`claude:/${id}`, 'utf8').toString('base64url')}`);
+    await firstMessage(client, await defaultChatOf(client, `claude:/${id}`));
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string }[];
@@ -159,7 +162,9 @@ describe('a session a client names', () => {
   it('holds a session created on another provider\'s scheme under that URI, and answers every spelling of its id', async () => {
     const id = '4e8d2f6a-1b3c-4d5e-8f7a-9b0c1d2e3f4a';
     const client = serving('/home/softov').accept(peer());
-    await client.handle(hello(['0.9.0']));
+    // An older window, whose session's default chat is the derived one, and so
+    // the chat every spelling of the id derives.
+    await client.handle(hello(['0.9.0'], OLDER_WINDOW));
     await client.handle({ method: 'createSession', params: { channel: `pi:/${id}`, provider: 'claude' } });
     await firstMessage(client, `ahp-chat://default/${Buffer.from(`pi:/${id}`, 'utf8').toString('base64url')}`);
 
@@ -222,7 +227,7 @@ describe('a session a client names', () => {
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: `claude:/${id}`, provider: 'claude' } });
-    await firstMessage(client, `ahp-chat://default/${Buffer.from(`claude:/${id}`, 'utf8').toString('base64url')}`);
+    await firstMessage(client, await defaultChatOf(client, `claude:/${id}`));
     // The id is what everything kept about a session is stored by, so a
     // second one under it would share the first one's flags, config and marks.
     await expect(client.handle({ method: 'createSession', params: { channel: `ahp-session:/${id}`, provider: 'codex' } }))
@@ -604,24 +609,27 @@ describe('a session asked for by the name its creator used', () => {
   const held = given;
   const chatOfSession = (session: string) =>
     `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+  /** A second chat, shaped as an older window mints one for the session. */
+  const second = `ahp-chat://second/${Buffer.from(given, 'utf8').toString('base64url')}`;
 
+  /** The session, made by an older window, whose default chat is the one derived from the session. */
   const created = async () => {
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'], ...OLDER_WINDOW }));
     await client.handle({ method: 'createSession', params: { channel: given, provider: 'claude' } });
     return { host, client, peer: p };
   };
 
   it('forks a chat in it', async () => {
     const { client } = await created();
-    await client.handle({ method: 'createChat', params: { channel: given, chat: 'ahp-chat:/second' } });
+    await client.handle({ method: 'createChat', params: { channel: given, chat: second } });
     const opened = await client.handle({ method: 'subscribe', params: { channel: given } }) as {
       snapshot: { resource: string; state: { chats: { resource: string }[] } };
     };
     expect(opened.snapshot.resource).toBe(given);
-    expect(opened.snapshot.state.chats.map((one) => one.resource)).toEqual([chatOfSession(given), 'ahp-chat:/second']);
+    expect(opened.snapshot.state.chats.map((one) => one.resource)).toEqual([chatOfSession(given), second]);
   });
 
   it('disposes it, and says so under the name it is held by', async () => {
@@ -652,7 +660,7 @@ describe('a session asked for by the name its creator used', () => {
     // rather than a replay.
     const result = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given] },
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: 0, subscriptions: [given], _meta: OLDER_WINDOW._meta },
     }) as { type: string; snapshots: { resource: string; state: { defaultChat: string } }[] };
     expect(result.type).toBe('snapshot');
     expect(result.snapshots.map((one) => one.resource)).toEqual([given]);
@@ -705,11 +713,11 @@ describe('a session asked for by the name its creator used', () => {
   it('replays what it missed on a reconnect in the creator\'s spelling', async () => {
     const { host, client } = await created();
     const read = await client.handle({ method: 'subscribe', params: { channel: given } }) as { snapshot: { fromSeq: number } };
-    await client.handle({ method: 'createChat', params: { channel: given, chat: 'ahp-chat:/second' } });
+    await client.handle({ method: 'createChat', params: { channel: given, chat: second } });
     const again = host.accept(peer());
     const result = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [given] },
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [given], _meta: OLDER_WINDOW._meta },
     }) as { type: string; actions: { channel: string }[] };
     expect(result.type).toBe('replay');
     expect(result.actions.length).toBeGreaterThan(0);
@@ -733,7 +741,7 @@ describe('a session asked for by the name its creator used', () => {
     const again = host.accept(peer());
     const result = await again.handle({
       method: 'reconnect',
-      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [given, chatOfSession(given)] },
+      params: { channel: 'ahp-root://', clientId: 'probe', lastSeenServerSeq: read.snapshot.fromSeq, subscriptions: [given, chatOfSession(given)], _meta: OLDER_WINDOW._meta },
     }) as { type: string; actions: { channel: string; action: Record<string, any> }[] };
     expect(result.type).toBe('replay');
     // The chat's actions under the creator's name for the chat.
@@ -786,11 +794,17 @@ describe('an older VS Code window', () => {
   const derived = (session: string) => `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
   const shaped = (session: string, id: string) => `ahp-chat://${id}/${Buffer.from(session, 'utf8').toString('base64url')}`;
 
-  /** A host with a session in each scheme, made by a client that can address both. */
+  /**
+   * A host with a session in each scheme, made by a window that can address
+   * both schemes and no opaque chat, so each session's default chat is the
+   * shaped one an older window for chats can see too.
+   */
   const both = async () => {
     const host = serving('/home/softov');
     const maker = host.accept(peer());
-    await maker.handle(hello(['1.0.0'], { clientId: 'maker', initialSubscriptions: ['ahp-root://'] }));
+    await maker.handle(hello(['1.0.0'], {
+      clientId: 'maker', initialSubscriptions: ['ahp-root://'], ...older, _meta: { 'vscode.ahpSessionUris': true },
+    }));
     await maker.handle({ method: 'createSession', params: { channel: AHP, provider: 'claude' } });
     await maker.handle({ method: 'createSession', params: { channel: NAMED, provider: 'claude' } });
     await firstMessage(maker, derived(AHP));
@@ -870,11 +884,45 @@ describe('an older VS Code window', () => {
     expect(said('root/sessionSummaryChanged').every((one) => one?.startsWith('claude:') === true)).toBe(true);
   });
 
-  it('shows a window that cannot address opaque chats only the shaped chats that name their session', async () => {
+  /*
+   * A new session's default chat is minted as VS Code's host mints one: shaped
+   * for a window that cannot address an opaque chat, and opaque for every other
+   * client, whose sessions such a window is then shown none of.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10109-L10116
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1059-L1060
+   */
+  it('mints a session\'s default chat shaped for a window that addresses no opaque chat, and opaque for any other client', async () => {
     const { host, maker } = await both();
+    expect(await defaultChatOf(maker, NAMED)).toBe(derived(NAMED));
+    const other = host.accept(peer());
+    await other.handle(hello(['1.0.0'], { clientId: 'other' }));
+    const MADE = 'ahp-session:/6f7a8b9c-0d1e-4f2a-9b3c-4d5e6f7a8b9c';
+    await other.handle({ method: 'createSession', params: { channel: MADE, provider: 'claude' } });
+    const minted = await defaultChatOf(other, MADE);
+    expect(getCanonicalOpaqueChatUuid(minted)).toBeDefined();
+    await firstMessage(other, minted);
+    const window = host.accept(peer());
+    await window.handle(hello(['1.0.0'], { clientId: 'window', ...older, _meta: { 'vscode.ahpSessionUris': true } }));
+    expect(await listed(window)).toEqual([AHP, NAMED].sort());
+    await expect(window.handle({ method: 'subscribe', params: { channel: minted } })).rejects.toMatchObject({ code: -32001 });
+  });
+
+  /*
+   * A session whose default chat is shaped takes no opaque chat, which an older
+   * window that sees the session could not address, refused in VS Code's words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L57-L63
+   */
+  it('refuses an opaque chat in a session whose default chat is shaped, in VS Code\'s words', async () => {
+    const { maker } = await both();
     const OPAQUE = 'ahp-chat:/3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f';
+    await expect(maker.handle({ method: 'createChat', params: { channel: NAMED, chat: OPAQUE } })).rejects.toMatchObject({
+      code: -32602, message: `Opaque chat URI is not allowed in a session with a shaped default chat: ${OPAQUE}`,
+    });
+  });
+
+  it('shows a window that cannot address opaque chats the shaped chats that name their session', async () => {
+    const { host, maker } = await both();
     const SHAPED = shaped(NAMED, '4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a');
-    await maker.handle({ method: 'createChat', params: { channel: NAMED, chat: OPAQUE } });
     const p = peer();
     const window = host.accept(p);
     await window.handle(hello(['1.0.0'], { clientId: 'window', ...older }));
@@ -882,9 +930,7 @@ describe('an older VS Code window', () => {
       snapshot: { state: { chats: { resource: string }[] } };
     };
     expect(opened.snapshot.state.chats.map((one) => one.resource)).toEqual([derived(NAMED)]);
-    await expect(window.handle({ method: 'subscribe', params: { channel: OPAQUE } })).rejects.toMatchObject({ code: -32001 });
-    // A chat made while it watches is said to it only when it can address it.
-    await maker.handle({ method: 'createChat', params: { channel: NAMED, chat: 'ahp-chat:/5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b' } });
+    // A chat made while it watches is said to it.
     await maker.handle({ method: 'createChat', params: { channel: NAMED, chat: SHAPED } });
     await settle();
     const added = actions(p, NAMED).filter((one) => one.action.type === 'session/chatAdded')

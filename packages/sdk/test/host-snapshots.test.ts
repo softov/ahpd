@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, actions, builtServer, claude, createHost, echo, emit, firstMessage, flushed, hello, hostTools, machine, open, peer,
+  resetSdk, actions, builtServer, claude, createHost, defaultChatOf, echo, emit, firstMessage, flushed, hello, hostTools, machine, open, peer,
  sdk, serving, sessionQueries, settle, showExternal, running,
 } from './support/host.js';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
@@ -93,8 +93,7 @@ describe('what it says it is doing', () => {
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     const uri = 'ahp-session:/doing';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
-    const chatUri = chatUriFor(uri);
+    const chatUri = await defaultChatOf(client, uri);
     await client.handle({ method: 'subscribe', params: { channel: chatUri } });
     await client.handle({
       method: 'dispatchAction',
@@ -323,7 +322,7 @@ describe('what it says it is doing', () => {
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
     const peerChat = 'ahp-chat:/peer';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: peerChat } });
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    const minted = await defaultChatOf(client, uri);
     await client.handle({
       method: 'dispatchAction',
       params: { channel: peerChat, action: { type: 'session/titleChanged', title: 'Tests' } },
@@ -332,7 +331,7 @@ describe('what it says it is doing', () => {
     const id = 'titled';
     // Beside the default chat's, which took the session's title as its own
     // once the session had another chat.
-    const lead = { [chatUriFor(uri)]: 'New session' };
+    const lead = { [minted]: 'New session' };
     expect(store.chatTitlesOf(id)).toEqual({ ...lead, [peerChat]: 'Tests' });
 
     await client.handle({ method: 'disposeChat', params: { channel: peerChat } });
@@ -678,7 +677,7 @@ describe('the fields a client reads by name', () => {
     // every one that arrived would be a map that only grows. The session it
     // names, made later, opens its chat with no draft.
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/later', provider: 'claude' } });
-    const opened = await client.handle({ method: 'subscribe', params: { channel: later } }) as {
+    const opened = await client.handle({ method: 'subscribe', params: { channel: await defaultChatOf(client, 'ahp-session:/later') } }) as {
       snapshot: { state: { draft?: unknown } };
     };
     expect(opened.snapshot.state.draft).toBeUndefined();
@@ -1134,9 +1133,12 @@ describe('the fields a client reads by name', () => {
     const worker = session.snapshot.state.chats.map((one) => one.resource).find((one) => one.includes('toolu_task')) as string;
     const opened = await client.handle({ method: 'subscribe', params: { channel: worker } }) as { snapshot: { state: Record<string, unknown> } };
     expect(opened.snapshot.state.origin).toEqual({ kind: 'tool', chat: chatUriFor('ahp-session:/kept'), toolCallId: 'toolu_task' });
+    // A worker name no record holds has no owner, and its subscribe is refused
+    // in the words VS Code's host refuses a channel it finds nothing for.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2199
     const none = worker.replace('toolu_task', 'toolu_none');
     await expect(client.handle({ method: 'subscribe', params: { channel: none } }))
-      .rejects.toMatchObject({ code: -32001, message: `No chat at ${none}` });
+      .rejects.toMatchObject({ code: -32001, message: `Resource not found: ${none}` });
   });
 
   it('archives one chat, and restores it, without archiving the session', async () => {

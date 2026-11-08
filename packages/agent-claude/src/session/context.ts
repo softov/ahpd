@@ -179,6 +179,8 @@ export interface ClaudeSessionOptions extends SessionOptions {
    * offer one, and then a subagent's frames stay in the turn that spawned it.
    */
   subagent?: (toolCallId: string, request: SubagentRequest) => SubagentChat;
+  /** The chat the host mints for one tool call's worker, carried from `Start`. */
+  subagentChatOf?: (toolCallId: string) => string;
   /**
    * The host's background-task seam, carried from `Start`.
    *

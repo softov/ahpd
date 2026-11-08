@@ -356,12 +356,14 @@ export function createTurns(ctx: SessionContext): Turns {
      * selection resolves to, and clears it where the selection names none,
      * since the CLI holds one effort for the whole query. A level the CLI
      * already holds is not sent again, as VS Code's pipeline keeps the one it
-     * applied.
+     * applied. A turn that names none runs at the session's `effortLevel`,
+     * where one is set.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1217-L1224
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L375-L385
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L66-L78
      */
-    const level = EFFORTS.find((one) => one === (model?.config ?? {}).thinkingLevel);
+    const level = EFFORTS.find((one) => one === (model?.config ?? {}).thinkingLevel)
+      ?? EFFORTS.find((one) => one === ctx.config.effortLevel);
     if (level !== ctx.appliedEffort) {
       ctx.appliedEffort = level;
       void ctx.query?.applyFlagSettings({ effortLevel: level ?? null }).catch(() => {});

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Status } from '../src/sessions/catalog.js';
+import { chatUriFormatOf, subagentChatUri } from '../src/vscode/chatminting.js';
 import {
   resetSdk, actions, emit, hello, peer, sdk, sessionQueries, settle,
   running, firstMessage,
@@ -217,8 +218,9 @@ describe('driving a turn', () => {
       // action carries none, and a late subscriber reads what that action left.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1038-L1043
       const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart' && e.action.toolCallId === 'tc1');
+      // The worker's chat as the host mints it, from the lead chat and the call.
       expect((start?.action._meta as Record<string, unknown> | undefined)?.subagentChatUri)
-        .toEqual(expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/));
+        .toBe(subagentChatUri(chatUriFormatOf(chatUri), uri, chatUri, 'tc1'));
       const worker = { toolKind: 'subagent', subagentDescription: 'look' };
       // How long the call ran rides its completion, on the key VS Code's host
       // says it on.
@@ -269,7 +271,7 @@ describe('driving a turn', () => {
       );
       const linked = (await held())?.content;
       expect(linked).toEqual([{
-        type: 'subagent', resource: expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/), title: 'look', description: 'look',
+        type: 'subagent', resource: subagentChatUri(chatUriFormatOf(chatUri), uri, chatUri, 'tc1'), title: 'look', description: 'look',
       }]);
       await emit({
         type: 'system', subtype: 'task_progress', task_id: 'task-1', tool_use_id: 'tc1', description: 'look', summary: 'Reading the tests',
@@ -1107,19 +1109,13 @@ describe('running a failed turn again', () => {
 
   it('refuses a turn whose last part is not a resumable error, without asking the backend', async () => {
     const { client, peer: p, chatUri } = await running();
+    // A turn that ends complete, which leaves nothing a client could run again.
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'do it' } } },
     });
     await settle();
-    // The CLI's stream ends under the turn, which fails it with nothing a
-    // client could run again.
-    const cli = sessionQueries().at(-1);
-    if (cli !== undefined) {
-      // The same ending the fake's own `close()` gives: no more frames.
-      cli.closed = true;
-      cli.wake?.();
-    }
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
     await settle();
     const clis = sessionQueries().length;
 

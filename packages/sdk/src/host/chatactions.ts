@@ -3,10 +3,11 @@ import { SESSION_META_WORKSPACELESS_KEY, idOf, Status } from '../sessions/catalo
 import { localPath } from '../resources/fileuri.js';
 import { readMultiRoot } from '../sessions/remotesession.js';
 import { filesOf, needsAsyncRewrite, snapshot } from './attachments.js';
-import { chatIdFor, chatUriFor, isRootChannel, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatIdFor, chatUriFor, isRootChannel, RELAYED, ROOT, spaceOf, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { grantOf, withGrant } from './permissions.js';
 import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
+import { readAgentPermissionResponseMeta } from '../vscode/agentpermissionresponsemeta.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { Session } from '../types/session.js';
@@ -89,7 +90,7 @@ export function chatBits(ctx: HostContext, session: string, chat: string): numbe
     ?? (Array.isArray(ctx.stateOf(session)?.chats) ? ctx.stateOf(session)?.chats as Bag[] : []).find((one) => one.resource === chat)?.status;
   if (held !== undefined) return Number(held) & ~(Status.IsRead - 1);
   const bits = ctx.kept.chatFlags(idOf(session), chat);
-  return bits === 0 && toolCallOfSubagentChat(chat) !== undefined && !ctx.subagents.has(chat) ? Status.IsRead : bits;
+  return bits === 0 && !ctx.subagents.has(chat) && ctx.workerOf(chat) !== undefined ? Status.IsRead : bits;
 }
 
 /**
@@ -161,7 +162,7 @@ export function readAggregate(ctx: HostContext, session: string): { uri: string;
     ];
   return chats
     .filter((one) => (one.origin as Bag | undefined)?.['kind'] !== 'tool' && one.interactivity !== 'hidden'
-      && toolCallOfSubagentChat(String(one.resource)) === undefined)
+      && ctx.workerOf(String(one.resource)) === undefined)
     .map((one) => ({ uri: String(one.resource), read: (ctx.kept.chatFlags(id, String(one.resource)) & Status.IsRead) !== 0 }));
 }
 
@@ -332,7 +333,7 @@ export function chatAction(
     const running = sessions.get(flagSession);
     const recorded = running !== undefined || kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
     const lead = running?.defaultChat ?? recorded.find((one) => one.default === true)?.uri ?? chatUriFor(ctx.nameOf(id));
-    const subagent = toolCallOfSubagentChat(channel) !== undefined;
+    const subagent = ctx.workerOf(channel) !== undefined;
     /** Where the session has the chat: running, recorded, or nothing for a chat it does not have. */
     const has = running !== undefined
       ? subagent || byChat.get(channel)?.uri === flagSession
@@ -457,7 +458,7 @@ export function chatAction(
    * reference host's words for a read-only chat.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
    */
-  const worker = toolCallOfSubagentChat(channel) !== undefined;
+  const worker = ctx.workerOf(channel) !== undefined;
   if (worker && type === 'chat/turnStarted') {
     const owning = sessions.get(sessionFor(channel));
     const lead = owning === undefined ? undefined : leadOf(owning);
@@ -971,21 +972,18 @@ export function chatAction(
        * only one where starting it again is safe: a send that arrives during
        * a turn waits its turn, and the sets are compared again at the next.
        * Between turns is nothing of the session running but the turn this
-       * send starts, whose start is said above.
+       * send starts, whose start is said above. The chat that was running is
+       * closed, and the turn goes to the one that took its place once the
+       * start holds it; a start that fails ends the turn.
        */
-      let live = session;
       const between = owner !== undefined && [...owner.chats.keys()].every((chat) => {
         const active = ctx.stateOf(chat)?.activeTurn as Bag | null | undefined;
         return active === undefined || active === null || (chat === session.chatUri && active.id === turnId);
       });
-      if (owner !== undefined && between && pluginsMoved(session.uri, session.chatUri)) {
-        // A failed start is logged where it fails, and the turn below goes to
-        // whatever the chat holds then.
-        void relaunchChat(session.uri, session.chatUri, conn.tokensFor(getProviderForChat(owner, session.chatUri).provider), connection).catch(() => {});
-        // The chat that was running is closed and this is the one that took its
-        // place, so the turn below goes to the agent listening now.
-        live = owner.chats.get(session.chatUri) ?? session;
-      }
+      const relaunched = owner !== undefined && between && pluginsMoved(session.uri, session.chatUri)
+        ? () => relaunchChat(session.uri, session.chatUri, conn.tokensFor(getProviderForChat(owner, session.chatUri).provider))
+          .then(() => owner.chats.get(session.chatUri) ?? session)
+        : undefined;
       const provider = owner?.agent.provider ?? 'This provider';
       /*
        * Its preparation before its prompt goes out: the chats it attaches read
@@ -1002,9 +1000,11 @@ export function chatAction(
         break;
       }
       // Its start is the client's, said above, so nothing more is said for it.
+      const begin = (live: Session): string | undefined | Promise<string | undefined> =>
+        beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, attached.attachments,
+          () => undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true);
       beginTurn(
-        () => beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, attached.attachments,
-          () => undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true),
+        () => (relaunched === undefined ? begin(session) : relaunched().then(begin)),
         (why) => { unsent(session.chatUri, 'rejected', 'rejected', why, since); },
         (why) => { unsent(session.chatUri, 'error', 'sendFailed', why, since); },
       );
@@ -1143,7 +1143,6 @@ export function chatAction(
             config: due?.config ?? {},
             folders: true,
             credentials: conn.tokensFor(owner.agent.provider),
-            sender: connection,
             tokensFor: conn.tokensFor,
           });
           dispatch(uri, action, origin);
@@ -1233,7 +1232,6 @@ export function chatAction(
             uri,
             conn.tokensFor(owner.agent.provider),
             { additional: owner.additional, ...(moving ? { directory: next[0] } : {}) },
-            connection,
             (repository, path) => requireWorktreeTrust({ folder: next[0] ?? repository, repository, path, sender: connection, autoApproved: auto }),
             conn.tokensFor,
           );
@@ -1661,7 +1659,6 @@ export function chatAction(
             config: { ...due?.config, ...config },
             ...(due?.folders ? { folders: true } : {}),
             credentials: conn.tokensFor(owning.agent.provider),
-            sender: connection,
             tokensFor: conn.tokensFor,
           });
         },
@@ -1770,7 +1767,7 @@ export function chatAction(
        * for, and otherwise to stop the lead turn that runs it, where one runs.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
        */
-      const call = toolCallOfSubagentChat(channel);
+      const call = ctx.workerOf(channel)?.toolCallId;
       const lead = String((ctx.stateOf(session.chatUri)?.activeTurn as Bag | undefined)?.id ?? '');
       stopped(String(activeHeld.id ?? ''));
       if (session.stopWorker !== undefined && call !== undefined) session.stopWorker(call);
@@ -2119,12 +2116,14 @@ export function chatAction(
         no(`${toolCallId} is not a call this chat is waiting to have confirmed`);
         break;
       }
-      // The decision the held state takes, said, and then handed to the backend.
+      // The decision the held state takes, said, and then handed to the
+      // backend with who decided, as the client's `_meta` says it.
       dispatch(worker ? channel : session.chatUri, action, origin);
       session.confirm(
         toolCallId,
         action.approved === true,
         typeof action.selectedOptionId === 'string' ? action.selectedOptionId : undefined,
+        readAgentPermissionResponseMeta(action as { _meta?: Record<string, unknown> }).decisionSource,
       );
       /*
        * An approval that picked a grant keeps it, as VS Code's host keeps one:
@@ -2323,7 +2322,6 @@ export function chatAction(
             owner.workingDirectory,
             undefined,
             beside.get(chatUri) ?? owner.additional,
-            connection,
           );
           if (failed !== undefined) throw failed;
           log(`started ${chatUri} over`);

@@ -67,7 +67,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
       async *[Symbol.asyncIterator]() {
         for (;;) yield await sdk.next(feed);
       },
-      interrupt: async () => { sdk.interrupted += 1; },
+      interrupt: async () => {},
       stopTask: async (taskId: string) => { sdk.stopped.push(taskId); },
       setPermissionMode: async () => {},
       setModel: async () => {},
@@ -613,7 +613,7 @@ it('stops one foreground worker with its task id, and leaves the lead turn runni
   session.stopWorker?.(call);
   await settle();
   expect(sdk.stopped).toEqual(['a39214c163af9a96a']);
-  expect(sdk.interrupted).toBe(0);
+  expect(sdk.closed).toBe(0);
   expect(main.some((one) => one.action.type === 'chat/turnCancelled')).toBe(false);
   // Ended by the harness's own word that it stopped, once.
   expect(workers.get(call)?.ended).toEqual([]);
@@ -629,7 +629,7 @@ it('stops one background worker with its task id', async () => {
   session.stopWorker?.(call);
   await settle();
   expect(sdk.stopped).toEqual(['af279e8136cb23ae9']);
-  expect(sdk.interrupted).toBe(0);
+  expect(sdk.closed).toBe(0);
   sdk.push(stoppedNotice(call, 'af279e8136cb23ae9'));
   await settle();
   expect(workers.get(call)?.ended).toEqual([{ state: 'complete' }]);
