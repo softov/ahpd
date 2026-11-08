@@ -7,7 +7,6 @@ import { chatIdFor, chatUriFor, isRootChannel, RELAYED, ROOT, spaceOf, WORKER_AC
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { grantOf, withGrant } from './permissions.js';
 import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
-import { SANDBOX_ENABLED_KEY } from '../types/sandbox.js';
 import { readAgentPermissionResponseMeta } from '../vscode/agentpermissionresponsemeta.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
@@ -1451,19 +1450,14 @@ export function chatAction(
           dispatch(channel, { ...action, config: taken }, origin);
         }
         /*
-         * A chat's sandbox switch, the chat's own where its backend scopes the
-         * key to the chat, applied where the session runs once it is said: a
-         * change the computer cannot host is rejected in its words and put
-         * back, as VS Code's host rejects a sandbox change its runtime could
-         * not apply after saying it.
-         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionSandbox.ts#L351-L384
+         * The sandbox's part of the change, once it is said, as VS Code's
+         * host handles a session's config change and then its runtimes apply
+         * the sandbox: the session's floor published again, and the sandbox
+         * applied for each chat that takes the session's selection, a change
+         * the computer cannot host rejected in its words and put back.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L479-L503
          */
-        if (Object.hasOwn(taken, SANDBOX_ENABLED_KEY)) {
-          if (propertyOf(owning?.agent, SANDBOX_ENABLED_KEY)?.scope === 'chat') ctx.sandbox.choose(uri, session.chatUri, taken[SANDBOX_ENABLED_KEY]);
-          void ctx.sandbox.check(uri, session.chatUri, origin).catch((error: unknown) => {
-            log(`${session.chatUri}: the sandbox was not applied: ${error instanceof Error ? error.message : String(error)}`);
-          });
-        }
+        ctx.sandbox.configChanged(uri, taken, origin);
       };
       /*
        * The keys the schema does not declare, which are the backend's to

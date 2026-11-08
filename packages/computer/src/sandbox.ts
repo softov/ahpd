@@ -65,8 +65,9 @@ export const SANDBOX_PROPERTY = {
 
 /**
  * The plugin's provider configuration: the root `sandbox` property and the
- * entry a client draws its page from. The plugin declares this and nothing
- * else of the sandbox's settings; a chat's switch is each backend's own.
+ * entry a client draws its page from, the one sandbox setting the plugin
+ * declares. A chat's switch is the SDK's `SANDBOX_ENABLED_PROPERTY`, which a
+ * backend whose commands start through `Start.computers.sandboxed` declares.
  */
 export const sandboxConfiguration: ProviderConfiguration = {
   provider: 'sandbox',

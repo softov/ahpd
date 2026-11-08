@@ -250,6 +250,13 @@ const parseSandboxState = (value: unknown): SessionSandboxState | undefined => {
 };
 
 /**
+ * The session-level state, the default chat's, which older clients read.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/agentSandboxStateMeta.ts#L24-L26
+ */
+export const readSessionSandboxState = (source: { _meta?: Bag } | undefined): SessionSandboxState | undefined =>
+  parseSandboxState(source?._meta?.[STATE_KEY]);
+
+/**
  * One chat's last successful sandbox application, from the per-chat map of
  * the session's slot.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/agentSandboxStateMeta.ts#L28-L37

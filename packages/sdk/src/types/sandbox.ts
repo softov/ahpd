@@ -20,6 +20,24 @@ export const SANDBOX_ROOT_KEY = 'sandbox';
  */
 export const SANDBOX_ENABLED_KEY = 'sandboxEnabled';
 
+/**
+ * A chat's switch as VS Code's platform session schema declares it: a
+ * selection the session makes for its chats and a chat makes for itself, so
+ * `sessionMutable` and `chatMutable` both. A backend whose commands and MCP
+ * servers start through `Start.computers.sandboxed` puts it in its session
+ * schema under `SANDBOX_ENABLED_KEY`, as VS Code's agents spread the platform
+ * schema into their own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L370-L386
+ */
+export const SANDBOX_ENABLED_PROPERTY = {
+  type: 'string',
+  title: 'Sandbox',
+  description: 'Sandbox behavior for this session. Default follows the global setting.',
+  enum: ['default', 'on', 'off'],
+  sessionMutable: true,
+  chatMutable: true,
+} as const;
+
 /** Whether the sandbox is on, as VS Code's `AgentSandboxEnabledValue` says it. */
 export type SandboxEnabledValue = 'on' | 'off';
 

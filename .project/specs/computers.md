@@ -188,16 +188,25 @@ A session without the advanced tools does not see these three tools.
 WHEN the plugin loads
 THEN it declares VS Code's root `sandbox` property through `registerProviderConfiguration`
 AND it declares no other sandbox setting.
-Each backend that can apply the sandbox declares a chat's switch, `sandboxEnabled`, in its own session schema.
+A backend whose commands start through `Start.computers.sandboxed` declares a chat's switch with `SANDBOX_ENABLED_PROPERTY`.
+That property is VS Code's platform property, `sessionMutable` and `chatMutable`.
 
 ### A chat's sandbox is resolved within the floor
 
 WHEN a backend reads `Start.computers.sandbox(chat)`
 THEN the host answers the chat's sandbox as VS Code's `getSessionSandboxConfig` resolves it
 AND the root settings come first, then the chat's selection, within the operator's `managedSettingsSandbox`.
-A chat that set no selection follows its session.
+A chat reads its selection from the values it runs on: its own where it has them, its session's otherwise.
 Each session publishes the floor as `vscode.resolvedSandboxPolicy`.
-A floor with `failClosed` keeps the sandbox on with no way out.
+Under a floor that allows bypass, a client's `off` is the chat's enablement.
+A floor with `failClosed` keeps the sandbox on with no way out, and refuses a client's `off`.
+
+### Each chat's sandbox is applied
+
+WHEN a chat starts, the selection it takes changes, or the root `sandbox` settings change
+THEN the host applies the chat's sandbox where its session runs
+AND it publishes the chat's applied enablement in `vscode.sandboxState` under `chats`.
+The default chat's state is also at the top, where older clients read it.
 
 ### A command runs inside the sandbox runtime
 
@@ -217,7 +226,8 @@ A machine made for a session whose sandbox is on gets VS Code's options for it.
 
 WHEN a client turns a chat's sandbox on where its computer cannot host it
 THEN the host publishes the computer's reason in `vscode.sandboxState` with the client's id and sequence number
-AND it puts the chat's selection back to the enablement last applied.
+AND it puts the selection back to the enablement last applied.
+The rejection stays reported until a new selection is made.
 A start that meets the same reason reports it in the same place.
 
 ### A machine is owned and metered
