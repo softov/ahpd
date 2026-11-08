@@ -96,7 +96,7 @@ Attachments carry which of the three they became, so a backend whose block names
 
 ## Subagents
 
-An agent that spawns one starts a conversation of its own, and this host serves it as a **worker chat**: `ahp-chat://subagent/<base64url(session)>/<toolCallId>`. The shape is the reference client's, which reads the authority to tell a worker from an ordinary chat.
+An agent that spawns one starts a conversation of its own, and this host serves it as a **worker chat**, minted as VS Code's host mints one: in its session's format, `ahp-chat:/<uuid>` from the root chat of the conversation and the call for a session whose default chat is opaque, and `ahp-chat://subagent/<base64url(session)>/<toolCallId>` for one an older VS Code window made. A worker is known by its records, the chat open here or the call a session's record holds, and a worker name no record holds is no chat.
 
 The chat is announced on the session as `session/chatAdded`, its turn is opened with the prompt the parent agent wrote, and it is `read-only` to a person, who watches it and sends it no message: a turn, a pending message and a resume there are refused as read-only. An answer to what it asked, a stop, and a client's run of a tool the worker called with the confirmation of its result are each handed to the backend that runs the worker, and any other action, a draft among them, is applied to the worker chat's state. The spawning call carries the link in both directions - the chat's origin names the call, and the call's result content names the chat - so a client draws the worker under the row that started it. A nested worker's call is in the worker chat that spawned it, which is why the parent names a call rather than a chat.
 

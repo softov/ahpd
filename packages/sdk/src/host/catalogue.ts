@@ -1,4 +1,4 @@
-import { ROOT, chatUriFor, subagentChatUri } from './channels.js';
+import { ROOT, chatUriFor } from './channels.js';
 import { accountKey } from './root.js';
 import { SESSION_META_EXTERNAL_KEY, Status, idFor, idOf, normalizeTitle, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
@@ -452,7 +452,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       chats: [
         ...held.chats.keys(),
         ...[...subagents].filter(([, one]) => one.session === uri).map(([one]) => one),
-        ...read.map((one) => subagentChatUri(uri, String(one.toolCallId ?? '')))
+        ...read.map((one) => ctx.mintSubagentChatUri(uri, held.defaultChat, String(one.toolCallId ?? '')))
           .filter((one) => !subagents.has(one)),
       ],
     });

@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { canvasResource, chatUriFor, subagentChatUri } from '../src/host/channels.js';
+import { canvasResource, chatUriFor } from '../src/host/channels.js';
+import { buildSubagentChatUri, chatUriFormatOf, subagentChatUri } from '../src/vscode/chatminting.js';
 import { posixUriOf, uriOf } from '../src/resources/fileuri.js';
 import { createPeer, receive } from '../src/rpc.js';
 import { machinePathOf } from '../src/machines/machine.js';
@@ -2036,21 +2037,25 @@ const workingAgent = (): Agent => scriptedAgent((session, turnId) => {
   }, 30);
 }).agent;
 
-/** A `subagent` seam that keeps what it was asked and what was written to each chat. */
+/**
+ * A `subagent` seam that keeps what it was asked and what was written to each
+ * chat, with the name it gives a worker's chat before it opens.
+ */
 const seam = (session: string) => {
   const asked: { toolCallId: string; request: Bag }[] = [];
   const written: Bag[] = [];
   const ended: string[] = [];
+  const subagentChatOf = (toolCallId: string): string => buildSubagentChatUri(session, toolCallId);
   const subagent = (toolCallId: string, request: Bag) => {
     asked.push({ toolCallId, request });
     return {
-      uri: subagentChatUri(session, toolCallId),
+      uri: subagentChatOf(toolCallId),
       turnId: 'outer-turn',
       emit: (action: Bag) => { written.push(action); },
       end: (state: string) => { ended.push(state); },
     };
   };
-  return { asked, written, ended, subagent };
+  return { asked, written, ended, subagent, subagentChatOf };
 };
 
 it('an inner subagent chat is opened outside through the subagent seam, and its actions reach it on the outer turn', async () => {
@@ -2058,7 +2063,7 @@ it('an inner subagent chat is opened outside through the subagent seam, and its 
   const { emit } = recorder();
   const outside = seam('ahp-session:/outer');
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
-    .create({ ...start(emit), subagent: outside.subagent } as unknown as Start);
+    .create({ ...start(emit), subagent: outside.subagent, subagentChatOf: outside.subagentChatOf } as unknown as Start);
   session.sendMessage('t1', 'go');
   await until(() => outside.ended.length > 0);
   expect(outside.asked).toEqual([{ toolCallId: 'call-1', request: { title: 'Explore', prompt: 'look around' } }]);
@@ -2093,7 +2098,11 @@ it('a worker chat the outer seam cannot open is logged, and the session runs on'
       timeoutMs: 500,
       log: (line: string) => { lines.push(line); },
     })
-      .create({ ...start(emit), subagent: () => { throw new Error('the outer chat is gone'); } } as unknown as Start);
+      .create({
+        ...start(emit),
+        subagent: () => { throw new Error('the outer chat is gone'); },
+        subagentChatOf: (toolCallId: string) => buildSubagentChatUri('ahp-session:/outer', toolCallId),
+      } as unknown as Start);
     session.sendMessage('t1', 'go');
     await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
     // A rejection nobody holds is raised on a later turn of the loop than the
@@ -2114,12 +2123,15 @@ it('a link to an inner subagent chat in the lead chat names the outer chat', asy
   const { seen, emit } = recorder();
   const outside = seam('ahp-session:/outer');
   const session = nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
-    .create({ ...start(emit), subagent: outside.subagent } as unknown as Start);
+    .create({ ...start(emit), subagent: outside.subagent, subagentChatOf: outside.subagentChatOf } as unknown as Start);
   session.sendMessage('t1', 'go');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
-  const links = JSON.stringify(seen.filter(({ channel }) => channel === 'chat')).match(/ahp-chat:\/\/subagent\/[^"\\]+/g) ?? [];
+  // Every chat the lead chat names besides its own, in either format, is the
+  // outer worker's: the host inside mints its own name for the worker.
+  const links = (JSON.stringify(seen.filter(({ channel }) => channel === 'chat')).match(/ahp-chat:[^"\\]+/g) ?? [])
+    .filter((one) => one !== 'ahp-chat:/outer');
   expect(links.length).toBeGreaterThan(0);
-  expect([...new Set(links)]).toEqual([subagentChatUri('ahp-session:/outer', 'call-1')]);
+  expect([...new Set(links)]).toEqual([outside.subagentChatOf('call-1')]);
   session.close();
 });
 
@@ -2139,13 +2151,16 @@ it('the catalogue rows of an inner subagent chat reach a client outside under th
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   await client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } } });
   await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/turnComplete' && params?.channel === chat));
-  const worker = subagentChatUri(uri, 'call-1');
+  // The worker's chat as the host outside mints it, from its own lead chat and
+  // the call, as VS Code's host mints one.
+  const worker = subagentChatUri(chatUriFormatOf(chat), uri, chat, 'call-1');
   const added = peer.seen.find(({ params }) => params?.action?.type === 'session/chatAdded')?.params.action;
   expect(added?.summary.resource).toBe(worker);
   expect(added?.summary.title).toBe('Explore');
   expect(added?.summary.origin).toEqual({ kind: 'tool', chat, toolCallId: 'call-1' });
-  // Every subagent chat a client was told of is the outer one.
-  const named = JSON.stringify(peer.seen).match(/ahp-chat:\/\/subagent\/[^"\\]+/g) ?? [];
+  // Every chat a client was told of besides the lead is the outer worker: the
+  // host inside mints its own name for it, in either format.
+  const named = (JSON.stringify(peer.seen).match(/ahp-chat:[^"\\]+/g) ?? []).filter((one) => one !== chat);
   expect([...new Set(named)]).toEqual([worker]);
   await host.close();
 });

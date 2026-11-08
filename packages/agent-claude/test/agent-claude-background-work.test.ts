@@ -137,7 +137,9 @@ async function open(seam = true): Promise<Opened> {
     chatUri: 'ahp-chat:/bg',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-bg-')),
     emit: (_channel, action) => { main.push(action as Bag); },
-    ...(seam ? { subagent } : {}),
+    // The host's name for a worker's chat before it opens, beside the seam
+    // that opens it, as a host hands both.
+    ...(seam ? { subagent, subagentChatOf: (toolCallId: string) => subagentChatUri(session, toolCallId) } : {}),
     backgroundTasks: {
       set: (chat, task) => { tasks.set.push({ chat, task }); },
       remove: (chat, id) => { tasks.remove.push({ chat, id }); },

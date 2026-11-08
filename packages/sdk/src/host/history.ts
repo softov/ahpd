@@ -1,5 +1,5 @@
 import { idFor } from '../sessions/catalog.js';
-import { chatUriFor, subagentChatUri } from './channels.js';
+import { chatUriFor } from './channels.js';
 import type { Agent, Listed, SessionAt } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
 import type { Summary } from '../types/catalog.js';
@@ -92,7 +92,7 @@ export function createHistory(ctx: HostContext): History {
   /** The chat a restored worker's call is in: its parent worker's, or the session's lead chat. */
   const restoredParentChat = (session: string, lead: string, one: Bag): string =>
     (one.parentToolCallId !== undefined && String(one.parentToolCallId) !== ''
-      ? subagentChatUri(session, String(one.parentToolCallId))
+      ? ctx.mintSubagentChatUri(session, lead, String(one.parentToolCallId))
       : lead);
   /**
    * A past session's turns, with each worker linked from the call that ran it.
@@ -116,7 +116,7 @@ export function createHistory(ctx: HostContext): History {
         // does not carry; its worker's chat names the call from its origin.
         if (one === undefined || call.status === 'cancelled') return part;
         touched = true;
-        const resource = subagentChatUri(session, callId);
+        const resource = ctx.mintSubagentChatUri(session, ctx.defaultChatFor(session), callId);
         const held = (Array.isArray(call.content) ? call.content as Bag[] : [])
           .filter((block) => !(block.type === 'subagent' && block.resource === resource));
         const content = {

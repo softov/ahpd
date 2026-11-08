@@ -3,7 +3,7 @@ import { SESSION_META_WORKSPACELESS_KEY, idOf, Status } from '../sessions/catalo
 import { localPath } from '../resources/fileuri.js';
 import { readMultiRoot } from '../sessions/remotesession.js';
 import { filesOf, needsAsyncRewrite, snapshot } from './attachments.js';
-import { chatIdFor, chatUriFor, isRootChannel, RELAYED, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatIdFor, chatUriFor, isRootChannel, RELAYED, ROOT, spaceOf, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { grantOf, withGrant } from './permissions.js';
 import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
@@ -87,7 +87,7 @@ export function chatBits(ctx: HostContext, session: string, chat: string): numbe
     ?? (Array.isArray(ctx.stateOf(session)?.chats) ? ctx.stateOf(session)?.chats as Bag[] : []).find((one) => one.resource === chat)?.status;
   if (held !== undefined) return Number(held) & ~(Status.IsRead - 1);
   const bits = ctx.kept.chatFlags(idOf(session), chat);
-  return bits === 0 && toolCallOfSubagentChat(chat) !== undefined && !ctx.subagents.has(chat) ? Status.IsRead : bits;
+  return bits === 0 && !ctx.subagents.has(chat) && ctx.workerOf(chat) !== undefined ? Status.IsRead : bits;
 }
 
 /**
@@ -159,7 +159,7 @@ export function readAggregate(ctx: HostContext, session: string): { uri: string;
     ];
   return chats
     .filter((one) => (one.origin as Bag | undefined)?.['kind'] !== 'tool' && one.interactivity !== 'hidden'
-      && toolCallOfSubagentChat(String(one.resource)) === undefined)
+      && ctx.workerOf(String(one.resource)) === undefined)
     .map((one) => ({ uri: String(one.resource), read: (ctx.kept.chatFlags(id, String(one.resource)) & Status.IsRead) !== 0 }));
 }
 
@@ -311,7 +311,7 @@ export function chatAction(
     const running = sessions.get(flagSession);
     const recorded = running !== undefined || kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
     const lead = running?.defaultChat ?? recorded.find((one) => one.default === true)?.uri ?? chatUriFor(ctx.nameOf(id));
-    const subagent = toolCallOfSubagentChat(channel) !== undefined;
+    const subagent = ctx.workerOf(channel) !== undefined;
     /** Where the session has the chat: running, recorded, or nothing for a chat it does not have. */
     const has = running !== undefined
       ? subagent || byChat.get(channel)?.uri === flagSession
@@ -431,7 +431,7 @@ export function chatAction(
    * reference host's words for a read-only chat.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
    */
-  const worker = toolCallOfSubagentChat(channel) !== undefined;
+  const worker = ctx.workerOf(channel) !== undefined;
   if (worker && type === 'chat/turnStarted') {
     const owning = sessions.get(sessionFor(channel));
     const lead = owning === undefined ? undefined : leadOf(owning);
@@ -1731,7 +1731,7 @@ export function chatAction(
        * for, and otherwise to stop the lead turn that runs it, where one runs.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
        */
-      const call = toolCallOfSubagentChat(channel);
+      const call = ctx.workerOf(channel)?.toolCallId;
       const lead = String((ctx.stateOf(session.chatUri)?.activeTurn as Bag | undefined)?.id ?? '');
       stopped(String(activeHeld.id ?? ''));
       if (session.stopWorker !== undefined && call !== undefined) session.stopWorker(call);

@@ -3,7 +3,7 @@ import { Status, idOf } from '../sessions/catalog.js';
 import { windowOf } from '../sessions/paging.js';
 import { RpcError } from '../rpc.js';
 import { runState } from './automations.js';
-import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, ANNOTATIONS_PATH_SEGMENT, chatUriFor, servedIn, schemeOf, spaceOf, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
+import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, ANNOTATIONS_PATH_SEGMENT, chatUriFor, servedIn, schemeOf, spaceOf, toolCallOfSubagentChat } from './channels.js';
 import { ownerFilter } from '../utils/values.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
@@ -121,7 +121,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * record read before its backend starts, so the read is in hand.
      */
     const restored = (ctx.subHistory.get(idOf(channel)) ?? [])
-      .map((one) => ({ one, uri: subagentChatUri(channel, String(one.toolCallId ?? '')) }))
+      .map((one) => ({ one, uri: ctx.mintSubagentChatUri(channel, held.defaultChat, String(one.toolCallId ?? '')) }))
       .filter(({ uri }) => !subagents.has(uri));
     /*
      * The backend's answer with `resource` taken off it.
@@ -670,7 +670,9 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * call from its recorded origin.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L801
      */
-    const one = chat ? workers.find((held) => subagentChatUri(nameOf(id), String(held.toolCallId ?? '')) === channel) : undefined;
+    const one = chat
+      ? workers.find((held) => ctx.mintSubagentChatUri(nameOf(id), ctx.defaultChatFor(nameOf(id)), String(held.toolCallId ?? '')) === channel)
+      : undefined;
     if (one !== undefined) {
       const wanted = String(one.toolCallId ?? '');
       const parentChat = restoredParentChat(nameOf(id), ctx.defaultChatFor(nameOf(id)), one);
@@ -769,7 +771,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           // session's subagents openable rather than lost.
           ...workers.map((one) => restoredSubagentSummary(
             nameOf(id),
-            subagentChatUri(nameOf(id), String(one.toolCallId ?? '')),
+            ctx.mintSubagentChatUri(nameOf(id), ctx.defaultChatFor(nameOf(id)), String(one.toolCallId ?? '')),
             restoredParentChat(nameOf(id), ctx.defaultChatFor(nameOf(id)), one),
             one as unknown as { toolCallId: string; title: string; turns: Bag[] },
             listedAt,

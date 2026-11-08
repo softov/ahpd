@@ -10,7 +10,7 @@ import {
 } from './support/host.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { idOf, Status } from '../src/sessions/catalog.js';
-import { chatUriFor, subagentChatUri } from '../src/host/channels.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { undeclaredIn } from './support/wire.js';
 import type { Agent, Bag, HostOptions, Session, Start } from '@ahpd/sdk';
 
@@ -1705,8 +1705,7 @@ describe('more than one chat in a session', () => {
       expect(order.slice(0, 3)).toEqual([first, THIRD, PEER]);
       // The worker last, which is where a worker sits: after every chat the
       // session holds, because the host holds it rather than a `Session`.
-      expect(order[3]).toMatch(/^ahp-chat:\/\/subagent\//);
-      expect(order[3]).toContain('toolu_task');
+      expect(order[3]).toBe(worker?.uri);
       expect(reorders(p, LIVE)).toEqual([order]);
 
       /*
@@ -2100,15 +2099,9 @@ describe('more than one chat in a session', () => {
         ?.subagent?.('toolu_task', { title: 'Explore', prompt: 'list the files' });
       await settle();
       expect(worker).toBeDefined();
-      /*
-       * Two spellings of one name. The host mints it from the session it holds,
-       * and a client is answered in the session it knows: this one opened `LIVE`
-       * as `ahp-session:/live`, so a worker announced on that channel is named
-       * with that inside it. The name is the same chat either way, and which
-       * one a client holds is which one it was handed.
-       */
-      const called = subagentChatUri('ahp-session:/live', 'toolu_task');
-      const asSaid = subagentChatUri(LIVE, 'toolu_task');
+      // The one name the host minted for the worker, from the root chat and the
+      // call, which every client holds.
+      const called = String(worker?.uri);
       /*
        * Ended before the move, because a worker mid-turn is the chat's own
        * delay: the move closes the process the worker runs in, and nothing may
@@ -2133,13 +2126,8 @@ describe('more than one chat in a session', () => {
       expect(listed(from)).toEqual([from.state.defaultChat]);
       const there = await opened(client, TWO);
       expect(listed(there)).toEqual([there.state.defaultChat, TAIL, PEER, called]);
-      expect(actions(p, LIVE).some((e) => e.action.type === 'session/chatRemoved' && e.action.chat === asSaid)).toBe(true);
-      /*
-       * And it still answers for itself. The session inside its name is the one
-       * it was opened in rather than the one holding it now, so a host that
-       * read the session out of the name would answer a client about a chat of
-       * the session it left.
-       */
+      expect(actions(p, LIVE).some((e) => e.action.type === 'session/chatRemoved' && e.action.chat === called)).toBe(true);
+      // And it still answers for itself, where its records now hold it.
       const openedWorker = await opened(client, called);
       expect(openedWorker.state.resource).toBe(called);
       expect(openedWorker.state.turns.length).toBeGreaterThan(0);

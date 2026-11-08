@@ -16,7 +16,8 @@ import { meter } from '../usage/meter.js';
 import { linkIn } from '../automations/calllinks.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
-import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
+import { chatUriFor, toolCallOfSubagentChat } from './channels.js';
+import { buildSubagentChatUri, chatUriFormatOf, subagentChatUri } from '../vscode/chatminting.js';
 import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
 import {
@@ -78,6 +79,18 @@ export interface Spawn {
   raiseTurnEnd(end: Omit<TurnEndEvent, 'type'>): void;
   /** The worker chat for one tool call of a backend's, made on first ask. */
   openSubagent(session: string, lead: string, toolCallId: string, request: SubagentRequest): SubagentChat;
+  /**
+   * The chat a call of `issuingChat` spawns a worker in, as VS Code's host
+   * mints one: in the session's format, from the root of the conversation.
+   */
+  mintSubagentChatUri(session: string, issuingChat: string, toolCallId: string): string;
+  /**
+   * The session and the call a worker chat runs for, from the records: a
+   * worker open here, or one a session's read record holds under the name
+   * minted for it. Nothing for a chat no record names, as VS Code's host finds
+   * a spawned chat's owner from the spawning call's records alone.
+   */
+  workerOf(chat: string): { session: string; toolCallId: string } | undefined;
   /** A chat of a session held as `<provider>:/<id>`, in the `ahp-session:/<id>` spelling it was built for, when it has one. */
   legacyChatUri(uri: string, chatUri: string): string | undefined;
   /** A chat's stored title. */
@@ -253,8 +266,35 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (session === undefined) return action;
     const result = action.result as Bag | undefined;
     const linked = linkIn(action.content) ?? linkIn(result?.content) ?? links.linkOf(chat, action.toolCallId);
-    const uri = linked ?? subagentChatUri(session, action.toolCallId);
+    const uri = linked ?? mintSubagentChatUri(session, chat, action.toolCallId);
     return { ...action, _meta: { ...action._meta, subagentChatUri: uri } };
+  };
+  /**
+   * The chat a call spawns a worker in, as VS Code's host mints one: in the
+   * session's format, from the call and the root of the conversation the
+   * issuing chat is in, which a worker's chat names as its parent.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L103-L109
+   */
+  const mintSubagentChatUri = (session: string, issuingChat: string, toolCallId: string): string => {
+    let root = issuingChat;
+    for (let up = subagents.get(root); up !== undefined && up.parentChat !== root; up = subagents.get(root)) root = up.parentChat;
+    return subagentChatUri(chatUriFormatOf(ctx.defaultChatFor(session)), session, root, toolCallId);
+  };
+  /*
+   * A worker chat's session and call, as VS Code's host resolves a spawned
+   * chat's owner from the live registry and then the spawning calls recorded in
+   * loaded chats.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L302-L343
+   */
+  const workerOf = (chat: string): { session: string; toolCallId: string } | undefined => {
+    const live = subagents.get(chat);
+    if (live !== undefined) return { session: live.session, toolCallId: live.toolCallId };
+    for (const [id, workers] of ctx.subHistory) {
+      const session = ctx.nameOf(id);
+      const one = workers.find((held) => mintSubagentChatUri(session, ctx.defaultChatFor(session), String(held.toolCallId ?? '')) === chat);
+      if (one !== undefined) return { session, toolCallId: String(one.toolCallId ?? '') };
+    }
+    return undefined;
   };
   /**
    * A message with the attachments the client sent back on it.
@@ -348,7 +388,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         || !links.stampedOn(chat, call.toolCallId)) return part;
       touched = true;
       const linked = linkIn(call.content);
-      return { ...part, toolCall: { ...call, _meta: { ...call._meta, subagentChatUri: linked ?? subagentChatUri(session, call.toolCallId) } } };
+      return { ...part, toolCall: { ...call, _meta: { ...call._meta, subagentChatUri: linked ?? mintSubagentChatUri(session, chat, call.toolCallId) } } };
     });
     return touched ? { ...turn, responseParts: next } : turn;
   });
@@ -585,14 +625,14 @@ export function createSpawn(ctx: HostContext): Spawn {
    * somebody else's turn.
    */
   const openSubagent = (session: string, lead: string, toolCallId: string, request: SubagentRequest): SubagentChat => {
-    const uri = subagentChatUri(session, toolCallId);
     /*
      * The chat the call is in. A nested worker's call is in the worker chat
      * that spawned it, which is why the parent names a call and not a chat.
      */
     const parentChat = request.parentToolCallId !== undefined && request.parentToolCallId !== ''
-      ? subagentChatUri(session, request.parentToolCallId)
+      ? mintSubagentChatUri(session, lead, request.parentToolCallId)
       : lead;
+    const uri = mintSubagentChatUri(session, parentChat, toolCallId);
     let ref = subagents.get(uri);
     if (ref === undefined) {
       const now = new Date().toISOString();
@@ -718,7 +758,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (former === uri) return undefined;
     if (chatUri === chatUriFor(uri)) return chatUriFor(former);
     const callId = toolCallOfSubagentChat(chatUri);
-    return callId !== undefined && chatUri === subagentChatUri(uri, callId) ? subagentChatUri(former, callId) : undefined;
+    return callId !== undefined && chatUri === buildSubagentChatUri(uri, callId) ? buildSubagentChatUri(former, callId) : undefined;
   };
   /** A chat's stored title: under its URI, or else under `legacyChatUri`. */
   const titleOf = (uri: string, chatUri: string): string | undefined => {
@@ -1369,6 +1409,7 @@ export function createSpawn(ctx: HostContext): Spawn {
        * brings the call id and the words, and everything else is this.
        */
       subagent: (toolCallId: string, request: SubagentRequest) => openSubagent(uri, chatUri, toolCallId, request),
+      subagentChatOf: (toolCallId: string) => mintSubagentChatUri(uri, chatUri, toolCallId),
       /*
        * The background tasks this backend reports.
        *
@@ -2127,7 +2168,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   return {
     unstamped, withWorkerUri, stampedCalls, withSender, withSenderSaid, asSentChat,
     sendSubagent, endedWorkers, raiseTurnEnd,
-    openSubagent, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
+    openSubagent, mintSubagentChatUri, workerOf, legacyChatUri, titleOf, persistChatTitle, persistSessionTitle, recordSessionProvider,
     spawn, wirePlan,
   };
 }

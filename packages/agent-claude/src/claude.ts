@@ -755,6 +755,7 @@ export function claude(options: ClaudeOptions): Agent {
       // the chat. Without one, a subagent's frames stay in the turn that
       // spawned them.
       ...(start.subagent ? { subagent: start.subagent } : {}),
+      ...(start.subagentChatOf ? { subagentChatOf: start.subagentChatOf } : {}),
       // The host's background-task seam, carried through unchanged: this
       // backend reports each task the harness leaves running, and the host
       // draws the row, its stop flag and the snapshot it reaches.

@@ -5,7 +5,7 @@ import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import {
   ROOT, isRootChannel, isAutomations, automationsChannel, schemeOf, spaceOf, ownerUriOf,
-  chatOfCanvas, chatUriFor, nonPtyShellTerminalOf, subagentChatUri, toolCallOfSubagentChat, shapedSession,
+  chatOfCanvas, chatUriFor, nonPtyShellTerminalOf, toolCallOfSubagentChat, shapedSession,
 } from './channels.js';
 import type { ChannelKind, Space } from './channels.js';
 import type { Home } from './gate.js';
@@ -103,11 +103,13 @@ export function createRouting(ctx: HostContext): Routing {
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
    */
   const sessionOfChat = (uri: string): string | undefined => {
+    // A worker's chat by the records of the call that spawned it, whatever its
+    // name's shape: a worker name no record holds has no session.
+    const worker = ctx.workerOf(uri);
+    if (worker !== undefined) return worker.session;
     const minted = shapedSession(uri);
-    if (minted === undefined) return undefined;
+    if (minted === undefined || toolCallOfSubagentChat(uri) !== undefined) return undefined;
     const session = nameOf(idOf(minted));
-    const callId = toolCallOfSubagentChat(uri);
-    if (callId !== undefined) return subagentChatUri(minted, callId) === uri ? session : undefined;
     if (chatUriFor(minted) !== uri) return undefined;
     // The session's record agrees while its default chat is the one derived
     // from a spelling of its own id; a session that moved its default to a
@@ -153,10 +155,10 @@ export function createRouting(ctx: HostContext): Routing {
       const published = names.get(idOf(owner)) ?? ctx.kept.uri?.(idOf(owner));
       return published === undefined ? channel : `${published}${channel.slice(owner.length)}`;
     }
+    // A worker's chat is the name its records hold.
+    if (ctx.workerOf(channel) !== undefined) return channel;
     const session = sessionOfChat(channel);
     if (session === undefined || session === shapedSession(channel)) return channel;
-    const callId = toolCallOfSubagentChat(channel);
-    if (callId !== undefined) return subagentChatUri(session, callId);
     return defaultChatOf(session) ?? chatUriFor(session);
   };
 

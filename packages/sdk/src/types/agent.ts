@@ -528,6 +528,16 @@ export interface Start {
    */
   subagent?(toolCallId: string, request: SubagentRequest): SubagentChat;
   /**
+   * The chat a worker of one of this chat's tool calls runs in, as the host
+   * mints it, whether or not it is open yet: in the session's format, from
+   * this chat's conversation and the call, as VS Code's host hands its
+   * provider the format and owner a spawned chat is minted from.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1228
+   *
+   * Present with `subagent`.
+   */
+  subagentChatOf?(toolCallId: string): string;
+  /**
    * The tasks this backend is running in the background, as it learns them.
    *
    * A harness knows what it left running and the host knows what a client

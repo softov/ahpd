@@ -63,7 +63,8 @@ AND it announces the chat with `session/chatAdded` and opens a turn with the pro
 AND it adds a `subagent` content to the spawning call, while that call's chat has a turn open.
 
 A second call for the same tool call id gives the same chat.
-The URI comes from the SDK helper `subagentChatUri`, so a backend does not build it.
+The host mints the URI in the session's format, from the root chat and the call, as VS Code's `subagentChatUri`.
+A backend reads it before the chat opens through `start.subagentChatOf(toolCallId)`, so it builds none.
 A nested worker names its parent call, not a chat, because its call is in the parent worker's chat.
 A backend without this seam draws the worker's output inline in the lead chat.
 See [`code://packages/sdk/src/host/spawn.ts`](../../packages/sdk/src/host/spawn.ts).

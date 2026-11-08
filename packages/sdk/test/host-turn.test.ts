@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Status } from '../src/sessions/catalog.js';
+import { chatUriFormatOf, subagentChatUri } from '../src/vscode/chatminting.js';
 import {
   resetSdk, actions, emit, hello, peer, sdk, sessionQueries, settle,
   running, firstMessage,
@@ -217,8 +218,9 @@ describe('driving a turn', () => {
       // action carries none, and a late subscriber reads what that action left.
       // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1038-L1043
       const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart' && e.action.toolCallId === 'tc1');
+      // The worker's chat as the host mints it, from the lead chat and the call.
       expect((start?.action._meta as Record<string, unknown> | undefined)?.subagentChatUri)
-        .toEqual(expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/));
+        .toBe(subagentChatUri(chatUriFormatOf(chatUri), uri, chatUri, 'tc1'));
       const worker = { toolKind: 'subagent', subagentDescription: 'look' };
       // The times ride with them: the plugin stamped the call's start when it
       // began running and the completion adds the end.
@@ -271,7 +273,7 @@ describe('driving a turn', () => {
       );
       const linked = (await held())?.content;
       expect(linked).toEqual([{
-        type: 'subagent', resource: expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/), title: 'look', description: 'look',
+        type: 'subagent', resource: subagentChatUri(chatUriFormatOf(chatUri), uri, chatUri, 'tc1'), title: 'look', description: 'look',
       }]);
       await emit({
         type: 'system', subtype: 'task_progress', task_id: 'task-1', tool_use_id: 'tc1', description: 'look', summary: 'Reading the tests',

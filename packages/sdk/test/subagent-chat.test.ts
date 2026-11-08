@@ -4,7 +4,16 @@ import type { Agent, Listed, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
+import { chatUriFormatOf, subagentChatUri } from '../src/vscode/chatminting.js';
 import { undeclaredIn } from './support/wire.js';
+
+/**
+ * The chat a call of `lead`'s conversation spawns a worker in, as VS Code's
+ * host mints it: in the session's format, from the root chat and the call.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L43-L47
+ */
+const workerChat = (session: string, lead: string, toolCallId: string): string =>
+  subagentChatUri(chatUriFormatOf(lead), session, lead, toolCallId);
 
 /*
  * The host's worker-chat seam, driven by a backend that has no harness.
@@ -250,8 +259,8 @@ async function running(late = false, hold = false) {
   const chatUri = ((await ask('subscribe', { channel: uri })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   await ask('subscribe', { channel: chatUri });
   await settle();
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_task')}`;
-  const inner = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_inner')}`;
+  const worker = workerChat(uri, chatUri, 'toolu_task');
+  const inner = workerChat(uri, chatUri, 'toolu_inner');
   void client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn one' } } },
@@ -540,7 +549,7 @@ async function waiting(as = 'ahp-session:/ask', stoppable = false) {
   await ask('subscribe', { channel: lead });
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run a subagent' } } });
   await settle();
-  const worker = `ahp-chat://subagent/${Buffer.from(as, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
+  const worker = workerChat('ahp-session:/ask', lead, 'toolu_agent');
   await ask('subscribe', { channel: worker });
   wire.length = 0;
   /** Dispatch one action on a channel and let the host act on it. */
@@ -625,26 +634,28 @@ it('refuses a second confirmation of a call the first one answered, without aski
 });
 
 /*
- * A session answers to every spelling of its id, and so does a worker chat
- * built from one: the reference host answers a session under each identity it
- * has and derives that session's chats from each of them. The session's own
- * name is what its rows and its actions carry.
- * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
+ * A session answers to every spelling of its id, as the reference host
+ * answers a session under each identity it has; a worker chat is the one name
+ * the host minted for it from the root chat and the call, which the session's
+ * questions name.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L291
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMinting.ts#L43-L47
  */
-it('answers the session and its worker chat spelt from another scheme of its id', async () => {
+it('answers the session spelt from another scheme of its id, and its worker chat by the name minted for it', async () => {
   const { ask, lead, worker, send, refusals } = await waiting();
-  const elsewhere = `ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
   const session = await ask('subscribe', { channel: 'fake:/ask' }) as { snapshot: { resource: string; state: Bag } };
   expect(session.snapshot.resource).toBe('fake:/ask');
-  const chat = await ask('subscribe', { channel: elsewhere }) as { snapshot: { resource: string; state: Bag } };
-  expect(chat.snapshot.resource).toBe(elsewhere);
-  // The worker chat the session names is the one built from the URI it is held
-  // by, beside the lead's own two calls waiting to be allowed.
+  // A worker's name spelt from another scheme of the id is no name any record
+  // holds, so it is no chat, as VS Code's host finds no owner for it.
+  const elsewhere = `ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
+  await expect(ask('subscribe', { channel: elsewhere })).rejects.toMatchObject({ code: -32001 });
+  // The worker chat the session names, beside the lead's own two calls waiting
+  // to be allowed.
   const answer = await ask('subscribe', { channel: 'ahp-session:/ask' }) as { snapshot: { state: Bag } };
   const needed = (answer.snapshot.state.inputNeeded ?? []) as Bag[];
   expect(needed.map((one) => one.chat)).toEqual([worker, worker, lead, lead]);
-  // And an answer sent on that spelling reaches the worker's call.
-  await send(elsewhere, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: false, reason: 'denied' });
+  // And an answer sent on it reaches the worker's call.
+  await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: false, reason: 'denied' });
   expect(refusals()).toEqual([]);
   expect(told).toEqual([{ what: 'confirm', id: 'toolu_bash', value: false }]);
 });
@@ -674,8 +685,7 @@ it('says the session\'s URIs inside an action as the host holds them, to every c
   await creator('createSession', { channel: 'ahp-session:/ask', provider: 'fake' });
   // The chat the host minted for the session, read off its state.
   const minted = ((await creator('subscribe', { channel: 'ahp-session:/ask' })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
-  const workerOf = (session: string): string =>
-    `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
+  const workerOf = (session: string): string => workerChat(session, minted, 'toolu_agent');
   for (const client of [creator, other]) {
     await client('subscribe', { channel: 'ahp-session:/ask' });
     await client('subscribe', { channel: minted });
@@ -755,7 +765,7 @@ const saidBack = (chat: string): { turnId: unknown; clientSeq: unknown; rejectio
  */
 it('stops a worker that runs on after its lead turn, and says a stop back once it has ended, stopping nothing', async () => {
   const { ask, uri, lead } = await busyHost(true);
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const worker = workerChat(uri, lead, 'toolu_bg');
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: { id?: string } } } };
   const running = String(opened.snapshot.state.activeTurn?.id);
@@ -787,7 +797,7 @@ it('stops a worker that runs on after its lead turn, and says a stop back once i
  */
 it('ends a worker\'s turn on its stop when nothing can be asked to stop it, and refuses nothing', async () => {
   const { ask, uri, lead } = await busyHost();
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const worker = workerChat(uri, lead, 'toolu_bg');
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: { id?: string } } } };
   const running = String(opened.snapshot.state.activeTurn?.id);
@@ -806,7 +816,7 @@ it('ends a worker\'s turn on its stop when nothing can be asked to stop it, and 
 
 it('stops nothing when a stop on a running worker\'s chat names another turn, and says it back', async () => {
   const { ask, uri, lead } = await busyHost(true);
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const worker = workerChat(uri, lead, 'toolu_bg');
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await ask('subscribe', { channel: worker });
   await settle();
@@ -973,7 +983,7 @@ const chatOn = (row: Bag, chat: string): number | undefined =>
  */
 it('reads a session as running while its worker runs after the lead turn, and lists the worker on no row', async () => {
   const { ask, uri, lead, row, activity } = await busyHost();
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const worker = workerChat(uri, lead, 'toolu_bg');
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   const running = await said(row, (one) => activity(one.status) === 8);
   expect(activity(running.status)).toBe(8);
@@ -1013,7 +1023,7 @@ const readOn = async (ask: ReturnType<typeof asking>, channel: string): Promise<
 
 it('marks a worker chat unread when it ends, and leaves the session read', async () => {
   const { ask, uri, lead } = await busyHost();
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const worker = workerChat(uri, lead, 'toolu_bg');
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
   // The lead turn has ended, which marked the session unread; read it again.
@@ -1043,7 +1053,7 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
  */
 it('says nothing of its own when a worker chat\'s turn starts, and the chat reads unread', async () => {
   const { host, ask, uri, lead } = await busyHost();
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const worker = workerChat(uri, lead, 'toolu_bg');
   const before = await cursorOf(ask, lead);
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
@@ -1064,7 +1074,7 @@ it('says nothing of its own when a worker chat\'s turn starts, and the chat read
 
 it('says a worker chat unread when its turn ends, though nobody read it', async () => {
   const { host, ask, uri, lead } = await busyHost();
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const worker = workerChat(uri, lead, 'toolu_bg');
   const before = await cursorOf(ask, lead);
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
@@ -1088,7 +1098,7 @@ it('says a worker chat unread when its turn ends, though nobody read it', async 
 it('ends a failed worker\'s turn with errorType subagentFailed and the failure\'s words', async () => {
   for (const [why, message] of [['the model refused', 'the model refused'], [undefined, 'Subagent failed.']] as const) {
     const { host, ask, uri, lead } = await busyHost();
-    const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+    const worker = workerChat(uri, lead, 'toolu_bg');
     const before = await cursorOf(ask, lead);
     await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
     await settle();
@@ -1110,7 +1120,7 @@ it('ends a failed worker\'s turn with errorType subagentFailed and the failure\'
  */
 it('refuses an archive of a worker chat, as VS Code refuses a tool\'s chat', async () => {
   const { ask, uri, lead } = await busyHost();
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const worker = workerChat(uri, lead, 'toolu_bg');
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
   const before = wire.length;
@@ -1126,7 +1136,7 @@ it('refuses an archive of a worker chat, as VS Code refuses a tool\'s chat', asy
 
 it('leaves the session read when a worker chat is marked unread', async () => {
   const { ask, uri, lead } = await busyHost();
-  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  const worker = workerChat(uri, lead, 'toolu_bg');
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'spawn' } } });
   await settle();
   await ask('dispatchAction', { channel: uri, action: { type: 'session/isReadChanged', isRead: true } });

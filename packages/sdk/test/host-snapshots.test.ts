@@ -1114,9 +1114,12 @@ describe('the fields a client reads by name', () => {
     const worker = session.snapshot.state.chats.map((one) => one.resource).find((one) => one.includes('toolu_task')) as string;
     const opened = await client.handle({ method: 'subscribe', params: { channel: worker } }) as { snapshot: { state: Record<string, unknown> } };
     expect(opened.snapshot.state.origin).toEqual({ kind: 'tool', chat: chatUriFor('ahp-session:/kept'), toolCallId: 'toolu_task' });
+    // A worker name no record holds has no owner, and its subscribe is refused
+    // in the words VS Code's host refuses a channel it finds nothing for.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2199
     const none = worker.replace('toolu_task', 'toolu_none');
     await expect(client.handle({ method: 'subscribe', params: { channel: none } }))
-      .rejects.toMatchObject({ code: -32001, message: `No chat at ${none}` });
+      .rejects.toMatchObject({ code: -32001, message: `Resource not found: ${none}` });
   });
 
   it('archives one chat, and restores it, without archiving the session', async () => {
