@@ -709,7 +709,7 @@ export const serverFields = {
   steerReadBack: {
     type: 'string',
     enum: ['inTurn', 'ownTurn'],
-    description: 'How a chat read back after a restart shows a steering message the agent ran as a prompt of its own: inTurn inside the turn it steered, as it showed live; ownTurn as a turn of its own, as VS Code does.',
+    description: 'How a chat read back after a restart shows a steering message: inTurn inside the turn it steered, quoted, as it showed live; ownTurn as VS Code does, a turn of its own where the agent ran it as a prompt and no quote where it took it in at a tool call.',
   },
   backendBackgroundWork: {
     type: 'string',

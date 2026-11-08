@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync } 
 import { join } from 'node:path';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import { idOf } from '../sessions/catalog.js';
-import { steerPart } from '../sessions/steer.js';
+import { steerOf, steerPart } from '../sessions/steer.js';
 import { readJsonObject, writeJsonAtomic } from '../utils/jsonfile.js';
 import { bag, isRecord, reason, str } from '../utils/values.js';
 import type { Agent, SessionAt } from '../types/agent.js';
@@ -569,6 +569,16 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     });
   };
 
+  /**
+   * A transcript's turns without the steer parts its backend read back, for a
+   * host whose `steerReadBack` is `ownTurn`: VS Code's replay shows no quote of
+   * a steering message the agent took in at a tool call.
+   */
+  const withoutSteers = (turns: readonly WireTurn<Turn>[]): WireTurn<Turn>[] => turns.map((turn) => {
+    const parts = turn.responseParts.filter((part) => steerOf(part as unknown as Bag) === undefined);
+    return parts.length === turn.responseParts.length ? turn : { ...turn, responseParts: parts };
+  });
+
   const transcriptOf = async (
     agent: Agent,
     id: string,
@@ -583,7 +593,8 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
     // as the turns it keeps, as a nested session opens from its record.
     if (turns === undefined) return keptIn(session, chat).length > 0 ? interleaveLocalTurns(session, chat, []) : undefined;
     const records = recordedIn(session, chat);
-    const begun = asBegun(session, chat, begunWithOrigins(turns, records), records, agent.transcriptTurnIds === 'recorded');
+    const read = ctx.steerReadBack === 'ownTurn' ? withoutSteers(turns) : turns;
+    const begun = asBegun(session, chat, begunWithOrigins(read, records), records, agent.transcriptTurnIds === 'recorded');
     return interleaveLocalTurns(session, chat, begun.turns, begun.joined);
   };
 
