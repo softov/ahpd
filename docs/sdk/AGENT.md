@@ -83,7 +83,7 @@ const host = createHost({ path, agents: [shout()] });
 | `directories()` | The directories you will work in | optional |
 | `list()` | Sessions somebody can browse | optional |
 | `find(id, at?)` | One of those, on its own, for an id the host has not got | optional |
-| `transcript(id, at?, outputs?)` | One of those, as turns - a read, with nothing started | optional |
+| `transcript(id, at?, outputs?, kept?)` | One of those, as turns - a read, with nothing started | optional |
 | `subagents(id, turns?, at?)` | The worker chats one of those holds - a read, with nothing started | optional |
 | `protectedResources` | RFC 9728 metadata for anything you can be given a token for | optional |
 | `stateFile(id, directory)` | Where your own record of a session is, for the window to open or pack into a bug report | optional |
@@ -167,6 +167,14 @@ a call read back names its terminal again where `outputs.has(key)` says the
 output is kept. Both are absent where the session store keeps no folder for the
 session, and a `!` command's terminal or one opened with `start.terminals`
 needs neither: the host keeps what those print itself.
+
+**`kept` reads back what the host kept for `storeToolResultResource`.** Asked
+with the call's id (or the part's own) and the content's place you handed the
+store, it answers the `ContentRef` the host kept that content under, and nothing
+for content it kept nowhere, so a part read back after a restart names the
+bytes by the reference it named them by live, as VS Code's replay names a
+call's resources by what its session's database holds
+([mapSessionEvents.ts](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L617-L623)).
 
 **A turn is read back under the id your transcript gives it.** A turn a client
 sends has the client's id while it runs. A `!` command's turn is the host's and

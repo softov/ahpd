@@ -1013,8 +1013,20 @@ export interface Agent {
    * it keeps anything. A transcript holds what the model was sent and not what
    * a client was shown, so a backend that kept an output while the call ran
    * names it on the call read back, and the call shows its terminal again.
+   *
+   * `kept` reads back the reference the host kept a content under, by the call
+   * or part and the content's place that `storeToolResultResource` was handed,
+   * and nothing for content kept nowhere: a part read back names the bytes by
+   * the reference it named them by live, as VS Code's replay names a call's
+   * resources by what its session's database holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L617-L623
    */
-  transcript?(id: string, at?: SessionAt, outputs?: TerminalOutputs): Promise<WireTurn<Turn>[] | undefined>;
+  transcript?(
+    id: string,
+    at?: SessionAt,
+    outputs?: TerminalOutputs,
+    kept?: (toolCallId: string, ordinal: number) => Promise<ContentRef | undefined>,
+  ): Promise<WireTurn<Turn>[] | undefined>;
 
   /**
    * The worker chats one past session holds, read without starting anything.
