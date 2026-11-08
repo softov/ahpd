@@ -51,10 +51,15 @@ function resultText(content: unknown): string | undefined {
  */
 export async function turnsOf(sessionId: string, forkAnchorUuids?: Map<string, string>): Promise<WireTurn<Turn>[]> {
   let messages: unknown[];
+  // A read that fails is tried once more before the session reads as empty.
   try {
     messages = await getSessionMessages(sessionId, { includeSystemMessages: true });
   } catch {
-    return [];
+    try {
+      messages = await getSessionMessages(sessionId, { includeSystemMessages: true });
+    } catch {
+      return [];
+    }
   }
 
   const asked = askedIn(messages);
