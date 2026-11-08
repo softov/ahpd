@@ -11,6 +11,9 @@ import { piAgent } from '../src/agent.js';
 import { piSession } from '../src/session.js';
 import { fakePi, opened, root, settled as settledPi, streamed } from './fake-pi.js';
 
+/** The space a command is typed after, which keeps it out of a POSIX shell's history; PowerShell, Windows' shell here, keeps none. */
+const HISTORY_SPACE = process.platform === 'win32' ? '' : ' ';
+
 /*
  * What a pi session sends, read by the protocol's own schema.
  *
@@ -153,7 +156,7 @@ it('runs a person\'s command as a terminal call that names its terminal while it
    */
   await until(() => pty.started.length > 0);
   pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
-  await until(() => sent('chat/toolCallContentChanged') !== undefined && pty.typed.at(-1) === ' make preview\r');
+  await until(() => sent('chat/toolCallContentChanged') !== undefined && pty.typed.at(-1) === `${HISTORY_SPACE}make preview\r`);
 
   expect(sent('chat/toolCallStart')).toMatchObject({ toolName: 'terminal', displayName: 'Terminal', intention: 'make preview' });
   expect(sent('chat/toolCallReady')).toMatchObject({ invocationMessage: 'make preview', toolInput: 'make preview' });
