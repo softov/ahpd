@@ -3,6 +3,7 @@ import { sessionReducer } from '@microsoft/agent-host-protocol';
 import type { SessionState } from '@microsoft/agent-host-protocol';
 import { uriOf } from '../src/resources/fileuri.js';
 import {
+  startedBySend,
   SIGNED_IN, resetSdk, actions, claude, createHost, echo, emit, firstMessage, hello, machine, open, peer, sdk,
   sendAnswered, serving, settle, running,
 } from './support/host.js';
@@ -38,7 +39,7 @@ describe('what the harness offers', () => {
       { name: 'broken', status: 'failed', error: 'spawn ENOENT' },
     );
 
-    const { client, uri } = await running();
+    const { client, uri } = await running(startedBySend());
     expect(sdk.said).toEqual([]);
     const listed = async () => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
@@ -511,7 +512,8 @@ describe('what the harness offers', () => {
       params: { channel: 'ahp-root://', kind: 'userMessage', text: '/', offset: 1, provider: 'claude' },
     }) as { items: { insertText: string; attachment: Record<string, unknown> }[] };
     const meta = Object.fromEntries(found.items.map((one) => [one.insertText, (one.attachment._meta as Record<string, unknown>).isSkill]));
-    expect(meta).toEqual({ '/compact': undefined, '/writing': true });
+    // Every command is a skill, as VS Code's Claude discovery lists one.
+    expect(meta).toEqual({ '/compact': true, '/writing': true });
   });
 
   it('tells the client that a slash is worth asking about', async () => {

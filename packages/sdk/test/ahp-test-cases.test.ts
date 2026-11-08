@@ -105,7 +105,8 @@ beforeEach(() => { sdk.queries.length = 0; });
 /** A host, with nothing asked of it yet, and the one channel that opens with a state given it. */
 const aHost = (seeded?: { channel: string; initial: Record<string, unknown> }) => createHost({
   path: '/home/softov',
-  agents: [claude({ paths: ['/home/softov'] })],
+  // A CLI started by a send, so a case's session holds what its case gave it.
+  agents: [claude({ paths: ['/home/softov'], preset: { cliStart: 'send' } })],
   ...(seeded === undefined ? {} : {
     opening: (opened: string) => (opened === seeded.channel ? structuredClone(seeded.initial) : undefined),
   }),

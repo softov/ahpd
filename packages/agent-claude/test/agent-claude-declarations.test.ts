@@ -127,7 +127,7 @@ it('leaves the output style to the flag settings, which the CLI takes live', () 
 
 it('says what an option is when nothing named one', () => {
   expect(optionDefaults()).toEqual({
-    thinking: 'adaptive', hostTasks: true, hostTools: true, enableTasks: true, stopEnds: 'turn', dontAsk: true, portFailures: 'spawn', subagentsFrom: 'meta',
+    thinking: 'adaptive', hostTasks: true, hostTools: true, enableTasks: true, cliStart: 'open', stopEnds: 'turn', dontAsk: true, portFailures: 'spawn', subagentsFrom: 'meta',
     taskOutputFirstWaitMs: 500, taskOutputLongestWaitMs: 10_000, taskOutputQuietReads: 2, subagentTitleMax: 60, subagentStartTimeoutMs: 30_000,
     maxShellInitScript: 64 * 1024, maxTerminalOutputBytes: 10 * 1024 * 1024, keepFramed: 64, watchWaitMs: 300, fileMostBytes: 64 * 1024,
     ruleDepth: 32, ruleMost: 1000,

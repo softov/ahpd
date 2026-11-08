@@ -28,7 +28,7 @@ const OFFERED = [{ id: 'opus', name: 'Opus' }, { id: 'sonnet', name: 'Sonnet' }]
  */
 const sdk = vi.hoisted(() => ({ built: [] as (string | undefined)[] }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: (given: { options: { model?: string } }) => {
     sdk.built.push(given.options.model);

@@ -125,6 +125,8 @@ const open = (extra: Record<string, unknown> = {}): { session: ReturnType<typeof
     seedModels: MODELS,
     // The YAML the host hands a plugin, which a frontmatter is read with.
     parseYaml,
+    // The record that starts its CLI at the first send, as VS Code does.
+    preset: { cliStart: 'send' },
     ...extra,
   } as never);
   return { session, said, cwd };

@@ -129,6 +129,8 @@ const opened = (options: Record<string, unknown>): { session: ReturnType<typeof 
     chatUri: 'ahp-chat:/handshake',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-handshake-')),
     emit: (_channel: string, action: Bag) => { said.push(action); },
+    // A CLI started by a send, so each start is one a turn asked for.
+    preset: { cliStart: 'send' },
     ...options,
   } as never);
   return { session, said };
@@ -209,6 +211,7 @@ it('hands the SDK the bound, 120 seconds where nothing names one, and the plugin
   const agent = claude({
     paths: [mkdtempSync(join(tmpdir(), 'ahpd-handshake-'))],
     handshakeTimeoutMs: BOUND * 2,
+    preset: { cliStart: 'send' },
   });
   const made = await agent.create({
     uri: 'ahp-session:/plugin',

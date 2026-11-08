@@ -372,9 +372,9 @@ it('holds a turn open until the handle answers it', async () => {
     responseParts: [{ id: 't1:reply', kind: 'markdown', content: 'hello yourself' }],
   }]);
   // A part, then the turn it belongs to: a part after the end is a part of a
-  // turn nobody is holding any more.
+  // turn nobody is holding any more. The end marks the chat unread.
   const answered = actions(notes, CHAT).map((one) => one['type']);
-  expect(answered.slice(answered.indexOf('chat/responsePart'))).toEqual(['chat/responsePart', 'chat/turnComplete']);
+  expect(answered.slice(answered.indexOf('chat/responsePart'))).toEqual(['chat/responsePart', 'chat/turnComplete', 'chat/isReadChanged']);
 
   // The second line is the turn as it ended, and it is what a restart reads.
   const kept = lines(configDir, 'one');
@@ -1429,10 +1429,11 @@ it('shows the back session as one subagent call in a turn a steer goes into', as
   expect(parts[1]).toEqual({ kind: 'systemNotification', content: 'and this', _meta: { 'ahpd.steer': 's1' } });
   expect(parts[2]).toMatchObject({ kind: 'markdown', content: 'done' });
   const kinds = actions(notes, CHAT).map((one) => one['type']);
-  expect(kinds.slice(-3)).toEqual([
+  expect(kinds.slice(-4)).toEqual([
     'chat/toolCallComplete',
     'chat/responsePart',
     'chat/turnComplete',
+    'chat/isReadChanged',
   ]);
   // The steer's quote and the reply; the call is said by its own actions.
   expect(kinds.filter((one) => one === 'chat/responsePart')).toHaveLength(2);

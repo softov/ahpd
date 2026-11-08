@@ -80,6 +80,11 @@ export const hello = (versions: unknown[], extra: Record<string, unknown> = {}) 
 });
 
 /** A connected client with one session, subscribed to both its channels. */
+/** A host whose Claude sessions start their CLI at their first send, as VS Code's provisional session does. */
+export const startedBySend = (path = '/home/softov'): Partial<HostOptions> => ({
+  agents: [claude({ paths: [path], preset: { cliStart: 'send' } })],
+});
+
 export async function running(over: Partial<HostOptions> = {}) {
   const host = serving('/home/softov', [], over);
   const p = peer();

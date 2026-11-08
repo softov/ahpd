@@ -181,7 +181,7 @@ describe.skipIf(!posix)('an async command', () => {
       id: `shell:${id}`,
       label: 'sleep 1; echo done',
       command: 'sleep 1; echo done',
-      terminal: expect.stringMatching(/^ahp-terminal:\/\/shell\//u),
+      terminal: expect.stringMatching(/^agenthost-terminal:\/\/shell\//u),
       _meta: { 'vscode.stopBackgroundWork': true },
     });
     await settle();

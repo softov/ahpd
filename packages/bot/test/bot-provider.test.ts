@@ -1330,7 +1330,7 @@ it('answers a read with the record alone, and opens nothing for the reader', asy
 it('opens a chat with a bot by a create, the person\'s own, titled and placed as the bot', async () => {
   const { host, bots, sessions } = made({
     soft: ['bot:*', 'session:create'],
-    ana: ['bot:get', 'session:create', 'session:read', 'session:write'],
+    ana: ['bot:get', 'chat:*', 'session:create', 'session:read', 'session:write'],
   });
   const soft = await as(host, 'soft');
   await write(soft, 'bot://motion', { name: 'Motion' }, { createOnly: true });
@@ -1338,6 +1338,13 @@ it('opens a chat with a bot by a create, the person\'s own, titled and placed as
   const ana = await as(host, 'ana');
   const chat = 'ahp-session:/ana-and-motion';
   got(await call(ana, 'createSession', { channel: chat, provider: 'bot-chat', config: { bot: 'motion' } }));
+  // A session a client made is listed once its first message is sent.
+  const opened = got(await call(ana, 'subscribe', { channel: chat })) as { snapshot: { state: Bag } };
+  got(await call(ana, 'dispatchAction', {
+    channel: String(opened.snapshot.state['defaultChat']),
+    action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } },
+  }));
+  await vi.waitFor(async () => { expect(await row(ana, chat)).toBeDefined(); });
   expect(await row(ana, chat)).toMatchObject({
     title: 'Motion',
     workingDirectories: [uriOf(join(bots, 'motion'))],

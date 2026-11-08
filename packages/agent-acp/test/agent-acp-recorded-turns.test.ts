@@ -10,7 +10,6 @@ import { uriOf } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { fileSessions } from '../../sdk/src/sessions/sessions.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
-import { startedNow } from '../../sdk/test/support/started.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { replayedTurns } from '../src/transcript.js';
 import { anyone, signIn } from './people.js';
@@ -59,7 +58,7 @@ it.each([true, false])('records the first valid assistant messageId once per cal
     trusted: () => true, workingDirectory: path,
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS, onTurnRecorded: recorded,
   };
-  const session: Session = startedNow(agent.create(start));
+  const session: Session = await agent.create(start);
   closed.push(async () => { session.close(); });
   for (const turn of ['caller-one', 'caller-two']) {
     session.sendMessage(turn, turn);

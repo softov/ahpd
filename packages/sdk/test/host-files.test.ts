@@ -11,6 +11,7 @@ import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
 import type { HostOptions, WorkspaceFiles } from '../src/types/host.js';
 import {
+  startedBySend,
   resetSdk, actions, builtServer, claude, complete, createHost, emit, firstMessage, hello, hostTools, list, machine, open,
   peer, read, resolve, sendAnswered, serving, sessionQueries, settle, running, wrote,
 } from './support/host.js';
@@ -907,7 +908,8 @@ describe('more than one directory', () => {
    * would be a chat granting itself access to a folder nobody chose.
    */
   const wide = async () => {
-    const host = serving('/home/softov');
+    // Each chat's CLI starts at its first send, so a test counts the ones its sends start.
+    const host = serving('/home/softov', [], startedBySend());
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], EDITOR_WINDOW));

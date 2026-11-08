@@ -24,6 +24,7 @@ import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import {
+  startedBySend,
   resetSdk, actions, builtServer, claude, createHost, echo, emit, firstMessage, hello, hostTools,
   machine, peer, sdk, sendAnswered, serving, sessionQueries, settle, running,
 } from './support/host.js';
@@ -1402,8 +1403,8 @@ describe('tools a client contributes', () => {
   };
 
   /** A running session with one client that says it can run `openFile`. */
-  async function providing(tools: unknown[] = [OPEN_FILE], clientToolTimeoutMs?: number) {
-    const held = await running(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs });
+  async function providing(tools: unknown[] = [OPEN_FILE], clientToolTimeoutMs?: number, over: Partial<HostOptions> = {}) {
+    const held = await running({ ...over, ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }) });
     held.client.handle({
       method: 'dispatchAction',
       params: {
@@ -1424,7 +1425,7 @@ describe('tools a client contributes', () => {
   }> | undefined)?.client?.tools ?? [];
 
   it('offers what a client announced to the model, under a name of its own', async () => {
-    const { client, chatUri } = await providing();
+    const { client, chatUri } = await providing([OPEN_FILE], undefined, startedBySend());
     // In the options of the CLI the first send starts: a client announces what
     // it provides when it opens the session, before anything is sent, and the
     // session declares nothing to a CLI it has not started.

@@ -310,7 +310,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   const automations = memoryAutomations();
   const host = createHost({
     path: '/home/softov',
-    agents: [claude({ paths: ['/home/softov'] }), echo({ path: '/home/softov', pace: 0 })],
+    agents: [claude({ paths: ['/home/softov'], preset: { cliStart: 'send' } }), echo({ path: '/home/softov', pace: 0 })],
     resources: fileResources(),
     terminals: shellTerminals(),
     automations,
@@ -761,11 +761,6 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     'ChatState /activeTurn/responseParts/N/request undeclared key `_meta`': 'Being asked',
     'SessionInputNeededSetAction /request/request undeclared key `_meta`': 'Being asked',
     'SessionState /inputNeeded/N/request undeclared key `_meta`': 'Being asked',
-    // A property a chat may set for itself, marked as VS Code's agents mark one.
-    'ResolveSessionConfigResult /schema/properties/permissionMode undeclared key `chatMutable`': 'Commands',
-    'ResolveSessionConfigResult /schema/properties/permissions undeclared key `chatMutable`': 'Commands',
-    'SessionState /config/schema/properties/permissionMode undeclared key `chatMutable`': 'Commands',
-    'SessionState /config/schema/properties/permissions undeclared key `chatMutable`': 'Commands',
   };
 
   /*
