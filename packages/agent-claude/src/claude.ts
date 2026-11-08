@@ -438,7 +438,6 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L347-L368
        */
       sensitiveEditLocations: {
-        scope: 'session',
         type: 'array',
         title: 'Sensitive Edit Locations',
         description: 'Workspace-relative customization locations whose edits always require confirmation.',
