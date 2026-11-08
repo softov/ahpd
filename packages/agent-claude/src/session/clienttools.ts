@@ -48,7 +48,8 @@ const namedBy = (extra: unknown): string | undefined => {
 
 /**
  * The in-process server a client's tools ride, by VS Code's Claude's name for
- * it: the CLI calls one of them `mcp__client__<name>`.
+ * it: the CLI calls one of them `mcp__client__<clientId>__<name>`, by the name
+ * the host binds a client's tool under.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L80-L85
  */
 export const CLAUDE_CLIENT_MCP_SERVER_NAME = 'client';

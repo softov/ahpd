@@ -2,7 +2,7 @@ import { posix } from 'node:path';
 import { managedRuleOf, normalizeDomainPattern } from '@ahpd/sdk';
 import type { Bag, Start } from '@ahpd/sdk';
 import type { Settings } from '@anthropic-ai/claude-agent-sdk';
-import { CLAUDE_CLIENT_MCP_SERVER_NAME, CLAUDE_SERVER_TOOL_MCP_SERVER_NAME, isHostInjectedMcpServerName } from './session/clienttools.js';
+import { CLAUDE_SERVER_TOOL_MCP_SERVER_NAME, isHostInjectedMcpServerName } from './session/clienttools.js';
 import { bag, list } from './session/common.js';
 
 /*
@@ -151,12 +151,21 @@ const mcpToolRule = (server: string, tool: string): string[] =>
 /**
  * The `ask` rules naming each tool the operator's eligibility sets `false`, by
  * Claude Code's names for it, VS Code's per-tool translation for a grammar that
- * names a tool. A name the host reads as a backend's own tool is the CLI's tool
- * of that name and a client's tool of it, which the CLI calls
- * `mcp__client__<name>`; `ahp/<name>` is the host's tool, `mcp__host__<name>`;
- * `<server>/<tool>` is `mcp__<server>__<tool>`; and `<server>/*` is
- * `mcp__<server>__*` where no key keeps a tool of the server eligible, an ask
- * rule holding over every allow rule.
+ * names a tool. The keys are the setting's: a tool's name is the CLI's own tool
+ * of that name; `ahp/<name>` is the host's tool, which the CLI calls
+ * `mcp__host__<name>`; `<server>/<tool>` is `mcp__<server>__<tool>`; and
+ * `<server>/*` is `mcp__<server>__*` where no key keeps a tool of the server
+ * eligible, an ask rule holding over every allow rule.
+ *
+ * A tool's name names a client's tool of that name too, as VS Code's setting
+ * names its window's tools and the window hands them to an agent host by those
+ * names, and as the host reads a client's call by the name its client
+ * announced. The CLI calls a client's tool `mcp__client__<clientId>__<name>`,
+ * one name for each client offering it, and a session's clients come and go
+ * under a policy tier the CLI is given once, as it starts; so that call stays
+ * with the host's check on the question the CLI raises for it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/tools/languageModelToolsService.ts#L1379-L1410
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostToolUtils.ts#L24-L27
  *
  * Claude Code asks about a call an ask rule names in every permission mode,
  * `bypassPermissions` included, so the rules alone keep each such call asking.
@@ -170,7 +179,7 @@ const toolRulesOf = (eligible: Readonly<Record<string, boolean>>): string[] =>
     const slash = key.indexOf('/');
     if (slash === -1) {
       if (!/^[\w-]+$/.test(key)) return [];
-      if (!key.startsWith('mcp__')) return [key, ...mcpToolRule(CLAUDE_CLIENT_MCP_SERVER_NAME, key)];
+      if (!key.startsWith('mcp__')) return [key];
       const [server = '', tool = '', ...more] = key.slice('mcp__'.length).split('__');
       return more.length === 0 ? mcpToolRule(server, tool) : [];
     }

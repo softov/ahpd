@@ -114,14 +114,16 @@ it('hands the bypass lock as Claude Code\'s own, and the eligibility\'s asks as 
   expect(claudeManagedSettingsOf({ permissions: { disableBypassPermissionsMode: 'disable' } }, CWD))
     .toEqual({ permissions: { disableBypassPermissionsMode: 'disable' } });
   expect(claudeManagedSettingsOf({ eligibleForAutoApproval: { Bash: false } }, CWD))
-    .toEqual({ permissions: { ask: ['Bash', 'mcp__client__Bash'] } });
+    .toEqual({ permissions: { ask: ['Bash'] } });
 });
 
 /*
- * The host reads a key as a backend's own tool or a client's by its name, the
- * host's tool as `ahp/<name>` and an MCP server's as `<server>/<tool>`, and
- * the CLI names them `<name>`, `mcp__client__<name>`, `mcp__host__<name>` and
- * `mcp__<server>__<tool>`.
+ * The setting's keys, a tool's own name, the host's tool as `ahp/<name>` and an
+ * MCP server's as `<server>/<tool>` or `<server>/*`, which the CLI names
+ * `<name>`, `mcp__host__<name>`, `mcp__<server>__<tool>` and
+ * `mcp__<server>__*`; a client's tool of a key's name is the CLI's
+ * `mcp__client__<clientId>__<name>` for each client offering it, which the
+ * host's check keeps.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L31-L42
  * https://code.claude.com/docs/en/permissions#mcp
  */
@@ -136,7 +138,7 @@ it('asks about each tool the eligibility sets false, by each name Claude Code gi
       WebFetch: true,
     },
   }, CWD)?.permissions?.ask).toEqual([
-    'runInTerminal', 'mcp__client__runInTerminal', 'mcp__host__create_session', 'mcp__github__create_issue', 'mcp__linear__*', 'mcp__notes__append',
+    'runInTerminal', 'mcp__host__create_session', 'mcp__github__create_issue', 'mcp__linear__*', 'mcp__notes__append',
   ]);
 });
 
