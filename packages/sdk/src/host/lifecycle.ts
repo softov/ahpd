@@ -109,8 +109,11 @@ export interface Lifecycle {
   ): Promise<void>;
   /** The move `set_workspace` asked for, once the turn that asked is over. */
   moveSession(uri: string, move: Move): Promise<void>;
-  /** Relaunch one chat, in the directories it now has, as the same conversation, as VS Code relaunches a chat's provider. */
-  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void;
+  /**
+   * Relaunch one chat, in the directories it now has, as the same conversation, as VS Code relaunches a chat's
+   * provider; answered once the chat that takes its place is held.
+   */
+  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): Promise<void>;
   /** The name a backend is handed for one chat, which is the id a restart resumes it by. */
   chatIdOf(uri: string, chatUri: string, own: string | undefined): string | undefined;
   /** The backend's own copy of one chat's conversation disposed, as VS Code's provider disposes a chat. */
@@ -1211,8 +1214,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * to it would be a worse answer than refusing. `directory` is the folder a
    * moved chat worked in, which it goes on working in under the session that
    * holds it now. The chat keeps its place among its session's chats.
+   *
+   * Answered once the start is, so a caller reads the chat that took this
+   * one's place after it is held, and a start that fails rejects, which ends
+   * the turn that waited on it.
    */
-  const relaunchChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection, directory?: string): void => {
+  const relaunchChat = async (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection, directory?: string): Promise<void> => {
     const held = sessions.get(uri);
     const chat = held?.chats.get(chatUri);
     if (held === undefined || chat === undefined) return;
@@ -1233,7 +1240,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     chat.close('stopping');
     held.chats.delete(chatUri);
     byChat.drop(chatUri);
-    spawn(
+    await spawn(
       getProviderForChat(held, chatUri),
       uri,
       chatUri,
@@ -1869,17 +1876,19 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * A chat moved since its runtime was launched starts again under the
      * session that holds it now, at its next turn boundary, which this is, as
      * the reference host relaunches a moved chat's runtime there; the turn
-     * then goes to the chat the relaunch brought back.
+     * then goes to the chat the relaunch brought back, once it holds one.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L811
      */
     const moved = ctx.chatRelaunches.get(session.chatUri);
     if (moved !== undefined) {
       ctx.chatRelaunches.delete(session.chatUri);
       const owner = byChat.get(session.chatUri)?.uri;
-      if (owner !== undefined) relaunchChat(owner, session.chatUri, moved.credentials, moved.sender, moved.directory);
-      const back = byChat.get(session.chatUri)?.chat;
-      if (back === undefined) throw new Error(`${session.chatUri} did not start again`);
-      return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
+      if (owner === undefined) throw new Error(`${session.chatUri} did not start again`);
+      return relaunchChat(owner, session.chatUri, moved.credentials, moved.sender, moved.directory).then(() => {
+        const back = byChat.get(session.chatUri)?.chat;
+        if (back === undefined) throw new Error(`${session.chatUri} did not start again`);
+        return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
+      });
     }
     // Carried to another host where this session runs on one, and the host
     // there runs the command a start's text names.

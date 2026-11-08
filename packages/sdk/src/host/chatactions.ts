@@ -938,19 +938,18 @@ export function chatAction(
        * only one where starting it again is safe: a send that arrives during
        * a turn waits its turn, and the sets are compared again at the next.
        * Between turns is nothing of the session running but the turn this
-       * send starts, whose start is said above.
+       * send starts, whose start is said above. The chat that was running is
+       * closed, and the turn goes to the one that took its place once the
+       * start holds it; a start that fails ends the turn.
        */
-      let live = session;
       const between = owner !== undefined && [...owner.chats.keys()].every((chat) => {
         const active = ctx.stateOf(chat)?.activeTurn as Bag | null | undefined;
         return active === undefined || active === null || (chat === session.chatUri && active.id === turnId);
       });
-      if (owner !== undefined && between && pluginsMoved(session.uri, session.chatUri)) {
-        relaunchChat(session.uri, session.chatUri, conn.tokensFor(getProviderForChat(owner, session.chatUri).provider), connection);
-        // The chat that was running is closed and this is the one that took its
-        // place, so the turn below goes to the agent listening now.
-        live = owner.chats.get(session.chatUri) ?? session;
-      }
+      const relaunched = owner !== undefined && between && pluginsMoved(session.uri, session.chatUri)
+        ? () => relaunchChat(session.uri, session.chatUri, conn.tokensFor(getProviderForChat(owner, session.chatUri).provider), connection)
+          .then(() => owner.chats.get(session.chatUri) ?? session)
+        : undefined;
       const provider = owner?.agent.provider ?? 'This provider';
       /*
        * Its preparation before its prompt goes out: the chats it attaches read
@@ -967,9 +966,11 @@ export function chatAction(
         break;
       }
       // Its start is the client's, said above, so nothing more is said for it.
+      const begin = (live: Session): string | undefined | Promise<string | undefined> =>
+        beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, attached.attachments,
+          () => undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true);
       beginTurn(
-        () => beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, attached.attachments,
-          () => undefined, () => ctx.cancelledTurns.get(session.chatUri)?.has(turnId) === true),
+        () => (relaunched === undefined ? begin(session) : relaunched().then(begin)),
         (why) => { unsent(session.chatUri, 'rejected', 'rejected', why, since); },
         (why) => { unsent(session.chatUri, 'error', 'sendFailed', why, since); },
       );
