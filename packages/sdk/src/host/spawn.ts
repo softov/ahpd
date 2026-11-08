@@ -22,7 +22,7 @@ import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
 import {
   alwaysAsks, asksForTool, confirmationOptions, getAutoApproval as autoApprovalOf, isDeniedByPermissions, isForbiddenSnapshotWrite, managedDecision,
-  mcpServerOf, permissionRulesOf,
+  permissionRulesOf,
 } from './permissions.js';
 import type { ToolApproval } from './permissions.js';
 import { vscodeRootProperties } from '../vscoderootconfig.js';
@@ -544,11 +544,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      * `eligibleForAutoApproval` names.
      */
     const checked = options.managedRules !== 'handed';
-    // The operator's rule read against the tools this host offered the chat, which the rule names `host/<name>`, and
-    // an MCP server's tool against the server its contributor names among the session's customizations.
+    // The operator's rule read by the call's contributor: the tools this host offered the chat and runs itself, which
+    // the rule names `host/<name>`, and an MCP server's tool against the server its contributor names among the
+    // session's customizations.
     const eligible = !checked || toolName === undefined || !alwaysAsks(options.eligibleForAutoApproval, toolName,
-      ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
-      mcpServerOf(contributor, ctx.stateOf(session)?.customizations));
+      ctx.boundTools(session, chat, serving?.provider).filter((one) => one.owner === undefined).map((one) => one.definition.name),
+      contributor, ctx.stateOf(session)?.customizations);
     const managedSays = checked ? managedDecision(managedSettings, approval, subCommands) : undefined;
     const managed = signal.managedApprovalRequired === true || managedSays === 'ask' || !eligible;
     if (managedSays === 'deny' || isForbiddenSnapshotWrite(approval) || isDeniedByPermissions(approval, subCommands)) {

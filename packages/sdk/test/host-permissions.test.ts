@@ -19,7 +19,7 @@ import { fileResources } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
-import type { HostOptions } from '../src/types/host.js';
+import type { HostOptions, HostTool } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Session } from '../src/types/session.js';
 import type { Users } from '../src/types/users.js';
@@ -191,6 +191,30 @@ it('names an MCP tool a call carries no contributor for by its full tool name al
   const full = await serving(asking([], 'mcp__my_tracker__create'), { eligibleForAutoApproval: { 'mcp__my_tracker__create': false } });
   expect((await full.turn('t1')).options).toEqual(ONCE);
   await full.host.close();
+});
+
+/*
+ * A call no client and no MCP server of the session contributes is a
+ * server-side tool's, as AHP has a call say whose tool it runs, and one of the
+ * tools this host offered is `host/<name>` to the rule, read from the call's
+ * tool name as an MCP client names a server's tool: a backend that reaches the
+ * host's tools through a server of its own is asked as one that calls them by
+ * name.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1321-L1346
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+ */
+it('reads a host tool on a call no client and no MCP server contributes, whatever server its backend names it on', async () => {
+  const notify: HostTool = { definition: { name: 'notify', inputSchema: { type: 'object', properties: {} } }, run: () => 'sent' };
+  const named = { eligibleForAutoApproval: { 'host/notify': false }, tools: [notify] };
+  const prefixed = await serving(asking([], 'mcp__host__notify'), named);
+  expect((await prefixed.turn('t1')).options).toEqual(ONCE);
+  await prefixed.host.close();
+  const bare = await serving(asking([], 'notify'), named);
+  expect((await bare.turn('t1')).options).toEqual(ONCE);
+  await bare.host.close();
+  const other = await serving(asking([], 'mcp__host__notify'), { eligibleForAutoApproval: { 'host/ping': false }, tools: [notify] });
+  expect((await other.turn('t1')).options).toEqual(STANDARD);
+  await other.host.close();
 });
 
 it('keeps an Allow in this Session answer in the session\'s permissions, and answers the next question about the tool itself', async () => {
