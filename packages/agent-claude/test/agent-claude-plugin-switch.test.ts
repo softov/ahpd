@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, expect, it, vi } from 'vitest';
+import { uriOf } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 
 /*
@@ -16,10 +17,11 @@ import type { Bag } from '@ahpd/sdk';
  */
 
 const sdk = vi.hoisted(() => {
-  /** What the CLI ships, as its reload describes them. */
+  /** What the CLI ships, and a marketplace plugin at its root, as its reload describes them. */
   const ALL = [
     { name: 'cc-plugin-agents-md', path: 'builtin', source: 'cc-plugin-agents-md@builtin' },
     { name: 'cc-plugin-telemetry', path: 'builtin', source: 'cc-plugin-telemetry@builtin' },
+    { name: 'acme', path: '/plugins/acme', source: 'acme@market' },
   ];
   const held = {
     ALL,
@@ -194,6 +196,23 @@ it('answers false when the CLI did not take the switch', async () => {
   // says it is still loading the plugin.
   expect(containerOf(lastList(said), 'cc-plugin-agents-md')).not.toHaveProperty('enablement');
   expect(said.filter((one) => one.type === 'session/customizationsChanged')).toHaveLength(before);
+  await session.close();
+});
+
+/*
+ * A plugin's row is id'd by its root's URI and named by its `enabledPlugins`
+ * id, as VS Code's Claude discovery projects one, and the switch is the
+ * setting under that name.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L65-L88
+ */
+it('switches a plugin by the enabledPlugins id its row is named by, the row id\'d by its root\'s URI', async () => {
+  const { session, said } = await opened();
+  const root = uriOf('/plugins/acme');
+  expect(session.customizations().find((one) => one.id === root)).toMatchObject({ type: 'plugin', uri: root, name: 'acme@market' });
+
+  expect(await session.setCustomizationEnabled(root, false)).toBe(true);
+  expect(sdk.settings[0]).toEqual({ outputStyle: 'Concise', enabledPlugins: { 'acme@market': false } });
+  expect(lastList(said).find((one) => one.id === root)).toMatchObject({ name: 'acme@market', enablement: [{ kind: 'session', enabled: false }] });
   await session.close();
 });
 

@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest';
+import { uriOf } from '../src/resources/fileuri.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /*
@@ -275,8 +276,9 @@ it('reads the plugins the control protocol reports, and projects one as a contai
   await settle(10);
   const changed = actions(p).filter((one) => one.action.type === 'session/customizationsChanged').at(-1);
   const customizations = changed?.action.customizations as { type: string; uri: string; name: string; version?: string }[] | undefined;
+  // Its root's URI, and named by its `enabledPlugins` id, the name where the CLI reports no source.
   expect(customizations?.find((one) => one.type === 'plugin')).toMatchObject({
-    uri: '/plugins/acme',
+    uri: uriOf('/plugins/acme'),
     name: 'acme',
     version: '1.0.0',
   });

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
@@ -6,7 +7,7 @@ import { protectedResource, urlOf } from '../mcp.js';
 import { flagSettingsOf } from '../options.js';
 import { SDK_DEFAULT_MODEL_VALUE, thinkingFor } from './config.js';
 import { isHostInjectedMcpServerName } from './clienttools.js';
-import { customizationsOf, rootOf } from './customizations.js';
+import { customizationsOf, pluginIdOf, pluginUriOf } from './customizations.js';
 import { configDirOf, diskBoundsOf, diskOf, managedDirOf } from './disk.js';
 import { createClaudeCustomizationWatcher } from './watch.js';
 import type { Published } from './customizations.js';
@@ -40,7 +41,7 @@ export interface Servers {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1084
    */
   reconcileMcpServerEnablement: () => Promise<void>;
-  /** The plugins this session switched, by source, as the CLI's `enabledPlugins` setting takes them. */
+  /** The plugins this session switched, by `enabledPlugins` id, as the CLI's `enabledPlugins` setting takes them. */
   enabledPlugins: () => Record<string, boolean>;
   /** Stop the watch of the Claude folders. */
   unwatch: () => void;
@@ -108,7 +109,8 @@ export function createServers(ctx: SessionContext): Servers {
   const reported: { init: Bag; mcp: unknown[]; skills: unknown[] } = { init: {}, mcp: [], skills: [] };
 
   /**
-   * What this session has decided about each plugin, by id.
+   * What this session has decided about each plugin, by its container's id,
+   * with the plugin as the CLI described it.
    *
    * Two things are made of it. The ones it switched off are the rows the CLI
    * has stopped reporting and the session still lists - a switch here is an
@@ -122,7 +124,10 @@ export function createServers(ctx: SessionContext): Servers {
    * no opinion about the ones it moved before, and the CLI would load them
    * again.
    */
-  const switched = new Map<string, { name: string; source: string; enabled: boolean }>();
+  const switched = new Map<string, { plugin: Bag; enabled: boolean }>();
+
+  /** The plugins the CLI reported last, as it described each. */
+  let lastPlugins: Bag[] = [];
 
   /**
    * The disk as it is now, read again each time so a file written since is the
@@ -149,9 +154,8 @@ export function createServers(ctx: SessionContext): Servers {
    */
   const laid = (plugins: unknown[]): void => {
     const handed = new Set((ctx.options.plugins ?? []).map((one) => one.path));
-    const off = [...switched.values()]
-      .filter((one) => !one.enabled)
-      .map((one) => ({ name: one.name, path: one.source, source: one.source }));
+    lastPlugins = plugins.map((raw) => bag(raw));
+    const off = [...switched.values()].filter((one) => !one.enabled).map((one) => one.plugin);
     const was = JSON.stringify(ctx.customizations);
     ctx.customizations = customizationsOf(reported.init, reported.mcp, reported.skills, wanted, plugins, handed, off, diskNow(), stopRequested);
     if (JSON.stringify(ctx.customizations) !== was) {
@@ -322,12 +326,13 @@ export function createServers(ctx: SessionContext): Servers {
    * Switch a plugin this session offered, the CLI's own built-ins included.
    *
    * The CLI has no call for it. What it takes is an `enabledPlugins` setting,
-   * named by the source a plugin is keyed under - `<name>@<marketplace>`, and
-   * `<name>@builtin` for one the CLI ships itself - and it reads that when it
-   * loads its plugins, so the switch is the setting and then a reload to make
-   * it now. The reload is also the answer: a plugin gone from the list is one
-   * that stopped being loaded, and one still in it is a switch the CLI did not
-   * take, which is what a person is entitled to be told.
+   * named by the plugin's `enabledPlugins` id - `<name>@<marketplace>`, and
+   * `<name>@builtin` for one the CLI ships itself - which the plugin's row is
+   * named by, and it reads that when it loads its plugins, so the switch is the
+   * setting and then a reload to make it now. The reload is also the answer: a
+   * plugin gone from the list is one that stopped being loaded, and one still
+   * in it is a switch the CLI did not take, which is what a person is entitled
+   * to be told.
    *
    * The rest of the flag settings go with it rather than the one setting
    * alone: `applyFlagSettings` merges into the layer, and a set written from
@@ -339,21 +344,31 @@ export function createServers(ctx: SessionContext): Servers {
    */
   const switchPlugin = async (id: string, enabled: boolean): Promise<boolean> => {
     const held = ctx.customizations.find((entry) => str(entry.id) === id);
-    const name = str(held?.name);
-    const source = str(held?.uri);
-    if (held === undefined || str(held.type) !== 'plugin' || name === undefined || name === '' || source === undefined || source === '')
+    const key = str(held?.name);
+    if (held === undefined || str(held.type) !== 'plugin' || key === undefined || key === '')
       return false;
+    /*
+     * The plugin as the CLI described it, as this session kept it at an
+     * earlier switch, or, for a row no CLI of this session has described, as
+     * the row says it: its root's path, or the CLI's own `builtin`.
+     */
+    const plugin = lastPlugins.find((one) => pluginUriOf(one) === id) ?? switched.get(id)?.plugin ?? {
+      name: key,
+      source: key,
+      path: id.startsWith('file:') ? fileURLToPath(id) : 'builtin',
+      ...(str(held.version) !== undefined ? { version: str(held.version) } : {}),
+    };
     const to = ctx.query;
     if (to === undefined) {
-      switched.set(id, { name, source, enabled });
+      switched.set(id, { plugin, enabled });
       if (enabled) delete held.enablement;
       else held.enablement = [{ kind: 'session', enabled: false }];
       ctx.emit('session', { type: 'session/customizationUpdated', customization: { ...held } });
       return true;
     }
     const decided = Object.fromEntries([
-      ...[...switched.values()].map((one) => [one.source, one.enabled] as const),
-      [source, enabled] as const,
+      ...[...switched.values()].map((one) => [pluginIdOf(one.plugin), one.enabled] as const),
+      [key, enabled] as const,
     ]);
     try {
       await to.applyFlagSettings({ ...flagSettingsOf(ctx.values), enabledPlugins: decided });
@@ -366,10 +381,10 @@ export function createServers(ctx: SessionContext): Servers {
       .catch(() => undefined);
     if (plugins === undefined)
       return false;
-    const loading = plugins.some((raw) => rootOf(bag(raw)) === source);
+    const loading = plugins.some((raw) => pluginIdOf(bag(raw)) === key);
     if (enabled ? !loading : loading)
       return false;
-    switched.set(id, { name, source, enabled });
+    switched.set(id, { plugin, enabled });
     laid(plugins);
     return true;
   };
@@ -762,7 +777,7 @@ export function createServers(ctx: SessionContext): Servers {
     reloadPlugins,
     provisionalCustomizations,
     reconcileMcpServerEnablement,
-    enabledPlugins: () => Object.fromEntries([...switched.values()].map((one) => [one.source, one.enabled])),
+    enabledPlugins: () => Object.fromEntries([...switched.values()].map((one) => [pluginIdOf(one.plugin), one.enabled])),
     unwatch: () => {
       unwatch?.();
       unwatch = undefined;

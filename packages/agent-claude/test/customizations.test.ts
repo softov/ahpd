@@ -65,16 +65,22 @@ const agentNames = (out: Bag[]): string[] => listed(out).map((one) => String(one
 const agentNamed = (out: Bag[], name: string): Bag | undefined => listed(out).find((one) => one.name === name);
 
 describe('where a customization came from', () => {
-  it('projects a reported plugin as its own container with the real path, name and version', () => {
-    const out = customizationsOf({}, [], [], undefined, [PLUGIN]);
+  /*
+   * A plugin's container is id'd by its root's URI and named by its
+   * `enabledPlugins` id, the source the SDK reports, as VS Code's Claude
+   * discovery projects a plugin the session loaded.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L65-L88
+   */
+  it('projects a reported plugin as its own container, id\'d by its root\'s URI and named by its enabledPlugins id', () => {
+    const out = customizationsOf({}, [], [], undefined, [{ ...PLUGIN, source: 'acme@market' }]);
     expect(out).toHaveLength(1);
-    // Its id is its uri, as VS Code's agents mint one.
-    expect(out[0]).toMatchObject({ type: 'plugin', id: '/plugins/acme', uri: '/plugins/acme', name: 'acme', version: '1.0.0' });
+    const root = uriOf('/plugins/acme');
+    expect(out[0]).toMatchObject({ type: 'plugin', id: root, uri: root, name: 'acme@market', version: '1.0.0' });
   });
 
   it('leaves a reported plugin version off when the manifest declared none', () => {
     const out = customizationsOf({}, [], [], undefined, [{ name: 'acme', path: '/plugins/acme' }]);
-    expect(out[0]).toMatchObject({ type: 'plugin', uri: '/plugins/acme', name: 'acme' });
+    expect(out[0]).toMatchObject({ type: 'plugin', uri: uriOf('/plugins/acme'), name: 'acme' });
     expect(out[0]).not.toHaveProperty('version');
   });
 
@@ -86,7 +92,7 @@ describe('where a customization came from', () => {
       { name: 'cc-plugin-telemetry', path: 'builtin', source: 'cc-plugin-telemetry@builtin' },
       PLUGIN,
     ]);
-    expect(out.map((one) => one.uri)).toEqual(['cc-plugin-agents-md@builtin', 'cc-plugin-telemetry@builtin', '/plugins/acme']);
+    expect(out.map((one) => one.uri)).toEqual(['cc-plugin-agents-md@builtin', 'cc-plugin-telemetry@builtin', uriOf('/plugins/acme')]);
   });
 
   it('answers the builtin skills and agents directories when there is no disk and the SDK reported no plugins', () => {
@@ -108,25 +114,26 @@ describe('where a customization came from', () => {
   });
 
   /*
-   * A plugin on this disk, holding the files its children are listed by.
+   * A Claude plugin on this disk, its manifest and the files its children are
+   * listed by, each given its text or a frontmatter naming it.
    *
    * A child is named by its file's URI, as VS Code's agent host names a
    * plugin's children by the files it read them from, so the files are written
    * where the listing looks for them.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L481-L487
    */
-  const pluginWith = (files: string[]): { plugin: Bag; dir: string } => {
+  const pluginWith = (files: Record<string, string>): { plugin: Bag; dir: string } => {
     const dir = mkdtempSync(join(tmpdir(), 'ahpd-plugin-'));
     onTestFinished(() => { rmSync(dir, { recursive: true, force: true }); });
-    for (const file of files) {
+    for (const [file, text] of Object.entries({ '.claude-plugin/plugin.json': '{ "name": "acme" }', ...files })) {
       mkdirSync(dirname(join(dir, file)), { recursive: true });
-      writeFileSync(join(dir, file), '---\nname: x\n---\n');
+      writeFileSync(join(dir, file), text === '' ? '---\nname: x\n---\n' : text);
     }
     return { plugin: { name: 'acme', path: dir, version: '1.0.0' }, dir };
   };
 
   it('moves an attributed skill under its plugin and out of the skills directory', () => {
-    const { plugin: acme, dir } = pluginWith(['skills/acme-skill/SKILL.md']);
+    const { plugin: acme, dir } = pluginWith({ 'skills/acme-skill/SKILL.md': '' });
     const out = customizationsOf({}, [], [
       { name: 'acme:acme-skill', description: '(acme) A plugin skill' },
       { name: 'user-skill', description: 'A user skill from disk' },
@@ -135,27 +142,65 @@ describe('where a customization came from', () => {
     expect(children(plugin).map((one) => one.name)).toEqual(['acme-skill']);
     // Its `SKILL.md`, by its URI, which is its id too.
     const skill = uriOf(join(dir, 'skills', 'acme-skill', 'SKILL.md'));
-    expect(children(plugin)[0]).toMatchObject({ type: 'skill', id: skill, uri: skill, description: '(acme) A plugin skill' });
+    expect(children(plugin)[0]).toMatchObject({ type: 'skill', id: skill, uri: skill });
     const directory = byType(out, 'directory');
     expect(children(directory).map((one) => one.name)).toEqual(['user-skill']);
     expect(children(directory).map((one) => one.name)).not.toContain('acme-skill');
   });
 
-  it('moves an attributed agent and command under its plugin, the command as a skill, and keeps the directories empty', () => {
-    const { plugin: acme, dir } = pluginWith(['commands/acme-command.md', 'agents/acme-agent.md']);
+  /*
+   * A plugin's agent under the plugin by its file, and its command among the
+   * built-in skills, as VS Code's parse of a plugin reads its agents, skills,
+   * rules, hooks and servers and no commands.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentPlugins/common/pluginParsers.ts#L1456-L1525
+   */
+  it('moves an attributed agent under its plugin by its file, and lists the plugin\'s command among the built-in skills', () => {
+    const { plugin: acme, dir } = pluginWith({ 'commands/acme-command.md': '', 'agents/acme-agent.md': '' });
     const out = customizationsOf({
       commands: [{ name: 'acme:acme-command', description: '(acme) A plugin command' }],
       agents: [{ name: 'acme:acme-agent', description: 'A plugin agent' }],
     }, [], [], undefined, [acme]);
-    const plugin = byType(out, 'plugin');
-    const command = uriOf(join(dir, 'commands', 'acme-command.md'));
     const agent = uriOf(join(dir, 'agents', 'acme-agent.md'));
-    expect(children(plugin)).toEqual([
-      { type: 'skill', id: command, name: 'acme-command', uri: command, enabled: true, description: '(acme) A plugin command' },
-      { type: 'agent', id: agent, name: 'acme-agent', uri: agent, enabled: true, description: 'A plugin agent' },
+    expect(children(byType(out, 'plugin'))).toEqual([{ type: 'agent', id: agent, uri: agent, name: 'acme-agent' }]);
+    expect(out.filter((one) => one.type === 'directory').map((one) => [one.id, children(one).map((child) => child.name)])).toEqual([
+      ['agent-builtin:/skills', ['acme:acme-command']],
     ]);
-    // Everything was attributed, so no per-kind directory is reported at all.
-    expect(out.filter((one) => one.type === 'directory')).toEqual([]);
+  });
+
+  /*
+   * Every kind VS Code's `makePlugin` lists, read off the manifest and the
+   * places it names, a custom one among them: the agents, the skills, the
+   * rules, the hooks file and the servers, each by its file's URI, a server by
+   * its file's with its name in a fragment. What the CLI reports of them is
+   * listed under the plugin alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L65-L88
+   */
+  it('lists a plugin\'s agents, skills, rules, hooks and servers off its manifest, a custom place included, each by its file\'s URI', () => {
+    const { plugin: acme, dir } = pluginWith({
+      '.claude-plugin/plugin.json': JSON.stringify({ name: 'acme', skills: './more-skills' }),
+      'agents/reviewer.md': '',
+      'more-skills/lint/SKILL.md': '',
+      'rules/style.mdc': '---\ndescription: The house style\n---\nWrite plainly.\n',
+      'hooks/hooks.json': JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo hi' }] }] } }),
+      '.mcp.json': JSON.stringify({ mcpServers: { notes: { command: 'notes' } } }),
+    });
+    const out = customizationsOf(
+      { agents: [{ name: 'acme:reviewer' }], commands: [{ name: 'lint' }] },
+      [{ name: 'notes', status: 'connected' }],
+      [{ name: 'lint' }],
+      undefined,
+      [acme],
+    );
+    const at = (path: string): string => uriOf(join(dir, path));
+    expect(children(byType(out, 'plugin')).map((one) => [one.type, one.name, one.id])).toEqual([
+      ['agent', 'reviewer', at('agents/reviewer.md')],
+      ['skill', 'lint', at('more-skills/lint/SKILL.md')],
+      ['rule', 'style', at('rules/style.mdc')],
+      ['hook', 'hooks.json', at('hooks/hooks.json')],
+      ['mcpServer', 'notes', `${at('.mcp.json')}#mcp=notes`],
+    ]);
+    // Nothing the plugin holds is listed a second time outside it.
+    expect(out.filter((one) => one.type !== 'plugin')).toEqual([]);
   });
 
   /*
@@ -208,14 +253,16 @@ describe('where a customization came from', () => {
     expect(out).toEqual([]);
   });
 
-  it('attributes a skill to a plugin this host did not hand over, as before', () => {
+  it('lists a plugin this host did not hand over with what it holds', () => {
+    const { plugin: acme, dir } = pluginWith({ 'skills/acme-skill/SKILL.md': '' });
     const out = customizationsOf({}, [], [
       { name: 'acme:acme-skill' },
       { name: 'vs-code-synced-data:advisor' },
-    ], undefined, [PLUGIN, BUNDLE], new Set([HANDED]));
+    ], undefined, [acme, BUNDLE], new Set([HANDED]));
     const plugin = byType(out, 'plugin');
-    expect(plugin).toMatchObject({ name: 'acme', uri: '/plugins/acme' });
+    expect(plugin).toMatchObject({ name: 'acme', uri: uriOf(dir) });
     expect(children(plugin).map((one) => one.name)).toEqual(['acme-skill']);
+    expect(out.filter((one) => one.type === 'plugin')).toHaveLength(1);
   });
 
   it('never invents a container for a namespace the SDK did not report', () => {
@@ -283,14 +330,16 @@ describe('where an agent lives', () => {
     const { restore } = withHome([]);
     const root = mkdtempSync(join(tmpdir(), 'ahpd-plugin-'));
     mkdirSync(join(root, 'agents'), { recursive: true });
+    mkdirSync(join(root, '.claude-plugin'), { recursive: true });
+    writeFileSync(join(root, '.claude-plugin', 'plugin.json'), '{ "name": "acme" }');
     writeFileSync(join(root, 'agents', 'scribe.md'), '---\nname: scribe\n---\n');
     try {
       const out = customizationsOf(
         { agents: [{ name: 'acme:scribe' }, { name: 'acme:ghost' }] }, [], [], undefined,
         [{ name: 'acme', path: root }],
       );
-      expect(agentNamed(out, 'scribe')).toMatchObject({ uri: join(root, 'agents', 'scribe.md') });
-      expect(agentNamed(out, 'ghost')).toMatchObject({ uri: 'claude-internal:/agent/acme%3Aghost' });
+      expect(agentNamed(out, 'scribe')).toMatchObject({ uri: uriOf(join(root, 'agents', 'scribe.md')) });
+      expect(agentNamed(out, 'acme:ghost')).toMatchObject({ uri: 'claude-internal:/agent/acme%3Aghost' });
     } finally { restore(); rmSync(root, { recursive: true, force: true }); }
   });
 });
@@ -406,7 +455,7 @@ describe('where each entry\'s file is', () => {
   });
 
   it('gives a plugin skill its SKILL.md when the plugin has it', () => {
-    const { root } = roots({ 'acme/skills/lint/SKILL.md': skill('lint') });
+    const { root } = roots({ 'acme/.claude-plugin/plugin.json': '{ "name": "acme" }', 'acme/skills/lint/SKILL.md': skill('lint') });
     const out = customizationsOf({}, [], [{ name: 'acme:lint' }, { name: 'acme:gone' }], undefined, [{ name: 'acme', path: join(root, 'acme') }]);
     const plugin = byType(out, 'plugin');
     const lint = uriOf(join(root, 'acme', 'skills', 'lint', 'SKILL.md'));

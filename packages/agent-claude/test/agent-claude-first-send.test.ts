@@ -90,9 +90,12 @@ const settle = async (times = 30): Promise<void> => {
 
 const SESSION = '11111111-2222-3333-4444-555555555555';
 
+/** The plugin the agent's own lists hold, id'd by its root's URI. */
+const HELPER = uriOf('/plugins/helper');
+
 /** The agent's own lists, as the host seeds a session with them, each named by its uri. */
 const SEEDS: Bag[] = [
-  { type: 'plugin', id: '/plugins/helper', uri: '/plugins/helper', name: 'helper', children: [] },
+  { type: 'plugin', id: HELPER, uri: HELPER, name: 'helper@market', children: [] },
   {
     type: 'directory', id: 'agent-builtin:/skills', uri: 'agent-builtin:/skills', name: 'builtin', writable: false, contents: 'skill', enabled: true,
     children: [{ type: 'skill', id: 'agent-builtin:/skill/compact', name: 'compact', uri: 'agent-builtin:/skill/compact', enabled: true }],
@@ -164,7 +167,7 @@ it("lists the agent's own and its disk scan until its first CLI answers", async 
   expect(session.models()).toEqual(MODELS);
   const ids = listed(session).map((one) => one.id);
   const projectSkills = uriOf(join(cwd, '.claude', 'skills'));
-  expect(ids).toEqual(expect.arrayContaining(['/plugins/helper', 'agent-builtin:/skills', projectSkills]));
+  expect(ids).toEqual(expect.arrayContaining([HELPER, 'agent-builtin:/skills', projectSkills]));
   const skills = listed(session).find((one) => one.id === projectSkills);
   expect(skills?.children).toEqual([expect.objectContaining({ name: 'review', description: 'Reviews a change' })]);
   // The scan's servers, each declared and not started; the seeds' are another CLI's.
@@ -209,18 +212,19 @@ it('keeps a switch made before its first send for its first CLI, before its prom
   const docs = String(serverOf(session, 'docs')?.id);
 
   expect(await session.setCustomizationEnabled(docs, false)).toBe(true);
-  expect(await session.setCustomizationEnabled('/plugins/helper', false)).toBe(true);
+  expect(await session.setCustomizationEnabled(HELPER, false)).toBe(true);
   expect(sdk.built).toHaveLength(0);
   expect(sdk.calls).toEqual([]);
   const updated = said.filter((one) => one.type === 'session/customizationUpdated').map((one) => one.customization as Bag);
   expect(updated).toEqual([
     expect.objectContaining({ id: docs, enablement: [{ kind: 'session', enabled: false }] }),
-    expect.objectContaining({ id: '/plugins/helper', enablement: [{ kind: 'session', enabled: false }] }),
+    expect.objectContaining({ id: HELPER, enablement: [{ kind: 'session', enabled: false }] }),
   ]);
 
+  // The first CLI is handed the switch under the plugin's `enabledPlugins` id, which its row is named by.
   session.sendMessage('t1', 'hello');
   await settle();
-  expect(sdk.built[0]?.settings).toMatchObject({ enabledPlugins: { '/plugins/helper': false } });
+  expect(sdk.built[0]?.settings).toMatchObject({ enabledPlugins: { 'helper@market': false } });
   expect(sdk.calls).toEqual(['toggle docs false', 'prompt']);
   await session.close();
 });

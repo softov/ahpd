@@ -1,8 +1,7 @@
-import { existsSync } from 'node:fs';
 import { basename, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { McpServerState } from '@microsoft/agent-host-protocol';
-import { uriOf, withSkillArgumentHintMeta } from '@ahpd/sdk';
+import { pluginPartsOf, uriOf, withSkillArgumentHintMeta } from '@ahpd/sdk';
 import type { Bag, OnWire } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import { frontmatterOf, projectDirOf } from './disk.js';
@@ -19,19 +18,24 @@ import type { Disk, DiskFile, DiskKind, DiskScope } from './disk.js';
 export type Published = Bag & { resource: string };
 
 /**
- * Where a plugin came from, which is also what its decisions are kept under.
- *
- * The root the SDK reported, where it is one. A plugin built into the CLI has
- * no root: the SDK reports `builtin` as the path of every one of them, and one
- * key for all of them switched every built-in when a person switched one. Its
- * `source`, `<name>@builtin`, is its own.
- *
- * Exported because a switch is named by it: an `enabledPlugins` setting takes
- * the source, and the reload that follows is read for the same one.
+ * A plugin's `enabledPlugins` id, `<name>@<marketplace>`, which the SDK reports
+ * as its `source` (`<name>@builtin` for one the CLI ships), or its name where
+ * it reports none. A plugin's container is named by it, as VS Code names one by
+ * its `enabledPlugins` id, and a switch is the setting under it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/scan/claudeNativePluginScan.ts#L14-L24
  */
-export const rootOf = (plugin: Bag): string => {
-  const path = str(plugin.path) as string;
-  return isAbsolute(path) ? path : (str(plugin.source) ?? `${str(plugin.name)}@${path}`);
+export const pluginIdOf = (plugin: Bag): string => str(plugin.source) ?? str(plugin.name) ?? '';
+
+/**
+ * A plugin's container id and uri: its root's URI, `customizationId` of it as
+ * VS Code's Claude discovery ids a plugin. A plugin built into the CLI has no
+ * root, the SDK reporting `builtin` as the path of every one of them, and is
+ * id'd by its `enabledPlugins` id.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L65-L88
+ */
+export const pluginUriOf = (plugin: Bag): string => {
+  const path = str(plugin.path) ?? '';
+  return isAbsolute(path) ? uriOf(path) : pluginIdOf(plugin);
 };
 
 /**
@@ -172,23 +176,6 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    */
   const builtin = (name: string): string => `agent-builtin:/skill/${encodeURIComponent(name)}`;
   /*
-   * The plugins the SDK reported, each as its own top-level container.
-   *
-   * The SDK attributes a plugin's children through their names, which it
-   * namespaces as `<plugin>:<name>` for both a skill and an agent, and a child
-   * is listed under its plugin by its file there, its id that file's URI, as
-   * VS Code's agent host lists a plugin's children by the files it read them
-   * from. A child with no such namespace is listed in the directory for its
-   * kind, as any other. A plugin's child with no file in the plugin is listed
-   * where VS Code's Claude lists one the CLI reported and its disk scan found
-   * no file for: a skill among the built-in skills, an agent among the
-   * personal agents. The container's URI is the real plugin root the SDK
-   * reported, and its name and version are the plugin's own.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L54-L91
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L385-L394
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L481-L487
-   */
-  /*
    * The plugins this session switched off, which the CLI has stopped reporting.
    *
    * A switch here is an `enabledPlugins` setting the CLI reads when it loads
@@ -199,11 +186,11 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    */
   const stopped = list(off)
     .map((raw) => bag(raw))
-    .filter((one) => (str(one.name) ?? '') !== '');
-  const named = new Set(list(plugins).map((raw) => str(bag(raw).name) ?? ''));
-  /** The names of the plugins switched off that the CLI is not loading. */
-  const switchedOff = new Set(stopped.map((one) => str(one.name) as string).filter((name) => !named.has(name)));
-  const reported = [...list(plugins).map((raw) => bag(raw)), ...stopped]
+    .filter((one) => pluginIdOf(one) !== '');
+  const named = new Set(list(plugins).map((raw) => pluginIdOf(bag(raw))));
+  /** The ids of the plugins switched off that the CLI is not loading. */
+  const switchedOff = new Set(stopped.map((one) => pluginIdOf(one)).filter((id) => !named.has(id)));
+  const reported = [...list(plugins).map((raw) => bag(raw)), ...stopped.filter((one) => switchedOff.has(pluginIdOf(one)))]
     .filter((one) => (str(one.name) ?? '') !== '' && (str(one.path) ?? '') !== '');
   /*
    * The ones this host handed over itself, kept apart from the rest. The CLI
@@ -213,8 +200,6 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    */
   const handed = reported.filter((one) => ours?.has(str(one.path) ?? '') === true);
   const reportedPlugins = reported.filter((one) => ours?.has(str(one.path) ?? '') !== true);
-  const pluginOf = (name: string): Bag | undefined =>
-    reportedPlugins.find((plugin) => name.startsWith(`${str(plugin.name) ?? ''}:`));
   /*
    * The handed plugin that namespaced a name, which is the CLI's own name for
    * it: a skill of a copy is `<the name the CLI read>:<the file's name>`, and
@@ -226,20 +211,43 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    */
   const handedOf = (name: string): Bag | undefined =>
     handed.find((plugin) => name.startsWith(`${str(plugin.name) ?? ''}:`));
-  /** The SDK's name with the plugin's namespace taken off it. */
-  const bare = (plugin: Bag, name: string): string => {
-    const prefix = `${str(plugin.name) ?? ''}:`;
-    return name.startsWith(prefix) ? name.slice(prefix.length) : name;
-  };
+  /*
+   * The plugins the SDK reported, each as its own top-level container holding
+   * what its directory holds, as VS Code's Claude discovery projects a plugin
+   * the live session loaded: its agents, skills, rules, hooks and MCP servers,
+   * read off its manifest and the places the manifest names, each named and
+   * id'd by its file's URI. The container's id and uri are the plugin root's
+   * URI, its name the plugin's `enabledPlugins` id (`pluginUriOf`,
+   * `pluginIdOf`).
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L54-L91
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentPlugins/common/pluginParsers.ts#L1456-L1525
+   *
+   * The CLI reports the agents, skills and servers of a plugin it loaded beside
+   * the rest, an agent as `<plugin>:<name>` and a skill bare or so. Each such
+   * name is listed under its plugin and nowhere else, as VS Code's discovery
+   * registers both forms of each component its parse found; a name its parse
+   * found nothing for is listed where VS Code lists one the CLI reported with
+   * no file: a skill among the built-in skills, an agent among the agents.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L291-L321
+   */
+  const inPlugins = { agent: new Set<string>(), skill: new Set<string>(), mcpServer: new Set<string>() };
   const pluginContainers = new Map<string, Bag>();
   for (const plugin of reportedPlugins) {
-    const name = str(plugin.name) as string;
-    if (pluginContainers.has(name)) continue;
-    pluginContainers.set(name, {
+    const id = pluginIdOf(plugin);
+    if (pluginContainers.has(id)) continue;
+    const path = str(plugin.path) as string;
+    const uri = pluginUriOf(plugin);
+    const parts = isAbsolute(path) ? pluginPartsOf(path, uri) ?? [] : [];
+    for (const part of parts) {
+      const names = inPlugins[str(part.type) as keyof typeof inPlugins] as Set<string> | undefined;
+      names?.add(str(part.name) ?? '');
+      names?.add(`${str(plugin.name) ?? ''}:${str(part.name) ?? ''}`);
+    }
+    pluginContainers.set(id, {
       type: 'plugin',
-      id: rootOf(plugin),
-      uri: rootOf(plugin),
-      name,
+      id: uri,
+      uri,
+      name: id,
       ...(str(plugin.version) !== undefined ? { version: str(plugin.version) as string } : {}),
       /*
        * The session's own answer, for a plugin it switched off.
@@ -249,14 +257,10 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
        * row is one the CLI reports and nobody has decided about, which is a
        * switch drawn back on the moment it was moved.
        */
-      ...(switchedOff.has(name) ? { enablement: [{ kind: 'session', enabled: false }] } : {}),
-      children: [],
+      ...(switchedOff.has(id) ? { enablement: [{ kind: 'session', enabled: false }] } : {}),
+      children: parts,
     });
   }
-  /** Put one attributed child under the plugin that namespaced it. */
-  const under = (plugin: Bag, child: Bag): void => {
-    into(pluginContainers.get(str(plugin.name) as string), child);
-  };
 
   /*
    * The skills and the commands, and which a person can invoke.
@@ -286,17 +290,14 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
      * nonce its directory is named, so one of the two is `1683262406:advisor`.
      */
     if (handedOf(name) !== undefined) continue;
+    const file = skillFileOf(name);
+    if (file === undefined && inPlugins.skill.has(name)) continue;
     const command = offered.get(name);
-    const plugin = pluginOf(name);
-    const file = plugin === undefined ? skillFileOf(name) : undefined;
     // The CLI's words for it, or its file's own where the CLI said none.
     const described = str(skill.description) ?? str(bag(command).description) ?? file?.description;
     const hint = str(skill.argumentHint) ?? str(bag(command).argumentHint);
     // Its `SKILL.md`, which is what a client opens, and not the folder it is in.
-    const inPlugin = plugin === undefined ? undefined : join(str(plugin.path) ?? '', 'skills', bare(plugin, name), 'SKILL.md');
-    const at = plugin === undefined ? file?.path : (inPlugin !== undefined && existsSync(inPlugin) ? inPlugin : undefined);
-    const home = at === undefined ? undefined : plugin;
-    const uri = at !== undefined ? uriOf(at) : builtin(name);
+    const uri = file !== undefined ? uriOf(file.path) : builtin(name);
     /*
      * The argument hint under `_meta`, in the key VS Code's host publishes it
      * under and its window reads: `SkillCustomization` declares `description`
@@ -307,15 +308,14 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const leaf: Bag = {
       type: 'skill',
       id: uri,
-      name: home === undefined ? name : bare(home, name),
+      name,
       uri,
       enabled: true,
       ...(command ? {} : { disableUserInvocation: true }),
       ...(described ? { description: described } : {}),
       ...(meta === undefined ? {} : { _meta: meta }),
     };
-    if (home === undefined) place(file?.scope ?? 'builtin', 'skill', leaf);
-    else under(home, leaf);
+    place(file?.scope ?? 'builtin', 'skill', leaf);
   }
 
   // A command the skills did not list, as a skill: its file in the skills of
@@ -324,25 +324,21 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     if (loaded.has(name)) continue;
     // A command of a handed plugin, for the same reason as a skill of one.
     if (handedOf(name) !== undefined) continue;
-    const plugin = pluginOf(name);
-    const file = plugin === undefined ? skillFileOf(name) : undefined;
+    const file = skillFileOf(name);
+    if (file === undefined && inPlugins.skill.has(name)) continue;
     const described = str(command.description) ?? file?.description;
-    const inPlugin = plugin === undefined ? undefined : join(str(plugin.path) ?? '', 'commands', `${bare(plugin, name)}.md`);
-    const at = plugin === undefined ? file?.path : (inPlugin !== undefined && existsSync(inPlugin) ? inPlugin : undefined);
-    const home = at === undefined ? undefined : plugin;
-    const uri = at !== undefined ? uriOf(at) : builtin(name);
+    const uri = file !== undefined ? uriOf(file.path) : builtin(name);
     const meta = withSkillArgumentHintMeta(undefined, str(command.argumentHint));
     const leaf: Bag = {
       type: 'skill',
       id: uri,
-      name: home === undefined ? name : bare(home, name),
+      name,
       uri,
       enabled: true,
       ...(described ? { description: described } : {}),
       ...(meta === undefined ? {} : { _meta: meta }),
     };
-    if (home === undefined) place(file?.scope ?? 'builtin', 'skill', leaf);
-    else under(home, leaf);
+    place(file?.scope ?? 'builtin', 'skill', leaf);
   }
 
   for (const raw of list(init.agents)) {
@@ -357,16 +353,13 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
      * this is the only name dropped.
      */
     if (name === 'general-purpose') continue;
-    const plugin = pluginOf(name);
     /*
      * Managed, then the project's, then the person's: the order the CLI ranks
      * a subagent of one name in.
      * https://code.claude.com/docs/en/sub-agents
      */
-    const file = plugin === undefined ? fileOf('agent', name, ['managed', 'project', 'user']) : undefined;
-    const inPlugin = plugin === undefined ? undefined : join(str(plugin.path) ?? '', 'agents', `${bare(plugin, name)}.md`);
-    const at = plugin === undefined ? file?.path : (inPlugin !== undefined && existsSync(inPlugin) ? inPlugin : undefined);
-    const home = at === undefined ? undefined : plugin;
+    const file = fileOf('agent', name, ['managed', 'project', 'user']);
+    if (file === undefined && inPlugins.agent.has(name)) continue;
     const described = str(found.description) ?? file?.description;
     /*
      * Where the file is, or that there is none.
@@ -379,11 +372,11 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
      * `resolveClaudeAgentName` reads back. The name is encoded, because it is a
      * path segment here and a URI segment there.
      */
-    const uri = at !== undefined ? uriOf(at) : `${INTERNAL_AGENT}${encodeURIComponent(name)}`;
+    const uri = file !== undefined ? uriOf(file.path) : `${INTERNAL_AGENT}${encodeURIComponent(name)}`;
     const leaf: Bag = {
       type: 'agent',
       id: uri,
-      name: home === undefined ? name : bare(home, name),
+      name,
       uri,
       enabled: true,
       ...(described ? { description: described } : {}),
@@ -393,8 +386,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
      * discovery puts an agent no working directory holds.
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L106-L112
      */
-    if (home === undefined) place(file?.scope ?? (disk === undefined ? 'builtin' : 'user'), 'agent', leaf);
-    else under(home, leaf);
+    place(file?.scope ?? (disk === undefined ? 'builtin' : 'user'), 'agent', leaf);
   }
 
   /*
@@ -451,6 +443,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
     const name = str(server.name);
     if (!name) continue;
     const declared = fileOf('mcpServer', name, ['project', 'user']);
+    if (declared === undefined && inPlugins.mcpServer.has(name)) continue;
     const uri = declared !== undefined ? uriOf(declared.path) : internal('mcp', name);
     const reported = str(server.status);
     const said = str(server.error);

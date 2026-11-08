@@ -48,6 +48,7 @@ export { fileResources } from './resources/resources.js';
 export { ripgrepFiles } from './resources/workspacefiles.js';
 export { localPath, uriOf } from './resources/fileuri.js';
 export { clientPluginsIn } from './plugins/clientplugins.js';
+export { partsOf as pluginPartsOf } from './plugins/pluginparts.js';
 export { shellTerminals } from './machines/terminals.js';
 export { isShellName, shellEnvOf } from './machines/shellenv.js';
 export type { ShellEnv } from './machines/shellenv.js';
