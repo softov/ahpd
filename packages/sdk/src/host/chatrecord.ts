@@ -128,8 +128,14 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
   const recordedChats = (id: string): StoredChat[] => heldChats(id).filter((one) => one.closed !== true);
   const recordedChat = (id: string, chatUri: string): StoredChat | undefined =>
     recordedChats(id).find((one) => one.uri === chatUri);
-  const sessionBackendId = (id: string): string =>
-    heldChats(id).find((one) => one.uri === chatUriFor(ctx.nameOf(id)))?.backendId ?? id;
+  // The original chat is the one the record marks default, which a minted
+  // default chat needs, or the chat derived from the session in a record
+  // written before default chats were minted.
+  const sessionBackendId = (id: string): string => {
+    const chats = heldChats(id);
+    const original = chats.find((one) => one.default === true) ?? chats.find((one) => one.uri === chatUriFor(ctx.nameOf(id)));
+    return original?.backendId ?? id;
+  };
 
   const keepChat = (
     uri: string, chatUri: string, backendId: string | undefined, isDefault: boolean,
@@ -271,7 +277,10 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
     const id = idOf(session);
     const named = chatIdFor(session, chatUri);
     if (named === undefined) return true;
-    return named !== id && heldChats(id).some((one) => one.uri === chatUri && one.backendId === id);
+    // The chat the record keeps under the session's id, or the session's
+    // default chat under the name the session's own backend minted for it.
+    return named !== id && heldChats(id).some((one) => one.uri === chatUri
+      && (one.backendId === id || (one.default === true && one.provider === undefined)));
   };
 
   return {
