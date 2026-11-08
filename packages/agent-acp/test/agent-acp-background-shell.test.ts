@@ -151,7 +151,7 @@ it('lists a terminal that runs past its call, and the stop ends it', async () =>
     label: 'Watch for changes',
     command: 'sh -c sleep 30',
     startedAt: expect.any(String),
-    terminal: expect.stringContaining('ahp-terminal:'),
+    terminal: expect.stringMatching(/^agenthost-terminal:\/\/shell\//u),
     _meta: { 'vscode.stopBackgroundWork': true },
   });
   // The row is the terminal: a client reading the task and a client opening the
@@ -193,7 +193,7 @@ it('lists a running terminal no call named, labelled with its command line', asy
     label: 'sh -c sleep 30',
     command: 'sh -c sleep 30',
     startedAt: expect.any(String),
-    terminal: expect.stringContaining('ahp-terminal:'),
+    terminal: expect.stringMatching(/^agenthost-terminal:\/\/shell\//u),
   });
 
   // Stopped here so the process does not outlive the case.

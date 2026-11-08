@@ -172,7 +172,8 @@ it('hands the CLI the operator\'s managed settings as its policy tier, in Claude
   expect(options.managedSettings).toEqual({
     permissions: {
       deny: ['Bash(rm *)', 'PowerShell(rm *)'],
-      ask: ['WebFetch(domain:example.com)', 'WebFetch', 'mcp__client__WebFetch'],
+      // A client's `WebFetch` is under the bypass lock, which no rule names.
+      ask: ['WebFetch(domain:example.com)', 'WebFetch'],
       disableBypassPermissionsMode: 'disable',
     },
   });

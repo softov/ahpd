@@ -23,10 +23,11 @@ it('answers provider cofold with the settings a session may carry', () => {
   // from the agent's `models` rather than from a schema field with no values.
   // No endpoint: it is the agent's configuration, as VS Code keeps a
   // provider's settings in the host's root configuration.
-  // No thinking level either: it is each model's own form. The mode is the
-  // control a window draws, and the cases for what it means are
-  // `agent-cofold-modes.test.ts`.
-  expect(Object.keys(properties(agent))).toEqual(['instructions', 'permissionMode']);
+  // A model's thinking level is each model's own form, and cofold's own
+  // session reasoning is a session control under the agent's provider, with
+  // the effort a chat may set for itself after the mode. The cases for them
+  // are `agent-cofold-modes.test.ts`.
+  expect(Object.keys(properties(agent))).toEqual(['instructions', 'cofold.reasoning', 'permissionMode', 'effortLevel']);
   expect(properties(agent)).not.toHaveProperty('model');
 });
 

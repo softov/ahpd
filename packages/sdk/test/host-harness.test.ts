@@ -280,13 +280,7 @@ describe('what the harness offers', () => {
     expect(cfg.values.effortLevel).toBeUndefined();
   });
 
-  /*
-   * The effort is the model's own control alone, as VS Code's Claude offers
-   * it: a model that names no levels draws none, and the session has no
-   * effort key to fall back on.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
-   */
-  it('offers no session-wide effort where no model has one of its own', async () => {
+  it('keeps the session-wide effort where no model has one of its own', async () => {
     sdk.init = {
       account: SIGNED_IN,
       models: [{ value: 'haiku', displayName: 'Haiku' }],
@@ -296,7 +290,9 @@ describe('what the harness offers', () => {
     const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
       schema: { properties: Record<string, unknown> };
     };
-    expect(Object.keys(cfg.schema.properties)).not.toContain('effortLevel');
+    // Otherwise a harness whose models say nothing about effort would offer no
+    // effort control at all, which is worse than a general one.
+    expect(Object.keys(cfg.schema.properties)).toContain('effortLevel');
   });
 
   it('runs a turn on the model and the thinking level the client chose', async () => {
@@ -326,29 +322,35 @@ describe('what the harness offers', () => {
   });
 
   /*
-   * A turn's thinking level is that turn's, and no config moves.
+   * A turn's thinking level is that turn's, and the session's config stays.
    *
    * VS Code's Claude sets the effort each model selection resolves to and
-   * says no config action; the CLI holds one effort for the query, so a turn
-   * whose model names none clears it, back to the model's own.
+   * says no config action; the CLI holds one effort for the query, so the
+   * next turn that names none goes back to the session's.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1217-L1224
    */
-  it('runs a turn on its own thinking level, and clears it for a turn that names none', async () => {
+  it('runs a turn on its own thinking level, and the session keeps its effort', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     const turn = (turnId: string, model: Record<string, unknown>) => client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' }, model } } },
     });
+    const held = async (): Promise<Record<string, unknown>> => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { values: Record<string, unknown> } } };
+    }).snapshot.state.config.values;
+    const before = (await held()).effortLevel;
+    expect(before).toBe('high');
 
     void turn('t1', { id: 'sonnet', config: { thinkingLevel: 'xhigh' } });
     await settle();
     expect(sdk.effortsSet.at(-1)).toBe('xhigh');
     expect(actions(p, uri).filter((one) => one.action.type === 'session/configChanged')).toEqual([]);
+    expect((await held()).effortLevel).toBe(before);
 
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
     void turn('t2', { id: 'sonnet' });
     await settle();
-    expect(sdk.effortsSet.at(-1)).toBeNull();
+    expect(sdk.effortsSet.at(-1)).toBe(before);
   });
 
   it('says what a harness offers on the root channel, before any session exists', async () => {

@@ -708,7 +708,7 @@ describe('tools the host contributes', () => {
       const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
         tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
       }> | undefined;
-      const tool = servers?.ahp?.tools.find((one) => one.name === 'teams');
+      const tool = servers?.host?.tools.find((one) => one.name === 'teams');
       return (await tool?.handler({}))?.content[0]?.text;
     };
 

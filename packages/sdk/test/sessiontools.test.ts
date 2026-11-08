@@ -11,7 +11,7 @@ import {
   filterSessions, openLink, serializeContext, serializeSession, sessionMeant, sessionTools, statusWords,
 } from '../src/tools/session.js';
 import { directory, hello, root, signIn } from './users-gate-helpers.js';
-import { builtCount, builtServer, claude, echo, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
+import { SIGNED_IN, builtCount, builtServer, claude, echo, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Summary } from '../src/types/catalog.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -1251,8 +1251,14 @@ describe('a tool a person calls with no session', () => {
     return { ...base, provider, create: (start: Start) => { starts.push(start); return base.create(start); } };
   };
 
-  /** The two backends, both offering `shared-model`, recording what starts on the second. */
-  const pair = (starts: Start[]): Agent[] => [backend('claude', []), backend('other', starts)];
+  /**
+   * The two backends, both offering `shared-model`, recording what starts on the second; their CLI is signed in, as a
+   * harness offers its models once it is.
+   */
+  const pair = (starts: Start[]): Agent[] => {
+    sdk.init = { account: SIGNED_IN, models: [], commands: [], agents: [] };
+    return [backend('claude', []), backend('other', starts)];
+  };
 
   it('starts a new session on the agent it names, where two agents offer one model', async () => {
     const starts: Start[] = [];

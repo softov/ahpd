@@ -1749,6 +1749,10 @@ describe("a row's counts are the session's own", () => {
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId, duration: 0 } },
     });
+    await settle();
+    // The stop interrupts the CLI, which keeps running and reports the
+    // interrupted turn's result, so the next turn is its own.
+    await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, user_message_uuids: [sdk.uuids.at(-1)] });
     // The counts are read behind the checkpoint of that turn, which is two
     // answers away - and a row nobody waited for is a row a test cannot read.
     await settle(12);

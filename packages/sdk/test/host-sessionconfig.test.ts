@@ -29,11 +29,12 @@ describe('choosing a model', () => {
     expect(cfg.schema.type).toBe('object');
     // `schema.properties`, not `properties`. One level up draws no controls
     // at all. These are VS Code's Claude's keys, the platform's shell init
-    // script beside them; the model and its effort are each message's.
+    // script beside them, and the session's effort while no model has one.
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
     const keys = Object.keys(cfg.schema.properties);
-    expect(keys.sort()).toEqual(['permissionMode', 'permissions', 'sensitiveEditLocations', 'shellInitScripts']);
-    expect(cfg.schema.properties.permissionMode?.enum).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']);
+    expect(keys.sort()).toEqual(['effortLevel', 'permissionMode', 'permissions', 'sensitiveEditLocations', 'shellInitScripts']);
+    // VS Code's five modes and the SDK's `dontAsk`, which a record's `dontAsk` offers by default.
+    expect(cfg.schema.properties.permissionMode?.enum).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
     expect(cfg.values.permissionMode).toBe('default');
   });
 
@@ -45,6 +46,7 @@ describe('choosing a model', () => {
     };
     expect(cfg.schema.properties.permissionMode?.sessionMutable).toBe(true);
     expect(cfg.schema.properties.permissions?.sessionMutable).toBe(true);
+    expect(cfg.schema.properties.effortLevel?.sessionMutable).toBe(true);
   });
 
   it('answers back with what has already been chosen', async () => {
@@ -58,6 +60,7 @@ describe('choosing a model', () => {
     // undo a choice the moment anything re-asked. `permissions` is left unset
     // until a tool is approved, as VS Code's Claude leaves it.
     expect(cfg.values.permissionMode).toBe('plan');
+    expect(cfg.values.effortLevel).toBe('high');
     expect(cfg.values.permissions).toBeUndefined();
   });
 
@@ -69,15 +72,29 @@ describe('choosing a model', () => {
     // A session without this has no permission control.
     expect(Object.keys(state.config.schema.properties)).toContain('permissionMode');
     expect(state.config.values.permissionMode).toBe('default');
+    expect(state.config.values.effortLevel).toBe('high');
   });
 
   /*
    * A key VS Code's Claude does not declare is taken as it was set, as VS
-   * Code's host takes any key but its own, and moves nothing in the CLI: the
-   * effort is each turn's model's.
+   * Code's host takes any key but its own, and moves nothing in the CLI.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13606-L13610
    */
-  it('holds a key it does not declare as it was set, and leaves the CLI\'s effort to each turn', async () => {
+  it('holds a key it does not declare as it was set, and moves nothing in the CLI', async () => {
+    const { client, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/configChanged', config: { depth: 'deep' } } },
+    });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { values: Record<string, string> } } };
+    }).snapshot.state;
+    expect(state.config.values.depth).toBe('deep');
+    expect(sdk.effortsSet).toEqual([]);
+  });
+
+  it('changes the effort level on the running session', async () => {
     const { client, uri } = await running();
     client.handle({
       method: 'dispatchAction',
@@ -88,6 +105,23 @@ describe('choosing a model', () => {
       snapshot: { state: { config: { values: Record<string, string> } } };
     }).snapshot.state;
     expect(state.config.values.effortLevel).toBe('max');
+    // Told, not merely recorded: a control that updates the state a client
+    // reads while the CLI keeps its old setting is the worst of both.
+    expect(sdk.effortsSet).toEqual(['max']);
+  });
+
+  it('refuses an effort level that is not one, rather than passing it on', async () => {
+    const { client, uri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/configChanged', config: { effortLevel: 'enormous' } } },
+    });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { values: Record<string, string> } } };
+    }).snapshot.state;
+    expect(state.config.values.effortLevel).toBe('high');
+    // A rejected promise nobody reads is not an answer.
     expect(sdk.effortsSet).toEqual([]);
   });
 

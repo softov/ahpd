@@ -31,6 +31,8 @@ const sdk = vi.hoisted(() => {
     canUseTool: undefined as undefined | ((name: string, input: Bag, about?: Bag) => Promise<unknown>),
     /** The input stream the query built last was handed, which a case reads where its CLI reads its prompts. */
     prompt: undefined as AsyncIterable<unknown> | undefined,
+    /** Whether the next query reads its prompts as the SDK reads its input; a case sets it, and `reset` leaves it. */
+    reads: false,
     /** The feed the next query reads, and the one `push` writes to. */
     feed: fresh(),
     /** The task ids `stopTask` was called with, in order. */
@@ -62,6 +64,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
   query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
     sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
     sdk.prompt = prompt;
+    if (sdk.reads) void (async () => { for await (const _ of prompt) { /* read, as the SDK reads its input */ } })();
     const feed = sdk.feed;
     return {
       async *[Symbol.asyncIterator]() {
@@ -539,8 +542,11 @@ it('ends a cancelled turn\'s worker once, and a late frame does not reopen it', 
 it('leaves a background worker from an earlier turn running when a later turn is stopped', async () => {
   const lines = fixture('claude-subagent-background.jsonl');
   // Through the lead turn's result and the worker's first frame after it, so
-  // the worker is open when the next turn begins.
+  // the worker is open when the next turn begins; its CLI reads its prompts, so
+  // that result ends the lead turn.
+  sdk.reads = true;
   const { workers, session } = await replay('claude-subagent-background.jsonl', lines.slice(0, 7));
+  sdk.reads = false;
   const call = 'toolu_01Riysq5EgQZGcUE9kDMp6AB';
   expect(workers.has(call)).toBe(true);
   session.sendMessage('t2', 'and another thing');

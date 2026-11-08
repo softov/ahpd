@@ -324,7 +324,7 @@ describe('a first-party plugin', () => {
     ]],
     ['agent-cofold', [
       'model', 'baseUrl', 'models', 'instructions', 'computerConfigDir', 'store', 'memory', 'tools', 'strictTools', 'apiKey',
-      'resource', 'autoCompactTokens', 'hostTools',
+      'resource', 'autoCompactTokens', 'autoCompactAt', 'catalogueTimeoutMs', 'hostTools',
     ]],
     ['agent-pi', ['model', 'projectTrust', 'sessionDir', 'hostTools']],
     ['bot', ['root', 'mainTurnPostMessageAbsent', 'instructionsIn', 'contextIn', 'askIn']],

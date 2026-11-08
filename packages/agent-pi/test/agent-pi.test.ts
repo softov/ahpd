@@ -1121,7 +1121,10 @@ it('offers pi models before a session exists, as a session offers them', async (
   const { session, pi } = opened();
   session.sendMessage('t1', 'hello');
   await settled();
-  const agent = piAgent({}, [root], async () => (await pi.backend.models()).map((model) => ({ model, levels: pi.backend.levels(model) })));
+  const agent = piAgent({}, [root], async () => (await pi.backend.models()).map((model) => {
+    const startsOn = pi.backend.startsOn(model);
+    return { model, levels: pi.backend.levels(model), ...(startsOn === undefined ? {} : { startsOn }) };
+  }));
   const probed = await agent.probe?.();
   expect(probed).toEqual({ models: session.models(), customizations: [], commands: [] });
   expect(probed?.models.map((one) => one.id)).toEqual(['anthropic/claude-opus-5', 'openai/gpt-5']);

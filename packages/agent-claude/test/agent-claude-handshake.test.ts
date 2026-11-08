@@ -108,7 +108,15 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => {
         cli.close();
         throw new Error(unanswered(initializeTimeoutMs));
       }
-      return { query: () => cli, close: () => { cli.close(); }, [Symbol.asyncDispose]: async () => { cli.close(); } };
+      // Handed the prompt itself, as the warm handle's `query` takes it.
+      const query = (prompt?: unknown): typeof cli => {
+        // The CLI reads every prompt it is handed, which is when a turn's prompt leaves the queue.
+        if (typeof prompt === 'object' && prompt !== null && Symbol.asyncIterator in prompt) {
+          void (async () => { for await (const _ of prompt as AsyncIterable<unknown>) { /* read */ } })();
+        }
+        return cli;
+      };
+      return { query, close: () => { cli.close(); }, [Symbol.asyncDispose]: async () => { cli.close(); } };
     },
   };
 });

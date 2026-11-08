@@ -169,7 +169,8 @@ it('leaves out a server\'s wildcard where a key keeps one of its tools eligible,
       mcp__github: false,
       'Bash(rm *)': false,
     },
-  }, CWD)).toBeUndefined();
+    // No rule, and the bypass lock the names set `false` take, since each names a client's tool of that name too.
+  }, CWD)).toEqual({ permissions: { disableBypassPermissionsMode: 'disable' } });
 });
 
 /*

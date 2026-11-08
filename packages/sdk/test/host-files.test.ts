@@ -167,10 +167,15 @@ describe('where the agent works', () => {
       }).snapshot.state;
       const query = sessionQueries().at(-1);
       const servers = query?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>;
+      // What the CLI is told beside a prompt, through its `UserPromptSubmit` hook.
+      type Hook = (input: unknown, id: undefined, options: { signal: AbortSignal }) => Promise<{ hookSpecificOutput?: { additionalContext?: string } }>;
+      const hooks = (query?.options.hooks as Record<string, { hooks: Hook[] }[]> | undefined)?.UserPromptSubmit ?? [];
+      const answers = await Promise.all(hooks.flatMap((one) => one.hooks)
+        .map((hook) => hook({ hook_event_name: 'UserPromptSubmit', prompt: '' }, undefined, { signal: new AbortController().signal })));
       return {
         mark: state._meta?.workspaceless,
-        prompt: (query?.options.systemPrompt as { append?: string } | undefined)?.append ?? '',
-        upFront: servers.ahp?.tools.find((one) => one.name === 'set_workspace')?._meta?.['anthropic/alwaysLoad'],
+        prompt: answers.map((one) => one.hookSpecificOutput?.additionalContext ?? '').join('\n'),
+        upFront: servers.host?.tools.find((one) => one.name === 'set_workspace')?._meta?.['anthropic/alwaysLoad'],
       };
     };
     const scratch = await told({ workspacelessFolder: 'scratch' });

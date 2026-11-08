@@ -177,6 +177,9 @@ it('keeps a finished turn complete, with the message as the client sent it', asy
   say(client, chatUri, 'read hello');
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
   await client.handle({ method: 'disposeSession', params: { channel: uri } });
+  // Disposed, the session is the backend's own copy alone, which a listing
+  // shows as an external session once the root asks for those, as VS Code's.
+  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { showExternalSessions: 'last30Days' } } } });
   // Opened again from the backend's own record of it, which is what a later client reads.
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: { resource: string }[];
@@ -246,6 +249,9 @@ it('lists a finished session with the moment it began', async () => {
   say(client, chatUri, 'read hello');
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
   await client.handle({ method: 'disposeSession', params: { channel: uri } });
+  // Disposed, the session is the backend's own copy alone, which a listing
+  // shows as an external session once the root asks for those, as VS Code's.
+  await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { showExternalSessions: 'last30Days' } } } });
   const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
     items: { createdAt: string; modifiedAt: string }[];
   };

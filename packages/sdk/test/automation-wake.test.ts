@@ -748,7 +748,8 @@ it('settles a run on its session\'s default chat alone, failed with the chat\'s 
   own.wake?.();
   own.wake = undefined;
   await until(() => bag(newest(store)['lifecycle'])['status'] === 'failed', 'the run to fail');
-  expect(bag(bag(newest(store)['lifecycle'])['error'])).toMatchObject({ errorType: 'turnFailed', message: expect.any(String) });
+  // The chat's error is typed by the result's subtype, as VS Code types a failed Claude result.
+  expect(bag(bag(newest(store)['lifecycle'])['error'])).toMatchObject({ errorType: 'error_during_execution', message: expect.any(String) });
 });
 
 it('waits behind a turn a person is running in the chat it is pinned to', async () => {

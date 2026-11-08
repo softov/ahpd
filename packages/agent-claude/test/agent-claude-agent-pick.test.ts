@@ -42,7 +42,12 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: (given: { options: { agent?: string; resume?: string; sessionId?: string } }) => {
+  query: (given: { prompt?: unknown; options: { agent?: string; resume?: string; sessionId?: string } }) => {
+    // The CLI reads every prompt it is handed, which is when a turn's prompt leaves the queue.
+    const { prompt } = given;
+    if (typeof prompt === 'object' && prompt !== null && Symbol.asyncIterator in prompt) {
+      void (async () => { for await (const _ of prompt as AsyncIterable<unknown>) { /* read */ } })();
+    }
     sdk.built.push({
       ...(given.options.agent === undefined ? {} : { agent: given.options.agent }),
       ...(given.options.resume === undefined ? {} : { resume: given.options.resume }),

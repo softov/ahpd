@@ -6,7 +6,7 @@ import { PERMISSION_MODE_DESCRIPTIONS } from '@cofold/agents';
 import { createFakeModel } from '@cofold/agents/testing';
 import type { ModelAdapter, ModelProvider } from '@cofold/agents';
 import type { Agent, Bag, BoundTool, Session, Start } from '@ahpd/sdk';
-import { PERMISSION_MODES, effortOf, cofoldAgent, harnessConfig, modelOf } from '../src/index.js';
+import { EFFORT_LEVELS, PERMISSION_MODES, effortOf, cofoldAgent, harnessConfig, modelOf } from '../src/index.js';
 import type { Held } from '../src/agent.js';
 import { startedNow } from '../../sdk/test/support/started.js';
 
@@ -106,9 +106,9 @@ async function turn(mode: string | undefined, path = 'a.txt') {
   return { view, ran };
 }
 
-it('advertises an approvals mode in the window own names, the thinking level being each model\'s own', () => {
+it('advertises an approvals mode in the window own names, and an effort each chat may set for itself', () => {
   const props = properties(cofoldAgent({}));
-  expect(Object.keys(props)).toEqual(['instructions', 'cofold.reasoning', 'permissionMode']);
+  expect(Object.keys(props)).toEqual(['instructions', 'cofold.reasoning', 'permissionMode', 'effortLevel']);
   // Each chat keeps its own mode, as VS Code's Claude marks its mode.
   expect(props.permissionMode).toMatchObject({ scope: 'session', sessionMutable: true, chatMutable: true, default: 'auto' });
   expect(props.permissionMode?.enum).toEqual([...PERMISSION_MODES]);
@@ -116,19 +116,22 @@ it('advertises an approvals mode in the window own names, the thinking level bei
   // cofold's own sentences, in cofold's own order: what a mode means is the
   // library's to say, and a host that wrote its own would drift from it.
   expect(props.permissionMode?.enumDescriptions).toEqual(PERMISSION_MODES.map((mode) => PERMISSION_MODE_DESCRIPTIONS[mode]));
+  expect(props.effortLevel).toMatchObject({ chatMutable: true, sessionMutable: true, default: 'off' });
+  expect(props.effortLevel?.enum).toEqual([...EFFORT_LEVELS]);
 });
 
 it('omits a control this backend would not honour', async () => {
   const withPolicy = cofoldAgent({ policy: { decide: () => ({ behavior: 'allow' }) } });
   expect(Object.keys(properties(withPolicy))).not.toContain('permissionMode');
-  // The thinking level is no session control, with a policy or without one.
-  expect(Object.keys(properties(withPolicy))).not.toContain('effortLevel');
+  // The effort stays without the mode: it is the request's, which this backend still builds.
+  expect(Object.keys(properties(withPolicy))).toContain('effortLevel');
 
   // A caller's adapter builds its own requests, so a level it was given would
   // go nowhere: its model offers none, whatever the agent declares for it.
   const stub = { id: 'stub', modelId: 'stub', features: {} } as unknown as ModelAdapter;
   const withAdapter = cofoldAgent({ adapter: stub, model: 'stub', baseUrl: 'https://api.example/v1', models: [{ id: 'stub', supportsReasoningEffort: ['low', 'high'] }] });
   expect(Object.keys(properties(withAdapter))).toContain('permissionMode');
+  expect(Object.keys(properties(withAdapter))).not.toContain('effortLevel');
   expect((await withAdapter.probe?.())?.models).toEqual([{ id: 'stub', name: 'stub' }]);
 });
 
@@ -279,6 +282,10 @@ it('runs a turn on the session\'s reasoning where its model selection names no l
   expect((await sent({ 'cofold.reasoning': 'medium' })).reasoning_effort).toBe('medium');
   expect((await sent({ 'cofold.reasoning': 'medium', thinkingLevel: 'low' })).reasoning_effort).toBe('low');
   expect('reasoning_effort' in await sent({ 'cofold.reasoning': 'high', thinkingLevel: 'off' })).toBe(false);
+  // A chat's or the session's effortLevel, over the session's reasoning and under the selection.
+  expect((await sent({ 'cofold.reasoning': 'medium', effortLevel: 'high' })).reasoning_effort).toBe('high');
+  expect((await sent({ effortLevel: 'high', thinkingLevel: 'low' })).reasoning_effort).toBe('low');
+  expect('reasoning_effort' in await sent({ 'cofold.reasoning': 'high', effortLevel: 'off' })).toBe(false);
   // The person's harness level where the session set none.
   expect((await sent({}, { reasoning: 'high' })).reasoning_effort).toBe('high');
 });
