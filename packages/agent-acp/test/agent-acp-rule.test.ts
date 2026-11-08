@@ -254,10 +254,11 @@ it('asks before a matched host tool runs, and runs it when a person approves', a
     toolName: 'mcp__ahp__list_sessions',
     status: 'pending-confirmation',
   });
-  // One approval and one refusal: nothing on the card keeps an answer.
+  // VS Code's Allow Once and Skip, the options the host puts on a question the
+  // operator's rule asks: nothing on the card keeps an answer.
   expect(call(entry).options).toEqual([
-    { id: 'approve', label: 'Approve', kind: 'approve', group: 1 },
-    { id: 'deny', label: 'Deny', kind: 'deny', group: 2 },
+    { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+    { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
   ]);
   // It has not run while the question stands.
   expect(ran).toEqual([]);
