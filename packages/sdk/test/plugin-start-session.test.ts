@@ -228,7 +228,7 @@ const other = (starts: Start[]): Agent => {
     schema: () => {
       const schema = base.schema();
       const properties = { ...(schema.properties as Record<string, Record<string, unknown>>) };
-      properties.voice = { type: 'string', title: 'Voice', scope: 'session' };
+      properties.voice = { type: 'string', title: 'Voice' };
       return { ...schema, properties };
     },
     create: (start: Start) => { starts.push(start); return base.create(start); },

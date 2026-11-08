@@ -451,12 +451,17 @@ export function createSleep(ctx: HostContext): Sleep {
      * backend. Left to the chat, the session would come back as that one's and
      * the provider a client reads would move with it.
      */
+    /*
+     * Each chat of the session's backend on the session's config with the
+     * values it set for itself laid over it, as it ran before it slept; a
+     * chat of another backend on its own.
+     */
     const session = await spawn(
       other?.agent ?? owner,
       named,
       lead?.one.uri ?? chatUriFor(named),
       other?.one.backendId ?? chatIdFor(named, chatUriFor(named)),
-      other?.one.config ?? restored,
+      other?.one.config ?? { ...restored, ...lead?.one.configValues },
       other === undefined
         ? { resume: lead?.one.backendId ?? id, seed }
         : { resume: other.one.backendId, seed: (back ?? []) as unknown as Bag[] },
@@ -485,7 +490,7 @@ export function createSleep(ctx: HostContext): Sleep {
         named,
         one.uri,
         one.backendId,
-        one.config ?? restored,
+        one.config ?? { ...restored, ...one.configValues },
         { resume: one.backendId, seed: (own ?? []) as unknown as Bag[] },
         ran,
         undefined,

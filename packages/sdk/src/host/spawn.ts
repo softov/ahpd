@@ -113,11 +113,14 @@ export interface Spawn {
    * kept, so a session started again after a restart is not told it: what has
    * to hold for the whole life of a session belongs on a tool's instruction.
    *
-   * `own` is the session's own backend and config, for the one start that
-   * creates the session with a chat another backend serves: a resume whose
-   * recorded default chat is one of those. The chat lands on `Held.backends`
-   * and the session stays the one `own` names. Every other road starts the
-   * session's own chat, which says whose the session is by itself.
+   * `own` is the session's own backend and config, for a start that creates
+   * the session with a chat whose config is not the session's: a chat another
+   * backend serves, which a resume whose recorded default chat is one of those
+   * starts and which lands on `Held.backends`, or a default chat that set
+   * values of its own, which a resume and a restart start on them. The
+   * session stays the one `own` names. Every other road starts the session's
+   * own chat on the session's config, which says whose the session is by
+   * itself.
    */
   spawn(
     agent: Agent,

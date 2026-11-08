@@ -110,7 +110,7 @@ it('advertises an approvals mode in the window own names, and an effort each cha
   const props = properties(cofoldAgent({}));
   expect(Object.keys(props)).toEqual(['instructions', 'cofold.reasoning', 'permissionMode', 'effortLevel']);
   // Each chat keeps its own mode, as VS Code's Claude marks its mode.
-  expect(props.permissionMode).toMatchObject({ scope: 'session', sessionMutable: true, chatMutable: true, default: 'auto' });
+  expect(props.permissionMode).toMatchObject({ sessionMutable: true, chatMutable: true, default: 'auto' });
   expect(props.permissionMode?.enum).toEqual([...PERMISSION_MODES]);
   expect((props.permissionMode?.enumLabels as string[]).length).toBe(PERMISSION_MODES.length);
   // cofold's own sentences, in cofold's own order: what a mode means is the

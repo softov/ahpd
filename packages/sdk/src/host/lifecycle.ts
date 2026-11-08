@@ -6,10 +6,13 @@ import { uriOf } from '../resources/fileuri.js';
 import { idOf, uriFor, Status } from '../sessions/catalog.js';
 import { mkdir, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { worktreeFor, worktreesOf } from '../repo/worktrees.js';
 import { ROOT, chatIdFor, named } from './channels.js';
 import { mintDefaultChatUri } from '../vscode/chatminting.js';
+import { filterChatConfigValues } from '../vscode/chatconfig.js';
+import type { ConfigSchema } from '../vscode/chatconfig.js';
 import { mayUseAgent, mayUseAgentFor, ownershipOf } from '../agents/usable.js';
 import { keepChatAttachment, resolveChatAttachment } from './chatattachment.js';
 import { openLink } from '../tools/session.js';
@@ -126,8 +129,14 @@ export interface Lifecycle {
    * one wherever it is started again, and every other chat by the session's.
    */
   getProviderForChat(held: Held, chatUri: string): Agent;
-  /** The config that chat runs on: the chat's own where it has one, the session's otherwise. */
-  chatConfig(held: Held, chatUri: string): Record<string, unknown>;
+  /** The config a chat of the session `uri` runs on: its backend's own where it has one, the session's with the chat's own values otherwise. */
+  chatConfig(uri: string, held: Held, chatUri: string): Record<string, unknown>;
+  /** What a chat of the session `uri` runs on for the properties a chat may set, the read-only ones left out. */
+  effectiveChatConfigValues(uri: string, held: Held, chatUri: string): Record<string, unknown>;
+  /** The values a new chat of the session `uri` starts with as its own, by what it was made from. */
+  initialChatConfig(uri: string, held: Held, chatUri: string, origin: Bag | undefined): Record<string, unknown>;
+  /** A new or moved chat's own values written down, and said where its state is already open. */
+  keepChatOwnConfigValues(uri: string, chatUri: string, values: Record<string, unknown>): void;
   /** What the backend is given: everything except what this host answered. */
   backendsOwn(config: Record<string, unknown>): Record<string, unknown>;
   /** Where a session actually runs, once isolation has been answered. */
@@ -985,11 +994,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         uri,
         held.defaultChat,
         chatIdOf(uri, held.defaultChat, lead?.agentId()),
-        backendsOwn(chatConfig(held, held.defaultChat)),
+        backendsOwn(chatConfig(uri, held, held.defaultChat)),
         talking,
         to,
         credentialsOf(held.defaultChat),
         keeping?.additional ?? held.additional,
+        undefined,
+        { agent: held.agent, config: backendsOwn(held.config) },
       );
       /*
        * And every other chat of the session, which comes back with it.
@@ -1016,7 +1027,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           // is written again here, and a chat resumed by one name while
           // recorded under another is one the next start reads as missing.
           chatIdOf(uri, chatUri, own),
-          backendsOwn(chatConfig(held, chatUri)),
+          backendsOwn(chatConfig(uri, held, chatUri)),
           own === undefined ? undefined : { resume: own, seed: chat.allTurns() },
           to,
           credentialsOf(chatUri),
@@ -1261,7 +1272,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       uri,
       chatUri,
       chatIdOf(uri, chatUri, own),
-      backendsOwn(chatConfig(held, chatUri)),
+      backendsOwn(chatConfig(uri, held, chatUri)),
       talking,
       directory ?? held.workingDirectory,
       credentials,
@@ -1297,9 +1308,56 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    */
   const getProviderForChat = (held: Held, chatUri: string): Agent => held.backends.get(chatUri)?.agent ?? held.agent;
 
-  /** The config one chat runs on: its own where it has a backend of its own, the session's otherwise. */
-  const chatConfig = (held: Held, chatUri: string): Record<string, unknown> =>
-    held.backends.get(chatUri)?.config ?? held.config;
+  /**
+   * The config one chat runs on: its own where it has a backend of its own,
+   * and otherwise the session's with the values the chat set for itself laid
+   * over it, as VS Code applies a chat's own values over its session's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L255-L282
+   */
+  const chatConfig = (uri: string, held: Held, chatUri: string): Record<string, unknown> =>
+    held.backends.get(chatUri)?.config ?? { ...held.config, ...ctx.getChatOwnConfigValues(uri, chatUri) };
+
+  /**
+   * What a chat of the session `uri` runs on for the properties a chat may
+   * set, the read-only ones left out, which a chat made from it or moved out
+   * of the session takes as its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13393-L13394
+   */
+  const effectiveChatConfigValues = (uri: string, held: Held, chatUri: string): Record<string, unknown> => {
+    const schema = ctx.sessionSchema(held.agent) as ConfigSchema;
+    const effective = { ...held.agent.defaults(), ...ctx.contributedDefaults(), ...chatConfig(uri, held, chatUri) };
+    return Object.fromEntries(Object.entries(filterChatConfigValues(schema, effective))
+      .filter(([key]) => schema.properties[key]?.readOnly !== true));
+  };
+
+  /**
+   * The values a new chat of the session `uri` starts with as its own, as
+   * VS Code gives a new chat its config: a fork or a side chat copies the
+   * values its source chat set, a worker's chat and the default chat start
+   * with none, and any other chat starts with what the default chat runs on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13372-L13400
+   */
+  const initialChatConfig = (uri: string, held: Held, chatUri: string, origin: Bag | undefined): Record<string, unknown> => {
+    if ((origin?.kind === 'fork' || origin?.kind === 'sideChat') && typeof origin.chat === 'string') {
+      return ctx.getChatOwnConfigValues(uri, origin.chat);
+    }
+    if (origin?.kind === 'tool' || chatUri === held.defaultChat) return {};
+    return effectiveChatConfigValues(uri, held, held.defaultChat);
+  };
+
+  /**
+   * A new or moved chat's own values written into its row, and said on its
+   * channel where its state was seeded before they were written, as VS Code's
+   * host sets a chat's config with a `chat/configChanged` of its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9159
+   */
+  const keepChatOwnConfigValues = (uri: string, chatUri: string, values: Record<string, unknown>): void => {
+    ctx.persistChatOwnConfigValues(uri, chatUri, values);
+    const held = ctx.stateOf(chatUri)?.config as { values?: Record<string, unknown> } | undefined;
+    if (held !== undefined && !isDeepStrictEqual(held.values ?? {}, values)) {
+      dispatch(chatUri, { type: 'chat/configChanged', config: { ...values }, replace: true });
+    }
+  };
 
   /**
    * The name a backend is handed for a chat, on a start that is not the first.
@@ -2496,7 +2554,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
 
   return {
     removeSession, respawning, restart, moveSession, relaunchChat, chatIdOf, disposeProviderChat, backendsOwn,
-    getProviderForChat, chatConfig, isolated, oweTree,
+    getProviderForChat, chatConfig, effectiveChatConfigValues, initialChatConfig, keepChatOwnConfigValues, isolated, oweTree,
     requestSessionWorktreeRemoval, restoreSessionWorktree, canAutomaticallyDeleteArchivedSession, createDetachedWorktree,
     beginOrRun, startTurn, commandIn, beginTurn, modelIn, messageFrom, messageOf, messageAttachments, scratchFolder, createProviderSession,
   };

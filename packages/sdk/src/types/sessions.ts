@@ -153,6 +153,16 @@ export interface StoredChat {
    * session's own, whose config is the session's.
    */
   config?: Record<string, unknown>;
+  /**
+   * The values this chat set for itself, where it runs on its session's
+   * backend: the properties the session's schema marks `chatMutable`, laid
+   * over the session's config, as VS Code keeps a chat's own config values
+   * with the chat. A chat is made with the ones its session's default chat
+   * runs on, or the ones the chat it was forked from set, and a client's
+   * `chat/configChanged` moves them. Absent where it set none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L340-L341
+   */
+  configValues?: Record<string, unknown>;
   /** The title it was given, or nothing where it was never named. */
   title?: string;
   /** What it was made from, as `session/chatAdded` carried it. */

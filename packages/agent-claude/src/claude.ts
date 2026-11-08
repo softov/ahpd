@@ -348,7 +348,6 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * session reads the same however it is opened.
        */
       permissionMode: {
-        scope: 'session',
         type: 'string',
         title: 'Approvals',
         description: 'How Claude handles tool approvals.',
@@ -394,7 +393,6 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * `default`, so absent stays tellable from an explicit empty list.
        */
       shellInitScripts: {
-        scope: 'session',
         type: 'array',
         title: 'Shell Init Script',
         description: 'A script sourced before each built-in shell tool command.',
@@ -422,7 +420,6 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L277-L310
        */
       permissions: {
-        scope: 'session',
         type: 'object',
         title: 'Permissions',
         description: 'Permission rules: a tool name or Tool(specifier), e.g. Shell(npm run *), WebFetch(example.com), WebFetch(example.com/docs/*), Read(./src/**), or Edit(./docs/**). Shell specifiers support wildcards, /regex/flags, and commandLine:<specifier> for the full command line. Deny rules reject matching calls; ask rules require confirmation before allow rules or implicit defaults. Updated automatically when approving "in this Session" or "Always Allow".',

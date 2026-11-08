@@ -182,6 +182,8 @@ export const ACTION_NEEDS: Record<string, Grant> = {
   'chat/isReadChanged': 'chat:mark',
   'chat/isArchivedChanged': 'chat:mark',
   'chat/truncated': 'chat:truncate',
+  // A chat's own config is its session's config, set for one chat.
+  'chat/configChanged': 'session:configure',
 
   // a changeset and a session's annotations are the session's own review.
   'changeset/filesReviewChanged': 'session:review',

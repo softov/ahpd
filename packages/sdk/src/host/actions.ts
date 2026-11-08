@@ -24,9 +24,15 @@ import type { ConnectionContext, HostContext } from './context.js';
  * Widened from the generated exhaustive map, which is keyed by the action
  * types the package knows: a type read off the wire is a string and may be
  * none of them, and `undefined` there means "no such action" rather than
- * "host-only".
+ * "host-only". With it, the one client action VS Code's protocol adds ahead of
+ * the package, which its window sends for a property a chat may set for
+ * itself: `chat/configChanged`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/protocol/action-origin.generated.ts#L430
  */
-const dispatchable = IS_CLIENT_DISPATCHABLE as Record<string, boolean | undefined>;
+const dispatchable: Record<string, boolean | undefined> = {
+  ...(IS_CLIENT_DISPATCHABLE as Record<string, boolean | undefined>),
+  'chat/configChanged': true,
+};
 
 /**
  * What one client action does.

@@ -8,6 +8,8 @@ import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { grantOf, withGrant } from './permissions.js';
 import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
 import { readAgentPermissionResponseMeta } from '../vscode/agentpermissionresponsemeta.js';
+import { filterChatConfigValues, validateChatConfigWrite } from '../vscode/chatconfig.js';
+import type { ConfigSchema } from '../vscode/chatconfig.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { Session } from '../types/session.js';
@@ -459,6 +461,15 @@ export function chatAction(
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/turnAdmission/turnAdmissionContribution.ts#L29-L42
    */
   const worker = ctx.workerOf(channel) !== undefined;
+  /*
+   * A worker's chat runs on the config of the chat that spawned it, so a
+   * value set on one is refused, in VS Code's words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13337-L13339
+   */
+  if (type === 'chat/configChanged' && (worker || ctx.getChatOrigin(channel).kind === 'tool')) {
+    refuse(connection.peer, channel, action, origin, 'A subagent chat inherits its config from the chat that spawned it.');
+    return;
+  }
   if (worker && type === 'chat/turnStarted') {
     const owning = sessions.get(sessionFor(channel));
     const lead = owning === undefined ? undefined : leadOf(owning);
@@ -620,6 +631,95 @@ export function chatAction(
       else return conn.applyNow(params, origin);
       return undefined;
     });
+  }
+  /*
+   * A chat's own config: VS Code's `chat/configChanged`, the values a chat
+   * sets for itself of the properties its schema marks `chatMutable`, laid
+   * over its session's and reaching that chat alone.
+   *
+   * Refused, in VS Code's words, on a chat its session does not have, and for
+   * a key the schema does not let a chat set, a read-only one, or a value its
+   * property does not offer: one refusal answers the whole action. A chat of
+   * another backend is checked against that backend's schema, and its values
+   * are its own config's. Kept in the chat's record, which a restart starts it
+   * again with, and said; then handed to the chat's backend where it runs,
+   * one it could not take logged in its words as for a session's change. A
+   * chat whose session nothing runs keeps them for its next start, as a
+   * session's config is kept.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13333-L13365
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13618-L13625
+   */
+  if (type === 'chat/configChanged') {
+    const config = (typeof action.config === 'object' && action.config !== null
+      ? action.config
+      : {}) as Record<string, unknown>;
+    const replace = action.replace === true;
+    const uri = sessionFor(channel);
+    const id = idOf(uri);
+    const apply = (): void => {
+      const owning = sessions.get(uri);
+      const record = ctx.recordedChat(id, channel);
+      const foreign = owning?.backends.get(channel);
+      const provider = foreign?.agent.provider ?? (owning === undefined ? record?.provider : undefined);
+      const agent = foreign?.agent ?? (provider === undefined ? owning?.agent ?? owners.get(uri) : ctx.agents.get(provider));
+      const registered = owning?.chats.has(channel) === true || record !== undefined || channel === chatUriFor(ctx.nameOf(id));
+      if (!registered || agent === undefined) {
+        no('Chat config can only be changed on a registered chat.');
+        return;
+      }
+      const schema = ctx.sessionSchema(agent) as ConfigSchema;
+      try {
+        for (const [key, value] of Object.entries(config)) {
+          if (schema.properties[key]?.readOnly === true) throw new Error(`Chat config '${key}' is host-owned and cannot be set by a client.`);
+          validateChatConfigWrite(schema, key, value);
+        }
+      }
+      catch (error) {
+        no(error instanceof Error ? error.message : String(error));
+        return;
+      }
+      /*
+       * The values the chat sets for itself after the change, and the keys a
+       * replace leaves out of what it set before, which go back to what its
+       * session or its schema says.
+       */
+      const before = provider === undefined
+        ? ctx.getChatOwnConfigValues(uri, channel)
+        : filterChatConfigValues(schema, foreign?.config ?? record?.config);
+      const next = replace ? { ...config } : { ...before, ...config };
+      const dropped = Object.keys(before).filter((key) => !Object.hasOwn(next, key));
+      if (provider === undefined) {
+        if (record === undefined) ctx.keepChat(uri, channel, undefined, true);
+        ctx.persistChatOwnConfigValues(uri, channel, next);
+      }
+      else {
+        const settings = { ...(foreign?.config ?? record?.config) };
+        for (const key of dropped) delete settings[key];
+        Object.assign(settings, config);
+        if (foreign !== undefined) foreign.config = settings;
+        ctx.keepChat(uri, channel, undefined, false, provider, settings);
+      }
+      dispatch(channel, action, origin);
+      const chat = owning === undefined ? undefined : byChat.get(channel)?.chat;
+      if (owning === undefined || chat === undefined) return;
+      const effective = { ...agent.defaults(), ...contributedDefaults(), ...chatConfig(uri, owning, channel) };
+      void (async () => {
+        for (const key of [...Object.keys(config), ...dropped]) {
+          const answer = await Promise.resolve(chat.setConfig?.(key, effective[key]))
+            .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
+          if (answer !== true) log(`${channel}: ${key} was not taken by its backend: ${typeof answer === 'string' ? answer : 'no answer'}`);
+        }
+      })();
+    };
+    if (unavailableProvider(id) !== undefined) {
+      no(`No agent for session: ${uri}`);
+      return;
+    }
+    if (sessions.has(uri) || owners.has(uri)) {
+      apply();
+      return;
+    }
+    return restoreSession(id).then(apply);
   }
   /*
    * Config for a session with no agent yet: remembered, not refused.
@@ -1319,20 +1419,16 @@ export function chatAction(
       };
       /**
        * An accepted key written to the store, which a resume after a
-       * restart spawns the lead chat with.
+       * restart spawns the session's chats with.
        *
-       * A key the schema scopes to one chat only when that chat is the
-       * lead, since a peer chat's is that chat's and not the session's.
-       * And only while the session is the one the change was made to:
-       * the backend answers after a turn of the event loop, and a
-       * session disposed meanwhile has had its row forgotten, maybe for
-       * a new session under the same name. A session being started
-       * again is still the session.
+       * Only while the session is the one the change was made to: the
+       * backend answers after a turn of the event loop, and a session
+       * disposed meanwhile has had its row forgotten, maybe for a new
+       * session under the same name. A session being started again is
+       * still the session.
        */
-      const lead = owning !== undefined && session.chatUri === owning.defaultChat;
       const life = lifeOf(session.uri);
       const remember = (key: string, value: unknown): void => {
-        if (propertyOf(owning?.agent, key)?.scope === 'chat' && !lead) return;
         if (lives.get(session.uri) !== life) return;
         const id = idOf(session.uri);
         kept.setConfig(id, { ...kept.config(id), [key]: value });
@@ -1476,7 +1572,7 @@ export function chatAction(
         const answered = Object.entries(taken).filter(([key]) => Object.hasOwn(HOSTS_TAKEN, key));
         if (answered.length > 0) decided.set(uri, { ...decided.get(uri), ...Object.fromEntries(answered) });
         // Said on the session's channel, and answered on the channel it came
-        // on, a chat's for a key the schema scopes to one chat.
+        // on, where a client that sent it on a chat's waits for it.
         if (channel === uri) dispatch(uri, { ...action, config: taken }, origin);
         else {
           dispatch(uri, { ...action, config: taken });
@@ -1514,25 +1610,26 @@ export function chatAction(
        * host applies a config change its checks passed to its agents.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
        *
-       * Every chat, or only this one, as the property says. A permission
-       * mode and an output style are the session's: the chats are peers on
-       * one config, and a voice set on one of them is a session where two
-       * conversations answer differently. A model is the chat's. A chat of
-       * another backend is not one of the peers here: a key this session's
+       * Every chat of the session's backend that runs on the session's value:
+       * a key the schema marks `chatMutable` reaches the chats that set no
+       * value of it themselves, since a chat's own values are laid over its
+       * session's, as VS Code reads a chat's values over its session's. A
+       * chat of another backend is not one of them: a key this session's
        * backend takes is a key another may not, so it is left to the chat's
        * own config.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L263-L266
        */
       const handing = async (): Promise<void> => {
         for (const [key, value] of asked) {
-          if (!unschemed.some(([one]) => one === key)) {
+          const chatMutable = propertyOf(owning?.agent, key)?.chatMutable === true;
+          const follows = (chatUri: string): boolean => !chatMutable || !Object.hasOwn(ctx.getChatOwnConfigValues(uri, chatUri), key);
+          if (!unschemed.some(([one]) => one === key) && follows(session.chatUri)) {
             const answer = await Promise.resolve(session.setConfig?.(key, value))
               .catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
             if (answer !== true) log(`${session.chatUri}: ${key} was not taken by its backend: ${typeof answer === 'string' ? answer : 'no answer'}`);
           }
-          const everywhere = propertyOf(owning?.agent, key)?.scope === 'chat'
-            ? []
-            : (owning ? [...owning.chats].filter(([chat]) => !owning.backends.has(chat)).map(([, chat]) => chat) : [])
-              .filter((chat) => chat !== session);
+          const everywhere = (owning ? [...owning.chats].filter(([chat]) => !owning.backends.has(chat)).map(([, chat]) => chat) : [])
+            .filter((chat) => chat !== session && follows(chat.chatUri));
           for (const chat of everywhere) void Promise.resolve(chat.setConfig?.(key, value));
         }
         /*
@@ -2318,7 +2415,7 @@ export function chatAction(
             chatUri,
             // The session's own chat is handed no name, as a restart hands it none.
             ctx.ownChat(uri, chatUri) ? undefined : chatIdFor(uri, chatUri),
-            chatConfig(owner, chatUri),
+            chatConfig(uri, owner, chatUri),
             { ...(failed !== undefined && own !== undefined ? { resume: own } : {}), seed: kept },
             owner.workingDirectory,
             undefined,
@@ -2441,7 +2538,7 @@ export function chatAction(
         uri,
         chatUri,
         ctx.ownChat(uri, chatUri) ? undefined : chatIdFor(uri, chatUri),
-        chatConfig(owner, chatUri),
+        chatConfig(uri, owner, chatUri),
         resuming,
         owner.workingDirectory,
         undefined,

@@ -685,14 +685,6 @@ describe('more than one chat in a session', () => {
       params: { channel: uri, action: { type: 'session/configChanged', config: { permissionMode: 'plan' } } },
     });
     await settle();
-    /*
-     * Both chats, because the schema says `scope: 'session'`.
-     *
-     * The chats of one session are peers on one config: a permission mode set
-     * on one of them and not the other is a session where two conversations
-     * are allowed different things. Which keys are a session's is the backend's
-     * schema's answer rather than this host's.
-     */
     expect(sdk.modesSet.length - before).toBe(2);
   });
 
@@ -2676,14 +2668,13 @@ describe('a chat of another backend', () => {
   /**
    * The example backend, under a name of its own.
    *
-   * `voice` is declared as the session's rather than a chat's, which is what
-   * makes it a key a fan-out would push at every chat of the session. And
-   * `endPoint` names the last entry a turn left, without which this host
-   * refuses a rewind as one it has no point to cut at.
+   * `voice` is the session's, as echo declares it, which is what makes it a
+   * key a fan-out would push at every chat of the session. And `endPoint`
+   * names the last entry a turn left, without which this host refuses a
+   * rewind as one it has no point to cut at.
    */
   const backend = (provider: string, starts: Start[], told?: string[]): Agent => {
     const base = echo({ path: DIR, pace: 0 });
-    const schema = base.schema();
     return {
       ...base,
       provider,
@@ -2696,11 +2687,6 @@ describe('a chat of another backend', () => {
        * turn the chat already had, before the one this host adds.
        */
       transcript: async (id: string) => (id === UUID ? SECOND : base.transcript?.(id)),
-      schema: () => {
-        const properties = { ...(schema.properties as Record<string, Record<string, unknown>>) };
-        properties.voice = { ...properties.voice, scope: 'session' };
-        return { ...schema, properties };
-      },
       create: (start: Start): Session => {
         starts.push(start);
         const session = base.create(start.chatId === undefined ? start : { ...start, resume: start.chatId });

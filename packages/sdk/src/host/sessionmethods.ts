@@ -185,6 +185,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * until this line puts it where it now belongs.
      */
     const turns = ctx.liveTurnsOf(found.uri, chatUri, found.chat.allTurns() as Bag[]).map((one) => String(one.id ?? ''));
+    /*
+     * What it runs on for the properties a chat may set, read before it leaves
+     * and kept as its own where it goes, as VS Code's move gives a moved chat
+     * its effective values as its own: the session it joins has a config of
+     * its own, and the chat goes on as it was.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L376
+     */
+    const ownValues = held.backends.has(chatUri) ? {} : ctx.effectiveChatConfigValues(found.uri, held, chatUri);
     kept.moveChat(idOf(found.uri), idOf(into), chatUri, turns);
     // And the outputs its terminals kept and its local turns, which are the
     // chat's own.
@@ -221,6 +229,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     // Written down as the destination's, which a restart starts it again in,
     // the default chat of a session made for it.
     keepChat(into, chatUri, chatIdOf(into, chatUri, own), there.defaultChat === chatUri);
+    ctx.keepChatOwnConfigValues(into, chatUri, ownValues);
     // The peers it works beside, which are the chat's own from here on.
     if (folders !== undefined) beside.set(chatUri, folders);
     ctx.chatRelaunches.set(chatUri, {
@@ -1444,7 +1453,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       if (fromChat !== undefined && made?.seed !== undefined) ctx.persistForkedLocalTurns(uri, fromChat, chatUri, made.seed);
       const agent = fromChat === undefined ? held.agent : getProviderForChat(held, fromChat);
-      const config = fromChat === undefined ? held.config : chatConfig(held, fromChat);
+      /*
+       * The values it starts with as its own and the config they put it on: a
+       * chat of the session's backend runs on the session's config with them
+       * laid over it, and a fork of a chat of another backend on that chat's.
+       */
+      const ownValues = agent === held.agent ? ctx.initialChatConfig(uri, held, chatUri, origin) : {};
+      const config = agent === held.agent ? { ...held.config, ...ownValues } : chatConfig(uri, held, fromChat as string);
       // Read until something is said in it, written before its state opens.
       startsRead(ctx, uri, chatUri);
       /*
@@ -1483,6 +1498,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         throw new RpcError(INVALID_PARAMS, error instanceof Error ? error.message : String(error));
       }
       log(`opened ${chatUri} in ${uri}`);
+      ctx.keepChatOwnConfigValues(uri, chatUri, ownValues);
       if (title !== undefined) ctx.persistChatTitle(uri, chatUri, title);
       /*
        * The default chat takes its own title from here, before the new chat

@@ -76,7 +76,7 @@ it('carries an approvals control on the session, with the named model as the def
   const schema = agent.schema();
   const properties = schema.properties as Record<string, Record<string, unknown>>;
   expect(Object.keys(properties)).toEqual(['permissionMode', 'availableApprovalModes']);
-  expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true });
+  expect(properties.permissionMode).toMatchObject({ type: 'string', sessionMutable: true });
   // The server's modes are unknown until a session asks it, so there is no
   // enum here; a session that has asked reports them as its own, read-only.
   expect(properties.permissionMode?.enum).toBeUndefined();

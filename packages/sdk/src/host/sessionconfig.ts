@@ -14,7 +14,7 @@ export interface SessionConfig {
   ) => Promise<{ schema: Bag; defaults: Record<string, unknown>; repository?: string }>;
   mergedConfig(uri: string, theirs: unknown, mine: Record<string, unknown>): Bag;
   formOrdered(properties: Bag, hosts: string[]): Bag;
-  propertyOf(agent: Agent | undefined, key: string): { sessionMutable?: boolean; scope?: string } | undefined;
+  propertyOf(agent: Agent | undefined, key: string): { sessionMutable?: boolean; chatMutable?: boolean } | undefined;
   sessionSchema(agent: Agent): Bag;
   runningSchema(agent: Agent): Bag;
   schemaPolicy(): SchemaPolicy;
@@ -369,22 +369,21 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   /**
    * One property of a backend's config schema, as this host reads it.
    *
-   * Two fields and no more: `sessionMutable`, which the protocol already
-   * declares, and `scope`, which it does not - the protocol's schema is
-   * deliberately generic and says nothing about whether a key belongs to a
-   * session or to one chat inside it. A key that says neither stays as the
-   * session started it, since only `sessionMutable: true` lets a key move
-   * after the session is created, and is the session's.
+   * Two fields: `sessionMutable`, which the protocol declares, and
+   * `chatMutable`, VS Code's, which says a chat may hold its own value of the
+   * key, set with `chat/configChanged` on the chat and reaching that chat
+   * alone. A key that says neither stays as the session started it, since only
+   * `sessionMutable: true` lets a key move after the session is created, and
+   * is the session's.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L622-L623
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/protocol/channels-session/state.ts#L612-L618
    *
    * A key a plugin contributed is found here too, which is what makes a
    * key like `computer` obey the schema it was declared with. The contributed
    * property wins where both declare one, the same way `sessionSchema` folds
-   * them. Read from the raw schemas rather than from `sessionSchema`, because
-   * `published` drops `scope` on the way out and this is the one reader that
-   * needs it.
+   * them.
    */
-  const propertyOf = (agent: Agent | undefined, key: string): { sessionMutable?: boolean; scope?: string } | undefined => {
+  const propertyOf = (agent: Agent | undefined, key: string): { sessionMutable?: boolean; chatMutable?: boolean } | undefined => {
     if (!agent) return undefined;
     const own = agent.schema(schemaPolicy());
     const ownProperties = (typeof own.properties === 'object' && own.properties !== null
@@ -392,39 +391,8 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
       : {}) as Bag;
     const held = options.sessionConfig?.[key] ?? ownProperties[key];
     return typeof held === 'object' && held !== null
-      ? held as { sessionMutable?: boolean; scope?: string }
+      ? held as { sessionMutable?: boolean; chatMutable?: boolean }
       : undefined;
-  };
-
-  /**
-   * A backend's config schema, as it goes on the wire.
-   *
-   * `scope` is this host's own: it says whether a key belongs to the session
-   * or to one chat inside it, which is what decides how far a
-   * `session/configChanged` reaches - and `ConfigPropertySchema` does not
-   * declare it. A field the protocol has no place for is one a client cannot
-   * read and a strict validator calls a defect, so it is read here and left
-   * off what is published. The same rule `HOSTS_OWN` applies to values.
-   *
-   * `type` is set here rather than asked of the backend. `SessionConfigSchema`
-   * declares it as a required `object`, and a backend that lists `properties`
-   * without saying what they are properties of publishes a schema a strict
-   * client refuses.
-   */
-  const published = (schema: Bag): Bag => {
-    const properties = (typeof schema.properties === 'object' && schema.properties !== null
-      ? schema.properties
-      : undefined) as Bag | undefined;
-    if (properties === undefined) return { ...schema, type: 'object' };
-    return {
-      ...schema,
-      type: 'object',
-      properties: Object.fromEntries(Object.entries(properties).map(([key, value]) => {
-        if (typeof value !== 'object' || value === null) return [key, value];
-        const { scope: _scope, ...rest } = value as Bag & { scope?: unknown };
-        return [key, rest];
-      })),
-    };
   };
 
   /** A backend key said to be answered but not declared, so each is said once. */
@@ -478,9 +446,13 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L6168-L6190
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L374
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+   *
+   * `type` is this host's to set: `SessionConfigSchema` declares it as a
+   * required `object`, and a backend that lists `properties` without saying
+   * what they are properties of publishes a schema a strict client refuses.
    */
   const sessionSchema = (agent: Agent): Bag => {
-    const schema = published(agent.schema(schemaPolicy()));
+    const schema = agent.schema(schemaPolicy());
     const properties = (typeof schema.properties === 'object' && schema.properties !== null
       ? schema.properties
       : {}) as Bag;

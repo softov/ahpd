@@ -643,7 +643,6 @@ export function cofoldAgent(options: CofoldOptions = {}): CofoldAgent {
       ...(options.policy === undefined
         ? {
             permissionMode: {
-              scope: 'session',
               type: 'string',
               title: 'Approvals',
               description: 'How the agent handles tool approvals.',

@@ -459,12 +459,16 @@ const chatsOf = (value: unknown): StoredChat[] | undefined => {
     if (!text(held.uri) || typeof held.backendId !== 'string') return [];
     const origin = held.origin;
     const config = held.config;
+    const configValues = held.configValues;
     return [{
       uri: held.uri,
       backendId: held.backendId,
       ...(text(held.provider) ? { provider: held.provider } : {}),
       ...(typeof config === 'object' && config !== null && !Array.isArray(config)
         ? { config: config as Record<string, unknown> }
+        : {}),
+      ...(typeof configValues === 'object' && configValues !== null && !Array.isArray(configValues)
+        ? { configValues: configValues as Record<string, unknown> }
         : {}),
       ...(typeof held.title === 'string' ? { title: held.title } : {}),
       ...(typeof origin === 'object' && origin !== null && !Array.isArray(origin)

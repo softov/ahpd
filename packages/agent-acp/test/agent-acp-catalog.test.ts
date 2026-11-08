@@ -204,7 +204,7 @@ it('carries an approvals control on the session, with no enum before a server is
   const properties = agent.schema().properties as Record<string, Record<string, unknown>>;
   expect(Object.keys(properties)).toEqual(['permissionMode', 'availableApprovalModes']);
   // Each chat keeps its own mode, as VS Code's Claude marks its mode.
-  expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true, chatMutable: true });
+  expect(properties.permissionMode).toMatchObject({ type: 'string', sessionMutable: true, chatMutable: true });
   expect(properties.permissionMode?.enum).toBeUndefined();
   // A model is the turn's rather than a config property, but the configured id
   // is still the default a client is offered.
