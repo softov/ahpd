@@ -17,6 +17,7 @@ import { cliMountOf, cliVolumeOf, copyOf, gitVolumeOf, guardFor, guardedMounts, 
 import type { GitGuard, GitMounts, SessionTree } from './gitdir.js';
 import { codeRouteOf } from './clone.js';
 import type { CodeRoute } from './clone.js';
+import { sandboxRunArgs, sandboxSecurityOptions } from './sandbox.js';
 import { bringBack, bundledInto, checkedOut, fetchedInto, followOfCopy, hostGit, keepUncommitted, movesOver } from './machinegit.js';
 import type { FarSeed, MachineGit, Ran } from './machinegit.js';
 import { absoluteOnHost, mountParts } from './manifest.js';
@@ -327,6 +328,15 @@ export interface MachineSpec {
    * Compose override's `runtime` for a Compose definition.
    */
   ociRuntime?: string;
+  /**
+   * Whether the machine is made to host the sandbox runtime: seccomp, AppArmor
+   * and the system paths unconfined and a tun device, as VS Code prepares a
+   * dev container it starts with the sandbox enabled. A container's `docker
+   * run` options take them, and a Compose definition's service its
+   * `security_opt` and `devices`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerSandbox.ts#L93-L152
+   */
+  sandbox?: boolean;
   /**
    * Host paths made visible in the machine, as `source:target` or
    * `source:target:ro`.
@@ -1437,6 +1447,9 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
       // A part from its own image, which only `runArgs` can spell: the CLI
       // passes the entry to its `docker run` as written.
       ...options.images.flatMap((part) => ['--mount', imageMountOf(part)]),
+      // The sandbox runtime's options after the definition's own, as VS Code
+      // appends them to its `runArgs`.
+      ...(options.sandbox ? sandboxRunArgs : []),
     ];
   }
   return held;
@@ -1460,6 +1473,7 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
   memory?: string;
   runtime?: string;
   images: MadePart[];
+  sandbox: boolean;
 } => {
   const agents = spec.agents ?? [];
   return {
@@ -1476,6 +1490,7 @@ const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
     ...(spec.memory === undefined ? {} : { memory: spec.memory }),
     ...(spec.ociRuntime === undefined ? {} : { runtime: spec.ociRuntime }),
     images: route === 'image' ? spec.parts ?? [] : [],
+    sandbox: spec.sandbox === true,
   };
 };
 
@@ -1550,6 +1565,9 @@ const composeOverrideOf = (
             image: { subpath: partTarget(part.id).slice(1) },
           })),
         }),
+        // The sandbox runtime's options, as VS Code writes them for a Compose
+        // definition (devContainerSandbox.ts L125-L133 at 6b68d3fe).
+        ...(options.sandbox ? { security_opt: [...sandboxSecurityOptions], devices: ['/dev/net/tun:/dev/net/tun:rw'] } : {}),
       },
     },
   }), { mode: 0o600 });
@@ -3198,6 +3216,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        * Docker that has no such runtime refuses the machine itself.
        */
       if (spec.ociRuntime !== undefined) flags.push(`--runtime=${spec.ociRuntime}`);
+      // Made to host the sandbox runtime, where the session's sandbox is on.
+      if (spec.sandbox === true) flags.push(...sandboxRunArgs);
       /*
        * One `-v` per entry, however many said the same one.
        *

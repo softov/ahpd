@@ -1445,6 +1445,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     terminalAutoApproveDefaults: options.terminalAutoApproveDefaults,
     // The operator's managed permissions and per-tool eligibility, handed on as the file says them.
     ...(options.managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions: options.managedSettingsPermissions }),
+    ...(options.managedSettingsSandbox === undefined ? {} : { managedSettingsSandbox: options.managedSettingsSandbox }),
     ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
     managedRules: options.managedRules,
     /*

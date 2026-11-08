@@ -1,8 +1,9 @@
+import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
+import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork, SpawnOptions } from '@ahpd/sdk';
 import { AGENT_RECORD_VARIABLE, resolveNeeds, secretRef, strings } from '@ahpd/sdk';
 import { cliOf, devContainer, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
@@ -31,6 +32,10 @@ import { serverGate } from './servercheck.js';
 import { NODE_RUNTIME, nodeRuntime } from './node.js';
 import { claimAdopted, claimOwned, forgetOwned, keepMadeNeeds, keepProbe, madeNeedsOf, ownedOf, probeOf } from './owners.js';
 import { computerTools } from './tools.js';
+import {
+  hostSandboxPlace, hostSandboxRefusal, isSandboxSupported, MACHINE_SANDBOX_CHECK, MACHINE_SANDBOX_START, sandboxConfiguration,
+  sandboxedCommand, sandboxedServer, sandboxSettingsOf, sandboxTempDir, writeSandboxSettings,
+} from './sandbox.js';
 import { guardFor, hostUser, runsAsHost } from './gitdir.js';
 import type { GitGuard, SessionTree } from './gitdir.js';
 
@@ -1874,6 +1879,84 @@ export const apply: Plugin['apply'] = (host, options) => {
     if (wanted.length > 0) await made.takeOut(id, wanted);
   };
 
+  /**
+   * What a command in a machine printed and how it ended, run by the
+   * descriptor the machine's runtime answers for it.
+   */
+  const ranIn = async (id: string, asked: SpawnOptions): Promise<{ code: number; out: string }> => {
+    const how = await reach(id, asked);
+    if (how === undefined) return { code: 1, out: `There is no computer called ${id}` };
+    return await new Promise((done) => {
+      execFile(how.command, how.args, {
+        encoding: 'utf8',
+        timeout: 60_000,
+        ...(how.cwd === undefined ? {} : { cwd: how.cwd }),
+        ...(how.env === undefined ? {} : { env: { ...process.env, ...how.env } }),
+      }, (error, stdout, stderr) => {
+        done({ code: error === null ? 0 : typeof error.code === 'number' ? error.code : 1, out: `${stdout}${stderr}`.trim() });
+      });
+    });
+  };
+
+  /** Each machine's home, as the sandbox check inside it read it, which a sandboxed command does not read. */
+  const homes = new Map<string, string>();
+
+  /*
+   * Whether a computer can host the sandbox runtime, each kind for itself: this
+   * host by the runtime's own dependency check and VS Code's bubblewrap probe;
+   * a container by its real Docker settings, as VS Code checks a dev container
+   * before it treats it as able to host the sandbox, and then by the runtime's
+   * own start run inside it; a box or a VM by that start alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L498-L504
+   */
+  const sandboxSupport: NonNullable<ComputerPort['sandboxSupport']> = async (id) => {
+    if (id === undefined) return await hostSandboxRefusal();
+    const held = await made.inspect(id);
+    if (held === undefined) return `There is no computer called ${id}`;
+    if (typeof held['HostConfig'] === 'object' && held['HostConfig'] !== null && !isSandboxSupported(JSON.stringify(held))) {
+      return `computer://${id} was not made to host the sandbox: its container runs with seccomp, AppArmor or its system paths confined, or without /dev/net/tun`;
+    }
+    const probed = await ranIn(id, { command: 'sh', args: ['-c', MACHINE_SANDBOX_CHECK] });
+    if (probed.code !== 0) return probed.out === '' ? `The sandbox runtime cannot run in computer://${id}` : probed.out;
+    homes.set(id, probed.out);
+    return undefined;
+  };
+
+  /*
+   * A command or an MCP server inside the sandbox runtime, with the chat's
+   * settings: on this host, the runtime this plugin depends on run with the
+   * daemon's Node and its settings written beside it; inside a machine, the
+   * runtime's `srt` there, its settings written into the machine by the same
+   * command that starts it, which the machine's own runtime reaches.
+   */
+  const sandboxed: NonNullable<ComputerPort['sandboxed']> = async (id, asked) => {
+    const sandbox = asked.sandbox ?? {};
+    const { chat, server, unsandboxed, sandbox: _sandbox, ...options } = asked;
+    const outside = unsandboxed === true && sandbox.allowUnsandboxedCommands === true;
+    if (id === undefined) {
+      const place = hostSandboxPlace(chat ?? '', host.configDir);
+      const configPath = writeSandboxSettings(place, (path) => sandboxSettingsOf(sandbox, place, options.cwd, path));
+      return server === true ? sandboxedServer(place, configPath, options) : sandboxedCommand(place, configPath, options, outside);
+    }
+    if (!homes.has(id)) {
+      const refused = await sandboxSupport(id);
+      if (refused !== undefined) throw new Error(refused);
+    }
+    const home = homes.get(id);
+    const place = { execPath: 'node', ...(home === undefined ? {} : { home }), tempDir: sandboxTempDir('/tmp/ahpd-sandbox', chat ?? ''), platform: 'linux' as const };
+    const configPath = `${place.tempDir}/settings.json`;
+    const settings = JSON.stringify(sandboxSettingsOf(sandbox, place, options.cwd, configPath));
+    const inner = server === true ? sandboxedServer(place, configPath, options) : sandboxedCommand(place, configPath, options, outside);
+    const how = await reach(id, {
+      command: 'sh',
+      args: ['-c', MACHINE_SANDBOX_START, 'sh', place.tempDir, settings, inner.command, ...inner.args],
+      ...(inner.env === undefined ? {} : { env: inner.env }),
+      ...(asked.provider === undefined ? {} : { provider: asked.provider }),
+    });
+    if (how === undefined) throw new Error(`There is no computer called ${id}`);
+    return how;
+  };
+
   host.registerComputers({
     how: reach,
     /*
@@ -1906,6 +1989,8 @@ export const apply: Plugin['apply'] = (host, options) => {
     follow,
     putIn,
     takeOut,
+    sandboxSupport,
+    sandboxed,
     /*
      * The agents one was prepared for, read back from its own runtime.
      *
@@ -2058,7 +2143,7 @@ export const apply: Plugin['apply'] = (host, options) => {
           try {
             // The CLI decides the container's name, so the id is the one it made
             // rather than the one this host suggested.
-            return (await made.run({ ...spec, label, ...withGit(asked, answer) })).id;
+            return (await made.run({ ...spec, label, ...withGit(asked, answer), ...(asked.sandbox === true ? { sandbox: true } : {}) })).id;
           }
           catch (error) {
             throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
@@ -2174,6 +2259,8 @@ export const apply: Plugin['apply'] = (host, options) => {
           // keeps it out of a daemon that keeps the same session ids.
           session: asked.session,
           ...(host.hostId === undefined ? {} : { host: host.hostId }),
+          // Made to host the sandbox runtime where the session's sandbox is on.
+          ...(asked.sandbox === true ? { sandbox: true } : {}),
         }));
       });
       // Watched before the host says the session entered, so a session that
@@ -2379,6 +2466,14 @@ export const apply: Plugin['apply'] = (host, options) => {
       },
     });
   }
+
+  /*
+   * The root `sandbox` property, VS Code's own: a window forwards its sandbox
+   * settings to a host whose root config declares the property, and the
+   * switch a chat sets is each backend's own session key.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/terminalContrib/chatAgentTools/browser/agentHostSandboxForwarder.ts#L118-L136
+   */
+  host.registerProviderConfiguration(sandboxConfiguration);
 
   if (sessionSetting) {
     if (sessionDefault !== '' && !/^computer:\/\/[^/\s]+$/.test(sessionDefault)) {

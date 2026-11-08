@@ -77,6 +77,7 @@ import { createCatalogue } from './host/catalogue.js';
 import { createSpawn } from './host/spawn.js';
 import { createBackground } from './host/background.js';
 import { createCanvases } from './host/canvases.js';
+import { createSandbox } from './host/sandbox.js';
 import { TOOL_RESULT_RESOURCE_LIMIT, toolResultResources } from './resources/toolresults.js';
 import { createLifecycle } from './host/lifecycle.js';
 import { createTooling } from './host/tooling.js';
@@ -1587,6 +1588,9 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createRelay(ctx));
   Object.assign(ctx, createChangesets(ctx));
   Object.assign(ctx, createFacts(ctx));
+  // Under its own name, because `config`, `meta` and `publish` are words other
+  // areas could reach for.
+  ctx.sandbox = createSandbox(ctx);
   Object.assign(ctx, createOwners(ctx));
   Object.assign(ctx, createMachines(ctx));
   Object.assign(ctx, createSessionConfig(ctx));

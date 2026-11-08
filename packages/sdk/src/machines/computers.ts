@@ -1,5 +1,6 @@
 import type { Start } from '../types/agent.js';
-import type { ComputerPort, MachineSource, NestedStart } from '../types/computers.js';
+import type { ComputerPort, MachineSource, NestedStart, SandboxedSpawn, Spawn } from '../types/computers.js';
+import type { SandboxConfigValue } from '../types/sandbox.js';
 import type { Owner } from '../types/usage.js';
 
 /**
@@ -158,15 +159,51 @@ export const machineRefusal = async (
  * automation, a tool call - and the host asks it once more of its own before it
  * makes a session or starts one again, so a wrong machine fails where the
  * person is rather than at the first turn.
+ *
+ * `sandbox` is the host's resolution of a chat's sandbox, which the port
+ * carries to the runtime: VS Code's agent host resolves a chat's sandbox in
+ * its configuration service and hands the result to the runtime that applies
+ * it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionSandbox.ts#L292-L303
  */
-export const computersFor = (computers: ComputerPort, provider: string, session: string, owner?: Owner): ComputerPort => {
+export const computersFor = (
+  computers: ComputerPort,
+  provider: string,
+  session: string,
+  owner?: Owner,
+  sandbox?: (chat?: string) => SandboxConfigValue,
+): ComputerPort => {
   /** Refuse a machine prepared for somebody else, before either verb reaches it. */
   const prepared = async (id: string): Promise<void> => {
     const said = await machineRefusal(computers, id, provider, session, owner);
     if (said !== undefined) throw new Error(said);
   };
+  /**
+   * A command or a server where the chat's sandbox puts it: inside the
+   * runtime where the sandbox is on, and for a server only where
+   * `sandboxMcpServers` is too, as VS Code's MCP sandbox starts a server
+   * inside it only while that switch is on; as it was otherwise, on this host
+   * or reached in its machine.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/mcp/common/mcpSandboxService.ts#L108-L112
+   */
+  const sandboxed = async (id: string | undefined, options: SandboxedSpawn): Promise<Spawn> => {
+    const resolved = sandbox?.(options.chat);
+    const inside = resolved?.enabled === 'on' && (options.server !== true || resolved.sandboxMcpServers === true);
+    if (inside && computers.sandboxed !== undefined) {
+      if (id !== undefined) await prepared(id);
+      return computers.sandboxed(id, { ...options, provider, sandbox: resolved });
+    }
+    if (inside) throw new Error('This chat\'s sandbox is on, and this host has no sandbox runtime to run its commands in');
+    const { chat: _chat, server: _server, unsandboxed: _unsandboxed, sandbox: _sandbox, ...plain } = options;
+    if (id === undefined) return { command: plain.command, args: plain.args ?? [], ...(plain.env === undefined ? {} : { env: plain.env }), ...(plain.cwd === undefined ? {} : { cwd: plain.cwd }) };
+    await prepared(id);
+    const reached = await computers.how(id, { ...plain, provider });
+    if (reached === undefined) throw new Error(`There is no computer called ${id}`);
+    return reached;
+  };
   return {
     ...computers,
+    ...(sandbox === undefined ? {} : { sandbox, sandboxed }),
     how: async (id, options) => {
       await prepared(id);
       return computers.how(id, { ...options, provider });

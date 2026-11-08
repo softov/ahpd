@@ -941,6 +941,49 @@ A value under the plugin's `needs` or a profile's `needs` answers `<set>` in `ah
 
 **What a machine is not.** The container separates processes and the filesystem, not the network, and a bind mount is the host's files. Nothing in a machine survives `resourceDelete`.
 
+## The sandbox
+
+A session has two settings for where its work runs. Its `computer` setting is the machine the session runs in, or this host. A chat's sandbox switch is VS Code's: it turns the sandbox runtime on for that chat's commands wherever the session runs, this host included.
+
+| Setting | Whose | What it says |
+| --- | --- | --- |
+| `computer` | The session's, which this plugin declares | Where the session runs: this host, a machine, a disposable profile or a folder's dev container |
+| `sandboxEnabled` | Each chat's, which a backend that can apply the sandbox declares in its own session schema | `default` follows the root settings, `on` and `off` set the chat's own; a chat that set none follows its session |
+| `sandbox` | The host's root setting, which this plugin declares | VS Code's sandbox settings, which VS Code's window forwards to a host whose root config declares the property |
+
+This plugin declares the root `sandbox` property with VS Code's own schema, through `registerProviderConfiguration`, and no other sandbox setting.
+
+### How a chat's sandbox is resolved
+
+The host resolves a chat's sandbox as VS Code's `getSessionSandboxConfig` does. The root `sandbox` settings come first, then the chat's selection over them, all within the session's floor. The floor is the operator's `managedSettingsSandbox`, in VS Code's floor shape, and every session publishes it in its `_meta` as `vscode.resolvedSandboxPolicy`. A floor with `enabled` keeps the sandbox on whatever a chat selects; one with `failClosed` also takes every way out away. Each chat's applied enablement, and a failure met applying it, is in the session's `_meta` as `vscode.sandboxState`.
+
+A backend reads its chat's resolved sandbox from `Start.computers.sandbox(chat)`, and a runtime with a sandbox of its own applies it there.
+
+### The runtime
+
+`@vscode/sandbox-runtime`, the runtime VS Code's terminal sandbox runs, enforces the settings. A backend asks `Start.computers.sandboxed(id, options)` for each command it runs for its agent and each MCP server it starts, and runs the descriptor it gets back:
+
+- a command runs inside the runtime while the chat's sandbox is on, as VS Code's terminal sandbox wraps one;
+- an MCP server runs inside it while `sandboxMcpServers` is on too, as VS Code's MCP sandbox starts one;
+- a command the person let leave the sandbox runs outside it where `allowUnsandboxedCommands` allows one;
+- a person's terminal and a `!` command are left as they are.
+
+On this host the runtime is this plugin's own dependency, run with the daemon's Node, and its settings and sockets go under `tmp/` in the configuration folder. Inside a machine it is the `srt` on the machine's `PATH`, with its settings written into the machine by the command that starts it. The settings are the ones VS Code's terminal sandbox writes: writes in the working folder and the sandbox's own folder, the user's home denied, the platform's filesystem lists, and the domain lists unless the whole network is allowed.
+
+### Each computer
+
+Each kind of computer says whether it can host the runtime, from the computer as it is:
+
+| Computer | The check |
+| --- | --- |
+| This host | The runtime's own dependency check, which needs ripgrep and, on Linux, bubblewrap and socat; then on Linux VS Code's check that bubblewrap can make the namespace the sandbox needs |
+| A container, a dev container among them | Its real Docker settings, as VS Code checks a dev container: privileged, or seccomp unconfined with nothing masked or read-only and `/dev/net/tun` readable and writable, AppArmor unconfined either way; then the runtime's own start, `srt -c true`, run inside it |
+| An ssh box or a VM | The runtime's own start, run inside it |
+
+A machine made for a session whose sandbox is on is made to host the runtime, as VS Code prepares a dev container it starts with the sandbox enabled. A container gets `--security-opt seccomp=unconfined`, `apparmor=unconfined` and `systempaths=unconfined` and `--device /dev/net/tun`, and a Compose definition's service gets the same as `security_opt` and `devices`.
+
+A chat's request to turn the sandbox on where its computer cannot host it is rejected with the computer's reason, as VS Code rejects a sandbox change its runtime cannot apply. The failure is published in `vscode.sandboxState` with the client's id and sequence number, and then the chat's selection is put back to the enablement last applied. A session that starts with its sandbox on where its computer cannot host it reports the failure in the same place.
+
 ## Parts
 
 Every agent CLI is a **part**: one image that holds one CLI at one exact version, at `/opt/ahpd/<id>`, with its launchers at `/opt/ahpd/<id>/bin`. `codex` is a part, `goose` is a part, and so is `node`, which the npm parts name as a requirement so one Node serves them all. `claude` holds both Claude Code and its ACP adapter, and `ahpd` holds ahpd with the backends that run nested. Parts are the default way an agent's CLI reaches a machine: nothing of this host's binaries is mounted unless an agent's options ask for it.

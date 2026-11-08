@@ -18,7 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type OptionSpec } from '@cofold/commands';
 import { isRecord, secretRef } from '@ahpd/sdk';
-import type { IssuerVerify, ManagedSettingsPermissions, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
+import type { IssuerVerify, ManagedSettingsPermissions, McpServer, PayOrder, PluginSpec, SessionSandboxPolicy, ShellEnv } from '@ahpd/sdk';
 import type { Config, HttpSetting, RoutesSetting } from '../config.js';
 import { asSpec, configDir, configPath, eligibilityProblems, loadConfig, managedPermissionsProblems, shellEnvProblems } from '../config.js';
 import { READY_TIMEOUT_MS } from '../daemon.js';
@@ -138,6 +138,8 @@ export interface Options {
   terminalAutoApproveDefaults: 'vscode' | 'none';
   /** The managed permissions every session is held to, absent when the deployment set none. */
   managedSettingsPermissions?: ManagedSettingsPermissions;
+  /** The floor every session's sandbox is held to, absent when the deployment set none. */
+  managedSettingsSandbox?: SessionSandboxPolicy;
   /** The tools whose calls ask every time, by `false`, absent when the deployment named none. */
   eligibleForAutoApproval?: Record<string, boolean>;
   /** Who checks the managed rules on a tool question: the host, or the backends it hands them to. */
@@ -801,6 +803,35 @@ export const serverFields = {
     additionalProperties: false,
     description: 'The managed permissions every session on the host is held to, in VS Code\'s shape: deny and ask rules in the managed rule grammar (Shell, Read, Write, Domain), disableBypassPermissionsMode "disable" to take Allow All away, and limitTo, the Domain rules a fetch stays within, each Domain or Domain(<host>) with the host as VS Code\'s network filter normalizes it. A Domain rule names a host whatever the scheme, port or path of a URL. A rule the managed grammar refuses stops the start. The host checks each rule on the tool questions of its kind beside the session\'s permissions, and hands the whole to every backend. Set in the configuration file only.',
   },
+  /*
+   * VS Code's floor shape, `ISessionSandboxPolicy`, key for key.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/meta/vscode/agentSandboxPolicyMeta.ts#L10-L28
+   */
+  managedSettingsSandbox: {
+    type: 'object',
+    title: 'Managed sandbox',
+    properties: {
+      enabled: { type: 'boolean' },
+      allowBypass: { type: 'boolean' },
+      allowOutbound: { type: 'boolean' },
+      allowLocalNetwork: { type: 'boolean' },
+      allowedHosts: { type: 'array', items: { type: 'string' } },
+      blockedHosts: { type: 'array', items: { type: 'string' } },
+      readwritePaths: { type: 'array', items: { type: 'string' } },
+      readonlyPaths: { type: 'array', items: { type: 'string' } },
+      deniedPaths: { type: 'array', items: { type: 'string' } },
+      allowDevToolAccess: { type: 'boolean' },
+      addCurrentWorkingDirectory: { type: 'boolean' },
+      sandboxMcpServers: { type: 'boolean' },
+      sandboxLspServers: { type: 'boolean' },
+      authenticateGit: { type: 'boolean' },
+      authenticateGh: { type: 'boolean' },
+      failClosed: { type: 'boolean' },
+    },
+    required: ['enabled'],
+    additionalProperties: false,
+    description: 'The floor every session\'s sandbox is held to, in VS Code\'s floor shape: enabled keeps the sandbox on, allowBypass says whether a command may leave it, allowOutbound and allowLocalNetwork the network, allowedHosts replaces the hosts a chat allows and blockedHosts joins the ones it blocks, readwritePaths and readonlyPaths replace a chat\'s paths and deniedPaths joins its denied ones, the server, credential and developer-tool switches turn those off or on, and failClosed keeps the sandbox on with no way out. No chat\'s selection lowers it. Published on each session as vscode.resolvedSandboxPolicy. Set in the configuration file only.',
+  },
   eligibleForAutoApproval: asJsonSchema(eligibleForAutoApprovalField),
   managedRules: {
     type: 'string',
@@ -1406,6 +1437,7 @@ const noCwd = input['noCwd'] === true;
   const clientToolCallDisconnectTimeoutMs = given('clientToolCallDisconnectTimeoutMs');
   const shellEnv = given('shellEnv');
   const managedSettingsPermissions = given('managedSettingsPermissions');
+  const managedSettingsSandbox = given('managedSettingsSandbox');
   const eligibleForAutoApproval = given('eligibleForAutoApproval');
   // File-only, and already absolute: `anchored` resolved it against the file.
   const commandParser = file.commandParser;
@@ -1465,6 +1497,7 @@ const noCwd = input['noCwd'] === true;
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',
     ...(managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions }),
+    ...(managedSettingsSandbox === undefined ? {} : { managedSettingsSandbox }),
     ...(eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval }),
     managedRules: given('managedRules') ?? 'checked',
     ...(commandParser === undefined ? {} : { commandParser }),
