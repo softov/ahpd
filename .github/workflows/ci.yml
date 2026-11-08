@@ -69,8 +69,8 @@ jobs:
       # Every shard reports, so one red shard does not hide another.
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
-    name: windows (${{ matrix.shard }}/3)
+        shard: [1, 2, 3, 4]
+    name: windows (${{ matrix.shard }}/4)
     steps:
       # Before the checkout: some paths under `.project/plans` are 185
       # characters long, and with the checkout folder in front they pass the 260
@@ -101,7 +101,7 @@ jobs:
         shell: bash
 
       - name: Tests
-        run: timeout 300 pnpm test:unit --shard=${{ matrix.shard }}/3
+        run: timeout 300 pnpm test:unit --shard=${{ matrix.shard }}/4
         shell: bash
 
       # The computer plugin's cases that need no Docker, which `processes`
@@ -109,7 +109,7 @@ jobs:
       # start a real container skip, because this runner's engine runs no
       # Linux image.
       - name: Computer tests
-        run: timeout 300 pnpm exec vitest run packages/computer/ --shard=${{ matrix.shard }}/3
+        run: timeout 300 pnpm exec vitest run packages/computer/ --shard=${{ matrix.shard }}/4
         shell: bash
 
       # Last, because it is the slowest and the only one that writes anything.
