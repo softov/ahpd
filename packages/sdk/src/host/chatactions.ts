@@ -2316,7 +2316,8 @@ export function chatAction(
             agent,
             uri,
             chatUri,
-            chatIdFor(uri, chatUri),
+            // The session's own chat is handed no name, as a restart hands it none.
+            ctx.ownChat(uri, chatUri) ? undefined : chatIdFor(uri, chatUri),
             chatConfig(owner, chatUri),
             { ...(failed !== undefined && own !== undefined ? { resume: own } : {}), seed: kept },
             owner.workingDirectory,
@@ -2439,7 +2440,7 @@ export function chatAction(
         getProviderForChat(owner, chatUri),
         uri,
         chatUri,
-        chatIdFor(uri, chatUri),
+        ctx.ownChat(uri, chatUri) ? undefined : chatIdFor(uri, chatUri),
         chatConfig(owner, chatUri),
         resuming,
         owner.workingDirectory,
