@@ -289,13 +289,17 @@ describe('what the window asks', () => {
     const kept = { use: process.env.NODE_USE_ENV_PROXY, http: process.env.http_proxy, no: process.env.no_proxy };
     process.env.NODE_USE_ENV_PROXY = '1';
     process.env.http_proxy = 'http://127.0.0.1:2';
-    process.env.no_proxy = 'localhost,.internal:8080';
+    process.env.no_proxy = 'localhost,.localhost:8080';
     try {
       const through = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://127.0.0.1:1/' } }) as Record<string, unknown>;
       expect(through.proxyUrl).toBe('http://127.0.0.1:2');
       const direct = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://localhost:1/' } }) as Record<string, unknown>;
       expect(direct).not.toHaveProperty('proxyUrl');
-      const named = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://a.internal:8080/' } }) as Record<string, unknown>;
+      // A suffix entry with a port, for a name under `localhost`, which
+      // resolves to loopback without asking the network, so the probe's own
+      // lookups end at once wherever the case runs.
+      // https://www.rfc-editor.org/rfc/rfc6761#section-6.3
+      const named = await client.handle({ method: 'diagnosticsFetch', params: { url: 'http://a.localhost:8080/' } }) as Record<string, unknown>;
       expect(named).not.toHaveProperty('proxyUrl');
     }
     finally {
