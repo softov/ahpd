@@ -165,8 +165,8 @@ const mcpToolRule = (server: string, tool: string): string[] =>
  * names, and as the host reads a client's call by the name its client
  * announced. The CLI calls a client's tool `mcp__client__<clientId>__<name>`,
  * one name for each client offering it, and a session's clients come and go
- * under a policy tier the CLI is given once, as it starts; so that call stays
- * with the host's check on the question the CLI raises for it.
+ * under a policy tier the CLI is given once, as it starts; so no rule names
+ * that call, and the key takes the bypass lock (`lockedOf`).
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/tools/languageModelToolsService.ts#L1379-L1410
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostToolUtils.ts#L24-L27
  *
@@ -195,6 +195,20 @@ const toolRulesOf = (eligible: Readonly<Record<string, boolean>>): string[] =>
   });
 
 /**
+ * Whether the operator's bypass lock holds: the managed
+ * `disableBypassPermissionsMode`, or a tool's name the eligibility sets `false`.
+ * Such a key names a client's tool of that name too, which no rule in the CLI's
+ * policy tier names, so the session falls back to the lock, as VS Code's bridge
+ * falls back to it for a tool no rule family names: "One deliberate exception,
+ * erring more restrictive".
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L31-L40
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L236-L252
+ */
+const lockedOf = (given: Start['managedSettings']): boolean =>
+  given?.permissions?.disableBypassPermissionsMode === 'disable'
+  || Object.entries(given?.eligibleForAutoApproval ?? {}).some(([key, value]) => value === false && !key.includes('/'));
+
+/**
  * The permission modes the operator's bypass lock takes away: Edit
  * Automatically, Auto Mode and Bypass Permissions, the modes that approve a
  * call without asking.
@@ -213,7 +227,7 @@ const toolRulesOf = (eligible: Readonly<Record<string, boolean>>): string[] =>
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L165-L166
  */
 export const withheldModesOf = (given: Start['managedSettings']): ReadonlySet<string> =>
-  new Set(given?.permissions?.disableBypassPermissionsMode === 'disable' ? ['acceptEdits', 'auto', 'bypassPermissions'] : []);
+  new Set(lockedOf(given) ? ['acceptEdits', 'auto', 'bypassPermissions'] : []);
 
 /** A session's schema with the withheld modes taken out of its permission mode, their labels and descriptions with them. */
 export const withoutModes = (schema: Bag, withheld: ReadonlySet<string>): Bag => {
@@ -231,8 +245,8 @@ export const withoutModes = (schema: Bag, withheld: ReadonlySet<string>): Bag =>
 /**
  * The CLI's `managedSettings` for the operator's managed settings: the deny and
  * ask rules Claude Code's grammar carries, an ask rule for each tool the
- * eligibility sets `false`, and the bypass lock as Claude Code's own, which
- * takes `bypassPermissions` away. Absent where none of them is set.
+ * eligibility sets `false`, and the bypass lock (`lockedOf`) as Claude Code's
+ * own, which takes `bypassPermissions` away. Absent where none of them is set.
  * https://code.claude.com/docs/en/permissions#permission-modes
  */
 export const claudeManagedSettingsOf = (given: Start['managedSettings'], cwd: string): Settings | undefined => {
@@ -242,7 +256,7 @@ export const claudeManagedSettingsOf = (given: Start['managedSettings'], cwd: st
     ...(managed?.ask ?? []).flatMap((rule) => claudeRulesOf(rule, 'ask', cwd)),
     ...toolRulesOf(given?.eligibleForAutoApproval ?? {}),
   ])];
-  const locked = managed?.disableBypassPermissionsMode === 'disable';
+  const locked = lockedOf(given);
   if (deny.length === 0 && ask.length === 0 && !locked) return undefined;
   return {
     permissions: {

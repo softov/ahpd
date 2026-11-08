@@ -207,6 +207,35 @@ it('offers the modes VS Code leaves open under the operator\'s bypass lock, and 
   await session.close();
 });
 
+/*
+ * A tool's name the operator's eligibility sets `false` takes the same lock,
+ * VS Code's fallback for a tool no rule family names, and the same modes go.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L31-L40
+ */
+it('takes the same modes away for a tool\'s name the operator\'s eligibility sets false', async () => {
+  sdk.options = [];
+  const engine = await engineOf();
+  const agent = engine.open(viewOf('claude', () => ({})));
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/declared',
+    chatUri: 'ahp-chat:/declared',
+    settings: { permissionMode: 'acceptEdits' },
+    clientToolTimeoutMs: 60_000,
+    schema: () => agent.schema(),
+    emit: () => {},
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
+    managedSettings: { eligibleForAutoApproval: { runInTerminal: false } },
+  }));
+  const config = bag(session.sessionState().config);
+  expect(bag(bag(config.schema).properties).permissionMode).toMatchObject({ enum: ['default', 'plan', 'dontAsk'] });
+  expect(bag(config.values).permissionMode).toBe('default');
+  session.sendMessage('t1', 'hello');
+  await settle();
+  expect(sdk.options.at(0)?.permissionMode).toBe('default');
+  expect(bag(bag(sdk.options.at(0)?.managedSettings).permissions).disableBypassPermissionsMode).toBe('disable');
+  await session.close();
+});
+
 it('builds a session query from the declared values of its record', async () => {
   const options = await queried({ sandbox: 'on', thinking: 'disabled', outputStyle: 'concise' });
   expect(options.settings).toEqual({ sandbox: { enabled: true } });

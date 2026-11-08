@@ -105,16 +105,24 @@ it('writes a domain rule by its host, a wildcard one as the domain and its subdo
 
 /*
  * The lock is Claude Code's own key, and Claude Code asks about a call an ask
- * rule names in every mode, `bypassPermissions` included, so an eligibility
- * ask hands the rule alone.
+ * rule names in every mode, `bypassPermissions` included, so a server's tool
+ * the eligibility sets `false` hands its rule alone. A tool's name names a
+ * client's tool of that name too, which no rule in the CLI's policy tier
+ * names, so it takes the lock beside its rule, VS Code's fallback for a tool
+ * no rule family names.
  * https://code.claude.com/docs/en/permissions#permission-modes
  * https://code.claude.com/docs/en/permission-modes#actions-no-mode-auto-approves
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L31-L40
  */
-it('hands the bypass lock as Claude Code\'s own, and the eligibility\'s asks as ask rules alone', () => {
+it('hands the bypass lock as Claude Code\'s own, and takes it for a tool\'s name the eligibility sets false', () => {
   expect(claudeManagedSettingsOf({ permissions: { disableBypassPermissionsMode: 'disable' } }, CWD))
     .toEqual({ permissions: { disableBypassPermissionsMode: 'disable' } });
+  expect(claudeManagedSettingsOf({ eligibleForAutoApproval: { 'github/create_issue': false } }, CWD))
+    .toEqual({ permissions: { ask: ['mcp__github__create_issue'] } });
   expect(claudeManagedSettingsOf({ eligibleForAutoApproval: { Bash: false } }, CWD))
-    .toEqual({ permissions: { ask: ['Bash'] } });
+    .toEqual({ permissions: { ask: ['Bash'], disableBypassPermissionsMode: 'disable' } });
+  expect(claudeManagedSettingsOf({ eligibleForAutoApproval: { runInTerminal: true, 'github/*': false } }, CWD))
+    .toEqual({ permissions: { ask: ['mcp__github__*'] } });
 });
 
 /*
