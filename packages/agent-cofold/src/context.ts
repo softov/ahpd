@@ -130,9 +130,24 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   /**
    * The run a restart left paused on a person, whose turn reads back
    * interrupted: a client's resume of that turn continues it, and a new turn
-   * lets it go.
+   * lets it go. Held with the event the resume replays from, the one that
+   * raised the pending question, the call that question is about, and an
+   * answer to it given before the resume, which the resume hands the run.
    */
-  paused: { turnId: string; runId: string; requestId: string } | undefined;
+  paused: {
+    turnId: string;
+    runId: string;
+    requestId: string;
+    afterSeq: number;
+    callId: string | undefined;
+    answer: boolean | undefined;
+  } | undefined;
+  /**
+   * The question a resumed run asks again, until its replay reaches it, and
+   * whether somebody answered it before then: an answered one has its answer in
+   * the run already, and the replay's asking of it is passed by.
+   */
+  reasked: { requestId: string; callId: string | undefined; answered: boolean } | undefined;
   /**
    * The running turn's earlier time and usage when a client resumed it, and
    * when it ran again, so the turn holds its time and usage across both runs.

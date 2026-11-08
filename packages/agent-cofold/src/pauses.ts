@@ -126,64 +126,88 @@ export const createPauses = (
     abortNow(reason);
   };
 
+  /**
+   * Answer a tool call the run is waiting on, with the host's answer, a
+   * person's or its own.
+   *
+   * Found by the call's own id rather than assumed to be the only request:
+   * with two open, comparing against whichever was held last is a person
+   * pressing Approve and nothing at all happening. The host has said the
+   * client's confirmation; the entry leaves by the same id it arrived with,
+   * and the answer goes into the run, for this call alone whatever the host
+   * keeps of it, as VS Code's agents answer their runtimes once.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8640
+   */
+  const confirm = (toolCallId: string, approved: boolean): boolean => {
+    const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
+    /*
+     * An answer can arrive while the session is still finding the run a
+     * restart left paused: it waits for the same opening every turn waits
+     * for, and is answered then.
+     */
+    const opening = ctx.opening;
+    if (held === undefined && opening !== undefined) {
+      void opening.then(() => confirm(toolCallId, approved), () => {});
+      return true;
+    }
+    /*
+     * The question a paused run holds, answered before the resumed run asks it
+     * again. Before the resume the answer stays with the paused run, which the
+     * resume hands it to; after, it goes to the resumed run's handle now, which
+     * takes it once the run is read. Either way the replay's asking is passed
+     * by.
+     */
+    const paused = held === undefined && ctx.paused?.callId === toolCallId && ctx.paused.answer === undefined ? ctx.paused : undefined;
+    const reasked = held === undefined && ctx.reasked?.callId === toolCallId && !ctx.reasked.answered ? ctx.reasked : undefined;
+    const requestId = held?.requestId ?? paused?.requestId ?? reasked?.requestId;
+    if (requestId === undefined) return false;
+    if (paused !== undefined) paused.answer = approved;
+    if (reasked !== undefined) reasked.answered = true;
+    /*
+     * A decline ends the call without a result, so the file it announced as
+     * changing is settled here, where the call id is still known: the run's
+     * own `approval.resolved` arrives after this entry is gone, and a run
+     * paused on the next question never reaches the end-of-run sweep.
+     */
+    if (!approved) ctx.settleEdit(toolCallId);
+    pending.delete(requestId);
+    // The entry follows the chat's state: the host took it down when it said
+    // the confirmation that moved the call.
+    ctx.activeMapping?.settle(requestId);
+
+    /*
+     * The row in this session's own snapshot moves with the decision, as the
+     * protocol's reducer moves it: running when approved, and cancelled as
+     * `denied` when refused, the reason its cancelled state carries.
+     *
+     * Nothing applies what a client dispatched, so a call approved here would
+     * stay `pending-confirmation` for anybody who subscribes next.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L629
+     */
+    const part = (ctx.active?.responseParts as Bag[] | undefined)
+      ?.find((one) => one.kind === 'toolCall' && bag(one.toolCall).toolCallId === toolCallId);
+    if (part !== undefined) {
+      const call = bag(part.toolCall);
+      call.status = approved ? 'running' : 'cancelled';
+      if (approved) call.confirmed = 'user-action';
+      else call.reason = 'denied';
+      part.toolCall = call;
+    }
+    /*
+     * A refusal goes to cofold with no reason, as cofold's own app denies one
+     * the person gave none for, and cofold tells the model its own words,
+     * "Denied by the user".
+     * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/chat.ts#L544
+     * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/agents/src/run/turn.ts#L405
+     */
+    if (paused === undefined) route(approved ? { type: 'approve', requestId } : { type: 'deny', requestId });
+    return true;
+  };
+
   return {
     abort,
     methods: {
-      /**
-       * Answer a tool call the run is waiting on, with the host's answer, a
-       * person's or its own.
-       *
-       * Found by the call's own id rather than assumed to be the only request:
-       * with two open, comparing against whichever was held last is a person
-       * pressing Approve and nothing at all happening. The host has said the
-       * client's confirmation; the entry leaves by the same id it arrived with,
-       * and the answer goes into the run, for this call alone whatever the
-       * host keeps of it, as VS Code's agents answer their runtimes once.
-       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8640
-       */
-      confirm: (toolCallId, approved) => {
-        const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
-        if (held === undefined) return false;
-        /*
-         * A decline ends the call without a result, so the file it announced as
-         * changing is settled here, where the call id is still known: the run's
-         * own `approval.resolved` arrives after this entry is gone, and a run
-         * paused on the next question never reaches the end-of-run sweep.
-         */
-        if (!approved && held.callId !== undefined) ctx.settleEdit(held.callId);
-        pending.delete(held.requestId);
-        // The entry follows the chat's state: the host took it down when it
-        // said the confirmation that moved the call.
-        ctx.activeMapping?.settle(held.requestId);
-
-        /*
-         * The row in this session's own snapshot moves with the decision, as
-         * the protocol's reducer moves it: running when approved, and cancelled
-         * as `denied` when refused, the reason its cancelled state carries.
-         *
-         * Nothing applies what a client dispatched, so a call approved here
-         * would stay `pending-confirmation` for anybody who subscribes next.
-         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L629
-         */
-        const part = (ctx.active?.responseParts as Bag[] | undefined)
-          ?.find((one) => one.kind === 'toolCall' && bag(one.toolCall).toolCallId === held.callId);
-        if (part !== undefined) {
-          const call = bag(part.toolCall);
-          call.status = approved ? 'running' : 'cancelled';
-          if (approved) call.confirmed = 'user-action';
-          else call.reason = 'denied';
-          part.toolCall = call;
-        }
-        /*
-         * A refusal goes to cofold with no reason, as cofold's own app denies
-         * one the person gave none for, and cofold tells the model its own
-         * words, "Denied by the user".
-         * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/chat.ts#L544
-         * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/agents/src/run/turn.ts#L405
-         */
-        route(approved ? { type: 'approve', requestId: held.requestId } : { type: 'deny', requestId: held.requestId });
-        return true;
-      },
+      confirm,
 
       /**
        * Answer a question the run is waiting on.

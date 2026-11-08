@@ -161,7 +161,7 @@ A steering message goes into the running turn: cofold appends it to the run's tr
 
 A turn a client sends while another runs is said at once and takes that one's place in every client's chat, as the protocol's reducer replaces the active turn. It runs once the run in front of it is over, because one run reads the session at a time; the turn it replaced runs on, and is in no history. A stop of the turn that took its place stops that run, and the turns waiting with it go. A message queued while a stopped run still winds down is started at once the same way, because every client holds the chat idle once the stop is said.
 
-A session that resumes, forks or rewinds a conversation reads it before any turn starts, and holds the turns it is handed meanwhile. A turn that finds another running once the read is done, the turn that opened first or a run that was waiting on a person when the daemon stopped and that the resume reopened, takes its place the same way.
+A session that resumes, forks or rewinds a conversation reads it before any turn starts, and holds the turns it is handed meanwhile. A turn that finds another running once the read is done, the turn that opened first or a run that was waiting on a person when the daemon stopped and that the resume reopened, takes its place the same way. An answer to that run's question that arrives before the resumed run asks it again, while the session still reads the conversation or once the client resumed the turn, goes to the run through cofold's `resume()`, which takes a command before it has read the run, and the replay's asking of the question is passed by.
 
 ## A turn that fails
 

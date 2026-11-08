@@ -470,7 +470,7 @@ export const createTurns = (ctx: SessionContext): Turns => {
       ctx.error = undefined;
       const mapping = mappingOn(turnId, kept, Date.now(), str(bag(bag(reopened.message).model).id), true);
       ctx.activeMapping = mapping;
-      void ctx.resumePaused(turnId, mapping);
+      ctx.resumePaused(turnId, mapping);
       return true;
     }
     /*

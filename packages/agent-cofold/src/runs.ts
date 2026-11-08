@@ -11,7 +11,7 @@ export interface Runs {
   apply: (mapping: TurnMapping, turnId: string, event: RunEvent) => Promise<void>;
   read: (live: RunHandle, mapping: TurnMapping, turnId: string) => void;
   findPaused: () => Promise<void>;
-  resumePaused: (turnId: string, mapping: TurnMapping) => Promise<boolean>;
+  resumePaused: (turnId: string, mapping: TurnMapping) => boolean;
   dropPaused: () => Promise<void>;
 }
 
@@ -60,6 +60,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
     // An ending turn cannot still be waiting on an answer; a request left
     // here would keep the session reporting `InputNeeded` over nothing.
     pending.clear();
+    ctx.reasked = undefined;
     ctx.cancelRequested = false;
     // A turn's end moves the stamp to its start plus its duration, as the
     // reducer's does; a turn a later one took the place of ends in no state.
@@ -135,6 +136,20 @@ export const createRuns = (ctx: SessionContext): Runs => {
       }
     }
     const mapped = mapping.actions(event);
+    /*
+     * The question a resumed run asks again, as its replay reaches it. One
+     * somebody answered before the replay said it has its answer in the run
+     * already, and its asking is passed by: put to everybody again, it would
+     * ask a person who has answered.
+     */
+    const reasked = ctx.reasked;
+    if (reasked !== undefined && mapped.opened?.requestId === reasked.requestId) {
+      ctx.reasked = undefined;
+      if (reasked.answered) {
+        mapping.settle(reasked.requestId);
+        return;
+      }
+    }
     /*
      * A request is held before it is announced, so a client that answers
      * inside the emit that carries it finds it.
@@ -226,7 +241,19 @@ export const createRuns = (ctx: SessionContext): Runs => {
     const runs = await store.runs.list({ sessionId });
     const newest = runs[0];
     if (newest === undefined || newest.status !== 'awaiting' || newest.pendingRequestId === undefined) return;
-    ctx.paused = { turnId: newest.inputMessageId ?? newest.runId, runId: newest.runId, requestId: newest.pendingRequestId };
+    const requestId = newest.pendingRequestId;
+    // The event that raised the pending question, which a resume replays from.
+    const events = await store.runs.listEvents({ sessionId, runId: newest.runId });
+    const asked = events.findLast((event) => (event.type === 'approval.requested' || event.type === 'input.requested')
+      && event.requestId === requestId);
+    ctx.paused = {
+      turnId: newest.inputMessageId ?? newest.runId,
+      runId: newest.runId,
+      requestId,
+      afterSeq: asked === undefined ? (events.at(-1)?.seq ?? 0) : asked.seq - 1,
+      callId: asked?.type === 'approval.requested' ? asked.callId : undefined,
+      answer: undefined,
+    };
   };
 
   /**
@@ -241,21 +268,28 @@ export const createRuns = (ctx: SessionContext): Runs => {
    * paused is the reopened turn's already. Answers whether the turn was the
    * paused run's.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1313-L1314
+   *
+   * The handle takes a command before it has read the run, as cofold's
+   * `resume()` holds one until it knows a command is wanted: so an answer to
+   * the pending question given before the replay asks it again, before the
+   * resume or after it, goes to the run all the same.
+   * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/agents/src/run/resume.ts#L38-L50
    */
-  const resumePaused = async (turnId: string, mapping: TurnMapping): Promise<boolean> => {
+  const resumePaused = (turnId: string, mapping: TurnMapping): boolean => {
     const paused = ctx.paused;
     if (paused === undefined || paused.turnId !== turnId) return false;
     ctx.paused = undefined;
-    const events = await store.runs.listEvents({ sessionId, runId: paused.runId });
-    const asked = events.findLast((event) => (event.type === 'approval.requested' || event.type === 'input.requested')
-      && event.requestId === paused.requestId);
-    const afterSeq = asked === undefined ? (events.at(-1)?.seq ?? 0) : asked.seq - 1;
-    const live = resume({ agent: ctx.agentOf(ctx.values), sessionId, runId: paused.runId, afterSeq });
+    const live = resume({ agent: ctx.agentOf(ctx.values), sessionId, runId: paused.runId, afterSeq: paused.afterSeq });
     if (ctx.disposed) {
       live.cancel({ reason: 'the session closed' });
       return true;
     }
     ctx.handle = live;
+    ctx.reasked = { requestId: paused.requestId, callId: paused.callId, answered: paused.answer !== undefined };
+    if (paused.answer !== undefined) {
+      const { requestId } = paused;
+      void live.submit(paused.answer ? { type: 'approve', requestId } : { type: 'deny', requestId }).catch(() => {});
+    }
     read(live, mapping, turnId);
     return true;
   };

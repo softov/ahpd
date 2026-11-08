@@ -228,6 +228,7 @@ export function cofoldSession(
     disposed: false,
     opening: undefined,
     paused: undefined,
+    reasked: undefined,
     resumedFrom: undefined,
     steering: undefined,
   } as SessionContext;
