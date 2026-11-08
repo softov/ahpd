@@ -339,6 +339,22 @@ describe('a session that already happened', () => {
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/ghost' } }))
       .rejects.toMatchObject({ code: -32001 });
   });
+
+  /*
+   * A default chat derived from a session nothing here registers has no owner,
+   * as the reference host's index maps the derived default chats of its
+   * registered sessions alone, and its subscribe is refused in the words that
+   * host refuses a channel it finds nothing for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L267-L291
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2199
+   */
+  it('refuses the default chat derived from a session nothing here registers', async () => {
+    const client = open();
+    await client.handle(hello(['0.9.0']));
+    const ghost = chatUriFor('ahp-session:/ghost');
+    await expect(client.handle({ method: 'subscribe', params: { channel: ghost } }))
+      .rejects.toMatchObject({ code: -32001, message: `Resource not found: ${ghost}` });
+  });
 });
 
 describe('paging a long history', () => {

@@ -691,7 +691,7 @@ scheme this host serves, and `ahp-session:/<id>`, as VS Code's host answers a
 session under each identity it has and derives that session's chat from each
 of them
 ([agentHostChatOwnershipService.ts#L264-L287](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287)),
-a chat's owner coming from the records that hold it rather than from its URI
+a chat's owner coming from the records that hold it
 ([sessionState.ts#L894-L898](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/state/sessionState.ts#L894-L898)).
 A client that subscribes by one of the others watches the session: the
 subscribe is answered under the name it used, and every action goes out under
@@ -702,7 +702,17 @@ advertised them
 A derived default chat URI of any of those spellings is the session's default
 chat, while the session's record agrees that its default chat is a derived one;
 a session that moved its default to a chat of its own owns no derived chat
-([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
+([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
+The session is one registered here: running, kept in the store, or in the
+catalogue, which is read for the id a derived default chat carries when a
+client names that chat before anything here has listed its session, as VS
+Code's host registers every session its backends list and derives its index
+of default chats from those registrations
+([agentHostChatOwnershipService.ts#L267-L291](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L267-L291)).
+A derived default chat of a session nobody has is no chat: a subscribe to it
+answers `-32001`, "Resource not found: <chat>", in VS Code's words for a
+channel it finds no owner for
+([protocolServerHandler.ts#L2199](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2199)).
 
 A URI whose id no session here carries is no session: a subscribe to it answers
 `-32001`, as VS Code's host answers a URI no agent of its own serves

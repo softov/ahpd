@@ -31,6 +31,11 @@ export interface History {
   listedSessions(): Promise<Summary[]>;
   /** A stored session restored: its row found, and its turns read, or nothing for a session nobody has. */
   restoreSession(id: string): Promise<Bag[] | undefined>;
+  /**
+   * A session's row in the catalogue, found as `restoreSession` finds it with
+   * no turns read, or nothing for a session nobody has.
+   */
+  catalogueRow(id: string): Promise<Summary | undefined>;
   /** A session deleted here, removed from the listed sessions this host holds, by id. */
   removeListedSession(resource: string): void;
   /**
@@ -298,10 +303,65 @@ export function createHistory(ctx: HostContext): History {
     return recorded === undefined || ctx.agents.get(recorded)?.find === undefined;
   };
   /**
+   * A session's row in the catalogue, found as VS Code's host finds a session
+   * in its registry: from the held summaries; a nested session's from what
+   * this host recorded of it; a recorded session's asked by id of its backend
+   * and announced; and one no record ties to a backend that can be asked,
+   * from one more listing. Nothing for a session nobody has.
+   *
+   * `askedEpoch` is the listing epoch its caller read before it asked anybody
+   * anything, which `relist` decides by.
+   */
+  const catalogueRow = async (id: string, askedEpoch: number): Promise<Summary | undefined> => {
+    // The held rows are what says whose session this is, so they are read
+    // first, and nothing is listed to find a row that is in them.
+    const held = listedSummaries.find((item) => idFor(item.resource) === id);
+    if (held) return held;
+    const record = ctx.kept.nested?.(id);
+    const runs = record === undefined ? undefined : ctx.agents.get(record.provider);
+    if (record !== undefined && runs !== undefined) {
+      const { title, createdAt, modifiedAt, workingDirectories } = record;
+      // Named as a listing names it, which is one name for the row whichever
+      // road reached it first.
+      const found = ctx.registerListedSession(runs, { id, title, createdAt, modifiedAt, workingDirectories }, undefined, ctx.kept.sessions().includes(id));
+      ctx.announceSurfacedSession(found);
+      listedSummaries.push(found);
+      return found;
+    }
+    const one = await findOf(id);
+    if (one !== undefined) {
+      /*
+       * Registered and held for every caller.
+       *
+       * What the host knows about a row is what a client is sent for the next
+       * change of it, and this row is in the catalogue as surely as one a
+       * listing found, so it goes in with the rest, is announced to every
+       * client, and the next opening of it asks nobody anything. It is named
+       * as a listing names it: a row this host keeps a record for keeps the
+       * name its clients hold.
+       */
+      const found = ctx.registerListedSession(one.agent, one.row, undefined, ctx.kept.sessions().includes(id));
+      ctx.announceSurfacedSession(found);
+      if (!listedSummaries.some((heldRow) => heldRow.resource === found.resource)) listedSummaries.push(found);
+      return found;
+    }
+    if (!listedOnly(id)) return undefined;
+    /*
+     * One more listing for an id the held rows do not have.
+     *
+     * For a session no record names a backend for, or whose backend cannot be
+     * asked about one session: a listing is all there is. One per missing id,
+     * shared with whoever else is asking while it runs (`relist` decides which
+     * pass answers), and nothing else bounds how often that is, because a
+     * client opening sessions nobody has is asking the one question a listing
+     * answers.
+     */
+    return (await relist(askedEpoch)).find((item) => idFor(item.resource) === id);
+  };
+  /**
    * A stored session restored, as VS Code restores a session and its turns:
-   * its row from the held summaries, else asked of the backends by id and
-   * announced, else from one more listing; then its turns, or nothing for a
-   * session nobody has.
+   * its row from the catalogue (`catalogueRow`), then its turns, or nothing
+   * for a session nobody has.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionLifecycle.ts#L28
    */
   const restoreSession = async (id: string): Promise<Bag[] | undefined> => {
@@ -326,9 +386,7 @@ export function createHistory(ctx: HostContext): History {
     const already = reading.get(id);
     if (already) return await already;
     const asked = (async (): Promise<Bag[] | undefined> => {
-      // The held rows are what says whose session this is, so they are read
-      // first, and nothing is listed to find a row that is in them.
-      let row = listedSummaries.find((item) => idFor(item.resource) === id);
+      const row = await catalogueRow(id, askedEpoch);
       /*
        * A nested session, opened from what this host recorded of it.
        *
@@ -337,51 +395,9 @@ export function createHistory(ctx: HostContext): History {
        * inside, where the earlier turns are.
        */
       const record = ctx.kept.nested?.(id);
-      const runs = record === undefined ? undefined : ctx.agents.get(record.provider);
-      if (record !== undefined && runs !== undefined) {
-        if (!row) {
-          const { title, createdAt, modifiedAt, workingDirectories } = record;
-          // Named as a listing names it, which is one name for the row
-          // whichever road reached it first.
-          const found = ctx.registerListedSession(runs, { id, title, createdAt, modifiedAt, workingDirectories }, undefined, ctx.kept.sessions().includes(id));
-          ctx.announceSurfacedSession(found);
-          listedSummaries.push(found);
-          row = found;
-        }
+      if (row && record !== undefined && ctx.agents.get(record.provider) !== undefined) {
         titles.set(id, row.title);
         return [];
-      }
-      if (!row) {
-        const one = await findOf(id);
-        if (one !== undefined) {
-          /*
-           * Registered and held for every caller.
-           *
-           * What the host knows about a row is what a client is sent for the
-           * next change of it, and this row is in the catalogue as surely as
-           * one a listing found, so it goes in with the rest, is announced to
-           * every client, and the next opening of it asks nobody anything. It
-           * is named as a listing names it: a row this host keeps a record for
-           * keeps the name its clients hold.
-           */
-          const found = ctx.registerListedSession(one.agent, one.row, undefined, ctx.kept.sessions().includes(id));
-          ctx.announceSurfacedSession(found);
-          if (!listedSummaries.some((heldRow) => heldRow.resource === found.resource)) listedSummaries.push(found);
-          row = found;
-        }
-      }
-      if (!row && listedOnly(id)) {
-        /*
-         * One more listing for an id the held rows do not have.
-         *
-         * For a session no record names a backend for, or whose backend cannot
-         * be asked about one session: a listing is all there is. One per
-         * missing id, shared with whoever else is asking while it runs
-         * (`relist` decides which pass answers), and nothing else bounds how
-         * often that is, because a client opening sessions nobody has is asking
-         * the one question a listing answers.
-         */
-        row = (await relist(askedEpoch)).find((item) => idFor(item.resource) === id);
       }
       const owner = owners.get(nameOf(id));
       if (!row || !owner?.transcript)
@@ -433,5 +449,6 @@ export function createHistory(ctx: HostContext): History {
   return {
     history, subHistory, titles, restoredSubagents, launchWorkingDirectory, restoredParentChat, linkedTurns, refresh,
     listedSessions, restoreSession, removeListedSession, evictSessionState,
+    catalogueRow: (id) => catalogueRow(id, listingEpoch),
   };
 }

@@ -44,7 +44,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     kept, marksOf, restoredSessions, activeClientsOf,
     about, leadOf,
     LOGS, TRACES, METRICS,
-    nameOf, sessionOfChat, sessionChannel, sessionFor,
+    nameOf, sessionOfChat, sessionChannel, sessionFor, resolveChatOwner,
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
     mergedConfig, sessionSchema, storedConfig, contributedDefaults,
@@ -574,12 +574,13 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     /*
      * The session behind the channel: a session URI is one, a chat the store
      * records belongs to the session it was recorded under, and a default or
-     * worker chat to the session its URI was built for. Either way the
+     * worker chat to the session the records name for it, the catalogue read
+     * first for the session a default chat was derived from. Either way the
      * transcript is the session's, and the id is what reads it. A chat none of
-     * these places is no chat here, and its URI is never read for an id.
+     * these places is no chat here.
      */
     const chat = spaceOf(channel) === 'chat';
-    const asked = chat ? sessionFor(channel) : channel;
+    const asked = chat ? (await resolveChatOwner(channel)) ?? channel : channel;
     /*
      * Never a session's id read out of a file, a terminal, a watch or a chat.
      * A chat no session holds is a resource not found, in the reference host's

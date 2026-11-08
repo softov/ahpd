@@ -49,7 +49,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
   const {
     agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided,
     dir, dispatch, homeId, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
-    ownerFor, owners, restoreSession, permitted, presence, restart, retool,
+    ownerFor, owners, restoreSession, resolveChatOwner, permitted, presence, restart, retool,
     rootConfig, served, sessionFor, sessions, shown, starting, subagents, markSummaryDirty, terminals, toolDefinitions,
     value, unavailableProvider,
   } = ctx;
@@ -820,13 +820,14 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
 
     /*
      * An action on a chat this host does not know: no running session holds
-     * it, the store records no session for it, and the session its URI names
-     * is not one `knownSession` knows, once the catalogue has been read for
-     * it. The reference host finds no owner for such a chat and takes the
-     * action all the same: it goes out on the channel the client named, with
-     * the client's origin, to the clients that watch that channel, and nothing
-     * is reduced, kept or run for it. A read or an archive of such a chat is
-     * refused, in the reference host's words.
+     * it, the store records no session for it, and the records name no session
+     * `knownSession` knows as its owner, once the catalogue has been read for
+     * the session they name, or for the one a default chat was derived from
+     * (`resolveChatOwner`). The reference host finds no owner for such a chat
+     * and takes the action all the same: it goes out on the channel the client
+     * named, with the client's origin, to the clients that watch that channel,
+     * and nothing is reduced, kept or run for it. A read or an archive of such
+     * a chat is refused, in the reference host's words.
      * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12482-L12490
      * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L13442-L13460
      * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2988-L2992
@@ -834,14 +835,16 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     const knownChat = (): boolean => byChat.has(channel) || subagents.has(channel) || homeId(channel) !== undefined
       || knownSession(sessionFor(channel));
     if (spaceOf(asked) === 'chat' && !knownChat()) {
-      return restoreSession(idOf(sessionFor(channel))).then(() => {
-        if (knownChat()) return conn.applyNow(params, origin);
-        const refusal = type === 'chat/isReadChanged' ? 'Only a known chat can change its read state.'
-          : type === 'chat/isArchivedChanged' ? 'Only a known independently manageable non-default chat can be archived.'
-          : undefined;
-        if (refusal !== undefined) refuse(connection.peer, asked, action, origin, refusal);
-        else dispatch(asked, action, origin);
-      });
+      return resolveChatOwner(channel)
+        .then((session) => (session === undefined || knownChat() ? undefined : restoreSession(idOf(session))))
+        .then(() => {
+          if (knownChat()) return conn.applyNow(params, origin);
+          const refusal = type === 'chat/isReadChanged' ? 'Only a known chat can change its read state.'
+            : type === 'chat/isArchivedChanged' ? 'Only a known independently manageable non-default chat can be archived.'
+            : undefined;
+          if (refusal !== undefined) refuse(connection.peer, asked, action, origin, refusal);
+          else dispatch(asked, action, origin);
+        });
     }
 
     if (type === 'session/activeClientSet') {
