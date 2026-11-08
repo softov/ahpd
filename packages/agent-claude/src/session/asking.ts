@@ -6,6 +6,7 @@ import { getClaudeInvocationMessage, getClaudePastTenseMessage, getClaudeToolInp
 import {
   CLAUDE_QUESTION_CANCELLED_MESSAGE, CLAUDE_USER_DECLINED_MESSAGE, getClaudeConfirmationTitle, getClaudePermissionKind, getClaudeToolPath, toolMetaOf,
 } from '../kinds.js';
+import { HOST_SHELL_TOOL } from '../options.js';
 interface PendingInput {
   id: string;
   /** The question as it was raised on the session's `inputNeeded`: the spec's `SessionInputRequest`. */
@@ -96,7 +97,9 @@ interface Question {
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8105-L8112
  */
 const confirmationOf = (toolName: string, input: Bag, about: Bag): PendingConfirmation => {
-  const permissionKind = getClaudePermissionKind(toolName);
+  // The host's shell, where it takes the place of `Bash`, runs the same
+  // commands, so its call is a shell question the same rules read.
+  const permissionKind = toolName === HOST_SHELL_TOOL ? 'shell' : getClaudePermissionKind(toolName);
   const target = getClaudeToolPath(toolName, input);
   const path = str(about.blockedPath) ?? target;
   const asked = bag(about.matchedAskRule);
