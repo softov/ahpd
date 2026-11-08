@@ -867,13 +867,13 @@ it('says a reply\'s image by the reference the host kept its bytes under, or by 
 });
 
 /*
- * An event a newer cofold sends that its types do not name is passed by, and
- * said in the log, as VS Code's Claude mapper maps a message type it does not
- * know to nothing.
+ * An event a newer cofold sends that its types do not name maps to nothing,
+ * with nothing logged, as VS Code's Claude mapper maps a message type it does
+ * not know.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L292-L298
  */
-it('passes by an event cofold\'s types do not name, and says so in the log', () => {
-  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+it('maps an event cofold\'s types do not name to nothing, and logs nothing', () => {
+  const said = (['debug', 'error', 'info', 'log', 'warn'] as const).map((level) => vi.spyOn(console, level).mockImplementation(() => {}));
   try {
     const turn = mapTurn({
       turnId: 't1',
@@ -885,9 +885,9 @@ it('passes by an event cofold\'s types do not name, and says so in the log', () 
       cancelled: () => false,
     });
     expect(turn.actions({ type: 'run.newer' } as unknown as RunEvent).actions).toEqual([]);
-    expect(warned).toHaveBeenCalledWith('@ahpd/agent-cofold: cofold event is not mapped: run.newer');
+    expect(said.flatMap((one) => one.mock.calls)).toEqual([]);
   }
-  finally { warned.mockRestore(); }
+  finally { for (const one of said) one.mockRestore(); }
 });
 
 it('asks before a shell command and sends its bare command on the request', async () => {

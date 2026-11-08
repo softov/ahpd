@@ -849,12 +849,11 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            * An event cofold's types name and this file does not map is a
            * compile error here, which is the property this file exists to
            * keep. One a newer cofold sends at run time that the types do not
-           * name is logged and passed by, as VS Code's Claude mapper maps a
-           * message type it does not know to nothing.
+           * name maps to nothing, as VS Code's Claude mapper maps a message
+           * type it does not know.
            * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L292-L298
            */
-          const unhandled: never = event;
-          console.warn(`@ahpd/agent-cofold: cofold event is not mapped: ${(unhandled as { type?: string }).type ?? 'unknown'}`);
+          event satisfies never;
           return only([]);
         }
       }
