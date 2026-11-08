@@ -215,7 +215,7 @@ The host keeps it in memory only, as VS Code's host keeps its root config.
 A daemon that restarts therefore holds no rule until a window pushes it again.
 A key names one tool exactly, or every tool of a server through `<server>/*`.
 A key is the backend's own tool name, matched with its case, so Claude's `Bash` and pi's `bash` are different keys.
-A tool this host offers is `ahp/<name>` in every backend.
+A tool this host offers is `host/<name>` in every backend, after the MCP server that carries the host's tools, which is named `host` as [VS Code](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21) names it.
 A client's tool is the name its client announced, as VS Code's setting names its window's tools and the [window](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostToolUtils.ts#L24-L27) hands them to an agent host by those names.
 An MCP server's tool is `<server>/<tool>`: its server is the session's customization its call's `contributor` names, as [AHP](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1338-L1344) names an MCP tool's server on the call, and `<tool>` is the call's tool name or what ends it after a `__`. A call with no contributor is named by its full tool name alone.
 A matched call asks whenever its backend puts the call to a person, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1698) applies its rules to the confirmations a provider raises.

@@ -2,7 +2,7 @@ import { posix } from 'node:path';
 import { managedRuleOf, normalizeDomainPattern } from '@ahpd/sdk';
 import type { Bag, Start } from '@ahpd/sdk';
 import type { Settings } from '@anthropic-ai/claude-agent-sdk';
-import { CLAUDE_SERVER_TOOL_MCP_SERVER_NAME, isHostInjectedMcpServerName } from './session/clienttools.js';
+import { CLAUDE_CLIENT_MCP_SERVER_NAME } from './session/clienttools.js';
 import { bag, list } from './session/common.js';
 
 /*
@@ -154,10 +154,11 @@ const mcpToolRule = (server: string, tool: string): string[] =>
  * The `ask` rules naming each tool the operator's eligibility sets `false`, by
  * Claude Code's names for it, VS Code's per-tool translation for a grammar that
  * names a tool. The keys are the setting's: a tool's name is the CLI's own tool
- * of that name; `ahp/<name>` is the host's tool, which the CLI calls
- * `mcp__host__<name>`; `<server>/<tool>` is `mcp__<server>__<tool>`; and
+ * of that name; `<server>/<tool>` is `mcp__<server>__<tool>`, the host's tools
+ * among them as `host/<name>`, on the server VS Code names `host`; and
  * `<server>/*` is `mcp__<server>__*` where no key keeps a tool of the server
  * eligible, an ask rule holding over every allow rule.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
  *
  * A tool's name names a client's tool of that name too, as VS Code's setting
  * names its window's tools and the window hands them to an agent host by those
@@ -185,14 +186,12 @@ const toolRulesOf = (eligible: Readonly<Record<string, boolean>>): string[] =>
       const [server = '', tool = '', ...more] = key.slice('mcp__'.length).split('__');
       return more.length === 0 ? mcpToolRule(server, tool) : [];
     }
-    const owner = key.slice(0, slash);
+    const server = key.slice(0, slash);
     const tool = key.slice(slash + 1);
-    // A key on one of the CLI's two in-process servers names no tool to the host, which names
-    // the host's tools `ahp/<name>` and a client's tool by its own name.
-    if (isHostInjectedMcpServerName(owner)) return [];
-    const server = owner === 'ahp' ? CLAUDE_SERVER_TOOL_MCP_SERVER_NAME : owner;
+    // A client's tool is keyed by its own name, so a key on the server a client's tools ride names none.
+    if (server === CLAUDE_CLIENT_MCP_SERVER_NAME) return [];
     if (tool !== '*') return mcpToolRule(server, tool);
-    return Object.entries(eligible).some(([other, on]) => on === true && other.startsWith(`${owner}/`)) ? [] : mcpToolRule(server, '*');
+    return Object.entries(eligible).some(([other, on]) => on === true && other.startsWith(`${server}/`)) ? [] : mcpToolRule(server, '*');
   });
 
 /**

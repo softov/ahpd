@@ -118,20 +118,21 @@ it('hands the bypass lock as Claude Code\'s own, and the eligibility\'s asks as 
 });
 
 /*
- * The setting's keys, a tool's own name, the host's tool as `ahp/<name>` and an
- * MCP server's as `<server>/<tool>` or `<server>/*`, which the CLI names
- * `<name>`, `mcp__host__<name>`, `mcp__<server>__<tool>` and
- * `mcp__<server>__*`; a client's tool of a key's name is the CLI's
- * `mcp__client__<clientId>__<name>` for each client offering it, which the
- * host's check keeps.
+ * The setting's keys, a tool's own name and an MCP server's tool as
+ * `<server>/<tool>` or `<server>/*`, the host's tools among them as
+ * `host/<name>` on the server VS Code names `host`, which the CLI names
+ * `<name>`, `mcp__<server>__<tool>` and `mcp__<server>__*`; a client's tool of
+ * a key's name is the CLI's `mcp__client__<clientId>__<name>` for each client
+ * offering it, which the host's check keeps.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L31-L42
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
  * https://code.claude.com/docs/en/permissions#mcp
  */
 it('asks about each tool the eligibility sets false, by each name Claude Code gives it', () => {
   expect(claudeManagedSettingsOf({
     eligibleForAutoApproval: {
       runInTerminal: false,
-      'ahp/create_session': false,
+      'host/create_session': false,
       'github/create_issue': false,
       'linear/*': false,
       mcp__notes__append: false,
@@ -156,7 +157,7 @@ it('leaves out a server\'s wildcard where a key keeps one of its tools eligible,
       'github/list_issues': true,
       'my.server/run': false,
       'reports__v2/*': false,
-      'host/run': false,
+      'client/run': false,
       mcp__github: false,
       'Bash(rm *)': false,
     },
