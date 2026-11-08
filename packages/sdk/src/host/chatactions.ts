@@ -3,7 +3,7 @@ import { SESSION_META_WORKSPACELESS_KEY, idOf, Status } from '../sessions/catalo
 import { localPath } from '../resources/fileuri.js';
 import { readMultiRoot } from '../sessions/remotesession.js';
 import { filesOf, needsAsyncRewrite, snapshot } from './attachments.js';
-import { chatIdFor, chatUriFor, isRootChannel, RELAYED, ROOT, spaceOf, WORKER_ACTIONS } from './channels.js';
+import { chatUriFor, isRootChannel, RELAYED, ROOT, spaceOf, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { grantOf, withGrant } from './permissions.js';
 import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
@@ -2366,7 +2366,7 @@ export function chatAction(
             agent,
             uri,
             chatUri,
-            chatIdFor(uri, chatUri),
+            ctx.chatIdOf(uri, chatUri, own),
             ctx.backendsOwn(chatConfig(uri, owner, chatUri)),
             { ...(failed !== undefined && own !== undefined ? { resume: own } : {}), seed: kept },
             owner.workingDirectory,
@@ -2477,7 +2477,7 @@ export function chatAction(
         getProviderForChat(owner, session.chatUri),
         session.uri,
         session.chatUri,
-        chatIdFor(session.uri, session.chatUri),
+        ctx.chatIdOf(session.uri, session.chatUri, started),
         ctx.backendsOwn(chatConfig(session.uri, owner, session.chatUri)),
         { resume: started, rewindAt: point, seed: all.slice(0, at + 1) as Bag[] },
         owner.workingDirectory,
