@@ -1,6 +1,7 @@
 /** What git can say about a directory the host serves. */
 
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { ProjectInfo } from '@microsoft/agent-host-protocol';
@@ -41,9 +42,17 @@ export function gitBranches(): DirectoryFacts {
   /** Every directory whose project was read, placed in a repository or not. */
   const read = new Set<string>();
 
-  /** Run git in a directory and answer what it said, or nothing at all. */
+  /**
+   * Run git in a directory and answer what it said, or nothing at all, and
+   * nothing without asking for a directory that is not there, which git can
+   * only refuse: a process is dear on Windows, and a refresh asks three times.
+   */
   const git = (dir: string, args: string[]): Promise<string | undefined> =>
     new Promise((answer) => {
+      if (!existsSync(dir)) {
+        answer(undefined);
+        return;
+      }
       execFile('git', gitArgv(dir, args), { timeout: 2000, env: quiet(), windowsHide: true }, (error, out) => {
         answer(error ? undefined : out.toString().trim());
       });
