@@ -103,14 +103,14 @@
             },
             "required": ["id"]
           },
-          "description": "What the operator says of baseUrl's models, each by its id on that endpoint: supportsReasoningEffort, the thinking levels it accepts, as VS Code's Custom Endpoint models declare it, of which those cofold has are offered."
+          "description": "The models at baseUrl, by id, with the thinking levels each accepts in supportsReasoningEffort. Cofold offers the levels it supports."
         },
         "instructions": { "type": "string", "description": "Default system prompt for agents that don't set one." },
         "computerConfigDir": {
           "anyOf": [{ "type": "string" }, { "const": false }],
           "description": "Cofold configuration directory inside a computer. Defaults to '/ahpd/cofold'. Set to false to keep the computer image's own configuration."
         },
-        "store": { "type": "string", "description": "Folder for cofold's file store, shared by every agent. Defaults to $COFOLD_HOME, or ~/.cofold." },
+        "store": { "type": "string", "description": "Folder for cofold's file store, shared by every agent. Defaults to '$COFOLD_HOME', or '~/.cofold'." },
         "memory": { "type": "boolean", "description": "Keep each agent's store in memory instead of on disk. For tests." },
         "tools": {
           "type": "object",

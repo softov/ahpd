@@ -11,7 +11,7 @@
       "description": "Endpoint compatível com OpenAI padrão para os agentes que não definem um."
     },
     "models": {
-      "description": "O que o operador diz dos modelos de baseUrl, cada um pelo seu id nesse endpoint: supportsReasoningEffort, os níveis de raciocínio que aceita, como os modelos de Custom Endpoint do VS Code os declaram, dos quais se oferecem os que o cofold tem."
+      "description": "Os modelos de baseUrl, por id, com os níveis de raciocínio que cada um aceita em supportsReasoningEffort. O Cofold oferece os níveis que suporta."
     },
     "instructions": {
       "description": "Prompt de sistema padrão para os agentes que não definem um."
@@ -20,7 +20,7 @@
       "description": "Pasta de configuração do Cofold dentro de um computador. Por padrão, '/ahpd/cofold'. Use false para manter a configuração própria da imagem."
     },
     "store": {
-      "description": "Pasta do armazenamento de arquivos de cada agente, uma subpasta por agente. Por padrão, '$XDG_DATA_HOME/ahpd/cofold'."
+      "description": "Pasta do armazenamento de arquivos do Cofold, compartilhada por todos os agentes. Por padrão, '$COFOLD_HOME' ou '~/.cofold'."
     },
     "memory": {
       "description": "Mantém o armazenamento de cada agente em memória em vez de no disco. Para testes."
