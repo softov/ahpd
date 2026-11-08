@@ -86,6 +86,8 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   expect(undeclaredIn([...notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, notes, chatUri)));
   client.close();
+  // And its shells, which Windows will not remove the case's folder under.
+  await host.close();
 });
 
 /*
