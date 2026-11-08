@@ -32,7 +32,7 @@ import { sameFolder, trusted } from './trust.js';
 import { isWorktreeUnderRepository } from '../repo/worktrees.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
-import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
+import type { Agent, AutoApproval, AutoApprovalKind, BoundTool, Start } from '../types/agent.js';
 import type { TurnEndEvent, TurnEndReason } from '../types/events.js';
 import type { Owner } from '../types/usage.js';
 import type { Connection } from '../types/host.js';
@@ -1137,6 +1137,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      * One endpoint per session, opened when the backend asks and closed when
      * the session goes, so a token reaches the tools of the session it was
      * handed to and nothing else.
+     *
+     * The operator's rule holds there as at the /mcp door, where the daemon's
+     * `managedRules` is `checked` and the backend asks nothing of its own
+     * before a call runs: a call through this server reaches no question, so a
+     * host tool the rule names is refused, and so it is in every list the
+     * backend hands the endpoint after.
      */
     const toolsServer = (ask?: {
       runClient?: RunClientTool;
@@ -1144,17 +1150,26 @@ export function createSpawn(ctx: HostContext): Spawn {
       mayRun?: MayRunTool;
     }): ToolsEndpoint | undefined => {
       if (bare) return undefined;
+      const ruled = options.managedRules !== 'handed' && ask?.mayRun === undefined;
+      const held = (tools: BoundTool[]): BoundTool[] => tools.map((one) => {
+        const name = one.definition.name;
+        if (!ruled || one.run === undefined || !asksForTool(options.eligibleForAutoApproval, `host/${name}`)) return one;
+        return {
+          ...one,
+          run: () => { throw new Error(`${name} asks every time: eligibleForAutoApproval names host/${name}, and this session's tools server puts no question`); },
+        };
+      });
       const opened = options.toolsServers?.open(
-        ctx.boundTools(uri, chatUri, agent.provider),
+        held(ctx.boundTools(uri, chatUri, agent.provider)),
         ask?.runClient,
         ask?.toolsChanged,
         ask?.mayRun,
       );
       if (opened === undefined) return undefined;
-      const held = ctx.served.get(uri) ?? [];
-      held.push(opened);
-      ctx.served.set(uri, held);
-      return opened;
+      const open = ctx.served.get(uri) ?? [];
+      open.push(opened);
+      ctx.served.set(uri, open);
+      return { ...opened, setTools: (now) => opened.setTools(held(now)) };
     };
     /*
      * What this backend is told about the folders it is handed.
