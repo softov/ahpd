@@ -451,10 +451,13 @@ describe('driving a turn', () => {
     // A stop that left the question standing would leave the subprocess
     // waiting on a promise nobody will ever settle.
     expect(await decision).toMatchObject({ behavior: 'deny' });
-    // And the CLI the turn ran in is closed, as the reference pipeline ends
-    // its query at a stop.
-    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L487-L495
-    expect(sessionQueries().at(-1)?.closed).toBe(true);
+    // And once the CLI has recorded that answer, the turn is interrupted
+    // through the SDK on the CLI it ran in, which stays: the Claude record's
+    // `stopEnds` ends the turn alone by default.
+    // https://code.claude.com/docs/en/agent-sdk/typescript#query-object
+    await emit({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sleep', content: 'The turn was stopped', is_error: true }] }, parent_tool_use_id: null });
+    expect(sdk.interrupted).toBe(1);
+    expect(sessionQueries().at(-1)?.closed).toBe(false);
   });
 });
 
