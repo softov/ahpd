@@ -62,7 +62,6 @@ export function piAgent(
     type: 'object',
     properties: {
       projectTrust: {
-        scope: 'session',
         type: 'string',
         title: 'Project resources',
         description: "Whether this project's own pi extensions, skills and prompts are loaded.",

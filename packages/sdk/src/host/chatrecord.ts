@@ -54,6 +54,19 @@ export interface ChatRecord {
     uri: string, chatUri: string, backendId: string | undefined, isDefault: boolean,
     provider?: string, config?: Record<string, unknown>,
   ): void;
+  /**
+   * The values a chat of a session set for itself, as VS Code's
+   * `getChatOwnConfigValues` answers them: none where it set none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L244-L248
+   */
+  getChatOwnConfigValues(uri: string, chatUri: string): Record<string, unknown>;
+  /**
+   * The values a chat set for itself written into its row, which a restart
+   * starts it again with, as VS Code persists a chat's own config values with
+   * the chat. None takes them off the row.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L340
+   */
+  persistChatOwnConfigValues(uri: string, chatUri: string, values: Record<string, unknown>): void;
   /** Write down a session's chats in a new order, which is the order a restart rebuilds them in. */
   orderChats(uri: string, order: string[]): void;
   /** A chat a session has dropped, kept in the record or gone from it. */
@@ -154,6 +167,7 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
       backendId: backendId ?? was?.backendId ?? chatIdFor(uri, chatUri) ?? id,
       ...(served === undefined ? {} : { provider: served }),
       ...(settings === undefined ? {} : { config: settings }),
+      ...(was?.configValues === undefined ? {} : { configValues: was.configValues }),
       ...(title === undefined ? {} : { title }),
       ...(origin === undefined ? {} : { origin }),
       ...(isDefault || was?.default === true ? { default: true } : {}),
@@ -174,6 +188,22 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
     // - is not the one this host claimed under the old name.
     if (was !== undefined && was.backendId !== next.backendId && was.backendId !== id) chatBackings.delete(was.backendId);
     if (next.backendId !== '' && next.backendId !== id) chatBackings.add(next.backendId);
+  };
+
+  const getChatOwnConfigValues = (uri: string, chatUri: string): Record<string, unknown> =>
+    ({ ...recordedChat(idOf(uri), chatUri)?.configValues });
+
+  const persistChatOwnConfigValues = (uri: string, chatUri: string, values: Record<string, unknown>): void => {
+    const id = idOf(uri);
+    const list = stored(id);
+    if (!list.some((one) => one.uri === chatUri)) return;
+    // A copy of every entry, as `keepChat` writes them, with this one's values
+    // put on or taken off.
+    kept.setChats(id, list.map((one) => {
+      if (one.uri !== chatUri) return { ...one };
+      const { configValues: _was, ...rest } = one;
+      return Object.keys(values).length === 0 ? rest : { ...rest, configValues: { ...values } };
+    }));
   };
 
   /**
@@ -273,6 +303,7 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
   return {
     homeId: (chat) => chatHome.get(chat),
     chatBackings: () => chatBackings,
-    recordedChats, recordedChat, ownChat, heldChats, keepChat, orderChats, dropChat, forgetChats,
+    recordedChats, recordedChat, ownChat, heldChats, keepChat, getChatOwnConfigValues, persistChatOwnConfigValues,
+    orderChats, dropChat, forgetChats,
   };
 }

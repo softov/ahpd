@@ -685,8 +685,9 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
 
   /*
    * Everything this host serves that no map in the package names, keyed by
-   * the method `skipped()` reports it under, plus the one value it sends that
-   * no declaration allows.
+   * the method `skipped()` reports it under, plus the values it sends that no
+   * declaration allows and the action VS Code's window sends beside the
+   * protocol's.
    *
    * A method in no map is either a departure somebody decided on or a hole in
    * the checker, and the only thing that tells them apart is being written
@@ -721,6 +722,9 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     'vscode/devContainers/output': 'CONTAINERS.md',
     'vscode/devContainers/relayClose': 'CONTAINERS.md',
     'vscode/devContainers/closeConnection': 'CONTAINERS.md',
+    chatMutable: 'SESSIONS.md',
+    config: 'SESSIONS.md',
+    'chat/configChanged': 'SESSIONS.md',
   };
 
   /*
@@ -743,15 +747,22 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   };
 
   /*
-   * The one declaration this host widens on purpose, keyed by the finding.
+   * The declarations this host widens on purpose, keyed by the finding.
    *
    * A partial is spread over the row a client holds, so a key left off is a
    * field that did not move and an idled row would keep saying what its last
    * tool was doing. The reference host sends `null` for that and its client
    * reads it as cleared, so this one does too.
+   *
+   * A property a chat may set for itself says `chatMutable`, wherever a schema
+   * is served, and a chat's state carries the values it set as `config`: VS
+   * Code's per-chat config, which its window reads.
    */
   const WIDENED: Record<string, string> = {
     'SessionSummaryChangedParams /changes/activity type must be string': 'Server notifications',
+    'ChatState / undeclared key `config`': 'SESSIONS.md',
+    'ResolveSessionConfigResult /schema/properties/effortLevel undeclared key `chatMutable`': 'SESSIONS.md',
+    'SessionState /config/schema/properties/effortLevel undeclared key `chatMutable`': 'SESSIONS.md',
   };
 
   /*

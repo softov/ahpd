@@ -527,7 +527,6 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
       ...(options.policy === undefined
         ? {
             permissionMode: {
-              scope: 'session',
               type: 'string',
               title: 'Approvals',
               description: 'How the agent handles tool approvals.',
@@ -542,7 +541,7 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
       ...(options.adapter === undefined
         ? {
             effortLevel: {
-              scope: 'chat',
+              chatMutable: true,
               type: 'string',
               title: 'Effort',
               description: 'How hard it thinks before answering.',

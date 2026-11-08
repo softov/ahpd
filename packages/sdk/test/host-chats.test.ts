@@ -613,23 +613,27 @@ describe('more than one chat in a session', () => {
       .toEqual({ fork: true, sideChat: true });
   });
 
-  it('spreads a session-scoped key across every chat, and keeps a chat-scoped one where it was', async () => {
+  /*
+   * A key the chats of a session share reaches every chat, and one the schema
+   * marks `chatMutable` reaches the chats that run on the session's value: a
+   * new chat starts with the default chat's values as its own, so it keeps
+   * them, as VS Code gives a new chat its config and lays a chat's own values
+   * over its session's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13372-L13400
+   */
+  it('spreads a key the chats share across every chat, and a chat-mutable one to the chats that run on the session\'s value', async () => {
     const { client, uri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    const made = (await client.handle({ method: 'subscribe', params: { channel: second } }) as {
+      snapshot: { state: { config?: { values: Record<string, unknown> } } };
+    }).snapshot.state;
+    expect(made.config?.values).toEqual({ effortLevel: 'high' });
     const before = sdk.modesSet.length;
     await client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'session/configChanged', config: { permissionMode: 'plan' } } },
     });
     await settle();
-    /*
-     * Both chats, because the schema says `scope: 'session'`.
-     *
-     * The chats of one session are peers on one config: a permission mode set
-     * on one of them and not the other is a session where two conversations
-     * are allowed different things. Which keys are a session's is the backend's
-     * schema's answer rather than this host's.
-     */
     expect(sdk.modesSet.length - before).toBe(2);
 
     const efforts = sdk.effortsSet.length;
@@ -638,8 +642,6 @@ describe('more than one chat in a session', () => {
       params: { channel: uri, action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
     });
     await settle();
-    // One, because that one says `scope: 'chat'`. How hard a conversation
-    // thinks is that conversation's.
     expect(sdk.effortsSet.length - efforts).toBe(1);
   });
 
@@ -2535,14 +2537,13 @@ describe('a chat of another backend', () => {
   /**
    * The example backend, under a name of its own.
    *
-   * `voice` is declared as the session's rather than a chat's, which is what
-   * makes it a key a fan-out would push at every chat of the session. And
-   * `endPoint` names the last entry a turn left, without which this host
-   * refuses a rewind as one it has no point to cut at.
+   * `voice` is the session's, as echo declares it, which is what makes it a
+   * key a fan-out would push at every chat of the session. And `endPoint`
+   * names the last entry a turn left, without which this host refuses a
+   * rewind as one it has no point to cut at.
    */
   const backend = (provider: string, starts: Start[], told?: string[]): Agent => {
     const base = echo({ path: DIR, pace: 0 });
-    const schema = base.schema();
     return {
       ...base,
       provider,
@@ -2555,11 +2556,6 @@ describe('a chat of another backend', () => {
        * turn the chat already had, before the one this host adds.
        */
       transcript: async (id: string) => (id === UUID ? SECOND : base.transcript?.(id)),
-      schema: () => {
-        const properties = { ...(schema.properties as Record<string, Record<string, unknown>>) };
-        properties.voice = { ...properties.voice, scope: 'session' };
-        return { ...schema, properties };
-      },
       create: (start: Start): Session => {
         starts.push(start);
         const session = base.create(start.chatId === undefined ? start : { ...start, resume: start.chatId });

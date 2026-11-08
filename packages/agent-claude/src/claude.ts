@@ -284,7 +284,6 @@ export function claude(options: ClaudeOptions): Agent {
        * was missing too, and is the SDK's other mode.
        */
       permissionMode: {
-        scope: 'session',
         type: 'string',
         title: 'Approvals',
         description: 'How the agent handles tool approvals.',
@@ -318,7 +317,7 @@ export function claude(options: ClaudeOptions): Agent {
        */
       ...(perModelEffort ? {} : {
         effortLevel: {
-          scope: 'chat',
+          chatMutable: true,
           type: 'string',
           title: 'Effort',
           description: 'How hard it thinks before answering.',
@@ -337,7 +336,6 @@ export function claude(options: ClaudeOptions): Agent {
        * `default`, so absent stays tellable from an explicit empty list.
        */
       shellInitScripts: {
-        scope: 'session',
         type: 'array',
         title: 'Shell Init Script',
         description: 'A script sourced before each built-in shell tool command.',
@@ -370,7 +368,6 @@ export function claude(options: ClaudeOptions): Agent {
        * shape could be carried at all.
        */
       permissions: {
-        scope: 'session',
         type: 'object',
         title: 'Permissions',
         description: 'Per-tool session permissions. Updated when a tool is approved for this session.',

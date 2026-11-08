@@ -526,7 +526,22 @@ describe('a session\'s config across a restart', () => {
     expect(opened.snapshot.state.config.values.shellInitScripts).toEqual(scripts);
   });
 
-  it('keeps a key the schema scopes to one chat out of the session\'s store', async () => {
+  /** What the store folder holds for one chat of a session. */
+  const storedChat = (id: string, chat: string) => {
+    try {
+      return (JSON.parse(readFileSync(join(dir, `${id}.json`), 'utf8')) as { chats?: { uri: string; configValues?: Record<string, unknown> }[] })
+        .chats?.find((one) => one.uri === chat);
+    }
+    catch { return undefined; }
+  };
+
+  /*
+   * A value a chat sets for itself is that chat's: taken by its backend alone
+   * and kept with the chat, and the session's store keeps the session's, as
+   * VS Code keeps a chat's own config values with the chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L340
+   */
+  it('keeps a chat\'s own value with the chat and out of the session\'s store', async () => {
     const client = await hostOnFile();
     await client.handle({
       method: 'createSession',
@@ -535,28 +550,39 @@ describe('a session\'s config across a restart', () => {
     await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/peers', chat: 'ahp-chat:/peer' } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/peer', action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
+      params: { channel: 'ahp-chat:/peer', action: { type: 'chat/configChanged', config: { effortLevel: 'low' } } },
     });
     await settle();
     await written();
-    // Taken by the chat it was set on, and not what the session resumes with.
-    expect(sdk.effortsSet).toContain('low');
+    expect(sdk.effortsSet).toEqual(['low']);
     expect(stored('peers')).toEqual({ permissionMode: 'plan' });
+    expect(storedChat('peers', 'ahp-chat:/peer')?.configValues).toEqual({ effortLevel: 'low' });
   });
 
-  it('keeps a key the schema scopes to one chat when it was set on the lead chat', async () => {
+  it('reads a default chat back after a restart with the value it set for itself, and the session with its own', async () => {
     const client = await hostOnFile();
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/lead', provider: 'claude' } });
     // The chat the host minted for the session, read off its state.
     const lead = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/lead' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: lead, action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
+      params: { channel: lead, action: { type: 'chat/configChanged', config: { effortLevel: 'low' } } },
     });
     await settle();
     await written();
-    // What a resume hands the lead chat.
-    expect(stored('lead')).toEqual({ effortLevel: 'low' });
+    expect(stored('lead') ?? {}).not.toHaveProperty('effortLevel');
+    expect(storedChat('lead', lead)?.configValues).toEqual({ effortLevel: 'low' });
+
+    sdk.sessions.push({ sessionId: 'lead', summary: 'Kept', lastModified: 1, cwd: '/home/softov' });
+    const again = await hostOnFile();
+    const session = (await again.handle({ method: 'subscribe', params: { channel: 'ahp-session:/lead' } }) as {
+      snapshot: { state: { config: { values: Record<string, unknown> } } };
+    }).snapshot.state;
+    const chat = (await again.handle({ method: 'subscribe', params: { channel: lead } }) as {
+      snapshot: { state: { config?: { values: Record<string, unknown> } } };
+    }).snapshot.state;
+    expect(session.config.values.effortLevel).toBe('high');
+    expect(chat.config?.values).toEqual({ effortLevel: 'low' });
   });
 
   it('writes nothing for a session disposed before its backend took the change, even under its name again', async () => {
@@ -721,6 +747,55 @@ describe('a session\'s config across a restart', () => {
         .toEqual({ sandbox: { enabled: true } });
       expect((await resumedQuery({ sandboxEnabled: held }))?.settings, String(held)).toBeUndefined();
     }
+  });
+});
+
+/*
+ * A chat's own config, VS Code's: a property a chat may hold its own value of
+ * is published `chatMutable`, set for one chat with `chat/configChanged` on
+ * it, carried on the chat's state and handed to its backend alone, and a key
+ * a chat may not set is refused in VS Code's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/protocol/channels-session/state.ts#L612-L618
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13333-L13365
+ */
+describe('a chat\'s own config', () => {
+  it('publishes a property a chat may set for itself as chatMutable', async () => {
+    const { client, uri } = await running();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { schema: { properties: Record<string, { chatMutable?: boolean }> } } } };
+    }).snapshot.state;
+    expect(state.config.schema.properties.effortLevel?.chatMutable).toBe(true);
+    expect(state.config.schema.properties.permissionMode?.chatMutable).toBeUndefined();
+  });
+
+  it('sets a value for one chat, on its state and its backend, and leaves the session\'s', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/configChanged', config: { effortLevel: 'low' } } },
+    });
+    await settle();
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { config?: { values: Record<string, unknown> } } };
+    }).snapshot.state;
+    const session = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { config: { values: Record<string, unknown> } } };
+    }).snapshot.state;
+    expect(chat.config?.values).toEqual({ effortLevel: 'low' });
+    expect(session.config.values.effortLevel).toBe('high');
+    expect(sdk.effortsSet).toEqual(['low']);
+  });
+
+  it('refuses a key a chat may not set for itself, and a value its property does not offer, in VS Code\'s words', async () => {
+    const { client, peer: p, chatUri } = await running();
+    const set = async (config: Record<string, unknown>) => {
+      client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/configChanged', config } } });
+      await settle();
+      return (p.notes.filter((note) => note.method === 'action').at(-1)?.params as { rejectionReason?: string }).rejectionReason;
+    };
+    expect(await set({ permissionMode: 'plan' })).toBe('Session configuration \'permissionMode\' cannot be set for a chat.');
+    expect(await set({ effortLevel: 'enormous' })).toBe('Session configuration \'effortLevel\' does not offer \'enormous\'.');
+    expect(sdk.effortsSet).toEqual([]);
   });
 });
 
