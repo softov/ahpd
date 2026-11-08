@@ -768,27 +768,20 @@ export interface Session {
    *
    * Handed over once the host has said the client's result to every client of
    * the chat, and for a result its client asks to have confirmed, once a
-   * client has approved it or denied it, a denial handed as a failure. False
-   * when no call by that id waits on that client here, a second result for a
-   * call among them, which the host logs. What the backend says of the call
-   * afterwards is said, and the protocol's reducer leaves the completed call
-   * as it was.
+   * client has approved it or denied it, a denial handed as a failure. A call
+   * a client that has gone still owes is handed the failure the host says for
+   * it once the client's window runs out or it leaves the session, as VS
+   * Code's host fails a departed client's calls. False when no call by that id
+   * waits on that client here, a second result for a call among them, which
+   * the host logs. What the backend says of the call afterwards is said, and
+   * the protocol's reducer leaves the completed call as it was.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
    */
   completeToolCall?(
     toolCallId: string,
     clientId: string,
     result: ClientCallAnswer,
   ): boolean;
-  /**
-   * A client that was running tool calls here has gone.
-   *
-   * @deprecated The host fails each call a gone client still owes itself, in
-   * VS Code's words, once the client's window runs out or it leaves the
-   * session, and hands the backend the failure through `completeToolCall`, as
-   * VS Code's host does; it calls no backend's `clientGone`.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
-   */
-  clientGone?(clientId: string): void;
   /**
    * Answer a question the agent asked, keyed by question id.
    *

@@ -111,7 +111,13 @@ it('waits on the client that owns a tool, and lets only that client answer', asy
   expect(session.toolCallOwner?.('c1')).toBeUndefined();
 });
 
-it('fails a client tool call with the answer, and when its client is gone', async () => {
+/*
+ * A client tool call fails with the answer it is handed, the host's failure
+ * of a call a gone client owes among them, as VS Code's host fails one through
+ * the agent's own completion; the session ends none itself.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
+ */
+it('fails a client tool call with the answer, the host\'s for a gone client among them, and ends none itself', async () => {
   const { session, pi } = opened({
     tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
@@ -125,11 +131,13 @@ it('fails a client tool call with the answer, and when its client is gone', asyn
   session.completeToolCall?.('c1', 'editor', { text: 'it refused', ok: false, content: [] });
   await expect(refused).rejects.toThrow('it refused');
 
+  expect('clientGone' in session).toBe(false);
   await driveCall(pi, 'c2', 'editor__open', {});
   const gone = tool.execute('c2', {} as never, undefined, undefined, undefined as never);
   await settled();
-  session.clientGone?.('editor');
-  await expect(gone).rejects.toThrow('The client editor that was running open is no longer here');
+  const words = 'Client editor disconnected before completing open';
+  session.completeToolCall?.('c2', 'editor', { text: words, ok: false, content: [] });
+  await expect(gone).rejects.toThrow(words);
 });
 
 it('releases a waiting client call when the turn is cancelled', async () => {

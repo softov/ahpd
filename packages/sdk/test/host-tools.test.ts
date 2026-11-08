@@ -2354,9 +2354,6 @@ describe('a client\'s call, held by the backend', () => {
           chat: start.chatUri,
           emit: start.emit,
           timeoutMs: start.clientToolTimeoutMs,
-          providers: (name) => current
-            .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-            .map((one) => String(one.owner)),
         });
         const inner = base.create(start);
         held = { start, calls, tools: () => current, session: inner };

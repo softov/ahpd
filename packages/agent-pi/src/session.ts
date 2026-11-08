@@ -324,9 +324,6 @@ export function piSession(
     chat: start.chatUri,
     emit,
     ...(start.clientToolTimeoutMs === undefined ? {} : { timeoutMs: start.clientToolTimeoutMs }),
-    providers: (name) => built
-      .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-      .map((one) => String(one.owner)),
   });
 
   /** The client that provides a tool, by the name pi calls it. */
@@ -1504,12 +1501,6 @@ export function piSession(
      */
     completeToolCall: (toolCallId, clientId, result) =>
       calls.complete(toolCallId, clientId, result),
-
-    clientGone: (clientId) => {
-      // A call whose client has gone is a turn waiting on a promise nothing
-      // will settle. The agent is told it failed, which is true.
-      calls.gone(clientId);
-    },
 
     /**
      * The tools on offer, replaced whole.

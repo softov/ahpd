@@ -191,7 +191,6 @@ export interface ClientTools {
     setTools: (tools: BoundTool[]) => Promise<boolean>;
     toolCallOwner: (toolCallId: string) => string | undefined;
     completeToolCall: (toolCallId: string, clientId: string, result: ClientCallAnswer) => boolean;
-    clientGone: (clientId: string) => void;
   };
 }
 
@@ -228,11 +227,6 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     // Absent only where a session is built by hand, and then the holder's own
     // ten minutes apply - the same answer the host resolves an unset one to.
     ...(ctx.options.clientToolTimeoutMs === undefined ? {} : { timeoutMs: ctx.options.clientToolTimeoutMs }),
-    // Asked only when a client goes: the model is the one that has to know
-    // that somebody else provides the tool its call was for.
-    providers: (name) => ctx.offering
-      .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
-      .map((one) => String(one.owner)),
   });
 
   /*
@@ -360,11 +354,11 @@ export function createClientTools(ctx: SessionContext): ClientTools {
   /**
    * Every wait for one tool, ended at once, because nothing will open it now.
    *
-   * The tool is no longer on offer - its client left, or the frame for a call
-   * of it names one nothing offers - so a handler parked on a call that will
-   * never open is answered with the reason rather than left until the turn is
-   * stopped. Both joins go: a handler waiting on the call's id, and one that
-   * joined by the tool's name and has not been handed a call yet.
+   * The frame for a call of it names a tool nothing offers, so a handler
+   * parked on a call that will never open is answered with the reason rather
+   * than left until the turn is stopped. Both joins go: a handler waiting on
+   * the call's id, and one that joined by the tool's name and has not been
+   * handed a call yet.
    */
   const refuseJoins = (toolName: string, why: string): void => {
     for (const [id, waiting] of asked) {
@@ -552,42 +546,19 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     },
 
     /*
-     * The three the holder answers, spread on unchanged.
+     * The two the holder answers, as it answers them.
      *
-     * Who owns a call, which client may settle it, and what happens to the
-     * calls of a client that goes: all of it is the holder's, and none of it
+     * Who owns a call and which client may settle it, the host's failure of a
+     * gone client's call among the settlements, as VS Code's host fails the
+     * calls a departed client owes: all of it is the holder's, and none of it
      * is about this harness. Nothing is emitted from `completeToolCall`: the
      * answer goes back to the CLI, the CLI writes the tool result, and the
      * session reports the completion to everybody from that - which is the
      * same path every other tool call takes.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
      */
-    ...calls.methods,
-
-    /**
-     * A client left the session, with the tools it was offering.
-     *
-     * The holder's own `clientGone` ends the calls already open, which is what
-     * a call the model made and the client was running gets. What it does not
-     * reach is the half a handler is stuck on: a call the CLI has not reported
-     * yet, so a handler is still waiting in the joins for a client that is no
-     * longer there to answer. Those are ended here, with the sentence the
-     * holder uses for the same news, so both halves of one call read the same.
-     *
-     * Every tool whose name is this client's, by the prefix the model is
-     * offered under. The tools may already be gone from `offering` - the host
-     * takes them out in the same breath - so the joins are asked, not the list.
-     */
-    clientGone: (clientId) => {
-      const why = `The client ${clientId} that was running the tool is no longer here`;
-      // Every tool a handler is waiting on: by name in `expecting` and
-      // `unclaimed`, and by call id in `asked`, which carries the tool with the
-      // wait so a client that leaves can be told which of its tools those are.
-      const waited = [...expecting.keys(), ...unclaimed.keys(), ...[...asked.values()].flat().map((one) => one.tool)];
-      for (const toolName of new Set(waited)) {
-        if (toolName.startsWith(called(`${clientId}__`))) refuseJoins(toolName, why);
-      }
-      calls.methods.clientGone(clientId);
-    },
+    toolCallOwner: calls.methods.toolCallOwner,
+    completeToolCall: calls.methods.completeToolCall,
   };
 
   return { clientToolOf, openCall, holdCall, allowCall, refuseCall, releaseCalls, ranByClient, calls, methods };
