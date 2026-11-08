@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { expect, it } from 'vitest';
 import { DEFAULT_TERMINAL_AUTO_APPROVE_RULES } from '../src/access/commandautoapprover.js';
 import { createHost, GATE, ROOT } from '../src/host.js';
@@ -425,7 +425,9 @@ it('opens every client\'s terminal with the host\'s shell', async () => {
   await hello(client, 'a'); await signIn(client, 'a');
   const other = made.accept(peer());
   await hello(other, 'b'); await signIn(other, 'b');
-  await configChanged(client, { defaultShell: '/bin/sh' });
+  // A shell this machine has, as one it does not have opens the host's own.
+  const shell = process.platform === 'win32' ? process.env.ComSpec ?? 'C:\\Windows\\System32\\cmd.exe' : '/bin/sh';
+  await configChanged(client, { defaultShell: shell });
 
   // The title is the shell's own name when nobody named the terminal, which is
   // how the chosen binary is visible from outside: the one value opens the
@@ -435,7 +437,7 @@ it('opens every client\'s terminal with the host\'s shell', async () => {
       channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: `file://${root}`,
     })).toHaveProperty('result');
     const shown = (await terminalsOf(one)).find((row) => row.resource === uri);
-    expect(shown?.title).toBe('sh');
+    expect(shown?.title).toBe(basename(shell));
   }
 });
 

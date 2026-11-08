@@ -520,7 +520,9 @@ it('answers a read of a folder a Read grant names with VS Code\'s glob, the fold
   const answers: Answer[] = [];
   const other = `${realpathSync(dir)}-other`;
   const { host, dispatch, turn } = await serving(asking(answers, 'Read', undefined, { permissionKind: 'read', permissionPath: other }));
-  await dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: [`Read(/${other}/**)`], deny: [] } } });
+  // `//` and the absolute path, whose Windows spelling starts with its drive.
+  const absolute = other.startsWith('/') ? other : `/${other}`;
+  await dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: [`Read(/${absolute}/**)`], deny: [] } } });
   expect((await turn('t1')).confirmed).toBe('not-needed');
   await host.close();
 });

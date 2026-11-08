@@ -225,7 +225,8 @@ it('keeps as much of the stderr as the record\'s stderrBytes names', async () =>
 it('waits the record\'s exitGraceMs for the exit of a server that closed its stream', async () => {
   const connection = connectAcp({
     command: process.execPath,
-    args: ['-e', 'process.stdout.end(); setInterval(() => {}, 1000);'],
+    // Its stdout closed by its descriptor, which on Windows ends the pipe where `process.stdout.end()` does not.
+    args: ['-e', "require('node:fs').closeSync(1); setInterval(() => {}, 1000);"],
     handlers: { update: () => {} },
     exitGraceMs: 50,
   });

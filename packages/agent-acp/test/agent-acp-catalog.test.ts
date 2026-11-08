@@ -1,5 +1,6 @@
 import { WAIT_MS } from '../../../tools/wait.ts';
-import { mkdtempSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,9 +44,10 @@ const CLOSES_MS = 15_000;
 const made: string[] = [];
 const started: Session[] = [];
 
-afterEach(() => {
+// A server that has just closed may still hold its folder, which Windows will not remove until it exits.
+afterEach(async () => {
   for (const session of started.splice(0)) session.close();
-  for (const path of made.splice(0)) rmSync(path, { recursive: true, force: true });
+  for (const path of made.splice(0)) await rm(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 /** A fresh directory under the system temp root, kept for cleanup. */
