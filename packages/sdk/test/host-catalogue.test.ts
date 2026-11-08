@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -1879,9 +1879,9 @@ describe("a row's counts are the session's own", () => {
     made.push(dir);
     const first = await turned({ changes: ownWork({ live: 4 }), sessions: fileSessions({ dir }) }, 'live');
     expect(countsOf(first.peer, 'ahp-session:/live')).toMatchObject({ files: 4 });
-    // Written after the change rather than during it, so the next store is
-    // given a tick to have a file to read.
-    await settle();
+    // Written after the change rather than during it, so the next store waits
+    // for the file to hold the counts.
+    await vi.waitFor(() => { expect(readFileSync(join(dir, 'live.json'), 'utf8')).toMatch(/"files":\s*4/u); });
 
     // The daemon stops here, and starts again over the folder of sessions it
     // left: the session is not running in the new one, so its row has nothing
