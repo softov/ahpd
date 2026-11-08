@@ -459,7 +459,7 @@ describe('the managedSettingsPermissions key', () => {
  */
 describe('the eligibleForAutoApproval key', () => {
   it('takes a map of tools to booleans, and refuses a value that is not one, naming the tool', () => {
-    const eligible = { 'ahp/create_session': false, 'tracker/*': false, 'tracker/read': true };
+    const eligible = { 'host/create_session': false, 'tracker/*': false, 'tracker/read': true };
     expect(folded({ eligibleForAutoApproval: eligible }).eligibleForAutoApproval).toEqual(eligible);
     expect(refusal({ eligibleForAutoApproval: { Bash: 'no' } })).toBe(`${config}: eligibleForAutoApproval.Bash holds "no", which is not true or false`);
   });

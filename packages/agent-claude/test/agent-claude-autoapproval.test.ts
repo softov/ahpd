@@ -378,6 +378,33 @@ it('names an MCP tool as <server>/<tool>, the name the rule matches', async () =
   expect(decisionOf(await waiting)).toBe('deny');
 });
 
+/*
+ * The host's tools ride this session's in-process server, and the rule names
+ * one `host/<name>`, a tool of the server VS Code's Claude carries the host's
+ * tools on, by the prefix and by the server a hook is told alike.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+ */
+it('names a host tool as host/<name>, the name the rule matches', async () => {
+  const { asked, check } = naming(['host/notify']);
+  const { session, options } = await sessionWith(check);
+
+  const waiting = ruleHook(options)({ hook_event_name: 'PreToolUse', tool_name: 'mcp__ahp__notify', tool_input: {}, tool_use_id: 'toolu_host' });
+  await settle();
+  const told = ruleHook(options)({
+    hook_event_name: 'PreToolUse', tool_name: 'mcp__ahp__notify', tool_input: {}, tool_use_id: 'toolu_told',
+    mcp_server: { name: 'ahp', source: 'sdk' },
+  });
+  await settle();
+  expect(asked).toEqual([
+    { kind: 'tool', line: 'host/notify', shell: undefined, tool: undefined },
+    { kind: 'tool', line: 'host/notify', shell: undefined, tool: undefined },
+  ]);
+  session.confirm('toolu_host', false);
+  session.confirm('toolu_told', false);
+  expect(decisionOf(await waiting)).toBe('deny');
+  expect(decisionOf(await told)).toBe('deny');
+});
+
 it('names a renamed MCP server as its config key, which the tool prefix does not spell', async () => {
   // A server's key and the prefix the CLI builds from it need not be the same
   // text, and the rule names the server by its key, which is what the hook is

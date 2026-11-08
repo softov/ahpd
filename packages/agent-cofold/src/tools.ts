@@ -25,12 +25,13 @@ type CofoldInput = Parameters<typeof createTool>[0]['input'];
 /**
  * A call's tool as the operator's `eligibleForAutoApproval` rule names it.
  *
- * A tool the host offered is `ahp/<name>`, which is the name Claude and ACP
- * give the same tool on the host's MCP server, so one rule reaches it in every
- * backend. cofold's own tools keep their own names.
+ * A tool the host offered is `host/<name>`, a tool of the server VS Code's
+ * Claude carries the host's tools on, so one rule reaches it in every backend.
+ * cofold's own tools keep their own names.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
  */
 export const ruleName = (offered: readonly BoundTool[], name: string): string =>
-  offered.some((one) => one.definition.name === name) ? `ahp/${name}` : name;
+  offered.some((one) => one.definition.name === name) ? `host/${name}` : name;
 
 /** The keys of a schema whose values are one schema each. */
 const ONE_SCHEMA = ['items', 'additionalProperties'] as const;

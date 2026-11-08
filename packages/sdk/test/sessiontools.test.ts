@@ -1151,8 +1151,10 @@ describe('a tool a person calls with no session', () => {
       sessionless: true,
       run: () => { calls.push(name); return name; },
     });
-    // The operator's rule, the daemon's setting.
-    const { users, host } = hosting([probe('notify'), probe('ping')], undefined, undefined, { eligibleForAutoApproval: { 'ahp/notify': false } });
+    // The operator's rule, the daemon's setting, naming a host tool `host/<name>`, a tool of the server VS Code's
+    // Claude carries the host's tools on.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+    const { users, host } = hosting([probe('notify'), probe('ping')], undefined, undefined, { eligibleForAutoApproval: { 'host/notify': false } });
     const member = await principal(users, 'member');
 
     await expect(run(host, { principal: member }, 'notify', {})).rejects.toThrow('eligibleForAutoApproval');
@@ -1174,7 +1176,7 @@ describe('a tool a person calls with no session', () => {
       sessionless: true,
       run: () => { calls.push('notify'); return 'notify'; },
     };
-    const { users, host } = hosting([notify], undefined, undefined, { eligibleForAutoApproval: { 'ahp/notify': false }, managedRules: 'handed' });
+    const { users, host } = hosting([notify], undefined, undefined, { eligibleForAutoApproval: { 'host/notify': false }, managedRules: 'handed' });
     expect(await run(host, { principal: await principal(users, 'member') }, 'notify', {})).toBe('notify');
     expect(calls).toEqual(['notify']);
   });

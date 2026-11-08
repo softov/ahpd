@@ -2302,8 +2302,8 @@ export function createTooling(ctx: HostContext): Tooling {
              * settings get none, so the call runs.
              * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
              */
-            if (options.managedRules !== 'handed' && asksForTool(options.eligibleForAutoApproval, `ahp/${definition.name}`)) {
-              throw new Error(`${definition.name} asks every time: eligibleForAutoApproval names ahp/${definition.name}, and /mcp has no session to ask in`);
+            if (options.managedRules !== 'handed' && asksForTool(options.eligibleForAutoApproval, `host/${definition.name}`)) {
+              throw new Error(`${definition.name} asks every time: eligibleForAutoApproval names host/${definition.name}, and /mcp has no session to ask in`);
             }
             const answer = await one.run(input, sessionlessContext(caller));
             void fire({ type: 'tool_call', tool: definition.name, ok: true, ...(person === undefined ? {} : { person }) });

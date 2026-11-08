@@ -51,6 +51,9 @@ export interface Claimed {
   callId: string;
 }
 
+/** The name the CLI calls this session's in-process server by, which the CLI's name for each of its tools carries. */
+export const SERVER_NAME = 'ahp';
+
 /**
  * The host's tools, as an in-process MCP server the CLI can call.
  *
@@ -64,7 +67,7 @@ export const contributed = (
   /** Hand a call to the client that provides it, and wait for what it says. */
   byClient: (tool: BoundTool, input: Bag, extra: unknown) => Promise<Claimed>,
 ): unknown => createSdkMcpServer({
-  name: 'ahp',
+  name: SERVER_NAME,
   version: '1.0.0',
   tools: tools.map((one) => {
     const schema = one.definition.inputSchema;

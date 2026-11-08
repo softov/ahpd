@@ -650,13 +650,16 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * The agent calls the host's tools over the MCP server this session handed
    * it, so the call never passes through this bridge and the server has to be
    * the one that asks. A tool the rule does not name answers at once, which is
-   * every call in a session with no rule. A tool it names is put to a person
-   * with one approval and one refusal and nothing to keep, named as the agent
-   * spells that server's tools, and the person's answer is the server's.
+   * every call in a session with no rule, which names a host tool
+   * `host/<name>`, a tool of the server VS Code's Claude carries the host's
+   * tools on. A tool it names is put to a person with one approval and one
+   * refusal and nothing to keep, named as the agent spells that server's
+   * tools, and the person's answer is the server's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
    */
   const askTool = async (tool: BoundTool, input: Record<string, unknown>): Promise<boolean> => {
     const name = tool.definition.name;
-    if (start.getAutoApproval?.('tool', `${HOST_TOOLS}/${name}`) !== 'ask') return true;
+    if (start.getAutoApproval?.('tool', `host/${name}`) !== 'ask') return true;
     questioned += 1;
     const answered = await askPermission({
       sessionId: ctx.acpSessionId ?? '',

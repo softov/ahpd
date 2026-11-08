@@ -88,17 +88,19 @@ export const mcpServerOf = (contributor: unknown, customizations: unknown): stri
  * tool.
  *
  * A backend's own tool is its own name, and a tool this host offered, one of
- * `offered`, is `ahp/<name>`. An MCP server's tool is `<server>/<tool>` to the
+ * `offered`, is `host/<name>`, a tool of the server VS Code's Claude carries
+ * the host's tools on. An MCP server's tool is `<server>/<tool>` to the
  * rule, its server the one `server` names from the call's contributor: a rule
  * names it where its tool part is the call's tool name or the end of it after
  * a `__`, the way an MCP client names a server's tool, and `<server>/*` names
  * every tool of the server. A rule naming the tool answers on its own, as
  * `asksForTool` reads an exact name before the server's `<server>/*`. A call
  * no server contributes is named by its full tool name alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
  */
 export const alwaysAsks = (rules: Readonly<Record<string, boolean>> | undefined, toolName: string, offered: readonly string[], server?: string): boolean => {
   if (asksForTool(rules, toolName)) return true;
-  if (offered.includes(toolName) && asksForTool(rules, `ahp/${toolName}`)) return true;
+  if (offered.includes(toolName) && asksForTool(rules, `host/${toolName}`)) return true;
   if (rules === undefined || server === undefined) return false;
   const named = Object.entries(rules).flatMap(([key, value]) =>
     (key.startsWith(`${server}/`) ? [{ tool: key.slice(server.length + 1), value }] : []));

@@ -544,8 +544,8 @@ export function createSpawn(ctx: HostContext): Spawn {
      * `eligibleForAutoApproval` names.
      */
     const checked = options.managedRules !== 'handed';
-    // The operator's rule read against the tools this host offered the chat, which a backend names to the rule as
-    // `ahp/<name>`, and an MCP server's tool against the server its contributor names among the session's customizations.
+    // The operator's rule read against the tools this host offered the chat, which the rule names `host/<name>`, and
+    // an MCP server's tool against the server its contributor names among the session's customizations.
     const eligible = !checked || toolName === undefined || !alwaysAsks(options.eligibleForAutoApproval, toolName,
       ctx.boundTools(session, chat, serving?.provider).map((one) => one.definition.name),
       mcpServerOf(contributor, ctx.stateOf(session)?.customizations));

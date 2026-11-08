@@ -2,6 +2,7 @@ import type { HookCallback } from '@anthropic-ai/claude-agent-sdk';
 import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
+import { SERVER_NAME } from './clienttools.js';
 import type { SessionContext } from './context.js';
 import { lineOf, pastLineOf, questionRequest, toolInputOf, writeOf } from '../input.js';
 import { toolMetaOf } from '../kinds.js';
@@ -75,16 +76,22 @@ const KEPT_IN: Record<string, string> = {
  * uses: the prefix can spell a server differently, and a server's own name can
  * contain the `__` a split would stop at. `canUseTool` is told no server, so it
  * keeps the split, which is the best reading of a name alone.
+ *
+ * This session's in-process server carries the host's tools, which the rule
+ * names `host/<name>`, a tool of the server VS Code's Claude carries the
+ * host's tools on.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
  */
 const referenceName = (toolName: string, server?: string): string => {
+  const ruled = (name: string): string => (name === SERVER_NAME ? 'host' : name);
   if (server !== undefined) {
     const prefix = `mcp__${server}__`;
-    if (toolName.startsWith(prefix)) return `${server}/${toolName.slice(prefix.length)}`;
+    if (toolName.startsWith(prefix)) return `${ruled(server)}/${toolName.slice(prefix.length)}`;
     const after = /^mcp__(?:.+?)__(.+)$/.exec(toolName);
-    if (after !== null) return `${server}/${after[1]}`;
+    if (after !== null) return `${ruled(server)}/${after[1]}`;
   }
   const named = /^mcp__(.+?)__(.+)$/.exec(toolName);
-  return named === null ? toolName : `${named[1]}/${named[2]}`;
+  return named === null ? toolName : `${ruled(named[1] ?? '')}/${named[2]}`;
 };
 
 /** What a person's answer to a held question settles, in the SDK's terms. */

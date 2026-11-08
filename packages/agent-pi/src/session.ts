@@ -503,9 +503,10 @@ export function piSession(
    * without consulting the rules.
    */
   const decide = async (toolName: string, input: Bag): Promise<ToolCallEventResult | 'ask' | undefined> => {
-    // A tool the host offered is `ahp/<name>` to the rule, the name Claude and
-    // ACP give it on the host's MCP server; pi's own tools keep their own.
-    const ruled = offering.some((one) => one.definition.name === toolName) ? `ahp/${toolName}` : toolName;
+    // A tool the host offered is `host/<name>` to the rule, a tool of the server
+    // VS Code's Claude carries the host's tools on; pi's own tools keep their own.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+    const ruled = offering.some((one) => one.definition.name === toolName) ? `host/${toolName}` : toolName;
     if (start.getAutoApproval?.('tool', ruled) === 'ask') {
       return modeOf(settings.permissionMode) === 'dontAsk'
         ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
