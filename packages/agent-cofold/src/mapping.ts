@@ -737,7 +737,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           held.readied = true;
           const call = held.part.toolCall as Bag;
           call.status = 'running';
-          call.invocationMessage = held.invocation ?? describe(held.shown, held.subject);
+          // A client's call reads as its row is titled, by the title its tool
+          // was offered under, as the entry asking its client to run it reads.
+          const line = held.invocation ?? describe(held.contributor === undefined ? held.shown : options.displayNameOf(held.name), held.subject);
+          call.invocationMessage = line;
           call.confirmed = held.awaited ? 'user-action' : 'not-needed';
           const written = toolInputOf(held.name, held.input, held.subject);
           if (written !== undefined) call.toolInput = written;
@@ -751,7 +754,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             type: 'chat/toolCallReady',
             turnId,
             toolCallId: event.callId,
-            invocationMessage: held.invocation ?? describe(held.shown, held.subject),
+            invocationMessage: line,
             confirmed: held.awaited ? 'user-action' : 'not-needed',
             ...contributorOf(held.contributor),
             ...(written !== undefined ? { toolInput: written } : {}),
