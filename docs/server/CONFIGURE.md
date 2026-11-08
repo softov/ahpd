@@ -111,7 +111,7 @@ An unknown key is logged and ignored:
 | `workspacelessFolder` | `--workspaceless-folder` | `first` | `scratch` works a session that names no folder in a folder of its own, `~/.copilot/chats/<session id>`, made with the session and removed with it, and makes it VS Code's workspace-less session, as VS Code does |
 | `rootOwner` | `--root-owner` | `host` | Whose work a session a root connection starts is, under a users directory: `host` is the host itself, `root:<hostName>`, the owner the usage rules charge; `none` is no one, as VS Code's host records no principal for a session made without a validated identity |
 | `turnSenders` | `--turn-senders` | `said` | `kept` keeps each turn's sender on the host and says it in no action, as VS Code does |
-| `steerReadBack` | `--steer-read-back` | `inTurn` | `ownTurn` reads a steering message back after a restart as VS Code does: one the agent ran as a prompt of its own as a turn of its own, and one it took in at a tool call with no quote; `inTurn` keeps it inside the turn it steered, quoted, as it showed live |
+| `steerReadBack` | `--steer-read-back` | `inTurn` | `ownTurn` reads a steering message back after a restart as VS Code does; `inTurn` keeps it in the turn it steered, as shown live |
 | `backendBackgroundWork` | `--backend-background-work` | `drop` | `say` says a backend's own background work actions as the host's, as VS Code does |
 | `agentOrchestrationLimitsScope` | `--agent-orchestration-limits-scope` | `sessionTree` | `session` keeps the session tools' counts per session, as VS Code does |
 | `automations` | `--automations` | `file` | `memory` keeps automations until exit, and fires no schedule |
