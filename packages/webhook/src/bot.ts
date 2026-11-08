@@ -152,13 +152,16 @@ export function turnEnds() {
       held.turn = event.turn;
       taken.set(key(event.chat, event.turn), event.queuedMessageId);
     },
-    heard(event: { chat: string; turn: string } & Omit<Ending, 'turn'>): void {
-      const message = taken.get(key(event.chat, event.turn));
+    heard(event: Pick<TurnEndEvent, 'channel' | 'turnId' | 'reason'>): void {
+      const message = taken.get(key(event.channel, event.turnId));
       if (message === undefined) return;
-      taken.delete(key(event.chat, event.turn));
-      const held = waiting.get(key(event.chat, message));
-      waiting.delete(key(event.chat, message));
-      held?.done({ turn: event.turn, status: event.status, ...(event.error === undefined ? {} : { error: event.error }) });
+      taken.delete(key(event.channel, event.turnId));
+      const held = waiting.get(key(event.channel, message));
+      waiting.delete(key(event.channel, message));
+      const { reason: why } = event;
+      held?.done(why.kind === 'error' || why.kind === 'rejected'
+        ? { turn: event.turnId, status: 'error', error: why.error.message }
+        : { turn: event.turnId, status: why.kind === 'cancelled' ? 'cancelled' : 'complete' });
     },
     wait(chat: string, message: string): Promise<Ending> {
       return new Promise((resolve) => { waiting.set(key(chat, message), { done: resolve }); });

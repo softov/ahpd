@@ -400,7 +400,7 @@ it('forgets the wait for a message the host refused', async () => {
   void ends.wait('ahp-chat:/c1', 'm1').then(() => { settled = true; });
   ends.forget('ahp-chat:/c1', 'm1');
   ends.started({ chat: 'ahp-chat:/c1', turn: 't1', queuedMessageId: 'm1' });
-  ends.heard({ chat: 'ahp-chat:/c1', turn: 't1', status: 'complete' });
+  ends.heard({ channel: 'ahp-chat:/c1', turnId: 't1', reason: { kind: 'success' } });
   await settle();
   expect(settled).toBe(false);
 });
@@ -415,11 +415,11 @@ it('hears the end of the turn a message became, by the turn that named it', asyn
   const ends = turnEnds();
   const waited = ends.wait('ahp-chat:/c1', 'm1');
   ends.started({ chat: 'ahp-chat:/c1', turn: 't0' });
-  ends.heard({ chat: 'ahp-chat:/c1', turn: 't0', status: 'complete' });
+  ends.heard({ channel: 'ahp-chat:/c1', turnId: 't0', reason: { kind: 'success' } });
   expect(ends.turnOf('ahp-chat:/c1', 'm1')).toBeUndefined();
   ends.started({ chat: 'ahp-chat:/c1', turn: 't1', queuedMessageId: 'm1' });
   expect(ends.turnOf('ahp-chat:/c1', 'm1')).toBe('t1');
-  ends.heard({ chat: 'ahp-chat:/c1', turn: 't1', status: 'error', error: 'the model refused' });
+  ends.heard({ channel: 'ahp-chat:/c1', turnId: 't1', reason: { kind: 'error', error: { errorType: 'turnFailed', message: 'the model refused' }, resumable: false } });
   expect(await waited).toEqual({ turn: 't1', status: 'error', error: 'the model refused' });
 });
 
