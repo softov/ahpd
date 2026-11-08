@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, writeFileSync, existsSync, lstatSync, mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -175,7 +176,14 @@ const say = async (client: Awaited<ReturnType<typeof joined>>['client'], chat: s
     method: 'dispatchAction',
     params: { channel: chat, clientSeq: 0, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
   });
-  for (let tries = 0; tries < 200 && await turns() === before; tries++) await new Promise((r) => { setTimeout(r, 10); });
+  /*
+   * By the clock, and a failure when it runs out: two hundred 10 ms ticks
+   * were three seconds on Windows, and a first turn that makes the worktree
+   * took longer on a busy runner, so the case went on to read the folder the
+   * session had not yet left.
+   */
+  for (const until = Date.now() + WAIT_MS; Date.now() < until && await turns() === before;) await new Promise((r) => { setTimeout(r, 10); });
+  if (await turns() === before) throw new Error(`turn ${turnId} on ${chat} did not end within ${WAIT_MS} ms`);
   await client.handle({ method: 'unsubscribe', params: { channel: chat } });
 };
 
