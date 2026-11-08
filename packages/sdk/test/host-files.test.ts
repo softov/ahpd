@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, parse } from 'node:path';
+import { join, parse, resolve as resolvePath } from 'node:path';
 import { echo } from '../../../examples/echo/agent.js';
 import { uriOf } from '../src/resources/resources.js';
 import type { Start } from '../src/types/agent.js';
@@ -25,7 +25,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
  * be found rather than written down: a literal one passes on the machine it
  * was written on and fails on every other, CI included.
  */
-const REPO = fileURLToPath(new URL('../../..', import.meta.url)).replace(/\/$/, '');
+// The trailing separator off, `\\` on Windows and `/` elsewhere.
+const REPO = fileURLToPath(new URL('../../..', import.meta.url)).replace(/[\\/]$/u, '');
 
 beforeEach(resetSdk);
 
@@ -397,9 +398,11 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
 });
 
 /** A listing of each directory's files, as ripgrep lists them, for a host to complete against. */
-const listing = (byDir: Record<string, string[]>): WorkspaceFiles => ({
-  getFiles: async (dir) => ({ files: (byDir[dir] ?? []).map((one) => join(dir, one)), isTruncated: false }),
-});
+const listing = (byDir: Record<string, string[]>): WorkspaceFiles => {
+  // Keyed by the folder as the host resolves it, so a spelling of it lists the same files.
+  const held = new Map(Object.entries(byDir).map(([dir, files]) => [resolvePath(dir), files]));
+  return { getFiles: async (dir) => ({ files: (held.get(resolvePath(dir)) ?? []).map((one) => join(dir, one)), isTruncated: false }) };
+};
 
 type FileItem = { insertText: string; rangeStart: number; rangeEnd: number; attachment: Record<string, unknown> };
 
