@@ -6,6 +6,7 @@ import type { FileEdit } from './changes.js';
 import type { BoundTool } from './agent.js';
 import type { Account } from './probe.js';
 import type { ClientCallAnswer } from '../tools/clientcalls.js';
+import type { AgentPermissionDecisionSource } from '../vscode/agentpermissionresponsemeta.js';
 
 export type { MessageAttachment };
 
@@ -724,6 +725,14 @@ export interface Session {
    * host's or the backend's own, when the client sent one as
    * `selectedOptionId`; absent, the answer is a plain approve or deny.
    *
+   * `decisionSource` says who decided, as VS Code's host hands its agent the
+   * decision source of a permission response: `host_policy` for an answer the
+   * host's rules made, which nobody was asked, and for a client's decision the
+   * source its `_meta['agentHost.permissionDecisionSource']` names, where it
+   * names one of VS Code's four; absent where nothing says.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1696-L1765
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1898-L1902
+   *
    * Handed over once the chat's state has the call pending a confirmation,
    * which is the protocol's condition for taking one. The host has said the
    * client's own decision by then, so a `chat/toolCallConfirmed` the backend
@@ -732,7 +741,7 @@ export interface Session {
    * confirmation here, and the host then says the decision itself, since
    * every client holds the call the state says.
    */
-  confirm(toolCallId: string, approved: boolean, optionId?: string): boolean;
+  confirm(toolCallId: string, approved: boolean, optionId?: string, decisionSource?: AgentPermissionDecisionSource): boolean;
 
   /**
    * Replace the tools this session offers the model.

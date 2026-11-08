@@ -7,6 +7,7 @@ import { chatIdFor, chatUriFor, isRootChannel, RELAYED, ROOT, spaceOf, WORKER_AC
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import { grantOf, withGrant } from './permissions.js';
 import { autoApproved, requireTrust, requireWorktreeTrust } from './trust.js';
+import { readAgentPermissionResponseMeta } from '../vscode/agentpermissionresponsemeta.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { Session } from '../types/session.js';
@@ -2071,12 +2072,14 @@ export function chatAction(
         no(`${toolCallId} is not a call this chat is waiting to have confirmed`);
         break;
       }
-      // The decision the held state takes, said, and then handed to the backend.
+      // The decision the held state takes, said, and then handed to the
+      // backend with who decided, as the client's `_meta` says it.
       dispatch(worker ? channel : session.chatUri, action, origin);
       session.confirm(
         toolCallId,
         action.approved === true,
         typeof action.selectedOptionId === 'string' ? action.selectedOptionId : undefined,
+        readAgentPermissionResponseMeta(action as { _meta?: Record<string, unknown> }).decisionSource,
       );
       /*
        * An approval that picked a grant keeps it, as VS Code's host keeps one:

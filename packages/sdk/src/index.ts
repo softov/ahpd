@@ -52,6 +52,7 @@ export { shellTerminals } from './machines/terminals.js';
 export { isShellName, shellEnvOf } from './machines/shellenv.js';
 export type { ShellEnv } from './machines/shellenv.js';
 export { isManagedDomainBoundaryRule } from './vscode/managedrules.js';
+export type { AgentPermissionDecisionSource } from './vscode/agentpermissionresponsemeta.js';
 export { managedRuleOf } from './host/permissions.js';
 export { hostTools } from './tools/index.js';
 export { answerTools, toolServers, TOOLS_PREFIX } from './tools/server.js';

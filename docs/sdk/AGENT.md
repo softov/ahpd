@@ -215,7 +215,7 @@ session channel. A session never needs to know either URI to do it.
 | the turn | `sendMessage(turnId, text, from?, attachments?, options?)`, `changeModel(model)`, `changeAgent(agent?)`, `abort()`, `resumeTurn?(turnId)`, `stopWorker?(toolCallId)` |
 | steering | `sendSteeringMessage?(message)`, `withdrawSteeringMessage?(id)` |
 | the draft | `setDraft(text)` |
-| being asked | `confirm(toolCallId, approved, optionId?)`, `answer(requestId, accepted, answers)` |
+| being asked | `confirm(toolCallId, approved, optionId?, decisionSource?)`, `answer(requestId, accepted, answers)` |
 | the controls | `setConfig(key, value)`, `settings()` |
 | customizations | `setCustomizationEnabled`, `startMcpServer`, `stopMcpServer` |
 | another host's session | `relay?(channel, action, origin?)` |
@@ -301,7 +301,7 @@ methods:
 
 | | `Session` method | said on the chat as |
 | --- | --- | --- |
-| a tool call waiting to be allowed | `confirm(toolCallId, approved, optionId?)` | `chat/toolCallReady` with no `confirmed` |
+| a tool call waiting to be allowed | `confirm(toolCallId, approved, optionId?, decisionSource?)` | `chat/toolCallReady` with no `confirmed` |
 | a question that is not about a tool | `answer(requestId, accepted, answers)` | `chat/inputRequested` |
 
 The session's `inputNeeded` list is the host's, an entry raised for each from

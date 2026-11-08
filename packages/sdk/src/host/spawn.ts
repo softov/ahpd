@@ -571,7 +571,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const managedSays = checked ? managedDecision(managedSettings, approval, subCommands) : undefined;
     const managed = signal.managedApprovalRequired === true || managedSays === 'ask' || !eligible;
     if (managedSays === 'deny' || isForbiddenSnapshotWrite(approval) || isDeniedByPermissions(approval, subCommands)) {
-      queueMicrotask(() => { backend()?.confirm(toolCallId, false); });
+      queueMicrotask(() => { backend()?.confirm(toolCallId, false, undefined, 'host_policy'); });
       return undefined;
     }
     const asked = { ...approval, ...(managed ? { managedApprovalRequired: true } : {}) };
@@ -585,7 +585,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       const { _meta: _given, ...rest } = action;
       return { ...rest, options: offered, ...(meta === undefined ? {} : { _meta: meta }) };
     }
-    queueMicrotask(() => { backend()?.confirm(toolCallId, true); });
+    queueMicrotask(() => { backend()?.confirm(toolCallId, true, undefined, 'host_policy'); });
     return {
       type: 'chat/toolCallReady',
       turnId: action.turnId,

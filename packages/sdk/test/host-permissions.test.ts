@@ -71,7 +71,14 @@ type Answer = [string, boolean, string | undefined];
  * The echo backend, asking a person about one call of `tool` in every turn it
  * is sent, and keeping every answer it is handed.
  */
-const asking = (answers: Answer[], tool = 'bash', server?: { id: string; name: string }, asked: Bag = {}, starts: Start[] = []): Agent => {
+const asking = (
+  answers: Answer[],
+  tool = 'bash',
+  server?: { id: string; name: string },
+  asked: Bag = {},
+  starts: Start[] = [],
+  sources: (string | undefined)[] = [],
+): Agent => {
   const base = echo({ path: dir, pace: 50 });
   return {
     ...base,
@@ -98,8 +105,9 @@ const asking = (answers: Answer[], tool = 'bash', server?: { id: string; name: s
           // The question, with whatever the backend says for the host's decision beside it.
           start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: 'Run ls', toolInput: 'ls', confirmationTitle: 'Run Bash?', ...asked });
         },
-        confirm: (toolCallId: string, approved: boolean, optionId?: string) => {
+        confirm: (toolCallId: string, approved: boolean, optionId?: string, decisionSource?: string) => {
           answers.push([toolCallId, approved, optionId]);
+          sources.push(decisionSource);
           return true;
         },
       };
@@ -165,6 +173,44 @@ it('offers Allow Once and Skip alone where the operator\'s rule makes the tool a
   expect(ready.confirmed).toBeUndefined();
   expect(answers).toEqual([]);
   await host.close();
+});
+
+/*
+ * The backend is told who decided, as VS Code's host hands its agent a
+ * permission response's decision source: the host's rules for an answer they
+ * made, which nobody was asked, and a client's own word for its decision.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1696-L1765
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1898-L1902
+ */
+it('tells the backend who decided: the host\'s rules, or the client in its own words', async () => {
+  const allowed: (string | undefined)[] = [];
+  const allowing = await serving(asking([], 'bash', undefined, {}, [], allowed));
+  await allowing.dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: ['bash'], deny: [] } } });
+  await allowing.turn('t1');
+  await until(() => allowed.length > 0, 'the answer');
+  expect(allowed).toEqual(['host_policy']);
+  await allowing.host.close();
+
+  const denied: (string | undefined)[] = [];
+  const denying = await serving(asking([], 'bash', undefined, {}, [], denied));
+  await denying.dispatch(SESSION, { type: 'session/configChanged', config: { permissions: { allow: [], deny: ['bash'] } } });
+  await denying.dispatch(CHAT, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } });
+  await until(() => denied.length > 0, 'the refusal');
+  expect(denied).toEqual(['host_policy']);
+  await denying.host.close();
+
+  const said: (string | undefined)[] = [];
+  const asked = await serving(asking([], 'bash', undefined, {}, [], said));
+  await asked.turn('t1');
+  await asked.dispatch(CHAT, {
+    type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-t1', approved: true, confirmed: 'user-action', selectedOptionId: 'allow-once',
+    _meta: { 'agentHost.permissionDecisionSource': 'human_response' },
+  });
+  await asked.turn('t2');
+  await asked.dispatch(CHAT, { type: 'chat/toolCallConfirmed', turnId: 't2', toolCallId: 'call-t2', approved: false, confirmed: 'user-action', selectedOptionId: 'skip' });
+  await until(() => said.length > 1, 'both answers');
+  expect(said).toEqual(['human_response', undefined]);
+  await asked.host.close();
 });
 
 /*
