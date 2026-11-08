@@ -174,12 +174,8 @@ export const profilesOf = (value: unknown): Record<string, Profile> | undefined 
       // is `volume` and `owner`.
       ...(said.state === 'volume' || said.state === 'host' ? { state: said.state } : {}),
       ...(said.stateScope === 'owner' || said.stateScope === 'shared' ? { stateScope: said.stateScope } : {}),
-      // How a git directory in its machines is guarded. Absent is `fetch`, and
-      // `bind` - the guard this plan removes - is read as `fetch` too, so a
-      // profile written for it keeps working and gets the safer layout. The
-      // line saying so is the check's, where the whole option is read.
+      // How a git directory in its machines is guarded. Absent is `fetch`.
       ...(said.gitGuard === 'fetch' || said.gitGuard === 'open' ? { gitGuard: said.gitGuard } : {}),
-      ...(said.gitGuard === 'bind' ? { gitGuard: 'fetch' as const } : {}),
       // What deleting one of its machines' sessions when it is not running
       // does to the machine's own copy. Absent is `inside`.
       ...(said.nestedDelete === 'inside' || said.nestedDelete === 'record' ? { nestedDelete: said.nestedDelete } : {}),
@@ -505,17 +501,12 @@ export const apply: Plugin['apply'] = (host, options) => {
    * dropped: the loader's check does not reach into a profile, and a value read
    * as the default would make a machine other than the one its operator asked
    * for.
-   *
-   * `gitGuard` takes a third value, `bind`, which is no longer a guard of its
-   * own: a profile written for it is read as `fetch` - the safer layout - and
-   * one line says so, because a profile quietly guarded differently from what
-   * its file asks for is a thing an operator has to be able to find out.
    */
   const answers: [field: string, values: string[]][] = [
     ['secretUnreadable', ['fail', 'drop']],
     ['state', ['volume', 'host']],
     ['stateScope', ['owner', 'shared']],
-    ['gitGuard', ['fetch', 'open', 'bind']],
+    ['gitGuard', ['fetch', 'open']],
     ['sessionTree', ['shared', 'copy']],
     ['nestedDelete', ['inside', 'record']],
     ['code', ['bundle', 'clone']],
@@ -529,9 +520,6 @@ export const apply: Plugin['apply'] = (host, options) => {
       if (said === undefined) continue;
       if (!values.includes(said as string)) {
         throw new Error(`plugin ${name}: profiles.${key}.${field} is ${asList(values)}, and ${String(said)} is neither`);
-      }
-      if (field === 'gitGuard' && said === 'bind') {
-        host.log(`${name}: profiles.${key}.gitGuard is bind, which is now fetch: the machine commits in a git directory of its own`);
       }
     }
   }

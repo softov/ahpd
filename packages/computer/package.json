@@ -212,8 +212,8 @@
               },
               "gitGuard": {
                 "type": "string",
-                "enum": ["fetch", "open", "bind"],
-                "description": "How a git directory in a session's machine is guarded: fetch, the machine committing in a git directory of its own so the host fetches the work back, or open, the host's git directory writable in the machine. fetch when absent. bind is read as fetch."
+                "enum": ["fetch", "open"],
+                "description": "How a git directory in a session's machine is guarded: fetch, the machine committing in a git directory of its own so the host fetches the work back, or open, the host's git directory writable in the machine. fetch when absent."
               },
               "nestedDelete": {
                 "type": "string",
