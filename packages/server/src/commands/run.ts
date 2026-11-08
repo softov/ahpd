@@ -291,8 +291,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   /*
    * Where this daemon takes a stop and a restart, on Windows, made by the
    * `start` that spawned it. Taken out of the environment at once like the flag
-   * above, so a shell a session runs inherits neither - and so the key is held
-   * by this process alone.
+   * above, so a shell a session runs inherits neither - and so the token is
+   * held by this process alone.
    */
   const control = controlIn(process.env[CONTROL_ENV]);
   delete process.env[CONTROL_ENV];
