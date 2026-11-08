@@ -1043,7 +1043,7 @@ A machine made for one session, a disposable or a `devcontainer://` made when th
 
 ### The joined image
 
-`ahpd-agents:<hash>` is every part copied into one image, built on this host from the part images it has, which is what a runtime that cannot mount image parts runs. Its hash folds in the versions file and the ahpd part's own source, so a version that moved is a different image. Build it with:
+`ahpd-agents:<hash>` is every part copied into one image, which is what a runtime that cannot mount image parts runs. The release workflow builds it with the parts and pushes it beside them, `ghcr.io/<owner>/ahpd-agents:<hash>`, and a host whose parts all loaded at the tags the release published them at pulls it, as VS Code's build produces each agent SDK [once per release](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5). A joined image holding a checkout's own ahpd part, an earlier image of a part, or none of a part that would not load is no release's, and is built on this host from the part images it has. Its base is `debian:bookworm-slim` pinned by the digest of its index, as Docker's guidance [pins a base image](https://docs.docker.com/build/building/best-practices/#pin-base-image-versions), so it builds on the same base wherever it is built. Its hash folds in the versions file, the ahpd part's own source, the parts it holds and its Dockerfile, so a version that moved is a different image. Load it with:
 
 ```sh
 node --conditions development --import ./scripts/dev.mjs scripts/computer.mjs parts --joined

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { posix } from '../../../tools/posix.ts';
-import { dockerfileOf, lockOf, readParts, registryOf, tagOf } from '../src/parts.js';
+import { dockerfileOf, JOINED_BASE, lockOf, readParts, registryOf, tagOf } from '../src/parts.js';
 import type { Part } from '../src/parts.js';
 
 /*
@@ -57,8 +57,9 @@ it.skipIf(!posix)('builds every part for both platforms and pushes it where a ho
   const { held, status } = publish(['--push']);
   expect(status).toBe(0);
   const built = held.buildx ?? [];
-  // Each part once, for both platforms, pushed, labelled with the repository.
-  expect(built).toHaveLength(parts.length);
+  // Each part once, and the joined image after them, for both platforms,
+  // pushed, labelled with the repository.
+  expect(built).toHaveLength(parts.length + 1);
   expect(built.every((one) => one.push && one.platforms.join() === 'linux/amd64,linux/arm64')).toBe(true);
   expect(built.every((one) => one.labels.join() === 'org.opencontainers.image.source=https://github.com/softov/ahpd')).toBe(true);
   const at = (part: Part): number => built.findIndex((one) => one.tags.includes(remoteFor(part)));
@@ -73,6 +74,27 @@ it.skipIf(!posix)('builds every part for both platforms and pushes it where a ho
   expect(built[0]?.files).toEqual([]);
   // Nothing was built into this host's own images.
   expect(held.builds ?? []).toEqual([]);
+});
+
+/*
+ * The joined image is built at release with the parts, every part copied in
+ * from the tag it is published at, on the base its Dockerfile pins by digest,
+ * and pushed where a host whose parts all loaded at those tags pulls it.
+ */
+// POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('builds the joined image last, every part copied in from its published tag on the pinned base, and pushes it', () => {
+  const { held, status } = publish(['--push']);
+  expect(status).toBe(0);
+  const joined = (held.buildx ?? []).at(-1);
+  expect(joined?.tags).toHaveLength(1);
+  expect(joined?.tags[0]).toMatch(new RegExp(`^${registryOf()}/ahpd-agents:[0-9a-f]{12}$`));
+  expect(joined?.push).toBe(true);
+  expect(joined?.platforms.join()).toBe('linux/amd64,linux/arm64');
+  expect(joined?.dockerfile?.split('\n')[0]).toBe(`FROM ${JOINED_BASE}`);
+  expect(joined?.dockerfile).toContain(`COPY --from=${tagFor(codex)} /opt/ahpd/codex /opt/ahpd/codex`);
+  expect(joined?.contexts).toHaveLength(parts.length);
+  expect(joined?.contexts).toContain(`${tagFor(codex)}=docker-image://${remoteFor(codex)}`);
+  expect(joined?.files).toEqual([]);
 });
 
 // POSIX-only: the stand-in docker is a shell script on `PATH`, which Windows does not run.
@@ -99,8 +121,10 @@ it.skipIf(!posix)('builds every part on this host\'s Docker at the tag its daemo
   const { held, status } = publish(['--local']);
   expect(status).toBe(0);
   const tags = (held.builds ?? []).map((one) => one.tag);
-  expect(tags).toHaveLength(parts.length);
+  // Each part, and the joined image of them last.
+  expect(tags).toHaveLength(parts.length + 1);
   expect(tags[0]).toBe(tagFor(node));
   expect(tags).toContain(tagFor(codex));
+  expect(tags.at(-1)).toMatch(/^ahpd-agents:[0-9a-f]{12}$/);
   expect(held.buildx ?? []).toEqual([]);
 });

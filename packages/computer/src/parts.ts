@@ -1218,17 +1218,25 @@ export const refusedWithout = (spec: { sessionParts?: string[] }, failed: readon
 export const JOINED_PACKAGES = 'ca-certificates git ripgrep';
 
 /**
+ * The joined image's base, the image a machine runs when its profile names
+ * none, pinned to the digest of its index, so the same Dockerfile builds on
+ * the same base wherever it is built, as Docker's guidance pins a base image.
+ * https://docs.docker.com/build/building/best-practices/#pin-base-image-versions
+ */
+export const JOINED_BASE = `${MACHINE_IMAGE}@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc`;
+
+/**
  * The Dockerfile of the joined image: a machine with every part in it, at the
- * path each is mounted at, copied from the part images this host has.
+ * path each is mounted at, copied from the part images by their tags.
  *
- * Built only for a runtime that cannot mount image parts, which is why a profile
- * naming no image stays on `debian:bookworm-slim` with its parts mounted
- * instead - a fifteen-part build does not precede the first default machine.
- * The tags are handed in rather than spelled here, because the ahpd part's tag
- * carries the hash of its own source and only the build knows it.
+ * Made for a runtime that cannot mount image parts. A profile naming no image
+ * runs `debian:bookworm-slim` with its parts mounted, so a fifteen-part image
+ * does not precede the first default machine. The tags are handed in, because
+ * the ahpd part's tag carries the hash of its own source and only the build
+ * knows it.
  */
 export const joinedDockerfile = (parts: Part[], tags: ReadonlyMap<string, string>): string => [
-  'FROM debian:bookworm-slim',
+  `FROM ${JOINED_BASE}`,
   `RUN apt-get update \\
  && apt-get install --yes --no-install-recommends ${JOINED_PACKAGES} \\
  && rm -rf /var/lib/apt/lists/*`,
@@ -1243,7 +1251,7 @@ export const joinedDockerfile = (parts: Part[], tags: ReadonlyMap<string, string
 
 /** The joined image: its tag, the parts it holds and the parts it does not. */
 export interface Joined {
-  /** The tag it was built at, `ahpd-agents:<hash of the file and the ahpd part's tag>`. */
+  /** Its tag here, `ahpd-agents:<hash of the file and the ahpd part's tag>`, pulled or built. */
   tag: string;
   /** Every part whose image was here, at the path it is mounted at. */
   parts: Part[];
@@ -1292,12 +1300,25 @@ export const ensureJoined = async (options: EnsureOptions): Promise<Joined> => {
   // is in `missing` with its reason, and asking again here would throw the same
   // refusal out of the whole join: no machine at all would be made, where the
   // point of `missing` is that every machine not needing that part still is.
-  const hash = held.some((one) => one.kind === 'ahpd') ? (await ahpdSourceOf(options.log)).hash : undefined;
+  const source = held.some((one) => one.kind === 'ahpd') ? await ahpdSourceOf(options.log) : undefined;
   const file = joinedDockerfile(held, tags);
-  const tag = `ahpd-agents:${hashOf(hash, named, held.map((part) => part.id), file)}`;
+  const tag = `ahpd-agents:${hashOf(source?.hash, named, held.map((part) => part.id), file)}`;
+  /*
+   * Pulled where the release workflow built it with the parts: every part the
+   * file names loaded at the tag the release published it at, as VS Code's
+   * build produces its agent SDKs once per release. One holding a checkout's
+   * own ahpd part, an earlier image of a part, or none of a part that would
+   * not load is no release's, and is built here from the part images here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5
+   */
+  const released = missing.length === 0 && source?.from !== 'workspace' && held.every((part) => {
+    const own = part.kind === 'ahpd' ? source : undefined;
+    return tags.get(part.id) === tagOf(part, own?.hash, dockerfileOf(part, own, lockOf(part)));
+  });
   return once(tag, async () => {
     if (!await options.runtime.hasImage(tag)) {
-      await options.runtime.buildImage(tag, contextOf(file));
+      if (released) await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
+      else await options.runtime.buildImage(tag, contextOf(file));
     }
     return { tag, parts: held, missing };
   });

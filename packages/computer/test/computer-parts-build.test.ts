@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
-import { contextOf, dockerfileOf, ensureJoined, ensurePart, joinedDockerfile, lockOf, readParts, registryOf, tagOf } from '../src/parts.js';
+import { contextOf, dockerfileOf, ensureJoined, ensurePart, JOINED_BASE, joinedDockerfile, lockOf, readParts, registryOf, tagOf } from '../src/parts.js';
 import { dockerRuntime } from '../src/runtime.js';
 import type { Part } from '../src/parts.js';
 
@@ -239,13 +239,21 @@ it('takes the tag from a pulled image that fails its check, and loads the newest
     .rejects.toThrow('CLI at /opt/ahpd/codex/bin/codex-acp failed --version check after install (exit code 1)');
 });
 
-it('pipes the joined image a context holding its Dockerfile and nothing else', async () => {
+/*
+ * A joined image no release holds, one without a part that would not load, is
+ * built here from its Dockerfile alone, on the base pinned by digest, as
+ * Docker's guidance pins a base image
+ * (https://docs.docker.com/build/building/best-practices/#pin-base-image-versions).
+ */
+it('pipes a joined image it builds here a context holding its Dockerfile alone, on the base pinned by digest', async () => {
   const path = state();
-  const joined = await ensureJoined({ runtime: runtime(path), parts });
+  seeded(path, { failPull: [remoteFor(goose)] });
+  const joined = await ensureJoined({ runtime: runtime(path), parts: [...parts, goose] });
 
   const build = held(path).builds.find((one) => one.tag === joined.tag);
   expect(build?.files).toEqual(['Dockerfile']);
-  expect(build?.dockerfile).toContain('FROM debian:bookworm-slim');
+  expect(build?.dockerfile.split('\n')[0]).toBe(`FROM ${JOINED_BASE}`);
+  expect(JOINED_BASE).toMatch(/^debian:bookworm-slim@sha256:[0-9a-f]{64}$/);
 });
 
 it('puts the tarballs of a checkout in the context beside the Dockerfile', () => {
@@ -285,7 +293,7 @@ it('copies every part into the joined image once, from its own tag, and puts the
     ['goose', 'ahpd-part/goose:1.53.0'],
   ]));
 
-  expect(file.split('\n')[0]).toBe('FROM debian:bookworm-slim');
+  expect(file.split('\n')[0]).toBe(`FROM ${JOINED_BASE}`);
   expect(file).toContain('apt-get install --yes --no-install-recommends ca-certificates git ripgrep');
   expect(file).toContain('COPY --from=ahpd-part/node:24.21.0 /opt/ahpd/node /opt/ahpd/node');
   expect(file).toContain('COPY --from=ahpd-part/codex:2.1.1 /opt/ahpd/codex /opt/ahpd/codex');
@@ -297,7 +305,13 @@ it('copies every part into the joined image once, from its own tag, and puts the
   expect(file).toContain(labelLine('node', 'codex', 'goose'));
 });
 
-it('builds the joined image at a tag that moves with the file, and runs no second build for it', async () => {
+/*
+ * The joined image is built at release with the parts, and a host whose parts
+ * all loaded at the tags the release published them at pulls it, as VS Code's
+ * build produces its agent SDKs once per release (build/agent-sdk/README.md
+ * L1-L5 at 6b68d3fe).
+ */
+it('pulls the joined image the release built, at a tag that moves with the file, when every part loaded at its released tag, and pulls it once', async () => {
   const path = state();
   const docker = runtime(path);
 
@@ -308,15 +322,27 @@ it('builds the joined image at a tag that moves with the file, and runs no secon
   expect(one.tag).toMatch(/^ahpd-agents:[0-9a-f]{12}$/);
   expect(one.missing).toEqual([]);
   expect(one.parts.map((part) => part.id)).toEqual(['node', 'codex', 'goose']);
-
-  const builds = held(path).builds;
-  const joined = builds.find((one_) => one_.tag === one.tag);
-  expect(joined?.dockerfile).toContain('COPY --from=ahpd-part/goose:1.53.0');
-  expect(joined?.dockerfile).toContain(labelLine('node', 'codex', 'goose'));
+  expect(pulled(path)).toContain(`${registryOf()}/${one.tag}`);
+  expect(held(path).images).toContain(one.tag);
+  expect(held(path).builds).toEqual([]);
 
   // And a second call finds the tag.
   await ensureJoined({ runtime: docker, parts: [...parts, goose] });
-  expect(held(path).builds.filter((one_) => one_.tag === one.tag)).toHaveLength(1);
+  expect(pulled(path).filter((one_) => one_ === `${registryOf()}/${one.tag}`)).toHaveLength(1);
+});
+
+/*
+ * A joined image holding an earlier image of a part is no release's, and is
+ * built here from the part images here.
+ */
+it('builds the joined image here when it holds an earlier image of a part, which no release holds', async () => {
+  const path = state();
+  seeded(path, { images: ['ahpd-part/codex:2.0.0-aaaaaaaaaaaa'], failPull: [remoteFor(codex)] });
+  const joined = await ensureJoined({ runtime: runtime(path), parts });
+  expect(joined.missing).toEqual([]);
+  const build = held(path).builds.find((one) => one.tag === joined.tag);
+  expect(build?.dockerfile).toContain('COPY --from=ahpd-part/codex:2.0.0-aaaaaaaaaaaa /opt/ahpd/codex /opt/ahpd/codex');
+  expect(pulled(path)).not.toContain(`${registryOf()}/${joined.tag}`);
 });
 
 it('builds the joined image without the part that failed, and says which one is missing', async () => {
@@ -365,20 +391,16 @@ it('does not hand back an image built without a part the file now has', async ()
   const joined = await ensureJoined({ runtime: docker, parts: [...parts, goose] }).finally(() => { vi.useRealTimers(); });
   expect(joined.missing).toEqual([]);
   expect(joined.parts.map((part) => part.id)).toEqual(['node', 'codex', 'goose']);
-
-  const build = held(path).builds.find((one) => one.tag === joined.tag);
-  expect(build?.dockerfile).toContain(`COPY --from=${tagFor(goose)} /opt/ahpd/goose /opt/ahpd/goose`);
-  expect(build?.dockerfile).toContain(labelLine('node', 'codex', 'goose'));
+  // The image with goose is the one the release built, pulled at its own tag.
+  expect(joined.tag).not.toBe(without.tag);
+  expect(pulled(path)).toContain(`${registryOf()}/${joined.tag}`);
 });
 
-it('pulls a part at its new tag, and builds the joined image again, when the Dockerfile that writes the part moves', async () => {
+it('pulls a part at its new tag, and the joined image at its new tag, when the Dockerfile that writes the part moves', async () => {
   const path = state();
   const docker = runtime(path);
   const file = [...parts, goose];
-  /** What the scripted docker was asked to build, by the tag it was asked to build it at. */
-  const built = (prefix: string): string[] =>
-    held(path).builds.map((one) => one.tag).filter((tag) => tag.startsWith(prefix));
-  /** What it was asked to pull of one part, by the tag here it was pulled for. */
+  /** What it was asked to pull of one image, by the tag here it was pulled for. */
   const pulledOf = (prefix: string): string[] =>
     pulled(path).map((one) => one.slice(registryOf().length + 1)).filter((tag) => tag.startsWith(prefix));
 
@@ -396,11 +418,9 @@ it('pulls a part at its new tag, and builds the joined image again, when the Doc
   // is two images: the part is pulled at its new tag...
   const codex = pulledOf('ahpd-part/codex:');
   expect(codex).toHaveLength(2);
-  // ...and the joined image is built again, copying the part's new tag in.
-  expect(built('ahpd-agents:')).toHaveLength(2);
+  // ...and the joined image, which copies the part's new tag in, at its own new tag.
+  expect(pulledOf('ahpd-agents:')).toEqual([one.tag, again.tag]);
   expect(again.tag).not.toBe(one.tag);
-  const joined = held(path).builds.find((one_) => one_.tag === again.tag);
-  expect(joined?.dockerfile).toContain(`COPY --from=${String(codex[1])} /opt/ahpd/codex /opt/ahpd/codex`);
   // The node part's Dockerfile did not move, so it was not pulled twice.
   expect(pulledOf('ahpd-part/node:')).toHaveLength(1);
 });

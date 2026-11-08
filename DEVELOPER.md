@@ -144,7 +144,7 @@ git push origin vX.Y.Z
   An `npm pack` tarball carries the literal `workspace:^`, which installs here and is broken for everybody else.
 - It runs `npm stage publish --provenance --access public --tag <channel>` for every package named in `PUBLISHED`, in that order: `sdk` first, then the agents, `computer` and `tunnel-devtunnel`, then `server`.
   The channel is `latest` for a stable version and `next` for a pre-release.
-- Its `parts` job builds every part in `packages/computer/images/versions.json` for `linux/amd64` and `linux/arm64` with `scripts/parts-publish.mjs --push` and pushes each to `ghcr.io/<owner>/ahpd-part/<id>:<tag>`, the owner being the one `@ahpd/computer`'s `repository` names, which is where every host pulls its parts.
+- Its `parts` job builds every part in `packages/computer/images/versions.json` for `linux/amd64` and `linux/arm64` with `scripts/parts-publish.mjs --push` and pushes each to `ghcr.io/<owner>/ahpd-part/<id>:<tag>`, the owner being the one `@ahpd/computer`'s `repository` names, which is where every host pulls its parts; then the joined image of them all, to `ghcr.io/<owner>/ahpd-agents:<hash>`.
   A tag already there is left as it is.
   A part pushed to a personal account for the first time is a private package, [GitHub's default](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility), and no host can pull it until it is made public on its package page, once.
 
