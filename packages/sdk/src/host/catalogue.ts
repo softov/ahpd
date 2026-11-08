@@ -1078,8 +1078,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const computingChangesSummaries = new Set<string>();
   const queuedChangesSummaries = new Map<string, boolean>();
   const refreshSessionChangesSummary = async (uri: string, running = false): Promise<void> => {
-    const dir = ctx.dirOf(uri);
-    if (dir === undefined) return;
+    if (ctx.dirOf(uri) === undefined) return;
     if (computingChangesSummaries.has(uri)) {
       queuedChangesSummaries.set(uri, running);
       return;
@@ -1089,6 +1088,14 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     try {
       for (;;) {
         queuedChangesSummaries.delete(uri);
+        /*
+         * The folder as it is now, read again on every pass: a session moves
+         * into its worktree while its first read may still be running, and a
+         * pass queued behind that read is the one asked for the new folder. A
+         * folder read once on entry counted the old one on every pass after.
+         */
+        const dir = ctx.dirOf(uri);
+        if (dir === undefined) return;
         const source = options.changes;
         const branch = getSummaryChangesetKind(uri) === 'branch';
         let read: ChangesSummary | undefined;
