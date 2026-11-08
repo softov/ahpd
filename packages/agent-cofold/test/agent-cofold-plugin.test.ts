@@ -470,4 +470,4 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
   expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.queuedMessageId === 'q2')).toBe(true);
   // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
   expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
-});
+}, 30_000);

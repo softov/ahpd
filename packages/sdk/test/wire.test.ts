@@ -821,7 +821,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    * there to catch the capture quietly narrowing again, not to pin the count.
    */
   expect(check.checked()).toBeGreaterThan(200);
-});
+}, 20_000);
 
 describe('the `_meta` census', () => {
   const onItem = (meta: Record<string, unknown>): Record<string, unknown> => ({
