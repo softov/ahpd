@@ -1444,8 +1444,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * from them whatever a backend lists.
      */
     const forgotten: Array<[string, Record<string, unknown> | undefined]> = [];
+    // Read again now: a session made while the backends were listing was
+    // recorded after `claimed` was read, and is running.
+    const servedNow = registeredAndBackingIds();
     const gone = (id: string): boolean => {
-      if (claimed.has(id) || offered.has(id) || kept.nested?.(id) !== undefined)
+      if (claimed.has(id) || servedNow.has(id) || offered.has(id) || kept.nested?.(id) !== undefined)
         return false;
       const provider = kept.provider(id);
       if (provider === undefined || !spoken.has(provider))
