@@ -1,11 +1,10 @@
 /** The commits a session's turns leave in its folder, under a ref of its own. */
 
-import { execFile } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BASELINE_TURN } from '../types/changes.js';
-import { gitArgv } from '../repo/hardened.js';
+import { runGit } from '../repo/hardened.js';
 
 /*
  * Why a checkpoint at all.
@@ -28,14 +27,14 @@ import { gitArgv } from '../repo/hardened.js';
  */
 const git = (dir: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string | undefined> =>
   new Promise((answer) => {
-    execFile('git', gitArgv(dir, args), {
+    runGit(dir, args, {
       timeout: 30_000,
       maxBuffer: 32 * 1024 * 1024,
       env: { ...process.env, GIT_OPTIONAL_LOCKS: '0', ...env },
       // No console window on Windows, where each checkpoint's `git.exe` would
       // open one.
       windowsHide: true,
-    }, (error, out) => answer(error ? undefined : out.toString()));
+    }, (error, out) => answer(error ? undefined : out));
   });
 
 /**

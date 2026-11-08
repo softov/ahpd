@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HOST_CLOSE_WAIT_MS, createHost } from '../src/host.js';
+import { gitSettled, runGit } from '../src/repo/hardened.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -234,6 +235,20 @@ describe('Host.close', () => {
     finally {
       vi.useRealTimers();
     }
+  });
+
+  it('waits for a git it started, which Windows keeps the folder busy for', async () => {
+    // A git that waits on its input, so it runs until the case lets it end.
+    const git = runGit(dir, ['hash-object', '--stdin'], {}, () => {});
+    const host = createHost({ path: dir, agents: [echo({ path: dir, pace: 0 })] });
+    let closed = false;
+    const closing = host.close().then(() => { closed = true; });
+    await new Promise((done) => { setTimeout(done, 200); });
+    expect(closed).toBe(false);
+    git.stdin?.end('one');
+    await closing;
+    expect(closed).toBe(true);
+    await gitSettled();
   });
 });
 

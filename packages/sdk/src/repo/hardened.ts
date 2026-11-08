@@ -8,6 +8,9 @@
  * submodules is told `--ignore-submodules`.
  */
 
+import { execFile } from 'node:child_process';
+import type { ChildProcess, ExecFileException, ExecFileOptions } from 'node:child_process';
+
 /** The `-c` pairs before every subcommand. */
 export const GIT_HARDENED = ['-c', 'core.fsmonitor=', '-c', 'submodule.recurse=false'] as const;
 
@@ -31,3 +34,33 @@ export const gitArgv = (dir: string, args: readonly string[]): string[] => {
   if (dir === '') throw new Error(`git ${own.join(' ')} was given no folder to run in`);
   return [...GIT_HARDENED, '-C', dir, ...own];
 };
+
+/** Every `git` this process started through `runGit` that has not closed yet. */
+const running = new Set<Promise<void>>();
+
+/**
+ * `git` with `gitArgv`'s argv, run in `dir` and kept among the ones running
+ * until it closes.
+ *
+ * Windows will not remove a folder that a process is working in, and each of
+ * these runs in a session's folder: a host that closed while one ran left that
+ * folder busy behind it. `gitSettled` is what a close waits on.
+ */
+export const runGit = (
+  dir: string,
+  args: readonly string[],
+  options: ExecFileOptions,
+  done: (error: ExecFileException | null, out: string, err: string) => void,
+): ChildProcess => {
+  const child = execFile('git', gitArgv(dir, args), { ...options, encoding: 'utf8' }, (error, out, err) => done(error, out, err));
+  const closed = new Promise<void>((resolve) => {
+    child.once('close', () => resolve());
+    child.once('error', () => resolve());
+  });
+  running.add(closed);
+  void closed.then(() => running.delete(closed));
+  return child;
+};
+
+/** Settles once every `git` that `runGit` had started by now has closed. */
+export const gitSettled = (): Promise<void> => Promise.all([...running]).then(() => undefined);
