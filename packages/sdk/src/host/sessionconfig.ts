@@ -2,7 +2,7 @@ import { accepts } from '../utils/configvalues.js';
 import { frozenCopy } from '../utils/frozen.js';
 import { HOSTS_OWN, HOSTS_TAKEN } from './common.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from '../types/completions.js';
-import type { Agent } from '../types/agent.js';
+import type { Agent, SchemaPolicy } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
 
@@ -17,6 +17,7 @@ export interface SessionConfig {
   propertyOf(agent: Agent | undefined, key: string): { sessionMutable?: boolean; scope?: string } | undefined;
   sessionSchema(agent: Agent): Bag;
   runningSchema(agent: Agent): Bag;
+  schemaPolicy(): SchemaPolicy;
   seeded(
     properties: Bag,
     ask: Omit<SessionConfigAsk, 'property' | 'query'>,
@@ -333,6 +334,26 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   };
 
   /**
+   * What the operator's policy says now, as a start and a schema asked for
+   * before any session exists are both handed it: the daemon's managed
+   * settings and per-tool eligibility, and the auto-approval restriction a
+   * VS Code window forwards into the root config, as VS Code's agents read
+   * that restriction and their managed settings at launch and when they
+   * resolve a chat's config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7407-L7411
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1579
+   */
+  const schemaPolicy = (): SchemaPolicy => ({
+    ...(options.managedSettingsPermissions === undefined && options.eligibleForAutoApproval === undefined ? {} : {
+      managedSettings: {
+        ...(options.managedSettingsPermissions === undefined ? {} : { permissions: options.managedSettingsPermissions }),
+        ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
+      },
+    }),
+    ...(ctx.rootConfig.autoApprovePolicyRestricted === true ? { autoApprovePolicyRestricted: true } : {}),
+  });
+
+  /**
    * One property of a backend's config schema, as this host reads it.
    *
    * Two fields and no more: `sessionMutable`, which the protocol already
@@ -352,7 +373,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    */
   const propertyOf = (agent: Agent | undefined, key: string): { sessionMutable?: boolean; scope?: string } | undefined => {
     if (!agent) return undefined;
-    const own = agent.schema();
+    const own = agent.schema(schemaPolicy());
     const ownProperties = (typeof own.properties === 'object' && own.properties !== null
       ? own.properties
       : {}) as Bag;
@@ -442,7 +463,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L6168-L6190
    */
   const sessionSchema = (agent: Agent): Bag => {
-    const schema = published(agent.schema());
+    const schema = published(agent.schema(schemaPolicy()));
     const properties = (typeof schema.properties === 'object' && schema.properties !== null
       ? schema.properties
       : {}) as Bag;
@@ -604,7 +625,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   );
 
   return {
-    isolating, mergedConfig, formOrdered, propertyOf, sessionSchema, runningSchema, seeded,
+    isolating, mergedConfig, formOrdered, propertyOf, sessionSchema, runningSchema, schemaPolicy, seeded,
     contributedDefaults, storedConfig, hostOwnedSessionConfig,
   };
 }

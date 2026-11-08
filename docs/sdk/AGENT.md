@@ -73,7 +73,7 @@ const host = createHost({ path, agents: [shout()] });
 | | | |
 | --- | --- | --- |
 | `provider`, `displayName` | Who you are. `provider` is what a client names in `createSession`, so it must be unique among a host's agents | required |
-| `schema()`, `defaults()` | What a session can be told to do differently | required |
+| `schema(policy?)`, `defaults()` | What a session can be told to do differently | required |
 | `completions` | Answers for a key of your own `schema()`, drawn as a picker | optional |
 | `inheritedChatConfig(config)` | The settings a chat or session a session tool makes takes from the chat that made it, picked out of that chat's config, as VS Code's `getInheritedChatConfig` (Claude's: its permission mode and permissions) | optional |
 | `create(start)` | Start one. Returns a `Session` | required |
@@ -96,6 +96,15 @@ some.
 **One schema, not two.** `schema()` is used before a session exists *and* by
 every session that does. Two copies drift, and a composer then offers different
 controls on the new-session screen than in the session.
+
+**`schema(policy)` and the start carry the operator's policy alike.** The host
+hands `schema` what a start is handed under the same names: `managedSettings`,
+and `autoApprovePolicyRestricted` where a VS Code window forwarded its policy's
+restriction of elevated auto-approval into the root config. Withhold the same
+modes in both, so the form drawn before a session exists offers what the session
+would, as VS Code's agents read the restriction when they resolve a chat's
+config and when they launch a session
+([copilotAgent.ts](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7407-L7411)).
 
 **`completions` is how a key of your own schema offers answers.** A property
 with no `enum` reads as a fact somebody types, so a key whose values you already

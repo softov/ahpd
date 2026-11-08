@@ -197,6 +197,9 @@ export const PENDING_CONFIRMATION_FIELDS = [
  */
 export type AutoApproval = ToolCallConfirmationReason | 'ask';
 
+/** What the operator's policy says as the host asks a backend for its schema, under the names a start carries them. */
+export type SchemaPolicy = Pick<Start, 'managedSettings' | 'autoApprovePolicyRestricted'>;
+
 /**
  * One content a backend hands the host to keep, which a part then names by
  * reference: identified as VS Code identifies a tool result's embedded
@@ -308,6 +311,16 @@ export interface Start {
    * `false` asks every time, with no "always" option.
    */
   managedSettings?: { permissions?: ManagedSettingsPermissions; eligibleForAutoApproval?: Record<string, boolean> };
+  /**
+   * Whether managed policy forbids elevated auto-approval, the root config's
+   * `autoApprovePolicyRestricted` a VS Code window forwards from its policy,
+   * read as the session starts, as VS Code's agents read it when they launch a
+   * session: a backend withholds the modes that approve a call without asking.
+   * Absent where no window has said so.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostPolicySupport.ts#L46
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1579
+   */
+  autoApprovePolicyRestricted?: boolean;
   /**
    * Whether this session loads the settings of the person who runs the daemon.
    *
@@ -792,8 +805,15 @@ export interface Agent {
    * One schema, used before a session exists and by every session that does.
    * Two copies drift, and a composer then offers one set of controls on the
    * new-session screen and a different set the moment a session opens.
+   *
+   * `policy` is what the operator's policy says as the host asks, the values a
+   * start is handed under the same names, so a schema drawn before a session
+   * exists withholds what that session would, as VS Code's agents read the
+   * auto-approval restriction and their managed settings when they resolve a
+   * chat's config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7407-L7411
    */
-  schema(): Bag;
+  schema(policy?: SchemaPolicy): Bag;
   /** What each schema key sits at when nothing has been chosen. */
   defaults(): Record<string, unknown>;
   /**

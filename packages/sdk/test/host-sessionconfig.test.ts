@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
 import type { ConnectorRef } from '../src/types/connectors.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
-import { chatUriFor } from '../src/host/channels.js';
+import { chatUriFor, ROOT } from '../src/host/channels.js';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  actions, resetSdk, claude, createHost, hello, machine, open, peer,
+  actions, resetSdk, claude, createHost, echo, hello, machine, open, peer,
  sdk, sessionQueries, serving, settle, running,
 } from './support/host.js';
 
@@ -720,6 +720,51 @@ describe('a session\'s config across a restart', () => {
       expect((await resumedQuery({ sandboxEnabled: held }, { sandbox: 'on' }))?.settings, String(held))
         .toEqual({ sandbox: { enabled: true } });
       expect((await resumedQuery({ sandboxEnabled: held }))?.settings, String(held)).toBeUndefined();
+    }
+  });
+});
+
+/*
+ * A VS Code window forwards its policy's auto-approval restriction into the
+ * root config, and VS Code's agents read it when they resolve a chat's config
+ * and when they launch a session, so a backend is handed it on the schema a
+ * client draws before any session exists and on its start.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostPolicySupport.ts#L46
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7407-L7411
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts#L1579
+ */
+describe('the auto-approval restriction a window forwards', () => {
+  it('reaches a backend on the schema drawn before a session exists, and on its start', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-restricted-'));
+    try {
+      const base = echo({ path: dir, pace: 0 });
+      const starts: Start[] = [];
+      const agent: Agent = {
+        ...base,
+        schema: (policy) => ({
+          type: 'object',
+          properties: { mode: { type: 'string', enum: policy?.autoApprovePolicyRestricted === true ? ['ask'] : ['ask', 'auto'], sessionMutable: true } },
+        }),
+        create: (start: Start) => { starts.push(start); return base.create(start); },
+      };
+      const host = createHost({ path: dir, agents: [agent] });
+      const client = host.accept(peer());
+      await client.handle(hello(['0.9.0']));
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: ROOT, action: { type: 'root/configChanged', config: { autoApprovePolicyRestricted: true } } },
+      });
+      await settle();
+      const cfg = await client.handle({ method: 'resolveSessionConfig', params: { provider: 'echo' } }) as {
+        schema: { properties: Record<string, { enum?: string[] }> };
+      };
+      expect(cfg.schema.properties.mode?.enum).toEqual(['ask']);
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/restricted', provider: 'echo' } });
+      expect(starts.at(-1)?.autoApprovePolicyRestricted).toBe(true);
+      await host.close();
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

@@ -1319,12 +1319,9 @@ export function createSpawn(ctx: HostContext): Spawn {
       chatUri,
       trusted: trustedBy,
       getAutoApproval,
-      ...(options.managedSettingsPermissions === undefined && options.eligibleForAutoApproval === undefined ? {} : {
-        managedSettings: {
-          ...(options.managedSettingsPermissions === undefined ? {} : { permissions: options.managedSettingsPermissions }),
-          ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
-        },
-      }),
+      // The operator's policy as it stands at the start: managed settings, and
+      // the auto-approval restriction a window forwarded.
+      ...ctx.schemaPolicy(),
       ...(userSettings === undefined ? {} : { userSettings }),
       /*
        * The tools bound to this session: this host's own, and whatever the
