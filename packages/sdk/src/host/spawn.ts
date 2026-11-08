@@ -183,6 +183,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     publishAccountInfo, updateChatMovability,
   } = ctx;
   ctx.turnSenders = options.turnSenders ?? 'said';
+  ctx.steerReadBack = options.steerReadBack ?? 'inTurn';
   ctx.backendBackgroundWork = options.backendBackgroundWork ?? 'drop';
 
   /*

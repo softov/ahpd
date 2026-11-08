@@ -123,7 +123,7 @@ export const hostTools: Declaration = {
     type: 'boolean',
     description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting.",
   },
-  fallback: true,
+  default: true,
 };
 
 /**
@@ -294,6 +294,24 @@ export const ruleDepth: Declaration = {
 export const ruleMost: Declaration = {
   schema: { type: 'integer', minimum: 1, description: 'The most rule files read from one rules folder. 1000 by default.' },
   default: 1000,
+};
+
+/**
+ * When a session starts its CLI.
+ *
+ * `open`, the default, starts it as the session is made, so the session says
+ * its account, its context and its plan limits before any turn. `send` starts
+ * it at the first send, as VS Code's Claude agent makes a session provisional
+ * and materializes it then.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1543-L1556
+ */
+export const cliStart: Declaration = {
+  schema: {
+    type: 'string',
+    enum: ['open', 'send'],
+    description: 'When a session starts its CLI: open, as the session is made, so its usage shows before any turn; send, at its first message, as VS Code does. open by default.',
+  },
+  default: 'open',
 };
 
 /**
@@ -470,7 +488,7 @@ export const extraArgs: Declaration = {
 
 /** Every declared option, by the name a record gives it. */
 export const DECLARED: Record<string, Declaration> = {
-  sandbox, thinking, hostTasks, hostTools, enableTasks, stopEnds, dontAsk, portFailures, subagentsFrom,
+  sandbox, thinking, hostTasks, hostTools, enableTasks, cliStart, stopEnds, dontAsk, portFailures, subagentsFrom,
   taskOutputFirstWaitMs, taskOutputLongestWaitMs, taskOutputQuietReads, subagentTitleMax, subagentStartTimeoutMs,
   maxShellInitScript, maxTerminalOutputBytes, keepFramed, watchWaitMs, fileMostBytes, ruleDepth, ruleMost,
   outputStyle, env, logins, extraArgs,

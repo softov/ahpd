@@ -332,6 +332,8 @@ export interface Config {
    * action and no turn a client reads.
    */
   turnSenders?: 'said' | 'kept';
+  /** How a chat read back shows a turn it never began, such as a steer: inside the turn it steered, or as its own. */
+  steerReadBack?: 'inTurn' | 'ownTurn';
   /**
    * What a backend's own background work actions come to.
    *

@@ -228,6 +228,12 @@ export function createTurns(ctx: SessionContext): Turns {
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1766-L1776
      * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1266-L1273
      */
+    // A CLI the session began to start as it was made is waited for.
+    if (ctx.opening !== undefined) {
+      await ctx.opening;
+      ctx.opening = undefined;
+      if (ctx.disposed || stops !== stopped) return;
+    }
     if (ctx.query === undefined) {
       ctx.buildClientMcpServers();
       const unready = await ctx.rebindForSyncedState();

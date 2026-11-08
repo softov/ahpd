@@ -488,6 +488,11 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   preparingTurn: string | undefined;
   /**
+   * The CLI start a session made with `cliStart` at `open` began as it was
+   * made, which the first send waits for before it starts one of its own.
+   */
+  opening: Promise<void> | undefined;
+  /**
    * The tools the host handed since the CLI was last given a set, while there
    * are any: VS Code's client-tool diff, which the next send gives the CLI
    * before its prompt.
