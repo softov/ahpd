@@ -369,6 +369,9 @@ it('checks the folder a stop or a remove names, in VS Code\'s words', async () =
   expect(fake.gone).toEqual([]);
 });
 
+/** `/work/one` as this host spells it, which is what its launcher is handed. */
+const ONE = normalizeDevContainerWorkspaceFolder('/work/one', process.platform);
+
 it('stops and removes the folder it names, ending this connection\'s relay first', async () => {
   const fake = launcher();
   const { client } = await open({ containers: fake.port });
@@ -376,7 +379,7 @@ it('stops and removes the folder it names, ending this connection\'s relay first
   // A folder this launcher holds no computer for: the answer is still the
   // launcher's, because the host cannot know what the runtime holds.
   expect((await call(client, 'vscode/devContainers/stop', { workspaceFolder: '/work/one' })).result).toBe(true);
-  expect(fake.halted).toEqual(['/work/one']);
+  expect(fake.halted).toEqual([ONE]);
 
   // With a relay of this connection's own on the folder, the host ends it
   // before the container is stopped, so nothing is left running inside one
@@ -384,13 +387,13 @@ it('stops and removes the folder it names, ending this connection\'s relay first
   await call(client, 'vscode/devContainers/connect', connect);
   expect((await call(client, 'vscode/devContainers/stop', { workspaceFolder: '/work/one' })).result).toBe(true);
   expect(fake.stopped).toEqual(['a']);
-  expect(fake.halted).toEqual(['/work/one', '/work/one']);
+  expect(fake.halted).toEqual([ONE, ONE]);
   // And the name is free again, so a frame on it is not a silent nothing.
   expect(await call(client, 'vscode/devContainers/relaySend', { connectionId: 'a', data: '{}' }))
     .toMatchObject({ code: -32008 });
 
   expect((await call(client, 'vscode/devContainers/remove', { workspaceFolder: '/work/one' })).result).toBe(true);
-  expect(fake.gone).toEqual(['/work/one']);
+  expect(fake.gone).toEqual([ONE]);
 });
 
 it('leaves a folder alone while another connection is relaying to it', async () => {
@@ -415,7 +418,7 @@ it('leaves a folder alone while another connection is relaying to it', async () 
 
   // It is the first connection's own to stop, and then it happens.
   expect((await call(first.client, 'vscode/devContainers/stop', { workspaceFolder: '/work/one' })).result).toBe(true);
-  expect(fake.halted).toEqual(['/work/one']);
+  expect(fake.halted).toEqual([ONE]);
 });
 
 it('refuses a stop a launcher cannot reach the runtime\'s own stop for', async () => {

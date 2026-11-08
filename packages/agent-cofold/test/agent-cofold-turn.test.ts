@@ -26,6 +26,9 @@ import { fakePty } from '../../sdk/test/support/pty.js';
 import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
 import { undeclaredIn } from '../../sdk/test/support/wire.js';
 
+/** The space a command is typed after, which keeps it out of a POSIX shell's history; PowerShell, Windows' shell here, keeps none. */
+const HISTORY_SPACE = process.platform === 'win32' ? '' : ' ';
+
 /*
  * One cofold turn, as a client drives it.
  *
@@ -1030,7 +1033,7 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
   const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 
-  expect(pty.typed).toEqual([' make preview\r']);
+  expect(pty.typed).toEqual([`${HISTORY_SPACE}make preview\r`]);
 
   pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
   await until(() => ended(p, chatUri), 4000);

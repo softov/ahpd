@@ -19,6 +19,9 @@ import { fakePty } from './support/pty.js';
 import { callsIn, openedFrom, replayed } from './support/replay.js';
 import { undeclaredIn } from './support/wire.js';
 
+/** The space a command is typed after, which keeps it out of a POSIX shell's history; PowerShell, Windows' shell here, keeps none. */
+const HISTORY_SPACE = process.platform === 'win32' ? '' : ' ';
+
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
 /** What a terminal sends for ctrl+c. Written as a code so it survives a diff. */
@@ -221,7 +224,7 @@ describe('a command typed into the conversation', () => {
     expect(changed()?.content).toEqual([named]);
     expect(changed()).not.toHaveProperty('_meta');
     expect(rootList(p).map((one) => one.resource)).toEqual([(changed()?.content as { resource: string }[])[0]?.resource]);
-    expect(pty.typed).toEqual([' make preview\r']);
+    expect(pty.typed).toEqual([`${HISTORY_SPACE}make preview\r`]);
     // A client that subscribes while the command runs reads what a watching one holds.
     const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
     expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
