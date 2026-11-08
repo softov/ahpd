@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
-import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { questionOf, questioning } from './support/questions.js';
 import type { CommandSplit, CommandSplitter } from '../src/access/commandautoapprover.js';
@@ -76,6 +75,8 @@ function serving(extra: Partial<HostOptions> = {}) {
   const p = peer();
   const client: Client = host.accept(p);
   const uri = 'ahp-session:/ana-one';
+  // The default chat the host mints for the session, read once it is made.
+  let chat = '';
   let turns = 0;
   /** Whether the host answered a question about the line with nobody asked. */
   const approved = async (line: string): Promise<boolean> => {
@@ -84,7 +85,7 @@ function serving(extra: Partial<HostOptions> = {}) {
     backend.ask('bash', { permissionKind: 'shell', shellCommand: line, shellLanguage: 'bash' });
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
     await settle();
     return questionOf(p.notes, turnId) === undefined && backend.answerOf(turnId) === true;
@@ -105,8 +106,8 @@ function serving(extra: Partial<HostOptions> = {}) {
       method: 'createSession',
       params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(DIR)] },
     });
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
-    await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
+    chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
     await settle();
   };
   return { approved, opening };

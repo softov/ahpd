@@ -127,6 +127,9 @@ function serving(
     });
     await settle();
   };
+  /** The default chat the host minted for a session, read off the session's state. */
+  const chatOf = async (client: Client, uri: string): Promise<string> =>
+    ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   /** A session one window asked for, watched by it with its chat. */
   const opening = async (client: Client, name: string): Promise<void> => {
     const uri = `ahp-session:/${name}`;
@@ -135,7 +138,7 @@ function serving(
       params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(DIR)] },
     });
     await client.handle({ method: 'subscribe', params: { channel: uri } });
-    await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
+    await client.handle({ method: 'subscribe', params: { channel: await chatOf(client, uri) } });
     await settle();
   };
   let turns = 0;
@@ -147,7 +150,7 @@ function serving(
   const decided = async (client: Client, session: string, tool: string, asked: Bag): Promise<'approved' | unknown> => {
     turns += 1;
     const turnId = `q${turns}`;
-    const chat = chatUriFor(`ahp-session:/${session}`);
+    const chat = await chatOf(client, `ahp-session:/${session}`);
     backend.ask(tool, asked);
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     await client.handle({

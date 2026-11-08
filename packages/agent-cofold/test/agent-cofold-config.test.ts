@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { splitModel } from '@cofold/model-openai-compat';
 import { createHost } from '../../sdk/src/host.js';
-import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { cofoldAgent, harnessConfig, harnessConfigPath, modelOf, resourceOf } from '../src/index.js';
 
 /*
@@ -215,7 +214,8 @@ it('runs a session in a project on that project\'s .papo.json', async () => {
       method: 'createSession',
       params: { channel: 'ahp-session:/project', provider: 'cofold', workingDirectories: [`file://${project}`] },
     });
-    const chat = chatUriFor('ahp-session:/project');
+    // The default chat the host minted for the session.
+    const chat = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/project' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     client.handle({
       method: 'dispatchAction',

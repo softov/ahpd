@@ -531,5 +531,5 @@ it('takes one its schema marks mutable, and refuses a value its list does not of
   await settle();
   // The whole sentence, naming the key and the value it does not offer.
   const why = p.notes.filter((n) => n.method === 'action').at(-1)?.params as { rejectionReason?: string };
-  expect(why.rejectionReason).toBe('Session configuration \'ask\' does not offer \'sometimes\'.');
+  expect(why.rejectionReason).toBe('Session configuration \'autoApprove\' does not offer \'sometimes\'.');
 });

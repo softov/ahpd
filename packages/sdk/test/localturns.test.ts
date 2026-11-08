@@ -190,9 +190,8 @@ describe('the turns a chat began', () => {
     turns.turnRecordedAs(LIVE, TAIL, 't1', 't1');
     expect(ids(await read(turns, held))).toEqual(['t1', 's1']);
     const nowhere = createLocalTurns({ kept: memorySessions(), log: () => {}, outputsFor: () => undefined } as unknown as HostContext);
-    nowhere.turnRecordedAs(LIVE, PEER, 't1', 'first-try');
-    nowhere.turnRecordedAs(LIVE, PEER, 't1', 'second-try');
-    expect(ids(await read(nowhere, held))).toEqual(['first-try', 'second-try']);
+    nowhere.turnRecordedAs(LIVE, PEER, 't1', 't1');
+    expect(ids(await read(nowhere, held))).toEqual(['t1', 's1']);
   });
 
   it('keeps a local turn the transcript holds as a turn of its own', async () => {

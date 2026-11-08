@@ -219,11 +219,13 @@ it('lists a finished session with the moment it began and the folder it worked i
   await client.handle({ method: 'initialize', params: { clientId: 'p', protocolVersions: ['0.9.0'] } });
   const uri = 'ahp-session:/three';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo', workingDirectories: [pathToFileURL(folder).href] } });
+  // The default chat the host minted for the session.
+  const chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   // Long enough that the session's start and its turn's end are two moments.
   await new Promise((resolve) => { setTimeout(resolve, 20); });
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'remember me' } } },
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'remember me' } } },
   });
   await settle(12);
   await client.handle({ method: 'disposeSession', params: { channel: uri } });

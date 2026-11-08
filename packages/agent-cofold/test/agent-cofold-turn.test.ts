@@ -278,16 +278,18 @@ it('sends the thinking level the turn\'s model selection carries', async () => {
       params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
     });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/level', provider: 'cofold' } });
-    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/level') } });
+    // The default chat the host minted for the session.
+    const chat = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/level' } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
     const model = { id: 'open_router/deepseek/deepseek-r1', config: { thinkingLevel: 'high' } };
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: chatUriFor('ahp-session:/level'),
+        channel: chat,
         action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model } },
       },
     });
-    await until(() => ended(p, chatUriFor('ahp-session:/level')));
+    await until(() => ended(p, chat));
     expect(sent.at(-1)?.reasoning_effort).toBe('high');
   }
   finally {

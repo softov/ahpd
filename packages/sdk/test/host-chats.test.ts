@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import type { WireTurn } from '../src/types/wire.js';
 import {
-  resetSdk, actions, claude, createHost, defaultChatOf, echo, emit, flushed, hello, machine, open, peer, sdk, sendAnswered, serving,
+  resetSdk, actions, claude, createHost, defaultChatOf, echo, emit, flushed, hello, machine, open, peer, sdk, sendAnswered, serving, startedBySend,
   sessionQueries, settle, running, wrote,
 } from './support/host.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
@@ -351,7 +351,8 @@ describe('a chat made out of another', () => {
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7458-L7461
    */
   it('names a chat by the title it was asked for, and an untitled fork after its source, as VS Code\'s host', async () => {
-    const { client, uri, chatUri } = await running();
+    // A CLI started by its first send, so no start of one outlives the case.
+    const { client, uri, chatUri } = await running(startedBySend());
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
@@ -1400,6 +1401,8 @@ describe('more than one chat in a session', () => {
         params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`] },
       });
       await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      // The default chat the host minted for the session, which its record keeps.
+      const main = String((await opened(first.client, LIVE)).state.defaultChat);
       await send(first.client, LIVE, 't1', 'first');
       await send(first.client, PEER, 't2', 'second');
       await new Promise((tick) => { setTimeout(tick, 5); });
@@ -1409,7 +1412,7 @@ describe('more than one chat in a session', () => {
         items: { resource: string }[];
       };
       expect(rows.items.map((one) => one.resource)).toEqual([LIVE]);
-      expect(said(await opened(second.client, chatUriFor(LIVE)))).toEqual(['first']);
+      expect(said(await opened(second.client, main))).toEqual(['first']);
       expect(said(await opened(second.client, PEER))).toEqual(['second']);
       expect(starts).toHaveLength(2);
     }
@@ -1432,7 +1435,7 @@ describe('more than one chat in a session', () => {
         items: { resource: string }[];
       };
       expect(rows.items).toEqual([]);
-      await expect(opened(second.client, LIVE)).rejects.toMatchObject({ message: `No agent for session ${LIVE}` });
+      await expect(opened(second.client, LIVE)).rejects.toMatchObject({ message: `No agent for session: ${LIVE}` });
     }
     finally {
       rmSync(root, { recursive: true, force: true });
@@ -1446,24 +1449,26 @@ describe('more than one chat in a session', () => {
       const starts: Start[] = [];
       const agent = renaming(starts, true);
       const first = await chatty(dir, agent);
+      // The default chat the host minted for the session, which its record keeps.
+      const main = String((await opened(first.client, LIVE)).state.defaultChat);
       await send(first.client, LIVE, 't1', 'first');
       await send(first.client, PEER, 't2', 'second');
       await new Promise((tick) => { setTimeout(tick, 5); });
 
       const second = await hostAt(dir, agent);
-      expect(said(await opened(second.client, chatUriFor(LIVE)))).toEqual(['first']);
+      expect(said(await opened(second.client, main))).toEqual(['first']);
       expect(said(await opened(second.client, PEER))).toEqual(['second']);
       const session = await opened(second.client, LIVE);
-      expect(session.state.defaultChat).toBe(chatUriFor(LIVE));
-      expect(listed(session)).toEqual([chatUriFor(LIVE), PEER]);
+      expect(session.state.defaultChat).toBe(main);
+      expect(listed(session)).toEqual([main, PEER]);
       const before = starts.length;
-      await send(second.client, chatUriFor(LIVE), 't3', 'again');
+      await send(second.client, main, 't3', 'again');
       await send(second.client, PEER, 't4', 'also again');
       expect(resuming(starts.slice(before))).toEqual([
         { chatId: undefined, resume: 'live-minted', first: 'first' },
         { chatId: `${UUID}-minted`, resume: `${UUID}-minted`, first: 'second' },
       ]);
-      expect(said(await opened(second.client, chatUriFor(LIVE)))).toEqual(['first', 'again']);
+      expect(said(await opened(second.client, main))).toEqual(['first', 'again']);
       expect(said(await opened(second.client, PEER))).toEqual(['second', 'also again']);
     }
     finally {

@@ -657,9 +657,9 @@ describe('a session that ran only commands', () => {
 
 describe('a Claude chat', () => {
   /** A Claude session on a store that keeps a folder, with its chat watched. */
-  const shelled = async (dir: string) => {
+  const shelled = async (dir: string, steerReadBack?: 'inTurn' | 'ownTurn') => {
     const store = fileSessions({ dir });
-    const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })], ...machine(), sessions: store });
+    const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })], ...machine(), sessions: store, ...(steerReadBack === undefined ? {} : { steerReadBack }) });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -698,11 +698,14 @@ describe('a Claude chat', () => {
     await stateOf(at.client, chat);
     return { ...at, uri, chat };
   };
-  /** The same session read back by a host started again on the store at `dir`, its CLI having written `transcript`. */
-  const readAgain = async (dir: string, session: string, summary: string, transcript: Bag[]): Promise<unknown[][]> => {
+  /**
+   * The same session read back by a host started again on the store at `dir`, its CLI having written `transcript`;
+   * `steerReadBack` is that host's.
+   */
+  const readAgain = async (dir: string, session: string, summary: string, transcript: Bag[], steerReadBack?: 'inTurn' | 'ownTurn'): Promise<unknown[][]> => {
     sdk.sessions.push({ sessionId: session, summary, lastModified: 1, cwd: DIR });
     sdk.transcript.push(...transcript);
-    const after = await shelled(dir);
+    const after = await shelled(dir, steerReadBack);
     // Its default chat as the store kept it, the one minted when it was made.
     const opened = await stateOf(after.client, `claude:/${session}`);
     const read = shown((await stateOf(after.client, String(opened.defaultChat))).turns as Bag[]);
@@ -863,7 +866,8 @@ describe('a Claude chat', () => {
       [TOOL, 'complete', SLEEP, ['steer: Also, at the very end of your reply, add the word BETA2.', 'DONE BETA2']],
     ]);
     await before.host.close();
-    expect(await readAgain(dir, SESSION, ALPHA, capture('claude-steered-transcript.jsonl'))).toEqual([
+    // Read back as VS Code's replay reads it, the late steer a turn of its own.
+    expect(await readAgain(dir, SESSION, ALPHA, capture('claude-steered-transcript.jsonl'), 'ownTurn')).toEqual([
       [FIRST, 'complete', ALPHA, ['ALPHA']],
       [LATE, 'complete', BETA, ['BETA']],
       [TOOL, 'complete', SLEEP, ['DONE BETA2']],

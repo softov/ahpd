@@ -144,7 +144,7 @@ describe('what it says it is doing', () => {
     await flushed();
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+      params: { channel: await defaultChatOf(client, uri), clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
     });
     await flushed();
     const said = p.notes
