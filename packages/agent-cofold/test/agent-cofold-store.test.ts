@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -52,7 +53,7 @@ vi.mock('@cofold/store-file', async (original) => {
  * out fails on its own message rather than letting the case read on. `seen`
  * describes what had arrived, for the message.
  */
-const until = async (check: () => boolean, ms = 4000, seen?: () => string): Promise<void> => {
+const until = async (check: () => boolean, ms = WAIT_MS, seen?: () => string): Promise<void> => {
   const limit = Date.now() + ms;
   while (!check()) {
     if (Date.now() > limit) throw new Error(seen === undefined ? 'timed out waiting' : `timed out waiting; seen: ${seen()}`);
@@ -85,7 +86,7 @@ function channels(onEmit?: (channel: 'session' | 'chat' | 'terminal', action: Ba
  * `awaiting`, so a test that restarts on the action alone can read a run that
  * is still `running`.
  */
-const pausedRun = async (root: string, sessionId: string, ms = 4000): Promise<void> => {
+const pausedRun = async (root: string, sessionId: string, ms = WAIT_MS): Promise<void> => {
   const store = createFileStore({ root });
   const limit = Date.now() + ms;
   for (;;) {
@@ -868,7 +869,7 @@ it('continues a paused run when a client resumes its turn, writing the input onc
   expect((entry?.request as Bag | undefined)?.kind).toBe('toolConfirmation');
   expect(after.view.said('chat', 'chat/toolCallStart')).toBeUndefined();
   after.session.confirm('call-1', true);
-  await until(() => ended(after.view), 4000, () => JSON.stringify(after.view.notes.map((one) => [one.channel, one.action.type, one.action.type === 'chat/toolCallComplete' || one.action.type === 'chat/error' || one.action.type === 'session/inputNeededSet' ? one.action : undefined])));
+  await until(() => ended(after.view), WAIT_MS, () => JSON.stringify(after.view.notes.map((one) => [one.channel, one.action.type, one.action.type === 'chat/toolCallComplete' || one.action.type === 'chat/error' || one.action.type === 'session/inputNeededSet' ? one.action : undefined])));
 
   // A silent give-up in `until` must not read as a pass: the turn this asserts
   // is the one the answer was supposed to reach.
@@ -1009,7 +1010,7 @@ it('answers a pause the resumed run raises after the restart', async () => {
    * rather than on the call start is what puts the answer after the request is
    * held, since a decision for a request still in flight is a decision dropped.
    */
-  await until(() => entries() >= 2, 4000, () => JSON.stringify(calls()));
+  await until(() => entries() >= 2, WAIT_MS, () => JSON.stringify(calls()));
   // The resumed turn already holds the first call, so only the second opens.
   expect(calls()).toEqual(['call-2']);
   // The turn is still open: the replay answered one pause, the run raised the
@@ -1017,7 +1018,7 @@ it('answers a pause the resumed run raises after the restart', async () => {
   expect(ended(after.view)).toBe(false);
 
   after.session.confirm('call-2', true);
-  await until(() => ended(after.view), 4000, () => JSON.stringify(calls()));
+  await until(() => ended(after.view), WAIT_MS, () => JSON.stringify(calls()));
 
   expect(ran).toEqual(['x', 'y']);
   expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
@@ -1148,7 +1149,7 @@ it('leaves a paused run waiting on a stopping close, and cancels it on a delete'
 
   const gone = await paused('gone');
   await gone.session.close('dispose');
-  expect(await rests('gone', 4000)).toBe('cancelled');
+  expect(await rests('gone', WAIT_MS)).toBe('cancelled');
 });
 
 it('runs a new message in place of resuming a paused run, the run let go first', async () => {
@@ -1174,7 +1175,7 @@ it('runs a new message in place of resuming a paused run, the run let go first',
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
   const after = open(second, 'one', sweep, { resume: 'one', seed: (await second.transcript?.('one')) ?? [], tools: [tool] });
   after.session.sendMessage('t2', 'something else');
-  await until(() => ended(after.view), 4000, () => JSON.stringify(after.view.notes.map((one) => one.action.type)));
+  await until(() => ended(after.view), WAIT_MS, () => JSON.stringify(after.view.notes.map((one) => one.action.type)));
 
   expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
   const runs = await createFileStore({ root }).runs.list({ sessionId: 'one' });

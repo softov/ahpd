@@ -5,7 +5,7 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createHost } from '../src/host.js';
+import { createHost as openHost } from '../src/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { gitWorktrees, worktreesOf } from '../src/repo/worktrees.js';
 import { memorySessions } from '../src/sessions/sessions.js';
@@ -29,7 +29,21 @@ import type { HostOptions } from '../src/types/host.js';
 
 let made: string[] = [];
 
+/*
+ * Every host a case made, closed after it and before its folders go. A host
+ * left open kept its sessions, their git and their watchers for the rest of
+ * the file, so each case ran beside every one before it - and a folder one of
+ * them was still working in was one Windows would not remove.
+ */
+const hosts: ReturnType<typeof openHost>[] = [];
+const createHost = (options: HostOptions): ReturnType<typeof openHost> => {
+  const host = openHost(options);
+  hosts.push(host);
+  return host;
+};
+
 afterEach(async () => {
+  await Promise.all(hosts.splice(0).map((host) => host.close()));
   // Awaited, with retries: on Windows a git a case started can hold a folder
   // for a moment after the case is over.
   for (const dir of made) await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
