@@ -2097,7 +2097,13 @@ describe('tools a client contributes', () => {
     await settle();
   };
 
-  /** The person's answer, dispatched to the session the way a client dispatches it. */
+  /**
+   * The person's answer, dispatched to the session the way a client dispatches
+   * it: naming its turn, which the protocol's tool call actions carry and its
+   * reducer finds the call by.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L43-L47
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L629
+   */
   const decided = (
     client: { handle(message: unknown): Promise<unknown> },
     chatUri: string,
@@ -2105,7 +2111,7 @@ describe('tools a client contributes', () => {
   ): void => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-1', approved } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-1', approved } },
     });
   };
 
