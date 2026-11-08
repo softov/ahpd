@@ -59,8 +59,10 @@ const claudeRulesOf = (rule: string, behavior: 'deny' | 'ask', cwd: string): str
     case 'Shell': {
       /*
        * Every command, in both shells: the family names `Bash` and
-       * `PowerShell` alike, and Claude Code's bare `Bash` and `PowerShell`
-       * each match every command of their own.
+       * `PowerShell` alike, "Matches `Bash` and `PowerShell` on the SDK side
+       * too", and Claude Code's bare `Bash` and `PowerShell` each match every
+       * command of their own.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L80
        * https://code.claude.com/docs/en/permissions#match-all-uses-of-a-tool
        * https://code.claude.com/docs/en/permissions#powershell
        */
