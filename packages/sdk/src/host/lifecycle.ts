@@ -1822,9 +1822,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     let agentChanged: void | Promise<void> = undefined;
     try { agentChanged = session.changeAgent(agent); }
     catch (error) { unchanged(error); }
-    if (!(modelChanged instanceof Promise) && !(agentChanged instanceof Promise)) return send();
+    // After the tree the session found is written down, which the turn is measured from.
+    const baseline = ctx.baselineCheckpoints.get(session.uri);
+    const handed = baseline === undefined ? send : (): Promise<void> | undefined => baseline.then(send);
+    if (!(modelChanged instanceof Promise) && !(agentChanged instanceof Promise)) return handed();
     return Promise.all([modelChanged, agentChanged instanceof Promise ? agentChanged.catch(unchanged) : undefined])
-      .then(send, (error: unknown) => { ended('modelSelectionFailed', error); });
+      .then(handed, (error: unknown) => { ended('modelSelectionFailed', error); });
   };
 
   /**
