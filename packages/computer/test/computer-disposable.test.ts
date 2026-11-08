@@ -199,6 +199,14 @@ async function room(hostOptions: HostOptions) {
       await client.handle({ method: 'subscribe', params: { channel: uri } });
     },
     dispose: (uri: string): Promise<unknown> => client.handle({ method: 'disposeSession', params: { channel: uri } }),
+    /** A message sent to a session's default chat, which is when a change of its machine takes effect. */
+    send: async (uri: string, turnId: string): Promise<void> => {
+      const chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+      });
+    },
   };
 }
 
@@ -334,17 +342,18 @@ it('makes the machine when a disposable profile is picked before the first turn'
   const { options: loaded } = await load(options(state, {
     profiles: { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } },
   }), [agentWith()]);
-  const { client, peer: p, open, dispose } = await room(loaded);
+  const { client, peer: p, open, dispose, send } = await room(loaded);
   // New opened before the person decided, so the session has no computer.
   await open('ahp-session:/one', {}, folder);
   expect(held(state).machines).toEqual([]);
 
-  // The first send carries the profile that was picked, and the session is
-  // started again into the machine the profile becomes.
+  // The profile is picked, and the first send starts the session again into
+  // the machine the profile becomes.
   await client.handle({
     method: 'dispatchAction',
     params: { channel: 'ahp-session:/one', action: { type: 'session/configChanged', config: { computer: 'disposable:claude' } } },
   });
+  await send('ahp-session:/one', 't1');
   await until(() => held(state).machines.length === 1);
   // The restart runs behind the `configChanged`, and the machine file is
   // written before the create's own process has exited; give the start its
@@ -564,17 +573,19 @@ it('lets the machine go when the session moves to this host, and makes a new one
   const { options: loaded } = await load(options(state, {
     profiles: { scratch: { title: 'Scratch', disposable: true, disposableDelay: 1000 } },
   }), [agentWith()]);
-  const { client, open } = await room(loaded);
+  const { client, open, send } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:scratch' }, folder);
   await until(() => held(state).machines.length === 1);
   const first = held(state).machines[0]?.name as string;
   expect(first).toBeDefined();
 
-  // The person changes their mind before the first turn: this host, no machine.
+  // The person changes their mind before the first turn: this host, no
+  // machine, which the first send starts the session on.
   await client.handle({
     method: 'dispatchAction',
     params: { channel: 'ahp-session:/one', action: { type: 'session/configChanged', config: { computer: '' } } },
   });
+  await send('ahp-session:/one', 't1');
   await wait(200);
   await settle();
 
@@ -582,16 +593,11 @@ it('lets the machine go when the session moves to this host, and makes a new one
   await advanceUntil(() => held(state).machines.length === 0);
   expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === first)).toBe(true);
 
-  // And asking for the same profile again is a new machine rather than the
-  // one it left, whose id the host still remembered.
-  await client.handle({
-    method: 'dispatchAction',
-    params: {
-      channel: 'ahp-session:/one',
-      action: { type: 'session/configChanged', config: { computer: 'disposable:scratch' } },
-    },
-  });
-  await until(() => held(state).machines.length === 1);
+  // Its machine is fixed once it has started, so asking for the same profile
+  // again is a session's of its own: a new machine rather than the one that
+  // went, whose id the host still remembered.
+  await open('ahp-session:/two', { computer: 'disposable:scratch' }, folder);
+  await advanceUntil(() => held(state).machines.length === 1);
   const second = held(state).machines[0]?.name as string;
   expect(second).toBeDefined();
   expect(second).not.toBe(first);
@@ -610,7 +616,7 @@ it('lets the machine go when the new value is refused', async () => {
       two: { title: 'Two', disposable: true },
     },
   }), [agentWith()]);
-  const { client, open } = await room(loaded);
+  const { client, open, dispose } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:one' }, folder);
   await until(() => held(state).machines.length === 1);
   const box = held(state).machines[0]?.name as string;
@@ -628,8 +634,12 @@ it('lets the machine go when the new value is refused', async () => {
   // profile being unknown.
   expect(held(state).machines.map((one) => one.name)).toEqual([box]);
 
-  // And the session is over, so the machine it was in waits out the delay and
-  // goes rather than holding it for the rest of the daemon's life.
+  // The refused session stays in its machine, and once it is disposed, as the
+  // refusal says to, the machine waits out the delay and goes rather than
+  // holding it for the rest of the daemon's life.
+  expect(held(state).machines.map((one) => one.name)).toEqual([box]);
+  await dispose('ahp-session:/one');
+  await settle();
   await advanceUntil(() => held(state).machines.length === 0);
   expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === box)).toBe(true);
 });
