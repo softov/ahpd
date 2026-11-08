@@ -294,6 +294,8 @@ describe('opening a past session', () => {
       await new Promise((tick) => { setTimeout(tick, 5); });
       const saved = JSON.parse(readFileSync(join(dir, 'made.json'), 'utf8')) as { workingDirectory?: string };
       expect(saved.workingDirectory).toBe(root);
+      // Closed first: the checkpoint it writes there runs git in the folder, which Windows will not remove under it.
+      await host.close();
     }
     finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
   });

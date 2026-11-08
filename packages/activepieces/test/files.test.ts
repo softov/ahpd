@@ -109,7 +109,11 @@ describe('a prop the piece declares streaming', () => {
     expect(fromName).not.toBeNull();
     expect(fromName).toMatchObject({ filename: 'big.txt', extension: 'txt', size: 8 });
     expect((fromName as ApStreamingFile).body).toBeInstanceOf(Readable);
-    (fromName as ApStreamingFile).body.destroy();
+    // Closed before the case ends, as a stream destroyed before it opened still opens its file, after the folder is gone.
+    const body = (fromName as ApStreamingFile).body;
+    const closed = new Promise((resolve) => { body.once('close', resolve); });
+    body.destroy();
+    await closed;
     const fromData = await fileProcessor(streaming, `data:text/plain;base64,${Buffer.from('hi').toString('base64')}`, undefined) as ApStreamingFile;
     expect([fromData.filename, fromData.size]).toEqual(['unknown.txt', 2]);
     expect(Buffer.concat(await fromData.body.toArray() as Buffer[]).toString()).toBe('hi');

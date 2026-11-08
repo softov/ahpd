@@ -254,9 +254,11 @@ describe('a command typed into the conversation', () => {
     await emit({ type: 'assistant', uuid: 'reply-1', message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } });
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
     await ran(client, p, chatUri, 't2', 'echo dropped-one');
-    // The first line of each: a shell on pipes marks no command's end, so the
-    // line it echoes after the command is in what it printed too.
-    const printed = (): string[] => keptIn(store, 'banged').map((one) => String(one.output).split('\n')[0] ?? '');
+    // Which command each printed: a shell on pipes marks no command's end, so
+    // what is kept holds the line echoed after the command too, and on Windows
+    // PowerShell's prompt and the typed line before the output.
+    const printed = (): string[] => keptIn(store, 'banged').map((one) => String(one.output))
+      .map((output) => ['kept-one', 'dropped-one'].find((word) => output.split(/\r?\n/).includes(word)) ?? output);
     expect(printed().sort()).toEqual(['dropped-one', 'kept-one']);
 
     void client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } } });
