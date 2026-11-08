@@ -660,6 +660,8 @@ describe('a failed login', () => {
     sdk.push(...failure('rate_limit', SPENT, inAnHour()));
     await settle();
     release();
+    // The attachment is read from disk before either goes, which takes real time rather than a few turns.
+    await until(() => sdk.said.filter((one) => one.query === 1).length >= 3);
     await settle();
 
     const sent = sdk.said.filter((one) => one.query === 1).map((one) => JSON.stringify(one.content));
