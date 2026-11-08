@@ -168,6 +168,19 @@ it('offers Allow Once and Skip alone where the operator\'s rule makes the tool a
 });
 
 /*
+ * The rule is the daemon's setting alone: VS Code's host takes the setting's
+ * policy value and declares no root config key for it, so a client's push of
+ * one is kept as any key nobody declares is and asks about nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26
+ */
+it('reads the operator\'s rule from the daemon\'s setting alone, a client\'s root push of one asking about nothing', async () => {
+  const { host, dispatch, turn } = await serving(asking([]));
+  await dispatch(ROOT, { type: 'root/configChanged', config: { eligibleForAutoApproval: { bash: false } } });
+  expect((await turn('t1')).options).toEqual(STANDARD);
+  await host.close();
+});
+
+/*
  * An MCP server's tool is `<server>/<tool>` to the rule, its server the one the
  * call's contributor names among the session's customizations, as AHP names an
  * MCP tool's server on the call.
