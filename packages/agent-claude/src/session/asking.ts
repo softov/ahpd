@@ -486,13 +486,13 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     },
 
     /**
-     * One question of a request, part-way answered, which the host has said as
-     * the client sent it.
+     * One question of a request, part-way answered.
      *
-     * The same thing `setDraft` is for a message: held on the request itself,
-     * because a client that arrives while the question is open reads
-     * `session.inputNeeded` and would otherwise see an empty form somebody has
-     * already answered.
+     * The same thing `setDraft` is for a message: the host has said the
+     * client's draft, which every client holds from that, and it is kept here
+     * on the request itself, which a completion that carries no answers of its
+     * own is completed with and a client that arrives while the question is
+     * open reads.
      *
      * False when the request is not one this session is waiting on, which is
      * the caller's to report - answering a question nobody asked is a client
