@@ -259,6 +259,8 @@ export function createRelay(ctx: HostContext): Relay {
       lapsing.delete(clientId);
       for (const wait of held?.waits ?? []) wait(undefined);
     }, CONNECTION_GRACE_MS);
+    // A window for a request to wait in, and no reason to keep a daemon whose last client went away running.
+    timer.unref?.();
     lapsing.set(clientId, { timer, waits: [] });
   };
 
