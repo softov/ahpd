@@ -1026,8 +1026,8 @@ export interface HostOptions {
    * `inTurn`, the default, reads it back inside the turn it steered, as the
    * live turn showed it. `ownTurn` reads it back as a turn of its own, as VS
    * Code's replay starts a turn at every prompt a transcript holds, and drops
-   * the quote of a steer the agent took in at a tool call, which VS Code's
-   * replay does not show.
+   * the `systemNotification` part of a steer the agent took in at a tool call,
+   * which VS Code's replay does not show.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L282-L292
    */
   steerReadBack?: 'inTurn' | 'ownTurn';

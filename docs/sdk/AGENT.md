@@ -213,8 +213,8 @@ store with no session folder, reads as your transcript gives it. A daemon whose
 `steerReadBack` is `ownTurn` reads such a turn back as a turn of its own
 instead, as VS Code's replay starts a turn at every prompt a transcript holds;
 only a turn recorded as the same turn as the one before is joined then. That
-daemon also drops the quote of a steering message the agent took in at a tool
-call, which VS Code's replay does not show.
+daemon also drops the `systemNotification` part of a steering message the agent
+took in at a tool call, which VS Code's replay does not show.
 
 ## `Session`
 

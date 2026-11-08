@@ -571,8 +571,9 @@ export function createLocalTurns(ctx: HostContext): LocalTurns {
 
   /**
    * A transcript's turns without the steer parts its backend read back, for a
-   * host whose `steerReadBack` is `ownTurn`: VS Code's replay shows no quote of
-   * a steering message the agent took in at a tool call.
+   * host whose `steerReadBack` is `ownTurn`: VS Code's replay shows no
+   * `systemNotification` part for a steering message the agent took in at a
+   * tool call.
    */
   const withoutSteers = (turns: readonly WireTurn<Turn>[]): WireTurn<Turn>[] => turns.map((turn) => {
     const parts = turn.responseParts.filter((part) => steerOf(part as unknown as Bag) === undefined);
