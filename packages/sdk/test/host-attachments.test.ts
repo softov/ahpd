@@ -105,16 +105,30 @@ const first = <T>(list: T[]): T => list[0] as T;
  * backend that dropped them would leave a client with the message and no
  * picture, which is the thing this is here to make impossible.
  *
- * `held` keeps a turn running for `sendSteeringMessage` from its `sendMessage`
- * on, whenever the echo ends it, so a case about order does not race the
- * turn's own clock.
+ * `held` keeps a turn running until it has taken a steering message, whenever
+ * the echo ends it, so a case about order does not race the turn's own clock:
+ * the echo's end is held back and said once the steering is taken. The host
+ * hands steering only to an active turn, and a steering message whose file was
+ * still being written when a 60 ms turn ended was queued behind it instead.
  */
 const scripted = (dir: string, said: Said, pace = 0, held = false): Agent => {
   const base = echo({ path: dir, pace });
   return {
     ...base,
     create: (start: Start): Session => {
-      const session = base.create(start);
+      /** The echo's end of its turn, held back until the turn has taken its steering. */
+      let ending: (() => void) | undefined;
+      const holding: Start = !held ? start : {
+        ...start,
+        emit: (channel, action) => {
+          if (action.type === 'chat/turnComplete' && said.steered.length === 0) {
+            ending = () => { start.emit(channel, action); };
+            return;
+          }
+          start.emit(channel, action);
+        },
+      };
+      const session = base.create(holding);
       const kept = (one: Bag): Bag => {
         const mine = said.handed.get(String(one.id));
         if (mine === undefined) return one;
@@ -139,6 +153,9 @@ const scripted = (dir: string, said: Said, pace = 0, held = false): Agent => {
           if (!running) return false;
           said.steered.push({ id, text, ...(attachments === undefined ? {} : { attachments }) });
           start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+          const end = ending;
+          ending = undefined;
+          end?.();
           return true;
         },
         chatState: () => {
