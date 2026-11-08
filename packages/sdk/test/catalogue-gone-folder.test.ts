@@ -123,7 +123,9 @@ describe('a folder that has gone', () => {
         { summary?: { workingDirectories?: string[] } } | undefined;
       expect(added?.summary?.workingDirectories).toEqual([uriOf(folder)]);
 
-      rmSync(folder, { recursive: true, force: true });
+      // With retries: on Windows the checkpoint the first message ran can still
+      // have git working in the folder, which Windows will not remove under it.
+      rmSync(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
       await client.handle({
         method: 'dispatchAction',
         params: { channel: 'ahp-session:/live', action: { type: 'session/titleChanged', title: 'Gone' } },
