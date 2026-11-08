@@ -6,18 +6,14 @@ on:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
-      - run: git config --global core.longpaths true
-        shell: bash
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+        with:
+          sparse-checkout: tools
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-        shell: bash
-      - name: The exitGraceMs case, its steps timed
-        run: timeout 600 pnpm exec vitest run --reporter=verbose packages/agent-acp/test/agent-acp-failure.test.ts -t "exitGraceMs" --testTimeout=60000
+      - name: Which close ends a child's stdout
+        run: node tools/stdout-close.cjs
         shell: bash
