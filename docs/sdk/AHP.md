@@ -222,10 +222,9 @@ A matched call asks whenever its backend puts the call to a person, as [VS Code'
 Claude's backend puts it when the CLI asks about the call, and the CLI asks about a call a key names in its grammar in every mode, `bypassPermissions` included, from the ask rules the backend hands it as Claude Code's policy tier ([agent-claude](../../packages/agent-claude/README.md)).
 The CLI names a client's tool after the client offering it, so it asks about one of those where its mode asks about any tool of an MCP server.
 The question offers no "always" option, so an answer applies to that call alone.
-cofold puts the question for a matched call and deletes the approval it remembered for that tool first; in `dontAsk` it denies the call instead.
+cofold puts it when its policy asks about the call, by its mode, and no approval [cofold](https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/agents/src/run/tools.ts#L65-L71) remembered for the tool in that session answers the ask.
 A call to a matched host tool through `/mcp` is refused under `managedRules: 'checked'`, because that door has no session to ask in; under `handed` it runs, as VS Code's host checks no managed rule itself and that door has no runtime to hand one to.
-An ACP agent decides itself whether to ask about its own tools, so the rule reaches only the MCP tools this host serves it.
-The question about one of those goes on the call the agent reported for it, and a call it reported nothing for is refused.
+An ACP agent puts it when the agent asks permission for the call, which the agent decides itself, for its own tools and for the MCP tools this host serves it alike.
 A session inside a machine does not read the rule yet, so a matched call runs there with no question; [deferred.md](../../.project/plans/host/101-a-rule-makes-a-tool-call-ask-every-time/deferred.md) says why.
 The three terminal keys are the host's one value each, which the last push from any window set, and every session runs under them.
 They answer every turn whoever sent it, as `workspaceTrust` does, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380) reads them for every question.
