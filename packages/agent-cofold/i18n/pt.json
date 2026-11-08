@@ -10,6 +10,9 @@
     "baseUrl": {
       "description": "Endpoint compatível com OpenAI padrão para os agentes que não definem um."
     },
+    "models": {
+      "description": "O que o operador diz dos modelos de baseUrl, cada um pelo seu id nesse endpoint: supportsReasoningEffort, os níveis de raciocínio que aceita, como os modelos de Custom Endpoint do VS Code os declaram, dos quais se oferecem os que o cofold tem."
+    },
     "instructions": {
       "description": "Prompt de sistema padrão para os agentes que não definem um."
     },
@@ -42,10 +45,6 @@
     }
   },
   "session": {
-    "baseUrl": {
-      "title": "Endpoint",
-      "description": "Uma URL base compatível com a OpenAI, como https://api.deepseek.com/v1."
-    },
     "instructions": {
       "title": "Instruções",
       "description": "O prompt de sistema com que este agente roda."
@@ -60,16 +59,6 @@
         "auto": "Modo automático",
         "bypassPermissions": "Ignorar permissões",
         "dontAsk": "Não perguntar"
-      }
-    },
-    "effortLevel": {
-      "title": "Esforço",
-      "description": "Quanto ele pensa antes de responder.",
-      "enum": {
-        "off": "Desligado",
-        "low": "Baixo",
-        "medium": "Médio",
-        "high": "Alto"
       }
     }
   }

@@ -6,7 +6,7 @@ import { PERMISSION_MODE_DESCRIPTIONS } from '@cofold/agents';
 import { createFakeModel } from '@cofold/agents/testing';
 import type { ModelAdapter, ModelProvider } from '@cofold/agents';
 import type { Agent, Bag, BoundTool, Session, Start } from '@ahpd/sdk';
-import { EFFORT_LEVELS, PERMISSION_MODES, effortOf, cofoldAgent, harnessConfig, modelOf } from '../src/index.js';
+import { PERMISSION_MODES, effortOf, cofoldAgent, harnessConfig, modelOf } from '../src/index.js';
 import type { Held } from '../src/agent.js';
 import { startedNow } from '../../sdk/test/support/started.js';
 
@@ -106,28 +106,51 @@ async function turn(mode: string | undefined, path = 'a.txt') {
   return { view, ran };
 }
 
-it('advertises an approvals mode and a thinking level, in the window own names', () => {
+it('advertises an approvals mode in the window own names, the thinking level being each model\'s own', () => {
   const props = properties(cofoldAgent({}));
-  expect(Object.keys(props)).toEqual(['baseUrl', 'instructions', 'permissionMode', 'effortLevel']);
-  expect(props.permissionMode).toMatchObject({ scope: 'session', sessionMutable: true, default: 'auto' });
+  expect(Object.keys(props)).toEqual(['instructions', 'cofold.reasoning', 'permissionMode']);
+  // Each chat keeps its own mode, as VS Code's Claude marks its mode.
+  expect(props.permissionMode).toMatchObject({ scope: 'session', sessionMutable: true, chatMutable: true, default: 'auto' });
   expect(props.permissionMode?.enum).toEqual([...PERMISSION_MODES]);
   expect((props.permissionMode?.enumLabels as string[]).length).toBe(PERMISSION_MODES.length);
   // cofold's own sentences, in cofold's own order: what a mode means is the
   // library's to say, and a host that wrote its own would drift from it.
   expect(props.permissionMode?.enumDescriptions).toEqual(PERMISSION_MODES.map((mode) => PERMISSION_MODE_DESCRIPTIONS[mode]));
-  expect(props.effortLevel).toMatchObject({ scope: 'chat', sessionMutable: true, default: 'off' });
-  expect(props.effortLevel?.enum).toEqual([...EFFORT_LEVELS]);
 });
 
-it('omits a control this backend would not honour', () => {
+it('omits a control this backend would not honour', async () => {
   const withPolicy = cofoldAgent({ policy: { decide: () => ({ behavior: 'allow' }) } });
   expect(Object.keys(properties(withPolicy))).not.toContain('permissionMode');
-  expect(Object.keys(properties(withPolicy))).toContain('effortLevel');
+  // The thinking level is no session control, with a policy or without one.
+  expect(Object.keys(properties(withPolicy))).not.toContain('effortLevel');
 
+  // A caller's adapter builds its own requests, so a level it was given would
+  // go nowhere: its model offers none, whatever the agent declares for it.
   const stub = { id: 'stub', modelId: 'stub', features: {} } as unknown as ModelAdapter;
-  const withAdapter = cofoldAgent({ adapter: stub });
+  const withAdapter = cofoldAgent({ adapter: stub, model: 'stub', baseUrl: 'https://api.example/v1', models: [{ id: 'stub', supportsReasoningEffort: ['low', 'high'] }] });
   expect(Object.keys(properties(withAdapter))).toContain('permissionMode');
-  expect(Object.keys(properties(withAdapter))).not.toContain('effortLevel');
+  expect((await withAdapter.probe?.())?.models).toEqual([{ id: 'stub', name: 'stub' }]);
+});
+
+/*
+ * A key the schema does not declare is refused in VS Code's sentence for a key
+ * it cannot write, and a value of another kind in this backend's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
+ */
+it('refuses a key its schema does not declare in VS Code\'s sentence', async () => {
+  const agent = cofoldAgent({ memory: true });
+  const session: Session = startedNow(agent.create({
+    uri: 'ahp-session:/modes-config',
+    chatUri: 'ahp-chat:/modes-config',
+    settings: agent.defaults(),
+    workingDirectory: place(),
+    schema: () => agent.schema(),
+    emit: channels().emit,
+  } as unknown as Start));
+  expect(await session.setConfig?.('nonsense', 'x')).toBe('Session configuration \'nonsense\' is not writable.');
+  expect(await session.setConfig?.('permissionMode', 'plan')).toBe(true);
+  expect(String(await session.setConfig?.('permissionMode', 3))).toContain('takes a string');
+  await session.close();
 });
 
 it('runs a write under auto, which is the default, and under bypassPermissions', async () => {
@@ -200,12 +223,13 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-/** What the endpoint was sent for a session with these settings. */
-const sent = async (settings: Record<string, unknown>): Promise<Record<string, unknown>> => {
-  mkdirSync(join(home, 'cofold'), { recursive: true });
-  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify({
+/** What the endpoint was sent for a session with these settings, over a harness file with `extra` in it. */
+const sent = async (settings: Record<string, unknown>, extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({
     providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }],
     model: 'open_router/deepseek/deepseek-chat',
+    ...extra,
   }));
   let body: Record<string, unknown> = {};
   globalThis.fetch = (async (_input: unknown, init?: { body?: string }) => {
@@ -220,15 +244,49 @@ const sent = async (settings: Record<string, unknown>): Promise<Record<string, u
 };
 
 it('puts the chosen thinking level in the request and nothing for off', async () => {
-  expect((await sent({ effortLevel: 'high' })).reasoning_effort).toBe('high');
-  expect('reasoning_effort' in await sent({ effortLevel: 'off' })).toBe(false);
+  expect((await sent({ thinkingLevel: 'high' })).reasoning_effort).toBe('high');
+  expect('reasoning_effort' in await sent({ thinkingLevel: 'off' })).toBe(false);
   expect('reasoning_effort' in await sent({})).toBe(false);
+});
+
+/*
+ * cofold's own session-wide reasoning, papo's `reasoning`, as a session
+ * control under the agent's provider id, as VS Code keeps Codex's
+ * `codex.modelReasoningEffort` beside each model's picker, the turn's model
+ * selection winning over it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L465-L475
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1953-L1960
+ */
+it('offers the session its own reasoning under the agent\'s provider, the harness level its default', () => {
+  const offered = properties(cofoldAgent({ provider: 'papo' }))['papo.reasoning'];
+  expect(offered).toEqual({
+    type: 'string',
+    title: 'Reasoning Effort',
+    description: 'Controls how much reasoning effort Cofold uses.',
+    enum: ['off', 'low', 'medium', 'high'],
+    enumLabels: ['Off', 'Low', 'Medium', 'High'],
+    enumDescriptions: ['', 'Faster responses with less reasoning', 'Balanced reasoning and speed', 'Greater reasoning depth but slower'],
+    default: 'off',
+    sessionMutable: true,
+    chatMutable: true,
+  });
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({ reasoning: 'medium' }));
+  expect(properties(cofoldAgent({}))['cofold.reasoning']?.default).toBe('medium');
+});
+
+it('runs a turn on the session\'s reasoning where its model selection names no level, the selection winning', async () => {
+  expect((await sent({ 'cofold.reasoning': 'medium' })).reasoning_effort).toBe('medium');
+  expect((await sent({ 'cofold.reasoning': 'medium', thinkingLevel: 'low' })).reasoning_effort).toBe('low');
+  expect('reasoning_effort' in await sent({ 'cofold.reasoning': 'high', thinkingLevel: 'off' })).toBe(false);
+  // The person's harness level where the session set none.
+  expect((await sent({}, { reasoning: 'high' })).reasoning_effort).toBe('high');
 });
 
 /** What the provider was asked to build for a session with these settings. */
 const builtFor = (settings: Record<string, unknown>): Record<string, unknown> => {
-  mkdirSync(join(home, 'cofold'), { recursive: true });
-  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify({
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({
     providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }],
     model: 'open_router/deepseek/deepseek-chat',
   }));
@@ -255,10 +313,10 @@ it('asks for the level with the request param alone', () => {
    * that cannot think says so, and the same key set true here would overrule
    * it. `toEqual` is exact, so a `features` key would fail this.
    */
-  expect(builtFor({ effortLevel: 'high' })).toEqual({
+  expect(builtFor({ thinkingLevel: 'high' })).toEqual({
     id: 'deepseek/deepseek-chat',
     params: { reasoning: { effort: 'high' } },
   });
-  expect(builtFor({ effortLevel: 'off' })).not.toHaveProperty('features');
-  expect(builtFor({ effortLevel: 'off' })).not.toHaveProperty('params');
+  expect(builtFor({ thinkingLevel: 'off' })).not.toHaveProperty('features');
+  expect(builtFor({ thinkingLevel: 'off' })).not.toHaveProperty('params');
 });

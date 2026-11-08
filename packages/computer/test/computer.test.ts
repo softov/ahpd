@@ -546,13 +546,13 @@ it('destroys a machine, and refuses what is not one', async () => {
   held.set('box', { name: 'box', image: 'debian:bookworm-slim', Created: '2026-09-22T00:00:00Z' });
   const provider = computerProvider(runtime, options);
 
-  await provider.remove('computer://box');
+  await provider.delete('computer://box');
   expect(calls).toContain('remove box');
   expect(held.has('box')).toBe(false);
 
-  await expect(provider.remove('computer://box')).rejects.toMatchObject({ code: -32008 });
-  await expect(provider.remove('computer://')).rejects.toMatchObject({ code: -32602 });
-  await expect(provider.remove('computer://box/status')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.delete('computer://box')).rejects.toMatchObject({ code: -32008 });
+  await expect(provider.delete('computer://')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.delete('computer://box/status')).rejects.toMatchObject({ code: -32602 });
 });
 
 /*

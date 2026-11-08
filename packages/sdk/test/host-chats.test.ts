@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import type { WireTurn } from '../src/types/wire.js';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, machine, open, peer, sdk, serving,
+  resetSdk, actions, claude, createHost, echo, emit, flushed, hello, machine, open, peer, sdk, sendAnswered, serving,
   sessionQueries, settle, running, wrote,
 } from './support/host.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
@@ -129,8 +129,21 @@ describe('dropping the turns after one', () => {
     });
     await settle();
 
+    // The history through that turn is still here: a truncation that emptied
+    // the chat is not what the action asks for.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+
     // A CLI that still remembered the dropped turn would answer the edited
-    // message with the one it replaced still in front of it.
+    // message with the one it replaced still in front of it. The next send
+    // starts one on the cut.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't3', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
+    });
+    await settle();
     expect(sessionQueries().length).toBe(before + 1);
     const fresh = sessionQueries().at(-1);
     expect(fresh?.options.resume).toBe('sdk-1');
@@ -141,13 +154,6 @@ describe('dropping the turns after one', () => {
     // the turns from, so the id has to survive it - a new one would leave
     // every later resume reaching the transcript that still has them.
     expect(fresh?.options.forkSession).toBeUndefined();
-
-    // The history through that turn is still here: a truncation that emptied
-    // the chat is not what the action asks for.
-    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-      snapshot: { state: { turns: { id: string }[] } };
-    }).snapshot.state;
-    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
   });
 
   /*
@@ -180,6 +186,12 @@ describe('dropping the turns after one', () => {
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } },
+    });
+    await settle();
+    // The next send starts the CLI on the cut.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't3', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
     });
     await settle();
     expect(sessionQueries().at(-1)?.options.resumeSessionAt).toBe('reply-1');
@@ -230,6 +242,25 @@ describe('dropping the turns after one', () => {
     expect(sdk.queries.length).toBe(queries);
   });
 
+  /*
+   * A truncation at a turn the chat does not hold is said as it was sent, and
+   * the reducer leaves the chat as it was, as VS Code's host says every
+   * truncation.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L1995
+   */
+  it('says a truncation at a turn the chat does not hold, and starts no CLI again', async () => {
+    const { client, peer: p, chatUri } = await running();
+    const queries = sdk.queries.length;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 5, action: { type: 'chat/truncated', turnId: 'nowhere' } },
+    });
+    await settle();
+    const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/truncated');
+    expect(said.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[5, undefined]]);
+    expect(sdk.queries.length).toBe(queries);
+  });
+
   it('drops the turn that is running, and comes back idle', async () => {
     const { client, peer: p, chatUri } = await twice();
     client.handle({
@@ -277,19 +308,24 @@ describe('dropping the turns after one', () => {
      * `turnId` is optional and its absence means "clear everything", which as
      * a rewind is a cut before the first prompt, with no entry to name. The
      * CLI forgets it instead, as the reference's agent does: its conversation
-     * is deleted and a new CLI starts with nothing to resume.
+     * is deleted and the next send starts a CLI with nothing to resume.
      */
     expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
     expect(sdk.deleted).toEqual(['sdk-1']);
-    expect(sessionQueries().length).toBe(before + 1);
-    const fresh = sessionQueries().at(-1);
-    expect(fresh?.options.resume).toBeUndefined();
-    expect(fresh?.options.resumeSessionAt).toBeUndefined();
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/truncated')).toBe(true);
     const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { turns: unknown[] } };
     }).snapshot.state;
     expect(state.turns).toEqual([]);
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't3', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'again' } } },
+    });
+    await settle();
+    expect(sessionQueries().length).toBe(before + 1);
+    const fresh = sessionQueries().at(-1);
+    expect(fresh?.options.resume).toBeUndefined();
+    expect(fresh?.options.resumeSessionAt).toBeUndefined();
   });
 
   it('says a conversation started over back with the origin of the client that asked', async () => {
@@ -307,6 +343,37 @@ describe('dropping the turns after one', () => {
 });
 
 describe('a chat made out of another', () => {
+  /*
+   * A chat is named by the request's title, trimmed, and a fork given none is
+   * named after the chat it came from, as VS Code's host names one; the
+   * prefix is not said twice.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7370
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7458-L7461
+   */
+  it('names a chat by the title it was asked for, and an untitled fork after its source, as VS Code\'s host', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'system', subtype: 'init', session_id: 'sdk-1' });
+    await emit({ type: 'assistant', uuid: 'sdk-reply-1', message: { id: 'm1', content: [{ type: 'text', text: 'hello' }] } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+    wrote('sdk-1', String(sessionQueries().at(-1)?.options.cwd));
+    await client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'session/titleChanged', title: 'The plan' } } });
+    await settle();
+    const titleOf = async (chat: string): Promise<unknown> =>
+      ((await client.handle({ method: 'subscribe', params: { channel: chat } })) as { snapshot: { state: { title?: unknown } } }).snapshot.state.title;
+
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/named', title: '  Review  ' } });
+    expect(await titleOf('ahp-chat:/named')).toBe('Review');
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/forked', source: { kind: 'fork', chat: chatUri, turnId: 't1' } } });
+    expect(await titleOf('ahp-chat:/forked')).toBe('Forked: The plan');
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/again', source: { kind: 'fork', chat: 'ahp-chat:/forked', turnId: 't1' } } });
+    expect(await titleOf('ahp-chat:/again')).toBe('Forked: The plan');
+  });
+
   it('forks at the turn it was told to, and brings the history through it', async () => {
     const { client, uri, chatUri } = await running();
     client.handle({
@@ -329,19 +396,25 @@ describe('a chat made out of another', () => {
         source: { kind: 'fork', chat: chatUri, turnId: 't1' },
       },
     });
+    // The conversation through that turn is visible in the new chat: a fork
+    // that starts empty is a new chat, not a fork.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/forked' } }) as {
+      snapshot: { state: { turns: { id: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+
+    // The new chat's first send starts its CLI, on the conversation forked there.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/forked', action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go on' } } },
+    });
+    await settle();
     const fresh = sessionQueries().at(-1);
     expect(fresh?.options.forkSession).toBe(true);
     // The turn's *last* entry, not the prompt it began with: a fork copies the
     // conversation through the chosen turn, answer included, so cutting at the
     // prompt would leave the new chat showing an answer its agent never gave.
     expect(fresh?.options.resumeSessionAt).toBe('sdk-reply-1');
-
-    // And the conversation through that turn is visible in the new chat: a
-    // fork that starts empty is a new chat, not a fork.
-    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/forked' } }) as {
-      snapshot: { state: { turns: { id: string }[] } };
-    }).snapshot.state;
-    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
   });
 
   /*
@@ -374,6 +447,29 @@ describe('a chat made out of another', () => {
     expect(state.turns.map((one) => one.id)).toEqual(['t1']);
   });
 
+  /*
+   * The turn still running bounds a side chat as a completed one does, as VS
+   * Code's host takes either.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7715-L7720
+   */
+  it('makes a side chat of the turn still running', async () => {
+    const { client, uri, chatUri } = await running();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'the weather' } } },
+    });
+    await settle();
+
+    expect(await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/side', source: { kind: 'sideChat', chat: chatUri, turnId: 't1' } },
+    })).toBeNull();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/side' } }) as {
+      snapshot: { state: { origin?: unknown } };
+    }).snapshot.state;
+    expect(state.origin).toEqual({ kind: 'sideChat', chat: chatUri, turnId: 't1' });
+  });
+
   it('tells a side chat what the turn said, and keeps it out of the history', async () => {
     const { client, uri, chatUri } = await running();
     client.handle({
@@ -388,7 +484,7 @@ describe('a chat made out of another', () => {
       params: {
         channel: uri, chat: 'ahp-chat:/side',
         source: { kind: 'sideChat', chat: chatUri, turnId: 't1' },
-        initialMessage: { text: 'and tomorrow?' },
+        initialMessage: { text: 'and tomorrow?', origin: { kind: 'user' } },
       },
     });
     await settle();
@@ -536,6 +632,25 @@ describe('a chat made out of another', () => {
       params: { channel: uri, chat: 'ahp-chat:/bad', source: { kind: 'fork', chat: 'ahp-chat:/elsewhere', turnId: 't1' } },
     })).rejects.toThrow(/is not a chat in/);
   });
+
+  /*
+   * A fork at a turn the chat does not hold, as after another window cut the
+   * chat back, is a fresh chat, as VS Code's host drops a fork whose point it
+   * cannot find rather than seed nothing under a fork.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7427-L7433
+   */
+  it('makes a fresh chat for a fork at a turn the chat does not hold, as VS Code\'s host', async () => {
+    const { client, uri, chatUri } = await running();
+    expect(await client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: 'ahp-chat:/fresh', source: { kind: 'fork', chat: chatUri, turnId: 'gone' } },
+    })).toBeNull();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/fresh' } }) as {
+      snapshot: { state: { turns: unknown[]; origin?: { kind?: string } } };
+    }).snapshot.state;
+    expect(state.turns).toEqual([]);
+    expect(state.origin?.kind).not.toBe('fork');
+  });
 });
 
 describe('more than one chat in a session', () => {
@@ -560,6 +675,9 @@ describe('more than one chat in a session', () => {
   it('spreads a session-scoped key across every chat', async () => {
     const { client, uri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    // The CLI each chat's first send starts.
+    await sendAnswered(client, uri);
+    await sendAnswered(client, second);
     const before = sdk.modesSet.length;
     await client.handle({
       method: 'dispatchAction',
@@ -575,6 +693,134 @@ describe('more than one chat in a session', () => {
      * schema's answer rather than this host's.
      */
     expect(sdk.modesSet.length - before).toBe(2);
+  });
+
+  /*
+   * A chat with an agent of its own is VS Code's `multipleChatProviders`,
+   * which this host does not advertise, so a request naming one is refused in
+   * VS Code's words rather than made on the session's agent.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2287-L2289
+   */
+  it('refuses a chat asked for on an agent of its own, as VS Code\'s host that offers none', async () => {
+    const { client, uri } = await running();
+    await expect(client.handle({ method: 'createChat', params: { channel: uri, chat: second, provider: 'claude' } }))
+      .rejects.toMatchObject({ code: -32602, message: 'This host does not support chats with their own agent.' });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { chats: { resource: string }[] } };
+    };
+    expect(opened.snapshot.state.chats.map((c) => c.resource)).not.toContain(second);
+  });
+
+  /*
+   * A chat's first message is its first turn, begun once the chat is made:
+   * the request is answered with the chat there, and a turn this host will not
+   * run ends in an error on the chat, which keeps the prompt, as VS Code's host
+   * accepts an initial message. One that is not the user's is refused before
+   * anything is made.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7350-L7352
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7670-L7698
+   */
+  it('answers with the chat made, and ends a first message it will not run on the chat, as VS Code\'s host', async () => {
+    const { host, client, uri } = await running();
+    host.refuseTurns('This host is stopping');
+    expect(await client.handle({
+      method: 'createChat', params: { channel: uri, chat: second, initialMessage: { text: 'hello', origin: { kind: 'user' } } },
+    })).toBeNull();
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: second } }) as {
+      snapshot: { state: { turns: { message: { text: string }; state: string }[] } };
+    }).snapshot.state;
+    expect(state.turns.map((turn) => [turn.message.text, turn.state])).toEqual([['hello', 'error']]);
+  });
+
+  /*
+   * And its `turn_end` says the start was refused, with nobody holding the
+   * message once the chat is made, as VS Code's host starts a chat's first
+   * turn with a rejection nobody can recover.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7697
+   */
+  it('raises turn_end rejected for a first message it will not run, which nobody holds once the chat is made', async () => {
+    const ends: unknown[] = [];
+    const { host, client, uri } = await running({
+      events: { turn_end: [{ by: 'probe', context: {} as never, handle: (event) => { ends.push(event); } }] },
+    });
+    host.refuseTurns('This host is stopping');
+    await client.handle({
+      method: 'createChat', params: { channel: uri, chat: second, initialMessage: { text: 'hello', origin: { kind: 'user' } } },
+    });
+    await settle();
+    expect(ends).toEqual([expect.objectContaining({
+      channel: second, reason: { kind: 'rejected', error: { errorType: 'rejected', message: 'This host is stopping' }, recoverable: false },
+    })]);
+  });
+
+  it('refuses a first message that is not the user\'s before any chat is made, as VS Code\'s host', async () => {
+    const { client, uri } = await running();
+    await expect(client.handle({ method: 'createChat', params: { channel: uri, chat: second, initialMessage: { text: 'hello' } } }))
+      .rejects.toMatchObject({ code: -32602, message: 'An initial chat message must have user origin.' });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { chats: { resource: string }[] } };
+    };
+    expect(opened.snapshot.state.chats.map((c) => c.resource)).not.toContain(second);
+  });
+
+  it('hands the backend a first message\'s model, as VS Code\'s host sends a turn with the model it names', async () => {
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const models: unknown[] = [];
+    const agent: Agent = {
+      ...base,
+      create: (start: Start): Session => {
+        const session = base.create(start) as Session;
+        return { ...session, changeModel: (model) => { models.push(model); return session.changeModel(model); } };
+      },
+    };
+    const host = createHost({ path: '/home/softov', agents: [agent] });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+    await client.handle({
+      method: 'createChat',
+      params: { channel: 'ahp-session:/one', chat: second, initialMessage: { text: 'hello', origin: { kind: 'user' }, model: { id: 'echo/fast' } } },
+    });
+    await settle();
+    expect(models).toContainEqual({ id: 'echo/fast' });
+    await host.close();
+  });
+
+  /*
+   * A chat that is there already, as VS Code's host answers one: the default
+   * chat, made with its session, answered `null` with nothing made, or its
+   * first message taken as the default chat's turn; a fork with a first
+   * message onto a chat that exists, and any other chat that exists, refused
+   * AlreadyExists.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2272-L2282
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7354-L7365
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7663-L7668
+   */
+  it('answers a chat that is there already as VS Code\'s host answers it', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    const added = (): number => actions(p, uri).filter((e) => e.action.type === 'session/chatAdded').length;
+    expect(await client.handle({ method: 'createChat', params: { channel: uri, chat: chatUri } })).toBeNull();
+    expect(added()).toBe(0);
+
+    await expect(client.handle({
+      method: 'createChat',
+      params: { channel: uri, chat: chatUri, source: { kind: 'fork', chat: chatUri, turnId: 'none' }, initialMessage: { text: 'again', origin: { kind: 'user' } } },
+    })).rejects.toMatchObject({ code: -32010, message: `Chat already exists: ${chatUri}` });
+
+    expect(await client.handle({
+      method: 'createChat', params: { channel: uri, chat: chatUri, initialMessage: { text: 'over here', origin: { kind: 'user' } } },
+    })).toBeNull();
+    await settle();
+    const own = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { activeTurn?: { message: { text: string } } } };
+    }).snapshot.state;
+    expect(own.activeTurn?.message.text).toBe('over here');
+    expect(added()).toBe(0);
+
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await expect(client.handle({ method: 'createChat', params: { channel: uri, chat: second } }))
+      .rejects.toMatchObject({ code: -32010, message: `Chat already exists: ${second}` });
   });
 
   it('opens one, and lists both on the session', async () => {
@@ -648,7 +894,7 @@ describe('more than one chat in a session', () => {
     });
     await settle();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
-    await settle();
+    await sendAnswered(client, second);
     // Config belongs to the session, not to whichever chat happened to be
     // open when it was answered.
     expect(sessionQueries().at(-1)?.options.permissionMode).toBe('plan');
@@ -675,34 +921,35 @@ describe('more than one chat in a session', () => {
     expect((listed.items[0]?.status ?? 0) & ~Status.IsRead).toBe(24);
   });
 
-  it('will not dispose the only one, and says what to do instead', async () => {
-    const { client, chatUri } = await running();
-    await expect(client.handle({ method: 'disposeChat', params: { channel: chatUri } }))
-      .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('dispose the session') });
-  });
-
-  it('closes one, and moves the default when it was the default', async () => {
+  /*
+   * VS Code answers null for a chat it finds no owner for, and its state
+   * refuses to remove a session's default chat, so the default never changes
+   * this way.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2380-L2389
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1871-L1880
+   */
+  it('answers null for the default chat and for a chat it does not hold, removing nothing, as VS Code\'s', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
-    await client.handle({ method: 'disposeChat', params: { channel: chatUri } });
+    expect(await client.handle({ method: 'disposeChat', params: { channel: chatUri } })).toBeNull();
+    expect(await client.handle({ method: 'disposeChat', params: { channel: 'ahp-chat:/nobody' } })).toBeNull();
+    expect(actions(p, uri).some((e) => e.action.type === 'session/chatRemoved' || e.action.type === 'session/defaultChatChanged')).toBe(false);
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string; chats: { resource: string }[] } };
+    };
+    expect(session.snapshot.state.defaultChat).toBe(chatUri);
+    expect(session.snapshot.state.chats.map((one) => one.resource)).toEqual([chatUri, second]);
+  });
 
-    expect(actions(p, uri).find((e) => e.action.type === 'session/defaultChatChanged')?.action.defaultChat)
-      .toBe(second);
-    expect(actions(p, uri).find((e) => e.action.type === 'session/chatRemoved')?.action.chat).toBe(chatUri);
-    /*
-     * And the URI stays the chat's that was closed.
-     *
-     * The derived default chat URI is its session's only while the session's
-     * record says it is the default, as the reference host gives one an owner:
-     * once the default has moved, that URI names nothing, and the session's
-     * `defaultChat` says which chat a client gets.
-     * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242
-     */
-    await expect(client.handle({ method: 'subscribe', params: { channel: chatUri } })).rejects.toMatchObject({ code: -32001 });
+  it('closes a chat that is not the default', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    expect(await client.handle({ method: 'disposeChat', params: { channel: second } })).toBeNull();
+    expect(actions(p, uri).find((e) => e.action.type === 'session/chatRemoved')?.action.chat).toBe(second);
     const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { defaultChat: string } };
     };
-    expect(session.snapshot.state.defaultChat).toBe(second);
+    expect(session.snapshot.state.defaultChat).toBe(chatUri);
   });
 
   it('refuses to fork one from a turn, which it cannot do', async () => {
@@ -777,7 +1024,10 @@ describe('more than one chat in a session', () => {
     };
   };
 
-  /** A host over one store folder, and a client whose window trusts. */
+  /**
+   * A host over one store folder, and a client whose window trusts and moves
+   * chats, as a VS Code window with its move setting on turns it on.
+   */
   const hostAt = async (dir: string, agent: Agent, over: Partial<HostOptions> = {}) => {
     const host = createHost({ path: DIR, agents: [agent], ...machine(), sessions: fileSessions({ dir }), ...over });
     const p = peer();
@@ -786,6 +1036,10 @@ describe('more than one chat in a session', () => {
     p.request = async () => ({ trusted: true });
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+    });
     return { host, client, p };
   };
 
@@ -833,17 +1087,17 @@ describe('more than one chat in a session', () => {
    * a move between sessions changes two catalogues at once - and a client that
    * hears only one of them is holding a chat in two places or in none.
    */
-  const apart = async (dir: string, agent: Agent) => {
+  const apart = async (dir: string, agent: Agent, beside: string[] = []) => {
     const { client, p } = await hostAt(dir, agent);
     /*
      * Both sessions work in `DIR`, which is what a chat's own folder set is
      * read against: a chat is its session's primary directory plus what it has
      * narrowed itself to, so a session with no directory has no folders for a
-     * move to carry.
+     * move to carry. `beside` are the folders the first works in beside it.
      */
     await client.handle({
       method: 'createSession',
-      params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`] },
+      params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`, ...beside.map((one) => `file://${one}`)] },
     });
     await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
     await client.handle({
@@ -892,6 +1146,20 @@ describe('more than one chat in a session', () => {
   /** What a chat said, as the text each of its turns opened with. */
   const said = (read: Read): (string | undefined)[] => read.state.turns.map((one) => one.message?.text);
 
+  /**
+   * A chat's first turn, run to its end: a chat with no turn yet is one no move
+   * is made of, as VS Code's host refuses moving it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L8150-L8160
+   */
+  const firstTurn = async (client: { handle(request: unknown): Promise<unknown> }, chat: string, turnId: string): Promise<void> => {
+    await send(client, chat, turnId, 'first');
+    await vi.waitFor(async () => {
+      const read = await opened(client, chat);
+      expect(read.state.turns.length).toBeGreaterThan(0);
+      expect((read.state as { activeTurn?: unknown }).activeTurn ?? undefined).toBeUndefined();
+    });
+  };
+
   const send = async (
     client: { handle(request: unknown): Promise<unknown> },
     channel: string,
@@ -922,18 +1190,19 @@ describe('more than one chat in a session', () => {
     try {
       const starts: Start[] = [];
       const { client } = await hostAt(join(root, 'sessions'), backend(starts));
-      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`] } });
       await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
       await settle();
       await send(client, LIVE, 't1', 'first');
       await send(client, PEER, 't2', 'second');
       const before = starts.length;
 
-      // The window adds a folder, which a backend that takes its folders at
-      // startup can only answer by starting again: the in-process restart.
+      // The window puts another folder in the first one's place, which a
+      // backend that takes its folders at startup answers by starting again
+      // there, resumed: the in-process restart.
       void client.handle({
         method: 'dispatchAction',
-        params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${DIR}/extra` } },
+        params: { channel: LIVE, action: { type: 'session/workingDirectoryReplaced', directory: `file://${DIR}`, replacement: `file://${DIR}/extra` } },
       });
       await settle(20);
 
@@ -1078,47 +1347,6 @@ describe('more than one chat in a session', () => {
       // One start, and it is the chat that is the session: a chat somebody
       // closed is not one the session comes back with.
       expect(resuming(starts.slice(before))).toEqual([{ chatId: undefined, resume: 'live', first: 'first' }]);
-    }
-    finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('starts again as the chat that took over when the first one was closed', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
-    try {
-      const dir = join(root, 'sessions');
-      const starts: Start[] = [];
-      const agent = backend(starts);
-      const first = await hostAt(dir, agent);
-      await first.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
-      await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
-      await settle();
-      await send(first.client, LIVE, 't1', 'first');
-      await send(first.client, PEER, 't2', 'second');
-      const chatUri = (await opened(first.client, LIVE)).state.defaultChat as string;
-      await first.client.handle({ method: 'disposeChat', params: { channel: chatUri } });
-      await settle();
-      await new Promise((tick) => { setTimeout(tick, 5); });
-
-      const second = await hostAt(dir, agent);
-      /*
-       * The chat that took over, and not the one that was closed.
-       *
-       * Closing the session's first chat moves the default to the chat that is
-       * left, and the store is what says so. A resume that started the closed
-       * conversation instead would read turns nobody is looking at and leave
-       * the chat the turn is sent to with no process behind it.
-       */
-      const before = starts.length;
-      await send(second.client, PEER, 't3', 'third');
-      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'second' }]);
-      expect(said(await opened(second.client, PEER))).toEqual(['second', 'third']);
-
-      // And the session lists that chat alone: a closed one is not one it has.
-      const session = await opened(second.client, 'ahp-session:/live');
-      expect(session.state.defaultChat).toBe(PEER);
-      expect(session.state.chats?.map((one) => one.resource)).toEqual([PEER]);
     }
     finally {
       rmSync(root, { recursive: true, force: true });
@@ -1275,6 +1503,42 @@ describe('more than one chat in a session', () => {
     }
   });
 
+  /*
+   * A row's time moves forward only, so a chat closed takes nothing back with
+   * it, as VS Code's host rolls a session's chats into the session's catalogue
+   * timestamp only where they are later.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
+   */
+  it('keeps the time a closed chat brought its session to', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await chatty(join(root, 'sessions'), backend([]));
+      await send(client, LIVE, 't0', 'here');
+      await flushed();
+      await send(client, PEER, 't1', 'over here');
+      await flushed();
+      const rowAt = async (): Promise<string | undefined> => ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+        items: { resource: string; modifiedAt: string }[];
+      }).items.find((one) => one.resource === LIVE)?.modifiedAt;
+      const held = await rowAt();
+      expect(held).toBeDefined();
+      const since = p.notes.length;
+
+      expect(await client.handle({ method: 'disposeChat', params: { channel: PEER } })).toBeNull();
+      await settle();
+      await flushed();
+
+      expect(await rowAt()).toBe(held);
+      expect(p.notes.slice(since)
+        .filter((n) => n.method === 'root/sessionSummaryChanged')
+        .map((n) => (n.params as { changes: { modifiedAt?: string } }).changes.modifiedAt)
+        .filter((one) => one !== undefined)).toEqual([]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('does not rebuild the chats of a session inside a machine', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
@@ -1324,6 +1588,42 @@ describe('more than one chat in a session', () => {
   });
 
   /*
+   * Moving chats is VS Code's `chatMoves.enabled`, off until a window turns it
+   * on: while it is off a chat is offered no move and a move is refused
+   * `disabled` in VS Code's words, and turning it on offers the move.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L21-L27
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L62-L67
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L7892-L7896
+   */
+  it('offers and makes no move while moving chats is off, as VS Code\'s host', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const host = createHost({ path: DIR, agents: [backend([])], ...machine(), sessions: fileSessions({ dir: join(root, 'sessions') }) });
+      const p = peer();
+      p.request = async () => ({ trusted: true });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await firstTurn(client, PEER, 't0');
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      await expect(client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'newSession' } } }))
+        .rejects.toMatchObject({ code: -32602, message: 'Moving chats is not enabled.', data: { reason: 'disabled' } });
+
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+      });
+      await settle();
+      expect((await opened(client, PEER)).state.movable).toBe(true);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
    * Whether a chat may be moved, which is what a client draws a control from.
    *
    * The host is authoritative and the protocol reads a missing key as `false`,
@@ -1334,6 +1634,7 @@ describe('more than one chat in a session', () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const { client } = await chatty(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
       const session = await opened(client, LIVE);
       const rows = session.state.chats ?? [];
       expect(rows.map((one) => one.resource)).toEqual([session.state.defaultChat, PEER]);
@@ -1355,10 +1656,62 @@ describe('more than one chat in a session', () => {
     }
   });
 
+  /*
+   * A chat with no turn yet is no chat a move is made of, and the end of its
+   * first turn makes it one, said on the chat and on its row where the answer
+   * differs from what they hold, as VS Code's host says a chat's `movable`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L69-L83
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2147-L2160
+   */
+  it('offers no move for a peer chat before its first turn, and says it movable once that turn ends', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await chatty(join(root, 'sessions'), backend([]));
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      expect((await opened(client, LIVE)).state.chats?.find((one) => one.resource === PEER)).not.toHaveProperty('movable');
+      await firstTurn(client, PEER, 't0');
+      expect(moves(p, PEER)).toEqual([true]);
+      expect(actions(p, LIVE).filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === PEER)
+        .map((e) => (e.action.changes as { movable?: boolean }).movable).filter((one) => one !== undefined)).toEqual([true]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * An archived session's chats are not offered a move and a move out of it is
+   * refused in VS Code's words, and unarchiving it offers the move again.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9505-L9509
+   */
+  it('offers no move while its session is archived, refuses one in VS Code\'s words, and offers it again unarchived', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await apart(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
+      p.notes.length = 0;
+      const archive = async (isArchived: boolean): Promise<void> => {
+        await client.handle({ method: 'dispatchAction', params: { channel: LIVE, action: { type: 'session/isArchivedChanged', isArchived } } });
+        await settle(8);
+      };
+      await archive(true);
+      expect(moves(p, PEER)).toEqual([false]);
+      await expect(client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'session', session: TWO } } }))
+        .rejects.toMatchObject({ code: -32602, message: expect.stringMatching(/^Session \S+ is archived\.$/), data: { reason: 'sessionArchived' } });
+      await archive(false);
+      expect(moves(p, PEER)).toEqual([false, true]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('takes the move away for the length of a turn, and gives it back after', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const { client, p } = await chatty(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
+      p.notes.length = 0;
       await send(client, PEER, 't1', 'over here');
 
       // A move closes the backend and starts it again, and a turn is the one
@@ -1385,6 +1738,8 @@ describe('more than one chat in a session', () => {
     try {
       const starts: Start[] = [];
       const { client, p } = await chatty(join(root, 'sessions'), backend(starts));
+      await firstTurn(client, PEER, 't0');
+      p.notes.length = 0;
       expect((await opened(client, PEER)).state.movable).toBe(true);
 
       // A worker, opened by the backend on the start the host handed it. A move
@@ -1409,28 +1764,6 @@ describe('more than one chat in a session', () => {
       await settle();
       expect((await opened(client, PEER)).state.movable).toBe(true);
       expect(moves(p, PEER)).toEqual([false, true]);
-    }
-    finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it('takes the move away from a chat that becomes the default', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
-    try {
-      const { client, p } = await chatty(join(root, 'sessions'), backend([]));
-      const first = (await opened(client, LIVE)).state.defaultChat as string;
-      expect((await opened(client, PEER)).state.movable).toBe(true);
-
-      await client.handle({ method: 'disposeChat', params: { channel: first } });
-      await settle();
-
-      // `default` is a role and not a chat, so the chat that took it over is
-      // now the one the session hands out - and it stops being movable without
-      // anybody having to speak to it again.
-      expect((await opened(client, LIVE)).state.defaultChat).toBe(PEER);
-      expect((await opened(client, PEER)).state.movable).toBe(false);
-      expect(moves(p, PEER)).toEqual([false]);
     }
     finally {
       rmSync(root, { recursive: true, force: true });
@@ -1469,6 +1802,7 @@ describe('more than one chat in a session', () => {
     try {
       const starts: Start[] = [];
       const { client, p } = await three(join(root, 'sessions'), backend(starts));
+      await firstTurn(client, THIRD, 't0');
       const first = (await opened(client, LIVE)).state.defaultChat as string;
       /*
        * A worker on the peer chat, which is a chat of the session without being
@@ -1532,6 +1866,7 @@ describe('more than one chat in a session', () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const { client, p } = await three(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
       const first = (await opened(client, LIVE)).state.defaultChat as string;
 
       // `after` is optional and its absence is not "leave it where it is": it
@@ -1554,14 +1889,24 @@ describe('more than one chat in a session', () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const { client, p } = await three(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
       const first = (await opened(client, LIVE)).state.defaultChat as string;
       const before = listed(await opened(client, LIVE));
       const ask = (channel: string, destination: unknown) =>
         client.handle({ method: 'moveChat', params: { channel, destination } });
 
       // The chat the session hands out, which the protocol says MUST NOT move.
+      // Each refusal is VS Code's: its words, and its reason in `data`.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostChatMove.ts#L90-L144
       await expect(ask(first, { kind: 'session', session: LIVE }))
-        .rejects.toThrow(/cannot be moved/);
+        .rejects.toMatchObject({ code: -32602, message: `Chat ${first} can't be moved.`, data: { reason: 'notMovable' } });
+      // A chat with no turn yet, of which nothing exists beyond its composer,
+      // whether it is reordered or made a session of its own.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L8150-L8176
+      await expect(ask(THIRD, { kind: 'session', session: LIVE }))
+        .rejects.toMatchObject({ message: `Chat ${THIRD} has no turns yet; send a message before moving it.`, data: { reason: 'notStarted' } });
+      await expect(ask(THIRD, { kind: 'newSession' }))
+        .rejects.toMatchObject({ message: `Chat ${THIRD} has no turns yet; send a message before moving it to its own session.`, data: { reason: 'notStarted' } });
       /*
        * A chat this host is not running, which is not a chat at all here.
        *
@@ -1580,12 +1925,12 @@ describe('more than one chat in a session', () => {
       // A session it is not in, which is a move between sessions - and this
       // host is not running that session, so there is nowhere to put it.
       await expect(ask(PEER, { kind: 'session', session: 'ahp-session:/elsewhere' }))
-        .rejects.toThrow(/is not a session this host is running/);
+        .rejects.toMatchObject({ message: 'Session ahp-session:/elsewhere is not available.', data: { reason: 'destinationNotFound' } });
       // Itself as its own anchor, and an anchor this session does not hold.
       await expect(ask(PEER, { kind: 'session', session: LIVE, after: PEER }))
-        .rejects.toThrow(/cannot be placed after itself/);
+        .rejects.toMatchObject({ message: 'A chat can\'t be placed after itself.', data: { reason: 'invalidAnchor' } });
       await expect(ask(PEER, { kind: 'session', session: LIVE, after: 'ahp-chat:/nowhere' }))
-        .rejects.toThrow(/is not a chat in/);
+        .rejects.toMatchObject({ message: `Chat ahp-chat:/nowhere is not a visible chat of ${LIVE}.`, data: { reason: 'invalidAnchor' } });
 
       // A rejection is a rejection: no action and no reordering, so a client
       // that was told no holds the list it already had.
@@ -1594,6 +1939,37 @@ describe('more than one chat in a session', () => {
       expect(listed(await opened(client, LIVE))).toEqual(before);
     }
     finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * A chat of a workspace-less session works in the session's scratch folder,
+   * which its default chat, staying, works in too: it is offered no move and
+   * a move is refused, in VS Code's reason and words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L9526-L9528
+   */
+  it('refuses a move of a chat working in its session\'s scratch folder, which the default chat shares', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('USERPROFILE', root);
+    try {
+      const { client } = await hostAt(join(root, 'sessions'), backend([]), { workspacelessFolder: 'scratch' });
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await opened(client, LIVE);
+      await firstTurn(client, PEER, 't0');
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      await expect(client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'newSession' } } }))
+        .rejects.toMatchObject({
+          code: -32602,
+          message: `Chat ${PEER} works in a scratch folder that another chat of ${LIVE} also uses.`,
+          data: { reason: 'workspaceless' },
+        });
+    }
+    finally {
+      vi.unstubAllEnvs();
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -1614,7 +1990,7 @@ describe('more than one chat in a session', () => {
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: THIRD, destination: { kind: 'session', session: LIVE } },
-      })).rejects.toThrow(/cannot be moved/);
+      })).rejects.toThrow(/can't be moved/);
       expect(reorders(p, LIVE)).toEqual([]);
 
       // And it is the turn rather than the chat: once the words are out, the
@@ -1681,51 +2057,106 @@ describe('more than one chat in a session', () => {
    * folders it was working in. Everything a client holds is what the actions
    * say, and the store is what a restart reads.
    */
+  /*
+   * An unread chat that counts toward its session's read state takes the
+   * unread with it: the destination is unread, and the source, its other
+   * chats read, is read, as VS Code synchronizes them after a move.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2131-L2145
+   */
+  it('carries an unread chat\'s unread to the session it moves to, and leaves its source read', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client } = await apart(join(root, 'sessions'), backend([]));
+      await firstTurn(client, PEER, 't0');
+      const mark = async (channel: string, action: Record<string, unknown>) => {
+        await client.handle({ method: 'dispatchAction', params: { channel, action } });
+        await settle(8);
+      };
+      const lead = (await opened(client, LIVE)).state.defaultChat as string;
+      await mark(lead, { type: 'chat/isReadChanged', isRead: true });
+      await mark(PEER, { type: 'chat/isReadChanged', isRead: false });
+      // The destination's default chat read, as a new session's starts unread,
+      // which reads the destination, its other chat read already.
+      await mark((await opened(client, TWO)).state.defaultChat as string, { type: 'chat/isReadChanged', isRead: true });
+      const read = async (channel: string): Promise<boolean> =>
+        (Number(((await opened(client, channel)).state as { status?: number }).status) & 32) !== 0;
+      expect(await read(LIVE)).toBe(false);
+      expect(await read(TWO)).toBe(true);
+
+      await client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'session', session: TWO } } });
+      await settle(8);
+      expect(await read(TWO)).toBe(false);
+      expect(await read(LIVE)).toBe(true);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('makes a fork from its source alone, taking none of the folders it is asked for, as VS Code\'s host makes one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const starts: Start[] = [];
+      const agent = backend(starts);
+      const { client } = await apart(join(root, 'sessions'), { ...agent, chats: { ...agent.chats, fork: true } }, [EXTRA, MORE]);
+      await send(client, PEER, 't1', 'over here');
+      const before = starts.length;
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2302-L2310
+      await client.handle({
+        method: 'createChat',
+        params: {
+          channel: LIVE, chat: 'ahp-chat:/forked', source: { kind: 'fork', chat: PEER, turnId: 't1' },
+          workingDirectories: [`file://${DIR}`, `file://${EXTRA}`],
+        },
+      });
+      await settle(20);
+      expect(starts.slice(before).map((one) => one.additional)).toEqual([[EXTRA, MORE]]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('moves a chat into another session, with its turns and its own folders', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const starts: Start[] = [];
-      const { client, p } = await apart(join(root, 'sessions'), backend(starts));
       /*
-       * Folders for the chat to keep, narrower than its session's.
+       * Folders for the chat to work in beside its session's first.
        *
-       * A chat works in a subset of its session's folders, so what travels is
-       * the chat's own set: one moved beside a session working somewhere else
-       * goes on where it was, and one narrowed to a folder of its own arrives
-       * narrowed rather than with everything its old session had.
+       * What travels is the chat's own set: one moved beside a session working
+       * somewhere else goes on where it was, with every folder it had.
        */
-      for (const directory of [EXTRA, MORE]) {
-        void client.handle({
-          method: 'dispatchAction',
-          params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${directory}` } },
-        });
-        await settle(20);
-      }
-      void client.handle({
-        method: 'dispatchAction',
-        params: { channel: PEER, action: { type: 'chat/workingDirectoryRemoved', directory: `file://${MORE}` } },
-      });
-      await settle(20);
+      const { client, p } = await apart(join(root, 'sessions'), backend(starts), [EXTRA, MORE]);
+      // The destination's first message, which announces it, so its row moves
+      // are said, and then the chat's newer one.
+      await send(client, TWO, 'w1', 'over there');
       await send(client, PEER, 't1', 'over here');
+      // Each row's moves said before the next, past the catalogue's debounce.
+      await flushed();
       const before = starts.length;
       const lead = (await opened(client, TWO)).state.defaultChat as string;
+      // The source's row as it stands with the chat in it, which a client
+      // listing the sessions holds.
+      const held = ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+        items: { resource: string; modifiedAt: string }[];
+      }).items.find((one) => one.resource === LIVE)?.modifiedAt as string;
+      const since = p.notes.length;
 
       const answer = await client.handle({
         method: 'moveChat',
         params: { channel: PEER, destination: { kind: 'session', session: TWO, after: TAIL } },
       }) as { session: string };
       await settle(20);
+      await flushed();
 
       /*
-       * One start, and it is the chat: the destination resumes the
-       * conversation the backend kept under the chat's own name, seeded with
-       * the turns it had, in the folders it was working in.
+       * No start: the chat's runtime goes on under the session it was
+       * launched for until its next turn boundary, as VS Code's move keeps a
+       * chat's runtime and relaunches it there.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L374
        */
-      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'over here' }]);
-      const mine = starts.at(-1) as Start;
-      expect(mine.uri).toBe('ahp-session:/two');
-      expect(mine.workingDirectory).toBe(DIR);
-      expect(mine.additional).toEqual([EXTRA]);
+      expect(starts.slice(before)).toEqual([]);
       // The session it landed in, published under a name a client can ask about.
       expect(answer.session).toBe('ahp-session:/two');
 
@@ -1748,28 +2179,42 @@ describe('more than one chat in a session', () => {
       /*
        * And the root rows, which is the catalogue both sessions are drawn from.
        *
-       * A row carries the time of its newest chat, so the chat arriving moves
-       * the destination's row forward and the chat leaving moves the source's
-       * row back to the newest of what it still holds. A row that kept the
-       * moved chat's time is a row a client draws in the wrong place.
+       * A row's time is the latest its chats have brought it to, and it moves
+       * forward only, as VS Code's host rolls a session's chats into the
+       * session's catalogue timestamp only where they are later: the chat
+       * arriving moves the destination's row to its own newer time, and the
+       * source's row keeps the time the chat brought it to.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3325-L3332
        */
-      // Each change carries the fields that moved, so the times are the
-      // changes that carried one.
-      const rows = p.notes
+      // Each change carries the fields that moved, so the times the move said
+      // are the changes after it that carried one.
+      const rows = p.notes.slice(since)
         .filter((n) => n.method === 'root/sessionSummaryChanged')
         .map((n) => n.params as { session: string; changes: { modifiedAt?: string } })
         .filter((one) => one.changes.modifiedAt !== undefined);
-      const cameTo = rows.filter((one) => one.session === 'ahp-session:/two');
-      const wentFrom = rows.filter((one) => one.session === 'ahp-session:/live');
-      expect(cameTo.at(-1)?.changes.modifiedAt).toBeDefined();
-      expect(wentFrom.at(-1)?.changes.modifiedAt).toBeDefined();
-      expect((wentFrom.at(-1) as { changes: { modifiedAt: string } }).changes.modifiedAt
-        < (wentFrom.at(-2) as { changes: { modifiedAt: string } }).changes.modifiedAt).toBe(true);
+      expect(rows.filter((one) => one.session === TWO).at(-1)?.changes.modifiedAt).toBe(held);
+      expect(rows.filter((one) => one.session === LIVE)).toEqual([]);
+      const after = ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+        items: { resource: string; modifiedAt: string }[];
+      }).items;
+      expect(after.find((one) => one.resource === LIVE)?.modifiedAt).toBe(held);
+      expect(after.find((one) => one.resource === TWO)?.modifiedAt).toBe(held);
 
       // Its turns came with it, and it goes on from there.
       expect(said(await opened(client, PEER))).toEqual(['over here']);
       await send(client, PEER, 't2', 'and again');
       expect(said(await opened(client, PEER))).toEqual(['over here', 'and again']);
+      /*
+       * Its next turn is where it starts again, and it is the one start: the
+       * destination resumes the conversation the backend kept under the
+       * chat's own name, seeded with the turns it had, in the folders it was
+       * working in.
+       */
+      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'over here' }]);
+      const mine = starts.at(-1) as Start;
+      expect(mine.uri).toBe('ahp-session:/two');
+      expect(mine.workingDirectory).toBe(DIR);
+      expect(mine.additional).toEqual([EXTRA, MORE]);
     }
     finally {
       rmSync(root, { recursive: true, force: true });
@@ -1781,6 +2226,7 @@ describe('more than one chat in a session', () => {
     try {
       const starts: Start[] = [];
       const { client, p } = await apart(join(root, 'sessions'), backend(starts));
+      await firstTurn(client, PEER, 't0');
       // A worker on the chat that is about to move, which is a chat of the
       // session that is not one a client opened.
       const worker = starts.find((one) => one.chatId === UUID)
@@ -1857,6 +2303,10 @@ describe('more than one chat in a session', () => {
       p.request = async () => ({ trusted: true });
       const client = host.accept(p);
       await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+      });
       await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
       await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
       await client.handle({ method: 'createSession', params: { channel: OTHERS, provider: 'claude' } });
@@ -1866,20 +2316,24 @@ describe('more than one chat in a session', () => {
       });
       await settle(20);
       await opened(client, LIVE);
+      await firstTurn(client, PEER, 't0');
       const before = starts.length;
 
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: PEER, destination: { kind: 'session', session: OTHERS } },
-      })).rejects.toThrow(/between providers is not supported yet/);
+      })).rejects.toMatchObject({
+        message: 'Chats can only move between sessions of the same agent. Turn on chats with their own agents to move it to a session of another agent.',
+        data: { reason: 'differentProvider' },
+      });
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: PEER, destination: { kind: 'session', session: ONBOX } },
-      })).rejects.toThrow(/between computers is not supported yet/);
+      })).rejects.toMatchObject({ message: expect.stringMatching(/between computers is not supported yet/), data: { reason: 'unsupported' } });
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: PEER, destination: { kind: 'session', session: 'ahp-session:/nowhere' } },
-      })).rejects.toThrow(/is not a session this host is running/);
+      })).rejects.toMatchObject({ message: 'Session ahp-session:/nowhere is not available.', data: { reason: 'destinationNotFound' } });
 
       /*
        * Nothing was started and nothing moved: a refusal that closed the chat
@@ -1897,7 +2351,14 @@ describe('more than one chat in a session', () => {
     }
   });
 
-  it('leaves a chat in its session when the destination will not start it', async () => {
+  /*
+   * A move starts nothing: the chat's runtime goes on until its next turn
+   * boundary relaunches it under the destination, as VS Code moves only
+   * ownership, so a destination whose backend will not start the chat takes
+   * the move, and the relaunch failing ends the turn that waited on it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L374
+   */
+  it('moves a chat to a session whose backend will not start it, and ends its next turn in that start\'s failure', async () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     try {
       const starts: Start[] = [];
@@ -1918,24 +2379,49 @@ describe('more than one chat in a session', () => {
       await expect(client.handle({
         method: 'moveChat',
         params: { channel: PEER, destination: { kind: 'session', session: TWO } },
-      })).rejects.toThrow(/will not work there/);
+      })).resolves.toEqual({ session: TWO });
       await settle(20);
-
-      /*
-       * The chat is where it was, with a process behind it again and its turns
-       * read back - and the client was told nothing had moved, so the two have
-       * to agree.
-       */
-      const from = await opened(client, LIVE);
-      expect(listed(from)).toEqual([from.state.defaultChat, PEER]);
-      expect(reorders(p, LIVE)).toEqual([]);
-      expect(reorders(p, TWO)).toEqual([]);
-      await send(client, PEER, 't2', 'and again');
-      expect(said(await opened(client, PEER))).toEqual(['over here', 'and again']);
-
-      // And nowhere has it arrived: the destination holds its own chat only.
       const there = await opened(client, TWO);
-      expect(listed(there)).toEqual([there.state.defaultChat, TAIL]);
+      expect(listed(there)).toContain(PEER);
+
+      // Its next turn is where it starts again under the destination, which
+      // refuses it, and the turn ends in that failure.
+      await send(client, PEER, 't2', 'and again');
+      await settle(20);
+      const ended = actions(p, PEER).filter((e) => e.action.type === 'chat/error' && e.action.turnId === 't2');
+      expect(JSON.stringify(ended.map((e) => e.action.part))).toContain('will not work there');
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('announces a session made for a moved chat once the chat has left its source, ready with the chat, as VS Code\'s host promotes one', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const first = await chatty(join(root, 'sessions'), backend([]));
+      await send(first.client, PEER, 't1', 'over here');
+      const outgoing = (await opened(first.client, LIVE)).state.defaultChat as string;
+      await send(first.client, outgoing, 't0', 'the one it leaves');
+      const from = first.p.notes.length;
+      const answer = await first.client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'newSession' } },
+      }) as { session: string };
+      await settle(20);
+      const told = first.p.notes.slice(from);
+      const removedAt = told.findIndex((one) => one.method === 'action'
+        && (one.params as Bag).channel === LIVE && ((one.params as Bag).action as Bag).type === 'session/chatRemoved');
+      const addedAt = told.findIndex((one) => one.method === 'root/sessionAdded'
+        && ((one.params as Bag).summary as Bag).resource === answer.session);
+      expect(removedAt).toBeGreaterThanOrEqual(0);
+      expect(addedAt).toBeGreaterThan(removedAt);
+      // Nothing said on the new session itself: it is made ready, holding the chat.
+      expect(told.filter((one) => one.method === 'action' && (one.params as Bag).channel === answer.session)
+        .map((one) => ((one.params as Bag).action as Bag).type)).toEqual([]);
+      const there = await opened(first.client, answer.session);
+      expect((there.state as { lifecycle?: string }).lifecycle ?? 'ready').toBe('ready');
+      expect(listed(there)).toEqual([PEER]);
     }
     finally {
       rmSync(root, { recursive: true, force: true });
@@ -1976,8 +2462,9 @@ describe('more than one chat in a session', () => {
        * offer the same transcript twice.
        */
       expect(answer.session).toBe(`ahp-session:/${UUID}`);
-      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'over here' }]);
-      expect(starts.at(-1)?.uri).toBe(`ahp-session:/${UUID}`);
+      // The chat's runtime goes on until its next turn boundary, as VS Code's
+      // move keeps a chat's runtime and relaunches it there.
+      expect(starts.slice(before)).toEqual([]);
 
       const there = await opened(first.client, answer.session);
       expect(there.state.defaultChat).toBe(PEER);
@@ -2077,6 +2564,29 @@ describe('a chat renamed on its own channel', () => {
     expect(session.snapshot.state.chats.find((one) => one.resource === second)?.title).toBe('Renamed');
     const own = await client.handle({ method: 'subscribe', params: { channel: second } }) as { snapshot: { state: { title: string } } };
     expect(own.snapshot.state.title).toBe('Renamed');
+  });
+
+  /*
+   * VS Code's host takes a rename as its client sent it, a blank title and
+   * one with spaces around it included.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L53-L78
+   */
+  it('takes a blank title and an untrimmed one as they were sent', async () => {
+    const { client, peer: p, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await client.handle({ method: 'subscribe', params: { channel: second } });
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: second, clientSeq: 6, action: { type: 'session/titleChanged', title: '' } } });
+    client.handle({ method: 'dispatchAction', params: { channel: second, clientSeq: 7, action: { type: 'session/titleChanged', title: '  Spaced  ' } } });
+    await settle();
+    expect(titled(p)).toEqual([
+      [second, { type: 'session/titleChanged', title: '' }, { clientId: 'probe', clientSeq: 6 }],
+      [uri, { type: 'session/chatUpdated', chat: second, changes: { title: '' } }, undefined],
+      [second, { type: 'session/titleChanged', title: '  Spaced  ' }, { clientId: 'probe', clientSeq: 7 }],
+      [uri, { type: 'session/chatUpdated', chat: second, changes: { title: '  Spaced  ' } }, undefined],
+    ]);
   });
 
   it('renames a default chat on its channel in its row, then its session', async () => {
@@ -2212,13 +2722,20 @@ describe('a chat of another backend', () => {
     };
   };
 
-  /** A host serving these backends over one store, and a client whose window trusts. */
+  /**
+   * A host serving these backends over one store, and a client whose window
+   * trusts and moves chats.
+   */
   const hostAt = async (agents: Agent[], store: ReturnType<typeof memorySessions>, over: Partial<HostOptions> = {}) => {
     const host = createHost({ path: DIR, agents, ...machine(), sessions: store, ...over });
     const p = peer();
     p.request = async () => ({ trusted: true });
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+    });
     return { host, client, p };
   };
 
@@ -2306,11 +2823,14 @@ describe('a chat of another backend', () => {
 
     const beganLead = startsOne.length;
     const beganTwo = startsTwo.length;
-    // A folder added to the session, which a backend that takes its folders at
-    // startup can only answer by starting again.
+    // Another folder put in the first one's place, which a backend that takes
+    // its folders at startup answers by starting again there.
+    const first = ((await second.client.handle({ method: 'subscribe', params: { channel: LIVE } })) as {
+      snapshot: { state: { workingDirectories?: string[] } };
+    }).snapshot.state.workingDirectories?.[0];
     second.client.handle({
       method: 'dispatchAction',
-      params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${EXTRA}` } },
+      params: { channel: LIVE, action: { type: 'session/workingDirectoryReplaced', directory: first, replacement: `file://${EXTRA}` } },
     });
     await settle(20);
     expect(resuming(startsTwo.slice(beganTwo))).toEqual([{ chatId: UUID, resume: UUID, first: 'second' }]);
@@ -2360,36 +2880,6 @@ describe('a chat of another backend', () => {
     // And no chat of `one` was started to hold the session: the default chat is
     // the chat of `two`, and it is a chat of the session, not the session.
     expect(startsOne.slice(beganOne)).toEqual([]);
-  });
-
-  it('starts a chat of another backend again on that backend when only the chat restarts', async () => {
-    const startsOne: Start[] = [];
-    const startsTwo: Start[] = [];
-    const { second } = await opening(backend('one', startsOne), backend('two', startsTwo));
-    await send(second.client, PEER, 't3', 'third');
-    /*
-     * A folder the session may work in, added the way a window adds one. The
-     * restart behind it is a session restart and starts both chats again,
-     * which is also what leaves the chat's own set something to narrow.
-     */
-    second.client.handle({
-      method: 'dispatchAction',
-      params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${EXTRA}` } },
-    });
-    await settle(20);
-
-    const beganOne = startsOne.length;
-    const beganTwo = startsTwo.length;
-    second.client.handle({
-      method: 'dispatchAction',
-      params: { channel: PEER, action: { type: 'chat/workingDirectoryRemoved', directory: `file://${EXTRA}` } },
-    });
-    await settle(8);
-    // The chat, and only the chat: one conversation's folders are its own.
-    expect(resuming(startsTwo.slice(beganTwo))).toEqual([{ chatId: UUID, resume: UUID, first: 'second' }]);
-    expect(startsOne.slice(beganOne)).toEqual([]);
-    // Narrowed to nothing, so it works in the session's folder again.
-    expect(startsTwo.at(-1)?.additional).toBeUndefined();
   });
 
   it('rewinds a chat of another backend on that backend', async () => {
@@ -2473,6 +2963,9 @@ describe('a chat of another backend', () => {
     second.client.handle({ method: 'createChat', params: { channel: LIVE, chat: THIRD } });
     second.client.handle({ method: 'createSession', params: { channel: TWO, provider: 'one' } });
     await settle(8);
+    // Its first turn, which a chat has run before a move is made of it.
+    await send(second.client, THIRD, 't0', 'first');
+    await vi.waitFor(async () => { expect((await opened(second.client, THIRD)).state.turns.length).toBeGreaterThan(0); });
 
     const here = await opened(second.client, LIVE);
     expect(here.state.chats?.find((chat) => chat.resource === THIRD)?.movable).toBe(true);
@@ -2481,7 +2974,7 @@ describe('a chat of another backend', () => {
     await expect(second.client.handle({
       method: 'moveChat',
       params: { channel: PEER, destination: { kind: 'session', session: TWO } },
-    })).rejects.toThrow(/another backend cannot move/);
+    })).rejects.toMatchObject({ data: { reason: 'differentProvider' } });
     // And nothing moved: it is still a chat of its session, answering on the
     // backend it runs on.
     const after = await opened(second.client, LIVE);
@@ -2560,5 +3053,83 @@ describe('an action naming a chat or session nobody has', () => {
       snapshot: { state: { chats: { resource: string }[] } };
     };
     expect(session.snapshot.state.chats.map((one) => one.resource)).not.toContain(gone);
+  });
+});
+
+/*
+ * A turn naming a model its chat's agent does not offer is decided once, by
+ * the host, where VS Code's host decides it, before the turn reaches the
+ * backend: `fail`, the default, ends it, as upstream decided, and `keep` is
+ * VS Code's, a chat whose agent is not its session's keeping its model and any
+ * other chat's agent handed the model as it is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2226-L2231
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnTelemetryContext.ts#L44-L55
+ */
+describe('a turn naming a model its agent does not offer', () => {
+  /** What each backend was handed: the models it was switched to and the turns it was sent. */
+  interface Handed { models: string[]; sent: string[] }
+
+  /** The example backend under `provider`, offering `m1` alone. */
+  const offering = (provider: string, handed: Handed): Agent => {
+    const base = echo({ path: '/home/softov', pace: 0 });
+    return {
+      ...base,
+      provider,
+      displayName: provider,
+      create: (start: Start): Session => {
+        const session = base.create(start) as Session;
+        return {
+          ...session,
+          models: () => [{ id: 'm1', name: 'One' }],
+          changeModel: (model) => { handed.models.push(`${provider}:${model.id}`); return session.changeModel(model); },
+          sendMessage: (turnId, text, from, attachments, options) => {
+            handed.sent.push(`${provider}:${turnId}`);
+            return session.sendMessage(turnId, text, from, attachments, options);
+          },
+        };
+      },
+    };
+  };
+
+  /** A host with an `echo` session, and a client watching its chat. */
+  const started = async (over: Partial<HostOptions> = {}) => {
+    const handed: Handed = { models: [], sent: [] };
+    const host = createHost({ path: '/home/softov', agents: [offering('echo', handed)], ...over });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+    const chat = chatUriFor('ahp-session:/one');
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    const ask = async (turnId: string, model: string): Promise<void> => {
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text: 'hi', origin: { kind: 'user' }, model: { id: model } } } },
+      });
+      await settle(8);
+    };
+    const failed = (turnId: string): unknown => (actions(p, chat)
+      .find((e) => e.action.type === 'chat/error' && e.action.turnId === turnId)?.action.part as Bag | undefined)?.error;
+    return { host, handed, ask, failed };
+  };
+
+  it('ends the turn by default, its backend never handed it', async () => {
+    const { host, handed, ask, failed } = await started();
+    await ask('t1', 'm2');
+    expect(failed('t1')).toEqual({ errorType: 'modelSelectionFailed', message: 'Its agent echo does not offer the turn\'s model m2' });
+    expect(handed).toEqual({ models: [], sent: [] });
+    // A model it offers is taken.
+    await ask('t2', 'm1');
+    expect(failed('t2')).toBeUndefined();
+    expect(handed).toEqual({ models: ['echo:m1'], sent: ['echo:t2'] });
+    await host.close();
+  });
+
+  it('hands the session\'s own agent the model as it is under keep, as VS Code\'s host does', async () => {
+    const { host, handed, ask, failed } = await started({ unofferedModel: 'keep' });
+    await ask('t1', 'm2');
+    expect(failed('t1')).toBeUndefined();
+    expect(handed).toEqual({ models: ['echo:m2'], sent: ['echo:t1'] });
+    await host.close();
   });
 });

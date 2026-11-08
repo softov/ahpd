@@ -108,6 +108,7 @@ export const NEEDS: Record<string, Grant> = {
 
   // diagnostics
   'vscode/collectAgentHostDebugLogs': 'diagnostics:logs',
+  'vscode/cancelAgentHostDebugLogs': 'diagnostics:logs',
   'vscode/readAgentHostDebugLogsChunk': 'diagnostics:logs',
   getNetworkDiagnosticsInfo: 'diagnostics:network',
   // The window asks this beside `getNetworkDiagnosticsInfo`, for the same
@@ -254,8 +255,8 @@ export const UNGATED = new Set([
  * A plugin channel needs the grant its plugin registered, `served`, which the
  * caller reads off `HostOptions.channels`.
  *
- * What is left - a `file:` URI, a resource watch, one another client relays,
- * an `x-` scheme no plugin serves - is `file:watch`, the operation
+ * What is left - a `file:` URI, a resource watch, an `x-` scheme no plugin
+ * serves - is `file:watch`, the operation
  * `createResourceWatch` requires to hand a watch over.
  */
 export const channelRead = (channel: string, kind: ChannelKind, served?: Grant): Grant => {
@@ -285,11 +286,9 @@ export const channelRead = (channel: string, kind: ChannelKind, served?: Grant):
  * no key changes nothing, and needs a sign-in and no grant (`undefined`).
  *
  * The other is `file:watch` for a channel that is neither a session's nor a
- * terminal's - a `file:` URI, a resource watch, one another client relays. An
- * action on one of those is a client reporting a change to something it is
- * watching, which is the grant the watch itself was handed under. The
- * automations are the one `other` that has actions of its own, and those are
- * `ACTION_NEEDS`' to say.
+ * terminal's - a `file:` URI, a resource watch - the grant a watch is handed
+ * under. The automations are the one `other` that has actions of its own, and
+ * those are `ACTION_NEEDS`' to say.
  *
  * A dispatch is a notification, so what it gets on refusal is `rejectionReason`
  * on the channel rather than an error code.
@@ -337,26 +336,32 @@ export const computerNeeds = (action: Record<string, unknown>): Grant | undefine
  * one of those values may be a credential.
  * The read is the whole group rather than the `settings` operation beside it:
  * what is behind it is every key the daemon holds, not one of them.
- * The host's own root holds every grant, as it does at every other gate.
- * A host with no people directory has nobody to ask, so nobody sees them.
+ * The host's own root holds every grant, as it does at every other gate. A
+ * host with no people directory serves the whole root config to every
+ * connection, as the reference host serves it to every client.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4307-L4317
  */
-export const seesConfig = (connection: Connection | undefined): boolean =>
-  connection?.root === true || connection?.principal?.can('config:settings') === true;
+export const seesConfig = (connection: Connection | undefined, directory: boolean): boolean =>
+  !directory || connection?.root === true || connection?.principal?.can('config:settings') === true;
 
 /**
  * Whether this connection is somebody who may read the account an agent bills to.
  *
  * The account is the operator's: an email and a plan, out of the CLI this
- * daemon runs. Root state is readable before anybody signs in, so a connection
- * that is not the host and does not hold `account:read` is shown none of it -
- * decision `an-agent-account-is-shown-to-account-readers`.
+ * daemon runs. Under a people directory, root state is readable before anybody
+ * signs in, so a connection that is not the host and does not hold
+ * `account:read` is shown none of it - decision
+ * `an-agent-account-is-shown-to-account-readers`, against a remote guest. A
+ * host with no directory has no guests, and serves the account to every
+ * connection, as the reference host serves an agent's account in the root
+ * config every client reads.
  *
  * `account:status`, the operation, rather than the read group: a role that
  * holds the group covers it, as a role holding `config:read` covers the
  * settings this host asks for by their own operation.
  */
-export const seesAccount = (connection: Connection | undefined): boolean =>
-  connection?.root === true || connection?.principal?.can('account:status') === true;
+export const seesAccount = (connection: Connection | undefined, directory: boolean): boolean =>
+  !directory || connection?.root === true || connection?.principal?.can('account:status') === true;
 
 /** The kinds of channel a family of client action can belong on. */
 export type Home = 'session' | 'terminal' | 'automations' | 'root' | 'watch';
@@ -439,8 +444,3 @@ export const DECLARED: Record<string, string | undefined> = {
   runAutomation: AUTOMATIONS,
   fetchAutomationRuns: AUTOMATIONS,
 };
-
-export const REVERSE = new Set([
-  'resourceRead', 'resourceWrite', 'resourceList', 'resourceCopy', 'resourceDelete',
-  'resourceMove', 'resourceResolve', 'resourceMkdir', 'resourceRequest', 'createResourceWatch',
-]);

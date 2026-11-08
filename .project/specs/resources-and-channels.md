@@ -28,7 +28,7 @@ refs:
   - "[code://packages/sdk/src/plugins/plugins.ts#L384-L416](../../packages/sdk/src/plugins/plugins.ts#L384-L416) - a scheme, channel or command that another plugin already has"
   - "[code://packages/sdk/src/plugins/validate.ts#L213-L248](../../packages/sdk/src/plugins/validate.ts#L213-L248) - `checkScheme` and `reservedName`"
   - "[code://packages/sdk/src/types/plugin.ts#L175-L232](../../packages/sdk/src/types/plugin.ts#L175-L232) - `PluginChannel`, `PublishOptions` and `ChannelHandle`"
-  - "[code://packages/sdk/src/host.ts#L540-L558](../../packages/sdk/src/host.ts#L540-L558) - `seenBy`, the test of each action per subscriber"
+  - "[code://packages/sdk/src/host.ts#L708-L783](../../packages/sdk/src/host.ts#L708-L783) - `projectActionForClient`, the test of each action per subscriber"
   - "[code://packages/sdk/src/host/actions.ts#L82-L90](../../packages/sdk/src/host/actions.ts#L82-L90) - a client's action on a plugin channel is refused"
   - "[code://packages/sdk/src/resources/recordschannel.ts#L245-L246](../../packages/sdk/src/resources/recordschannel.ts#L245-L246) - the `put` and `remove` command names of a records domain"
   - "[code://packages/push/src/provider.ts#L117-L125](../../packages/push/src/provider.ts#L117-L125) - `shownOf`, a device without its token"

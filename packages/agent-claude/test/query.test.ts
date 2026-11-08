@@ -13,7 +13,7 @@ import { claude } from '../src/claude.js';
  * so it gets the folder's `CLAUDE.md` and none of `~/.claude`.
  */
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: ({ options }: { options: Record<string, unknown> }) => {
     sdk.options.push(options);
@@ -55,7 +55,7 @@ const folder = (): string => {
   return dir;
 };
 
-/** The `settingSources` one session is built with, from the two answers. */
+/** The `settingSources` one session's first send starts its CLI with, from the two answers. */
 const sources = async (
   trusted: boolean | undefined,
   userSettings: boolean | undefined,
@@ -74,7 +74,7 @@ const sources = async (
     clientToolTimeoutMs: 0,
     schema: () => ({ type: 'object', properties: {} }),
     emit: () => {},
-  });
+  }).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');

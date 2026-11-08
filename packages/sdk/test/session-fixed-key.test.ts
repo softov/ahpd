@@ -166,6 +166,29 @@ it('starts the session again for a fixed key, and the first turn lands there', a
 });
 
 /*
+ * The change is said at once and the backend, which reads a fixed key only
+ * when it starts, is started again at the session's next turn boundary, as
+ * VS Code relaunches a runtime there: nothing restarts while no turn comes.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L1095-L1101
+ */
+it('says a fixed key\'s change at once, and starts the backend again only at the next turn', async () => {
+  const { client, p, uri, chatUri, spawns, began } = await opened();
+  await change(client, uri, { fixed: 'two' });
+  await settle();
+
+  expect(spawns).toHaveLength(1);
+  const changed = p.notes.filter((one) => one.method === 'action').map((one) => one.params as Note)
+    .filter((one) => one.action.type === 'session/configChanged');
+  expect(changed.map((one) => one.action.config)).toEqual([{ fixed: 'two' }]);
+
+  void turn(client, chatUri);
+  await settle();
+  expect(spawns).toHaveLength(2);
+  expect(spawns[1]?.settings.fixed).toBe('two');
+  expect(began).toEqual([{ spawn: 1, text: 'go' }]);
+});
+
+/*
  * The restart is the turn's preparation, so a restart that fails ends the turn
  * said meanwhile in an error in its words, as VS Code's host ends a turn whose
  * preparation failed.
@@ -191,6 +214,46 @@ it('ends the turn that waited on a restart in an error with the failure', async 
     ['chat/error', undefined],
   ]);
   expect(said[1]?.action.part).toMatchObject({ error: { errorType: 'sendFailed', message: 'the backend would not start' } });
+});
+
+/*
+ * A first message whose start fails ends in its error, and the session, still
+ * being created, fails its creation after it and is then announced, as VS
+ * Code's host fails a session its first send could not bring up.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2446-L2480
+ */
+it('fails the creation of a session its first message could not bring up, after the turn\'s error, and announces it, as VS Code\'s host', async () => {
+  const { client, p, uri, chatUri } = await opened(undefined, 1);
+  void change(client, uri, { fixed: 'two' });
+  void turn(client, chatUri);
+  await settle();
+
+  const said = p.notes.flatMap((one) => {
+    if (one.method === 'root/sessionAdded') return ['root/sessionAdded'];
+    if (one.method !== 'action') return [];
+    const { action } = one.params as Note;
+    return ['chat/turnStarted', 'chat/error', 'session/ready', 'session/creationFailed'].includes(String(action.type))
+      ? [String(action.type)]
+      : [];
+  });
+  expect(said).toEqual(['chat/turnStarted', 'chat/error', 'session/creationFailed', 'root/sessionAdded']);
+  const failed = p.notes.map((one) => one.params as Note).find((one) => one.action?.type === 'session/creationFailed');
+  expect(failed?.action.error).toMatchObject({ errorType: 'sendFailed', message: 'the backend would not start' });
+  const read = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { lifecycle: string } };
+  };
+  expect(read.snapshot.state.lifecycle).toBe('failed');
+
+  // A message sent again tries the start again, and ends in its error.
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', startedAt: new Date().toISOString(), message: { text: 'again', origin: { kind: 'user' } } } },
+  });
+  await settle();
+  const again = p.notes.filter((one) => one.method === 'action').map((one) => one.params as Note)
+    .filter((one) => one.action.turnId === 't2');
+  expect(again.map((one) => [one.action.type, one.rejectionReason])).toEqual([['chat/turnStarted', undefined], ['chat/error', undefined]]);
+  expect(again[1]?.action.part).toMatchObject({ error: { errorType: 'sendFailed', message: 'the backend would not start' } });
 });
 
 it('does not start anything again for a value that did not move', async () => {
@@ -389,7 +452,13 @@ it('keeps a change the backend took while the session was being started again', 
   expect(store.config('fixed')).toMatchObject({ fixed: 'two', mutable: 'b' });
 });
 
-it('applies a config change and a turn sent while the session starts again into a machine, in order, to the new backend', async () => {
+/*
+ * A change the running backend takes is handed to it at once, and the turn
+ * after it goes to the backend its relaunch into the machine brings up, as
+ * VS Code says a change at once and relaunches at the next turn boundary.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L1095-L1101
+ */
+it('hands a change to the running backend, and a turn after it to the backend its relaunch into a machine brings up, in order', async () => {
   const base = echo({ path: DIR, pace: 0 });
   /** What each backend was told, by the spawn it was. */
   const said: string[] = [];
@@ -431,8 +500,9 @@ it('applies a config change and a turn sent while the session starts again into 
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/boxed' } });
   void change(client, 'ahp-session:/boxed', { computer: 'disposable:box' });
   await settle();
-  // The machine is still being made: the old backend is gone and the new one
-  // not yet started. Both are sent back to back, as the first send does.
+  // Both are sent back to back, as the first send does: the change reaches
+  // the backend still running, and the turn is the session's next turn
+  // boundary, where its relaunch into the machine runs.
   void change(client, 'ahp-session:/boxed', { mutable: 'b' });
   void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
   // And one on another channel, which this connection sent after them.
@@ -440,7 +510,7 @@ it('applies a config change and a turn sent while the session starts again into 
   await settle();
   made('m1');
   await settle();
-  expect(said).toEqual(['1: mutable=b', '1: begin go']);
+  expect(said).toEqual(['0: mutable=b', '1: begin go']);
   const echoed = p.notes.filter((n) => n.method === 'action').map((n) => (n.params as Note).action)
     .filter((action) => action.type === 'root/configChanged' || (action.type === 'session/configChanged' && (action.config as Bag).mutable === 'b'))
     .map((action) => String(action.type));
@@ -592,6 +662,10 @@ const notesOf = (r: ReturnType<typeof peer>): Note[] => r.notes.filter((n) => n.
  */
 it('holds a dispatch behind its client\'s waiting one, sent on another connection of that client', async () => {
   const { host, client, machine } = await intoMachine();
+  // The turn is the session's next turn boundary, where its relaunch into the
+  // machine runs, and what the client sends after it waits for the relaunch.
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
+  await settle();
   void client.handle({ method: 'dispatchAction', params: { channel: chatUriFor('ahp-session:/boxed'), action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });
   await settle();
   const q = peer();
@@ -620,6 +694,28 @@ it('begins a turn that waited on a restart after its connection left', async () 
   machine.made('m1');
   await settle();
   expect(said).toEqual(['1: begin go']);
+});
+
+/*
+ * A dispatch that waited is applied whatever became of the connection that
+ * sent it, and every client of its channel is told, as VS Code's host runs a
+ * client's queued dispatch.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L12507-L12649
+ */
+it('applies a dispatch that waited on a restart after its connection left', async () => {
+  const { host, client, machine } = await intoMachine();
+  const chat = chatUriFor('ahp-session:/boxed');
+  const q = peer();
+  const other = host.accept(q);
+  await other.handle({ method: 'initialize', params: { clientId: 'other', protocolVersions: ['0.9.0'] } });
+  await other.handle({ method: 'subscribe', params: { channel: chat } });
+  void client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 4, action: { type: 'chat/draftChanged', draft: { text: 'half', origin: { kind: 'user' } } } } });
+  await settle();
+  client.close();
+  machine.made('m1');
+  await settle();
+  expect(notesOf(q).filter((note) => note.action.type === 'chat/draftChanged').map((note) => [note.origin?.clientId, note.origin?.clientSeq]))
+    .toEqual([['probe', 4]]);
 });
 
 /*
@@ -654,6 +750,10 @@ it('applies a dispatch that waited on a restart however long it took, and the ne
   const { p, client, machine } = await intoMachine();
   const chat = chatUriFor('ahp-session:/boxed');
   await client.handle({ method: 'subscribe', params: { channel: chat } });
+  // The turn is the session's next turn boundary, where its relaunch into the
+  // machine runs, and what the client sends after it waits for the relaunch.
+  void turn(client, chat, 'first');
+  await settle();
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
     void client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/draftChanged', draft: { text: 'go', origin: { kind: 'user' } } } } });
@@ -692,7 +792,7 @@ it('answers a config change that waited on the catalogue however long it took', 
   expect(actions(p, 'echo:/nowhere')).toEqual([]);
   listed([]);
   await settle();
-  expect(actions(p, 'echo:/nowhere').map((note) => note.rejectionReason)).toEqual(['echo:/nowhere is not a session here']);
+  expect(actions(p, 'echo:/nowhere').map((note) => note.rejectionReason)).toEqual(['No agent for session: echo:/nowhere']);
   expect(store.config('nowhere')).toBeUndefined();
 });
 
@@ -749,13 +849,13 @@ it('keeps a session\'s chat names while the session starts again', async () => {
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/boxed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
-  expect(await asked(client, 'createChat', { channel: 'ahp-session:/boxed', chat: 'peer:/side' })).toHaveProperty('result');
+  expect(await asked(client, 'createChat', { channel: 'ahp-session:/boxed', chat: 'ahp-chat:/side' })).toHaveProperty('result');
   void change(client, 'ahp-session:/boxed', { computer: 'disposable:box' });
   await settle();
   // The session is being started again into its machine: its chats are gone
   // from the backend and not yet back, and their names are still its.
-  expect(await asked(client, 'createTerminal', { channel: 'peer:/side', cwd: DIR })).toMatchObject({ code: -32003 });
+  expect(await asked(client, 'createTerminal', { channel: 'ahp-chat:/side', cwd: DIR })).toMatchObject({ code: -32003 });
   machine.made('m1');
   await settle();
-  expect(await asked(client, 'createTerminal', { channel: 'peer:/side', cwd: DIR })).toMatchObject({ code: -32003 });
+  expect(await asked(client, 'createTerminal', { channel: 'ahp-chat:/side', cwd: DIR })).toMatchObject({ code: -32003 });
 });

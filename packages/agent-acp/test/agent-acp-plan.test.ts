@@ -229,7 +229,15 @@ it('draws no call of its own for a plan while the list goes to the host', async 
   expect(actions(p, chatUri).some((e) => String(e.action.type).startsWith('chat/toolCall'))).toBe(false);
 });
 
-it('draws the Plan call from the host\'s tasks when the tasks plugin holds them', async () => {
+/*
+ * The host draws the session's tasks as a call in each turn running when the
+ * list changes, and completes it as the turn ends; the turn's end is said as
+ * the server says it, holding for no read, as VS Code says a turn's end as
+ * its agent ends it. So the turn here stays open on a question while the
+ * list is drawn, and ends once it is answered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L917
+ */
+it('draws the todo list call from the host\'s tasks when the tasks plugin holds them', async () => {
   const { client, peer: p, chatUri, heard } = await planning(true);
   // Held open after its plans, so the row is drawn in a turn that still runs.
   begin(client, chatUri, 't1', 'plan it and wait');
@@ -239,7 +247,7 @@ it('draws the Plan call from the host\'s tasks when the tasks plugin holds them'
   await until(() => finished(p, chatUri, 1));
 
   // The bridge draws none of its own: one row, opened once and completed by
-  // the turn ending, whose lines are the session's tasks rather than the
+  // the turn ending, whose lines are the session's tasks, apart from the
   // entries the server sent.
   const calls = planCalls(p, chatUri, 't1');
   expect(calls.filter((type) => type === 'chat/toolCallStart')).toHaveLength(1);

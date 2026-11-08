@@ -192,7 +192,7 @@ describe('the line a pipe spawn is given', () => {
     const start: SpawnShell = (nextShell, args, options) => {
       calls.push({ shell: nextShell, args, options });
       return {
-        stdin: { writable: false, end: () => {} },
+        stdin: { writable: false, end: () => {}, on: () => {} },
         stdout: { setEncoding: () => {}, on: () => {} },
         stderr: { setEncoding: () => {}, on: () => {} },
         pid: undefined,

@@ -38,7 +38,7 @@ afterEach(async () => {
 });
 
 /** A session of the fixture, with every action it emits kept. */
-function talking(flags: string[], options: Partial<AcpOptions> = {}): { session: Session; actions: Bag[] } {
+async function talking(flags: string[], options: Partial<AcpOptions> = {}): Promise<{ session: Session; actions: Bag[] }> {
   const actions: Bag[] = [];
   const agent = acpAgent({ command: process.execPath, args: [FIXTURE, ...flags], provider: 'acp-signin', ...options });
   const opening: Start = {
@@ -54,7 +54,7 @@ function talking(flags: string[], options: Partial<AcpOptions> = {}): { session:
     // folder is one the host vouched for.
     trusted: () => true,
   };
-  const session = agent.create(opening);
+  const session = await agent.create(opening);
   started.push(session);
   return { session, actions };
 }
@@ -76,7 +76,7 @@ async function turn(session: Session, actions: Bag[], turnId: string, text: stri
 }
 
 it('signs in with the method the spec named, and the session runs', async () => {
-  const { session, actions } = talking(['--signin'], { authenticate: { methodId: 'api-key' } });
+  const { session, actions } = await talking(['--signin'], { authenticate: { methodId: 'api-key' } });
   await turn(session, actions, 't1', 'hi');
 
   expect(actions.map((action) => action.type)).toContain('chat/turnComplete');
@@ -84,7 +84,7 @@ it('signs in with the method the spec named, and the session runs', async () => 
 });
 
 it('refuses a session from a server nobody signed in, naming the methods it offers', async () => {
-  const { session, actions } = talking(['--signin']);
+  const { session, actions } = await talking(['--signin']);
   await turn(session, actions, 't1', 'hi');
 
   // The refusal is the protocol's own rather than a generic failure, and it
@@ -96,7 +96,7 @@ it('refuses a session from a server nobody signed in, naming the methods it offe
 });
 
 it('refuses a method the server did not offer, and says which it did', async () => {
-  const { session, actions } = talking(['--signin'], { authenticate: { methodId: 'oauth' } });
+  const { session, actions } = await talking(['--signin'], { authenticate: { methodId: 'oauth' } });
   await turn(session, actions, 't1', 'hi');
 
   // The bridge does not send a guess, and it does not open a session on a
@@ -106,7 +106,7 @@ it('refuses a method the server did not offer, and says which it did', async () 
 });
 
 it('fails the turn with what the server said when it refuses the sign-in', async () => {
-  const { session, actions } = talking(['--signin-fails'], { authenticate: { methodId: 'api-key' } });
+  const { session, actions } = await talking(['--signin-fails'], { authenticate: { methodId: 'api-key' } });
   await turn(session, actions, 't1', 'hi');
 
   // The refusal came from `authenticate` and carries the same code the
@@ -120,7 +120,7 @@ it('fails the turn with what the server said when it refuses the sign-in', async
 });
 
 it('names the sign-in a turn refused as authRequired, with the methods to use', async () => {
-  const { session, actions } = talking(['--signin'], { authenticate: { methodId: 'api-key' } });
+  const { session, actions } = await talking(['--signin'], { authenticate: { methodId: 'api-key' } });
   await turn(session, actions, 't1', 'reauth now');
 
   // A prompt refused on open grounds ends as the protocol's own error rather

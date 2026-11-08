@@ -95,6 +95,22 @@ export const activityOf = (emit: Emit): Activity => {
 export const uriFor = (sessionId: string): string => `ahp-session:/${sessionId}`;
 
 /**
+ * The `_meta` key a session external to this host is marked under, VS Code's:
+ * a backend's session made outside the host that no person's turn here has
+ * adopted.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1115
+ */
+export const SESSION_META_EXTERNAL_KEY = 'vscode.external';
+
+/**
+ * The `_meta` key a workspace-less session is marked under, VS Code's: a
+ * session that named no folder and works in a scratch folder of its own,
+ * which a client draws as a chat with no workspace.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1999-L2008
+ */
+export const SESSION_META_WORKSPACELESS_KEY = 'workspaceless';
+
+/**
  * The id inside a channel URI, whatever its scheme.
  *
  * A client may name a channel under any scheme: an older VS Code window names
@@ -125,6 +141,23 @@ export const titleFrom = (text: string, fallback: string, max = 80): string => {
   const line = text.split('\n').map((one) => one.trim()).find((one) => one !== '') ?? '';
   return line === '' ? fallback : line.slice(0, max);
 };
+
+/**
+ * The most characters a title seeded from a message keeps, as VS Code's host
+ * caps one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L27
+ */
+export const MAX_TITLE_LENGTH = 200;
+
+/**
+ * A message as a title: trimmed, its whitespace collapsed to single spaces,
+ * and cut at `maxLength` characters, as VS Code's host normalizes a title it
+ * seeds from a first message. A message with nothing in it is the empty title,
+ * which a client draws as its own placeholder.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L252-L255
+ */
+export const normalizeTitle = (text: string, maxLength = MAX_TITLE_LENGTH): string =>
+  Array.from(text.trim().replace(/\s+/g, ' ')).slice(0, maxLength).join('').trim();
 
 /**
  * Whether a chat's latest turn holds its queue: a turn that ended in an error

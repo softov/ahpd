@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Status } from '../src/sessions/catalog.js';
 import {
   resetSdk, actions, emit, hello, peer, sdk, sessionQueries, settle,
-  running,
+  running, firstMessage,
 } from './support/host.js';
 import { undeclaredIn } from './support/wire.js';
 import { callsIn, openedFrom, replayed } from './support/replay.js';
@@ -23,22 +23,26 @@ const pastWindow = async (): Promise<void> => {
 };
 
 describe('driving a turn', () => {
-  it('announces the session, and answers for it once it exists', async () => {
+  it('announces the session at its first message, and answers for it once it exists', async () => {
     const { client, peer: p, uri, chatUri } = await running();
-    // The catalogue moved, and every client watching the root hears it.
-    expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(true);
+    // The session the client made is there for it before anything is said.
+    const made = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { lifecycle: string; defaultChat: string } };
+    };
+    expect(made.snapshot.state.lifecycle).toBe('creating');
+    expect(made.snapshot.state.defaultChat).toBe(chatUri);
+    expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(false);
 
-    // `session/ready` is dispatched at creation, which is before any client
-    // can be watching that channel - so it is for *other* clients if creation
-    // ever becomes asynchronous, and the creating client learns readiness
-    // from the snapshot it gets when it subscribes. That snapshot is the
-    // contract worth pinning.
+    // Its first message announces it to every client watching the root, and
+    // says it ready on its own channel.
+    await firstMessage(client, chatUri);
+    expect(p.notes.some((n) => n.method === 'root/sessionAdded')).toBe(true);
+    expect(actions(p, uri).some((e) => e.action.type === 'session/ready')).toBe(true);
     const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { lifecycle: string; defaultChat: string; status: number } };
+      snapshot: { state: { lifecycle: string; status: number } };
     };
     expect(opened.snapshot.state.lifecycle).toBe('ready');
-    expect(opened.snapshot.state.defaultChat).toBe(chatUri);
-    expect(opened.snapshot.state.status).toBe(Status.Idle | Status.IsRead);
+    expect(opened.snapshot.state.status & Status.InProgress).toBe(Status.InProgress);
   });
 
   it('passes the client\'s turn to the agent', async () => {
@@ -206,10 +210,16 @@ describe('driving a turn', () => {
         .map((e) => e.action._meta);
       // `_meta.progressMessage`, the reference client's word for a line on a
       // running row - never the result, which is what the tool answered and
-      // not what it was doing on the way. The kind and the worker's keys
-      // stamped at the start ride along, because an action carrying `_meta`
-      // replaces the bag whole.
-      const worker = { toolKind: 'subagent', subagentDescription: 'look', subagentChatUri: expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/) };
+      // not what it was doing on the way. The kind and the worker's keys the
+      // backend put on the call ride along, because an action carrying `_meta`
+      // replaces the bag whole. The worker chat's link is stamped on the
+      // start, delta and ready alone, as the reference stamps it, so a later
+      // action carries none, and a late subscriber reads what that action left.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1038-L1043
+      const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart' && e.action.toolCallId === 'tc1');
+      expect((start?.action._meta as Record<string, unknown> | undefined)?.subagentChatUri)
+        .toEqual(expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/));
+      const worker = { toolKind: 'subagent', subagentDescription: 'look' };
       // How long the call ran rides its completion, on the key VS Code's host
       // says it on.
       const started = worker;
@@ -364,16 +374,19 @@ describe('driving a turn', () => {
     const second = sdk.canUseTool?.('WebSearch', { query: 'rain' }, { toolUseID: 'call-b' });
     await settle();
 
+    // Each under the reference host's id for a call at its confirmation.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L157
+    const entry = (call: string) => `toolConfirmation:${chatUri}:t1:${call}`;
     const asked = actions(p, uri)
       .filter((e) => e.action.type === 'session/inputNeededSet')
       .map((e) => (e.action.request as { id: string }).id);
-    expect(asked).toEqual(['call-a', 'call-b']);
+    expect(asked).toEqual([entry('call-a'), entry('call-b')]);
 
     // Both are on the session, because `inputNeeded` is a list.
     const state = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { inputNeeded?: { id: string }[] } };
     };
-    expect(state.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual(['call-a', 'call-b']);
+    expect(state.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual([entry('call-a'), entry('call-b')]);
 
     // Answer the *first* one, which is the one that used to be unreachable.
     client.handle({
@@ -390,11 +403,11 @@ describe('driving a turn', () => {
     const after = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { inputNeeded?: { id: string }[] } };
     };
-    expect(after.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual(['call-b']);
+    expect(after.snapshot.state.inputNeeded?.map((one) => one.id)).toEqual([entry('call-b')]);
     const dropped = actions(p, uri)
       .filter((e) => e.action.type === 'session/inputNeededRemoved')
       .map((e) => e.action.id);
-    expect(dropped).toEqual(['call-a']);
+    expect(dropped).toEqual([entry('call-a')]);
 
     client.handle({
       method: 'dispatchAction',
@@ -587,7 +600,8 @@ describe('driving a turn', () => {
   });
 
   it('tells every client when a session goes', async () => {
-    const { host, client, peer: p, uri } = await running();
+    const { host, client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     const other = peer();
     const b = host.accept(other);
     await b.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -733,9 +747,7 @@ describe('a turn asked for while one is running', () => {
       params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't2', duration: 0 } },
     });
     await settle();
-    // A stop closes the CLI rather than interrupting it.
-    expect(sdk.interrupted).toBe(0);
-    expect(sessionQueries()[0]?.closed).toBe(true);
+    expect(sdk.interrupted).toBe(1);
     await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, user_message_uuids: [sdk.uuids[0]] });
     await settle();
     expect(sdk.said).toEqual(['first']);
@@ -964,7 +976,8 @@ describe('a compacted context', () => {
       .filter((e) => e.action.type === 'chat/responsePart')
       .map((e) => e.action.part as Record<string, unknown>)
       .find((held) => held.kind === 'systemNotification');
-    expect(part?.content).toBe('Context compacted automatically: 120000 tokens to 30000.');
+    // In the CLI's own words for the boundary.
+    expect(part?.content).toBe('Conversation compacted');
     // And as the protocol declares the notice, which has no id of its own.
     expect(undeclaredIn(p.notes)).toEqual([]);
 
@@ -1055,7 +1068,12 @@ describe('running a failed turn again', () => {
     expect(state.turns[0]?.usage).toMatchObject(both);
   });
 
-  it('refuses one that is not the latest turn', async () => {
+  /*
+   * In the words VS Code's host refuses a resume of a turn that is not the
+   * latest resumable errored one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13511-L13513
+   */
+  it('refuses one that is not the latest turn, in VS Code\'s words', async () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
@@ -1065,7 +1083,26 @@ describe('running a failed turn again', () => {
     const refused = p.notes
       .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
       .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('is not the latest turn'))).toBe(true);
+    expect(refused).toContain('The requested turn is not the latest resumable errored turn.');
+  });
+
+  /*
+   * A session filed away takes no resume, in VS Code's words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13508-L13510
+   */
+  it('refuses one on an archived session, in VS Code\'s words', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/isArchivedChanged', isArchived: true } } });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 'nothing' } },
+    });
+    await settle();
+    const refused = p.notes
+      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
+      .filter((one): one is string => typeof one === 'string');
+    expect(refused).toContain('Cannot resume a read-only or archived chat.');
   });
 
   it('refuses a turn whose last part is not a resumable error, without asking the backend', async () => {
@@ -1094,7 +1131,7 @@ describe('running a failed turn again', () => {
     const refused = p.notes
       .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
       .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('did not end with an error that can be resumed'))).toBe(true);
+    expect(refused).toContain('The requested turn is not the latest resumable errored turn.');
     // Nothing started, which is what calling the backend would have begun.
     expect(sessionQueries()).toHaveLength(clis);
     const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {

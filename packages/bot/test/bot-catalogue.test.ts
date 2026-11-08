@@ -11,7 +11,7 @@ import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { sdkVersion } from '../../sdk/src/version.js';
 import { holds } from '../../sdk/src/access/users.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { botChatAgent } from '../src/chat.js';
+import { botChatAgent, CHAT_PROVIDER } from '../src/chat.js';
 import { BOTS_DIR } from '../src/names.js';
 import { apply } from '../src/plugin.js';
 import { botStore } from '../src/store.js';
@@ -121,7 +121,7 @@ function made(tokens: Record<string, Grant[]>, members: Record<string, string[]>
     users,
   }, [contribution]);
   expect(problems).toEqual([]);
-  return { host: createHost(options), changed, users, records, bots, root, configDir: join(root, 'config') };
+  return { host: createHost(options), changed, users, records, sessions, bots, root, configDir: join(root, 'config') };
 }
 
 type Host = ReturnType<typeof createHost>;
@@ -282,8 +282,9 @@ it('sends the bots a membership change gives and takes, to that reader alone', a
 it('sends a membership change only to the person it concerns on a shared client id', async () => {
   const members: Record<string, string[]> = { ana: ['crew'], bo: [] };
   const { host, changed } = made({ ana: PERSON, bo: PERSON }, members);
-  const ana = await as(host, 'ana', 'anonymous');
-  const bo = await as(host, 'bo', 'anonymous');
+  // The empty id, which every client that gives none shares.
+  const ana = await as(host, 'ana', '');
+  const bo = await as(host, 'bo', '');
   await write(ana, 'crews', { name: 'Crews', owner: 'team:crew' });
   await write(bo, 'his', { name: 'His' });
   await write(ana, 'hers', { name: 'Hers' });
@@ -472,10 +473,13 @@ it('lists a chat whose log carries no mark without a `_meta`', async () => {
 });
 
 it('lists a chat that is not running as the bot it is with', async () => {
-  const { host, configDir } = made({ ana: [...PERSON, 'session:list'] });
+  const { host, configDir, sessions } = made({ ana: [...PERSON, 'session:list'] });
   const ana = await as(host, 'ana');
-  // A log a daemon left behind, so the chat is a row and nothing runs it.
+  // A log a daemon left behind, so the chat is a row and nothing runs it: a
+  // chat this host ran, under the name it was made with.
   logged(configDir, 'motion', 'one', mark('motion', 'Motion', 'red'));
+  sessions.setProvider('one', CHAT_PROVIDER);
+  sessions.setUri?.('one', 'ahp-session:/one');
   await write(ana, 'motion', { name: 'Motion', color: 'red' });
 
   const answer = await call(ana, 'listSessions', { channel: ROOT });

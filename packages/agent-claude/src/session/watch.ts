@@ -9,27 +9,26 @@ export interface WatchRoots {
   configDir: string;
   /** The session's working directory, whose `.claude` is the project scope. */
   cwd?: string;
+  /** The record's `watchWaitMs`. */
+  waitMs?: number;
 }
 
-/** How long after the last change of a burst the list is read again. */
+/**
+ * How long after the last change of a burst the list is read again, unless
+ * the record's `watchWaitMs` says otherwise: VS Code's Claude watcher's quiet.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L474
+ */
 const WAIT_MS = 300;
 
 /** The folders of a scope a customization is read from, each watched with its subfolders. */
 const FOLDERS = ['agents', 'skills', 'commands', 'rules'];
 
 /**
- * The folder of the installed plugins, watched without its subfolders: a
- * plugin's cache is a whole repository, and an install or a removal writes
- * the files at its top.
+ * The folder of the plugins, watched whole with its subfolders: every change
+ * in it calls, as VS Code's Claude watcher triggers on the whole subtree.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L443-L452
  */
 const PLUGINS = 'plugins';
-
-/**
- * The files in `PLUGINS` that list the installed plugins, and the only ones
- * there that are called for. The CLI writes `known_marketplaces.json` each
- * time it starts, and a call for it starts a probe, whose CLI writes it again.
- */
-const INSTALLED = new Set(['installed_plugins.json', 'installed_plugins_v2.json']);
 
 /**
  * Whether a change in one of `FOLDERS` is the CLI's own bookkeeping, which
@@ -61,30 +60,36 @@ const MEMORY = new Set(['CLAUDE.md', 'CLAUDE.local.md', '.mcp.json']);
 
 /**
  * Watch the Claude folders of a session, and call `onChange` when a
- * customization in them is written, edited or deleted.
+ * customization in them is written, edited or deleted: VS Code's
+ * `ClaudeCustomizationWatcher`, whose disposal is the function this returns.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L454-L476
  *
  * The personal folder and `<cwd>/.claude` are watched where a customization
  * is read from, and `cwd` itself only for its `CLAUDE.md` files and its
  * `.mcp.json`. A
- * burst of changes is one call, `WAIT_MS` after its last change. A folder that
- * is not there yet is watched for from its parent, and from when it appears.
+ * burst of changes is one call, the roots' `waitMs` after its last change. A
+ * folder that is not there yet is watched for from its parent, and from when
+ * it appears.
  *
  * A watcher is an extra rather than the answer: a folder that cannot be
  * watched is left out, and nothing here throws. The function it returns
  * closes every handle, and no call comes after it.
+ *
+ * `quiet`, where given, says when a change calls for nothing: one told while
+ * it holds is dropped as it arrives.
  */
-export function watchFolders(roots: WatchRoots, onChange: () => void): () => void {
+export function createClaudeCustomizationWatcher(roots: WatchRoots, onChange: () => void, quiet?: () => boolean): () => void {
   let closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const handles = new Set<FSWatcher>();
 
   const fire = (): void => {
-    if (closed) return;
+    if (closed || quiet?.() === true) return;
     if (timer !== undefined) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
       if (!closed) onChange();
-    }, WAIT_MS);
+    }, roots.waitMs ?? WAIT_MS);
   };
 
   /** One folder watched through the shared wait, or nothing when it cannot be. */
@@ -103,8 +108,8 @@ export function watchFolders(roots: WatchRoots, onChange: () => void): () => voi
   };
 
   /**
-   * A scope's folder: its customization folders with their subfolders, its
-   * plugins folder and its own files without. Nothing else in it is watched,
+   * A scope's folder: its customization folders and its plugins folder with
+   * their subfolders, and its own files. Nothing else in it is watched,
    * because the rest - the transcripts under `projects`, `todos` - is the
    * CLI's own and changes nothing listed, and a watch of it costs a handle per
    * folder.
@@ -120,12 +125,12 @@ export function watchFolders(roots: WatchRoots, onChange: () => void): () => voi
       if (was !== undefined) { was.close(); handles.delete(was); }
       const at = join(dir, name);
       const onName = name === PLUGINS
-        ? (file: string | null): void => { if (file === null || INSTALLED.has(file)) fire(); }
+        ? fire
         : (file: string | null, event: string): void => {
           if (file === null) fire();
           else if (!isBookkeeping(file) && !(event === 'change' && isFolder(join(at, file)))) fire();
         };
-      held.set(name, existsSync(at) ? opened(at, name !== PLUGINS, onName) : undefined);
+      held.set(name, existsSync(at) ? opened(at, true, onName) : undefined);
     };
     const open = (): void => {
       opened(dir, false, (name, event) => {

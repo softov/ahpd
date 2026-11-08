@@ -1,5 +1,5 @@
 import { deleteSession, getSessionInfo, listSessions } from '@anthropic-ai/claude-agent-sdk';
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
@@ -16,71 +16,44 @@ import type { Listed } from '@ahpd/sdk';
  * load this one to find that out.
  */
 /**
- * What this backend is a catalogue *of*.
- *
- * `dir`, not `cwd` - the option that scopes a listing to one project is spelled
- * `dir`, and an unrecognised key is ignored rather than refused, so the wrong
- * spelling answers with every session on the machine and looks like it worked.
- */
-/**
- * One SDK session as a row, under the directory it was asked for, titled by
- * its custom title or else the SDK's summary, as VS Code's Claude agent titles
- * a row; a session with neither is listed untitled.
+ * One SDK session as a row, titled by its custom title or else the SDK's
+ * summary, in the folder the SDK says it ran in, as VS Code's Claude agent
+ * projects a row; a session with neither title is listed untitled, and one
+ * with no folder in none.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSessionMetadataStore.ts#L191-L198
  */
-const listed = (info: SDKSessionInfo, dir: string): Listed => ({
+const listed = (info: SDKSessionInfo): Listed => ({
   id: info.sessionId,
   title: info.customTitle ?? info.summary ?? '',
   createdAt: new Date(info.createdAt ?? info.lastModified).toISOString(),
   modifiedAt: new Date(info.lastModified).toISOString(),
-  workingDirectories: [uriOf(info.cwd ?? dir)],
+  workingDirectories: info.cwd ? [uriOf(info.cwd)] : [],
 });
 
-export async function catalogue(dir: string): Promise<Listed[]> {
-  const found = await listSessions({ dir });
-  return found.map((info) => listed(info, dir));
+/**
+ * Every session the CLI's store holds, wherever it ran: the SDK's
+ * `listSessions` with no directory, as VS Code's Claude agent lists them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSdkService.ts#L171-L174
+ */
+export async function catalogue(): Promise<Listed[]> {
+  return (await listSessions()).map(listed);
 }
 
 /**
- * One session's own row, as the SDK answers it without listing the rest.
+ * One session's own row, as the SDK answers it by id without listing the rest.
  *
  * `getSessionInfo` reads one session file where `listSessions` reads every one
  * of them, which is what a client opening a row the host does not hold costs:
  * a link from another machine, a session written to disk after the last
- * listing. Same shape as `catalogue`'s rows and the same mapping, so a row
- * found this way is the row a listing would have offered.
- *
- * `dir` is passed per path rather than left out because the path is the answer
- * here as well as the row: the transcript reader wants the directory the
- * session ran in, and this is the one call that says which it was without a
- * listing. The paths are asked in turn, since a session lives under exactly one
- * of them and the first that has it is the only one that will.
- *
- * `folder` is the session's own working folder where the host recorded one,
- * and is asked before the paths: a session that ran outside them, in a
- * subfolder, a worktree or a bot's folder, is under none of them. It is asked
- * once, in its place in the order when it is one of the paths. A folder that
- * is not one of them is a path a client chose, so it is asked only when the
- * transcript for this id is already in its project folder: the SDK looks for
- * worktrees inside the folder itself when it is not, which is reading more of
- * that folder than the one session asked for.
+ * listing. Asked with no directory, it searches every project, as VS Code's
+ * Claude agent asks it, so a session is found wherever it ran. Same shape as
+ * `catalogue`'s rows and the same mapping, so a row found this way is the row
+ * a listing would have offered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2239
  */
-export async function findSession(
-  dirs: string[],
-  id: string,
-  folder?: string,
-): Promise<{ row: Listed; dir: string } | undefined> {
-  const served = folder !== undefined && dirs.includes(folder);
-  if (folder !== undefined && !served && hasTranscript(id, folder)) {
-    const info = await getSessionInfo(id, { dir: folder }).catch(() => undefined);
-    if (info !== undefined) return { row: listed(info, folder), dir: folder };
-  }
-  for (const dir of served ? [folder, ...dirs.filter((one) => one !== folder)] : dirs) {
-    const info = await getSessionInfo(id, { dir }).catch(() => undefined);
-    if (info === undefined) continue;
-    return { row: listed(info, dir), dir };
-  }
-  return undefined;
+export async function findSession(id: string): Promise<Listed | undefined> {
+  const info = await getSessionInfo(id).catch(() => undefined);
+  return info === undefined ? undefined : listed(info);
 }
 
 /** `~/.claude/projects`, or the same under `CLAUDE_CONFIG_DIR` where it is set. */
@@ -92,10 +65,22 @@ const fileNamed = (id: string): boolean => /^[A-Za-z0-9-]+$/.test(id);
 /** The transcript for `id` in `project`, where the CLI writes it. */
 const transcriptIn = (project: string, id: string): string => join(projectsDir(), project, `${id}.jsonl`);
 
-/** Whether `project` holds a transcript for `id` that is not empty. */
-const holds = (project: string, id: string): boolean => {
-  try { return statSync(transcriptIn(project, id)).size > 0; }
-  catch { return false; }
+/** The longest name the CLI gives a project folder before it cuts the name and adds the path's hash. */
+const NAME_MAX = 200;
+
+/**
+ * The name of the folder the CLI keeps a path's transcripts in: the path with
+ * every character that is not a letter or a digit made a dash, and a name
+ * longer than 200 characters cut there with the whole path's hash after it,
+ * the CLI's 32-bit string hash in base 36, as CLI 2.1.301 names the folder.
+ * https://code.claude.com/docs/en/sessions#where-transcripts-are-stored
+ */
+const projectFolderName = (path: string): string => {
+  const name = path.replace(/[^A-Za-z0-9]/g, '-');
+  if (name.length <= NAME_MAX) return name;
+  let hash = 0;
+  for (let at = 0; at < path.length; at++) hash = ((hash << 5) - hash + path.charCodeAt(at)) | 0;
+  return `${name.slice(0, NAME_MAX)}-${Math.abs(hash).toString(36)}`;
 };
 
 /**
@@ -106,92 +91,8 @@ const projectOf = (folder: string): string => {
   let real = folder;
   try { real = realpathSync(folder); }
   catch { /* a folder that is gone keeps its transcript under the name it had */ }
-  return real.replace(/[^A-Za-z0-9]/g, '-');
+  return projectFolderName(real);
 };
-
-/**
- * Whether the project folder of `folder` holds a transcript for `id` that is not
- * empty, which is where the SDK finds it without looking anywhere else.
- *
- * An id that is not a filename has no transcript.
- */
-function hasTranscript(id: string, folder: string): boolean {
-  if (!fileNamed(id)) return false;
-  return holds(projectOf(folder), id);
-}
-
-/** What every entry of a conversation carries, and the CLI's other lines in a transcript do not. */
-const ENTRY = Buffer.from('"parentUuid":');
-/** How much of each end of a transcript is read first. */
-const END = 65536;
-/** How much of the rest is read at a time, and how much of it at most. */
-const STEP = 1048576;
-const MOST = 16777216;
-
-/**
- * Whether `file` is a transcript that holds a conversation: at least one entry
- * of it, which is what the CLI's resume needs. It ends at startup with
- * `No conversation found` for a transcript of its other lines alone, the last
- * prompt, the cost and the like, which is what a CLI leaves when it is closed
- * after a prompt reached it and before it wrote the prompt's entry.
- *
- * The SDK's own test, read as it reads it: the first and the last 64 KiB, then
- * the rest 1 MiB at a time with each read's last bytes carried into the next,
- * up to 16 MiB, past which a transcript is taken to hold one. Synchronous,
- * because a session is built synchronously and its CLI starts as it is.
- * npm://@anthropic-ai/claude-agent-sdk@0.3.301 (sdk.mjs, the check its session
- * listing makes of a conversation a session continued in)
- */
-const conversation = (file: string): boolean => {
-  let fd: number;
-  try { fd = openSync(file, 'r'); }
-  catch { return false; }
-  try {
-    const size = fstatSync(fd).size;
-    const head = Buffer.alloc(Math.min(END, size));
-    readSync(fd, head, 0, head.length, 0);
-    if (head.includes(ENTRY)) return true;
-    if (size <= END) return false;
-    const tail = Buffer.alloc(END);
-    readSync(fd, tail, 0, END, size - END);
-    if (tail.includes(ENTRY)) return true;
-    const chunk = Buffer.alloc(STEP + ENTRY.length);
-    let kept = 0;
-    for (let at = 0; at < MOST;) {
-      const read = readSync(fd, chunk, kept, STEP, at);
-      if (read === 0) return false;
-      const end = kept + read;
-      if (chunk.subarray(0, end).includes(ENTRY)) return true;
-      kept = Math.min(ENTRY.length, end);
-      chunk.copyWithin(0, end - kept, end);
-      at += read;
-    }
-    return true;
-  }
-  catch { return false; }
-  finally { closeSync(fd); }
-};
-
-/**
- * Whether the CLI wrote a conversation under `id`, which is the only kind of id
- * its resume takes: it ends at startup with `No conversation found` for any
- * other.
- *
- * The project of `folder` is read first, because the CLI writes a session of
- * that folder there. Every other project follows, because the CLI's resume finds
- * a conversation under any of them, as the reference asks the SDK with no
- * folder at all. The files are read rather than the SDK asked, because a session
- * is built synchronously and its CLI starts as it is.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1728-L1744
- */
-export function written(id: string, folder: string): boolean {
-  if (!fileNamed(id)) return false;
-  if (conversation(transcriptIn(projectOf(folder), id))) return true;
-  let projects: string[];
-  try { projects = readdirSync(projectsDir()); }
-  catch { return false; }
-  return projects.some((project) => conversation(transcriptIn(project, id)));
-}
 
 /**
  * Make way for a new conversation under `id` in `folder`.
@@ -199,20 +100,24 @@ export function written(id: string, folder: string): boolean {
  * The CLI starts a conversation under a name only on a clean transcript: it
  * ends at startup with `Session ID <id> is already in use` when the project of
  * its folder holds a transcript for that id, whatever the transcript holds. So
- * a transcript there that holds no conversation is deleted first, as the
- * reference deletes a transcript before it starts a conversation over under the
- * same id. One that holds a conversation is never deleted.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1141-L1168
+ * a transcript there in which the SDK's `getSessionInfo` finds no session is
+ * deleted first, through the SDK's `deleteSession`, as VS Code's Claude deletes
+ * a transcript through the SDK before it starts a conversation over under the
+ * same id; the caller has waited for the CLI that could write it to exit, as VS
+ * Code shuts the live query down first. One the SDK holds a session in is kept.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1148-L1160
  */
-export function clearFor(id: string, folder: string): void {
+export async function clearFor(id: string, folder: string): Promise<void> {
   if (!fileNamed(id)) return;
-  const file = transcriptIn(projectOf(folder), id);
-  if (!existsSync(file) || conversation(file)) return;
-  rmSync(file, { force: true });
+  if (!existsSync(transcriptIn(projectOf(folder), id))) return;
+  if (await getSessionInfo(id, { dir: folder }).catch(() => undefined) !== undefined) return;
+  await deleteSession(id, { dir: folder });
 }
 
 /**
- * One listing the variants of one load of this plugin share.
+ * One listing the variants of one load of this plugin share, as VS Code's SDK
+ * service shares one `listSessions` among the callers that overlap it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSdkService.ts#L167-L181
  *
  * Every preset is registered as an agent of its own, and every one of them
  * reads the same projects directory for the same sessions - so three presets
@@ -225,12 +130,10 @@ export function clearFor(id: string, folder: string): void {
  * settles, because the host holds the catalogue (host 56, task 03) and a
  * listing kept here would be a second, older copy of the same rows.
  */
-export function sharedCatalogue(dirs: string[]): () => Promise<Listed[]> {
+export function sharedCatalogue(): () => Promise<Listed[]> {
   let running: Promise<Listed[]> | undefined;
   return () => {
-    running ??= Promise.all(dirs.map((dir) => catalogue(dir)))
-      .then((lists) => lists.flat())
-      .finally(() => { running = undefined; });
+    running ??= catalogue().finally(() => { running = undefined; });
     return running;
   };
 }
@@ -238,14 +141,13 @@ export function sharedCatalogue(dirs: string[]): () => Promise<Listed[]> {
 /**
  * The transcript on disk for one session, or nothing when it has none.
  *
- * `~/.claude/projects/<directory>/<id>.jsonl`, with the directory spelled the
- * way the CLI spells it - every character that is not a letter or a digit
- * made a dash - and `CLAUDE_CONFIG_DIR` in place of `~/.claude` where it is
- * set.
+ * `~/.claude/projects/<directory>/<id>.jsonl`, with the directory named as the
+ * CLI names its project folder (`projectFolderName`), and `CLAUDE_CONFIG_DIR`
+ * in place of `~/.claude` where it is set.
  *
  * A session resumed elsewhere may have been written under the directory it
- * *started* in, which is a folder no listing was asked about, so the other
- * projects are looked through before answering that there is none. What a
+ * *started* in, so the other projects are looked through before answering
+ * that there is none. What a
  * session does not have is an id that is not a filename: a client may name
  * anything at all, and one id would otherwise be a path out of the store.
  */
@@ -253,7 +155,7 @@ export function transcriptOf(id: string, directory: string | undefined): string 
   if (!/^[A-Za-z0-9-]+$/.test(id)) return undefined;
   const projects = projectsDir();
   if (directory !== undefined) {
-    const own = join(projects, directory.replace(/[^A-Za-z0-9]/g, '-'), `${id}.jsonl`);
+    const own = join(projects, projectFolderName(directory), `${id}.jsonl`);
     if (existsSync(own)) return own;
   }
   let names: string[];

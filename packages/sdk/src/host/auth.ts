@@ -1,70 +1,91 @@
 import { ROOT } from './channels.js';
 import { hostAgent, mayUseAgent, ownershipOf } from '../agents/usable.js';
 import type { Agent } from '../types/agent.js';
-import type { Connection } from '../types/host.js';
+import type { Connection, Credential } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
 
+/**
+ * The scopes a client says a token grants, as VS Code's host keeps them: each
+ * once and sorted, and none for anything that is not a list of them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostCredentials.ts#L48-L50
+ */
+export const normalizeScopes = (scopes: unknown): string[] => (Array.isArray(scopes)
+  ? [...new Set(scopes.filter((one): one is string => typeof one === 'string'))].sort()
+  : []);
+
+/**
+ * The key a pushed token is kept under: its resource and its scopes, and the
+ * server it was aimed at when the client named one, as VS Code's host keys a
+ * stored token.
+ *
+ * Two MCP servers can share a resource and still be two consumers, so a
+ * targeted token is kept apart from a provider-level one, and a lookup by a
+ * resource never finds one aimed at a server.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L498-L501
+ */
+export const keyOf = (resource: string, scopes: readonly string[], target?: { session: string; customizationId: string }): string =>
+  (target === undefined
+    ? `${resource}\u0000${scopes.join('\u0000')}`
+    : JSON.stringify([resource, scopes, target.session, target.customizationId]));
+
+/**
+ * The token one client pushed for a resource and the scopes asked for, as VS
+ * Code's host picks one: the token pushed for exactly those scopes; with
+ * scopes asked for, the provider-level token with the fewest scopes covering
+ * them; and the one pushed with no scopes. One past its expiry is none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L456-L486
+ */
+export const storedAuthToken = (tokens: ReadonlyMap<string, Credential>, resource: string, scopes: readonly string[]): Credential | undefined => {
+  const live = (held: Credential | undefined): Credential | undefined =>
+    (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now()) ? held : undefined);
+  const asked = normalizeScopes(scopes);
+  const exact = live(tokens.get(keyOf(resource, asked)));
+  if (exact !== undefined || asked.length === 0) return exact;
+  const covering = [...tokens.values()]
+    .filter((one) => one.target === undefined && one.resource === resource && one.scopes.length > 0 && live(one) !== undefined
+      && asked.every((scope) => one.scopes.includes(scope)))
+    .sort((a, b) => a.scopes.length - b.scopes.length)[0];
+  return covering ?? live(tokens.get(keyOf(resource, [])));
+};
+
 /** What a person has to sign into, and what they have. */
 export interface Auth {
-  loginId(): string;
+  /** The resource a client authenticates for the host's own sign-in. */
+  authenticationResource(): string;
   resourcesOf(agent: Agent): Bag[];
   agentsFor(connection: Connection, list: unknown): unknown;
-  lent(resource: string): string | undefined;
+  /** A token any connected client authenticated for a resource and the scopes asked for, unexpired, for the host's own work. */
+  getAuthToken(resource: string, scopes?: readonly string[]): string | undefined;
   advertised(): Set<string>;
   metadataFor(resource: string): Bag;
-  channelAwaiting(resource: string, connection: Connection): string;
-  watchedAs(connection: Connection, session: string): string | undefined;
-  asking(channel: string, action: Record<string, unknown>): void;
+  authRequiredChannel(resource: string, connection: Connection): string;
+  subscribedAs(connection: Connection, session: string): string | undefined;
 }
 
 export function createAuth(ctx: HostContext): Auth {
   const { options, agents, connections, sessions } = ctx;
 
   /**
-   * The session's URI when a connection watches it, or nothing when it does
-   * not.
+   * The session's URI when a connection is subscribed to it, or nothing when
+   * it is not.
    *
-   * A session is watched under the one URI it is held by. These are the
-   * sessions a connection asks for: the ones it is asked to sign into, and the
-   * only ones its tokens are spent on.
+   * A session is subscribed to under the one URI it is held by. These are the
+   * sessions a connection signs into an MCP server for, reading the server's
+   * `authRequired` state, as a VS Code window reads it and VS Code's host says
+   * nothing more, and the only ones its tokens are spent on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L729-L736
    */
-  const watchedAs = (connection: Connection, session: string): string | undefined =>
-    (connection.watching.has(session) ? session : undefined);
+  const subscribedAs = (connection: Connection, session: string): string | undefined =>
+    (connection.activeSubscriptions.has(session) ? session : undefined);
 
-  /**
-   * The resource a sign-in requirement is said as the protocol's own
-   * notification.
-   *
-   * `auth/required` is connection-level rather than a state action: a client
-   * reads it and pushes a token back with `authenticate`. Sent off the same
-   * state change that carries the requirement - an MCP server saying
-   * `authRequired` - so there is one source for the fact and no second thing
-   * to keep in step.
-   *
-   * Only to connections watching that session, because that is the channel
-   * the notification names and the only place the requirement is visible.
+  /*
+   * The users directory's protected resource, the one a client authenticates
+   * for the host's own sign-in, as VS Code's host names the resource a relay
+   * client authenticates.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2634-L2640
    */
-  const asked = new Set<string>();
-  const asking = (channel: string, action: Record<string, unknown>): void => {
-    if (String(action.type ?? '') !== 'session/mcpServerStateChanged') return;
-    const state = (typeof action.state === 'object' && action.state !== null ? action.state : {}) as Bag;
-    if (state.kind !== 'authRequired') return;
-    const resource = (typeof state.resource === 'object' && state.resource !== null ? state.resource : {}) as Bag;
-    const named = typeof resource.resource === 'string' ? resource.resource : undefined;
-    // Once per resource: the state is re-read on every refresh, and a client
-    // asked to sign in on a loop is one that never finishes signing in.
-    if (named === undefined || asked.has(named)) return;
-    asked.add(named);
-    for (const connection of connections) {
-      const watched = watchedAs(connection, channel);
-      if (watched !== undefined) {
-        connection.peer.notify('auth/required', { channel: watched, resource, reason: 'required' });
-      }
-    }
-  };
-
-  const loginId = (): string => String(options.users?.resource.resource ?? '');
+  const authenticationResource = (): string => String(options.users?.resource.resource ?? '');
   /**
    * What a backend may be handed a token for: its own, and GitHub's.
    *
@@ -76,79 +97,55 @@ export function createAuth(ctx: HostContext): Auth {
   const resourcesOf = (agent: Agent): Bag[] => [
     ...(agent.protectedResources ?? []) as Bag[],
     ...(options.github ? [options.github.resource] : []),
-    // The host's own sign-in resource, listed here for the same reason GitHub's
-    // is: it is the host's, whichever backend the session runs on.
-    ...(options.users ? [options.users.resource as Bag] : []),
   ];
   /**
-   * The agent list as one connection is told it.
+   * The agent list as one connection is told it: every agent, and one this
+   * caller may not use, decided by `mayUseAgent` from the owner its record
+   * names, listed with no models, as VS Code's host lists a provider it does
+   * not advertise to a client.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3288-L3291
    *
-   * Two rewrites, and both are about one connection. The host's sign-in
-   * resource is advertised on every backend with `required: true`, because
-   * every command but the handshake and `authenticate` is refused until
-   * somebody signs in - and a client reads that field to decide whether to
-   * prompt before it ever sends a command. For a connection this host already
-   * treats as somebody, root or carrying a principal, the prompt would be for
-   * a token nothing needs, and a client that insists on it never creates a
-   * session at all. So that one resource is rewritten for that one connection,
-   * and a backend's own resources and GitHub's are listed as they are.
-   *
-   * And the list holds only the agents this caller may use, decided by
-   * `mayUseAgent` from the owner its record names. An agent left out is not
-   * one this connection is told exists, which is why this is a filter and not
-   * a field it cannot use.
-   *
-   * A copy rather than an edit, because `options.users.resource` is the
-   * directory's own record and `descriptors()` is rebuilt from it for every
-   * delivery. Never called on the canonical list: the replay buffer and
-   * `descriptors()` keep `required: true`, and the rewrite happens where an
-   * envelope or a snapshot is handed to one connection.
+   * The host's own sign-in is on no agent: its requirement is said in the
+   * `-32007` refusal's data, as VS Code's host says its host-level sign-in,
+   * since a VS Code client asks for a token for each resource an agent lists.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2634-L2642
    */
   const agentsFor = (connection: Connection, list: unknown): unknown => {
     if (options.users === undefined) return list;
     if (!Array.isArray(list)) return list;
-    const id = loginId();
     const owners = options.agentOwners;
-    /*
-     * Who this connection already is: root, or somebody signed in. Only such a
-     * connection is told the host's sign-in is not required, because only it
-     * has a credential nothing else needs.
-     */
-    const somebody = connection.root === true || connection.principal !== undefined;
-    return list.flatMap((agent) => {
-      if (typeof agent !== 'object' || agent === null) return [agent];
-      const held = agent as Bag;
+    return list.map((agent) => {
+      if (typeof agent !== 'object' || agent === null) return agent;
       /*
        * Whose the agent is, read from its record. An id the records do not
        * hold is the daemon's own or a plugin's, and takes the host rule.
        */
-      const provider = held.provider;
+      const provider = (agent as Bag).provider;
       const owned = typeof provider === 'string' ? ownershipOf(owners?.(), provider) : hostAgent;
-      if (!mayUseAgent(connection.principal, owned, { root: connection.root === true, hasDirectory: true })) return [];
-      if (!somebody || !Array.isArray(held.protectedResources)) return [agent];
-      const mine = held.protectedResources.some((one) => typeof one === 'object' && one !== null && (one as Bag).resource === id);
-      if (!mine) return [agent];
-      return [{
-        ...held,
-        protectedResources: held.protectedResources.map((one) => (typeof one === 'object' && one !== null && (one as Bag).resource === id
-          ? { ...(one as Bag), required: false }
-          : one)),
-      }];
+      return mayUseAgent(connection.principal, owned, { root: connection.root === true, hasDirectory: true })
+        ? agent
+        : { ...agent as Bag, models: [] };
     });
   };
-  /** A token any connected client lent for a resource, and has not run out. */
-  const lent = (resource: string): string | undefined => {
+  /**
+   * A token any connected client authenticated for a resource and the scopes
+   * asked for, picked as `storedAuthToken` picks one and skipping one that has
+   * run out, for the host's own work, as VS Code's host reads a token from the
+   * host-wide store any client authenticated into.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAuthenticationService.ts#L267-L273
+   */
+  const getAuthToken = (resource: string, scopes: readonly string[] = []): string | undefined => {
     // A person's sign-in is not a credential the host spends on its own work:
     // one client's sign-in must not become another client's session.
-    if (options.users !== undefined && resource === loginId()) return undefined;
+    if (options.users !== undefined && resource === authenticationResource()) return undefined;
     for (const connection of connections) {
-      const held = connection.tokens.get(resource);
-      if (held !== undefined && !(held.expiresAt !== undefined && held.expiresAt <= Date.now())) return held.token;
+      const held = storedAuthToken(connection.tokens, resource, scopes);
+      if (held !== undefined) return held.token;
     }
     return undefined;
   };
 
-  /** Every resource identifier any agent here advertised. */
+  /** Every resource identifier any agent here advertised, and the host's own sign-in, which its refusals name. */
   const advertised = (): Set<string> => {
     const out = new Set<string>();
     for (const agent of agents.values()) {
@@ -157,15 +154,18 @@ export function createAuth(ctx: HostContext): Auth {
         if (typeof id === 'string') out.add(id);
       }
     }
+    if (options.users !== undefined) out.add(authenticationResource());
     return out;
   };
   /**
    * The whole RFC 9728 record for a resource, as a backend advertised it.
    *
    * `auth/required` carries the record rather than the identifier, so a
-   * client knows where to go and sign in. One this host never advertised -
-   * an MCP server's, named on a session's own state - is answered with the
-   * identifier alone, which is the record's one required field.
+   * client knows where to go and sign in. One no agent lists - the host's own
+   * sign-in, or an MCP server's, named on a session's own state - is answered
+   * with the identifier alone, which is the record's one required field, as
+   * VS Code's host says its own identity's expiry.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/missionControl/missionControlProtocolServer.ts#L217
    */
   const metadataFor = (resource: string): Bag => {
     for (const agent of agents.values()) {
@@ -176,23 +176,23 @@ export function createAuth(ctx: HostContext): Auth {
     return { resource };
   };
   /**
-   * Where a requirement for that resource is visible, to one connection.
+   * The channel an `auth/required` for that resource names, to one connection.
    *
    * A backend's own resource is the root's business; an MCP server's is the
    * session that server belongs to, which is where its `authRequired` state
-   * is drawn. Only a session the connection watches is one it can see that
-   * state on.
+   * is drawn. Only a session the connection is subscribed to is one it can see
+   * that state on.
    */
-  const channelAwaiting = (resource: string, connection: Connection): string => {
+  const authRequiredChannel = (resource: string, connection: Connection): string => {
     for (const [uri, held] of sessions) {
-      const watched = watchedAs(connection, uri);
-      if (watched === undefined) continue;
+      const subscribed = subscribedAs(connection, uri);
+      if (subscribed === undefined) continue;
       for (const chat of held.chats.values()) {
-        if (chat.awaiting?.().includes(resource) === true) return watched;
+        if (chat.awaiting?.().includes(resource) === true) return subscribed;
       }
     }
     return ROOT;
   };
 
-  return { loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting, watchedAs, asking };
+  return { authenticationResource, resourcesOf, agentsFor, getAuthToken, advertised, metadataFor, authRequiredChannel, subscribedAs };
 }

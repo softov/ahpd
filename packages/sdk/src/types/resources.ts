@@ -180,7 +180,8 @@ export interface ResourceStore {
    */
   write?(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
   /**
-   * Remove a file, or a directory when `recursive`.
+   * Delete a file, or a directory when `recursive`: the protocol's
+   * `resourceDelete`.
    *
    * `owner` and `reader` mean what they mean on `write`, and are absent in the
    * same two cases. A delete is the other road that changes what a scheme
@@ -188,7 +189,7 @@ export interface ResourceStore {
    * handed the same writer here - and a delete is the one road nothing takes
    * back, which is the worse of the two to leave unasked.
    */
-  remove?(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
+  delete?(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   /** Make a directory, and the parents it needs. */
   mkdir?(uri: string): Promise<void>;
   /** Rename. `failIfExists` refuses a destination already there. */
@@ -207,13 +208,15 @@ export interface ResourceStore {
    *
    * `onChange` is called with a *batch*, because the filesystem reports one
    * event per file and a save is several: the protocol says a server coalesces
-   * them, and an empty batch MUST NOT be dispatched. Closing the returned
-   * handle is the only way to stop it - there is no dispose command, and
-   * `unsubscribe` is what the host turns into this call.
+   * them, and an empty batch MUST NOT be dispatched. The host calls this at the
+   * first subscribe to the watch's channel. Closing the returned handle is the
+   * only way to stop it - there is no dispose command, and the last
+   * `unsubscribe`, 30 seconds on, is what the host turns into this call.
    *
-   * `reader` is whoever asked for the watch, absent in the two cases it is
-   * absent on `read`. A scheme whose objects only some people may read reports
-   * a change to a watcher who may read that object, and to nobody else.
+   * `reader` is whoever's subscribe attached the watch, absent in the two
+   * cases it is absent on `read`. A scheme whose objects only some people may
+   * read reports a change to a watcher who may read that object, and to
+   * nobody else.
    */
   watch?(
     uri: string,
@@ -261,7 +264,7 @@ export interface SchemeDescription {
   manifest?: Record<string, unknown>;
 }
 
-export type ResourceProvider = Pick<ResourceStore, 'watch' | 'write' | 'remove' | 'mkdir' | 'move' | 'copy'> & {
+export type ResourceProvider = Pick<ResourceStore, 'watch' | 'write' | 'delete' | 'mkdir' | 'move' | 'copy'> & {
   /**
    * One file's bytes, or the range of them that was asked for.
    *

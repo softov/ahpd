@@ -157,5 +157,5 @@ export interface ClientPlugins {
    * A copy that will not go is left where it is rather than thrown on: this
    * runs beside a write that has already been made.
    */
-  prune(kept: readonly string[]): void;
+  collectGarbage(kept: readonly string[]): void;
 }

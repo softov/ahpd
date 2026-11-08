@@ -251,7 +251,7 @@ const live = async ({ run, fetch, version }: { run?: Runner; fetch?: Fetch; vers
         ...(reload === undefined ? {} : { reload }),
       });
       await refresh();
-      await host.daemonValuesMoved();
+      await host.daemonValuesChanged();
       return answer;
     },
     restartNeeded: () => markRestart(),

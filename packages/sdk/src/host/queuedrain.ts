@@ -14,7 +14,7 @@
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md?plain=1#L623-L625
  */
 
-import { holdsTheQueue } from '../sessions/catalog.js';
+import { holdsTheQueue, idOf } from '../sessions/catalog.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { MessageAttachment, MessageFrom } from '../types/session.js';
@@ -24,14 +24,13 @@ import type { HostContext } from './context.js';
 
 /**
  * Who sent a pending message, kept by this host beside the chat's state and
- * put in no action: the window that set it, the owner a message of this
- * host's is for, and the files this host wrote for what it attached.
+ * put in no action: the window that set it, and the owner a message of this
+ * host's is for.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L77-L83
  */
 interface Sender {
   connection?: Connection | undefined;
   owner?: Owner | undefined;
-  attachments?: MessageAttachment[] | undefined;
 }
 
 /** What the drain keeps of one chat. */
@@ -46,7 +45,7 @@ interface Kept {
 
 export interface QueueDrain {
   /** A pending message a client set, said already, kept with who sent it and then handed on or drained. */
-  pendingSet(chat: string, id: string, connection: Connection | undefined, attachments: MessageAttachment[] | undefined): void;
+  pendingSet(chat: string, id: string, connection: Connection | undefined): void;
   /** A pending message a client took back, said already: steering the backend holds is withdrawn. */
   pendingRemoved(chat: string, id: string, kind: 'queued' | 'steering'): void;
   /** The queue reordered by a client, said already. */
@@ -105,11 +104,12 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
     submitted.add(id);
     const message = (steering.message ?? {}) as Bag;
     const from = ctx.messageFrom(message);
-    const sender = senders.get(id);
+    // The message as the chat holds it, as the reference host hands steering on.
+    const attachments = Array.isArray(message.attachments) ? message.attachments as MessageAttachment[] : undefined;
     const handoff = session.sendSteeringMessage({
       id,
       text: String(message.text ?? ''),
-      ...(sender?.attachments === undefined ? {} : { attachments: sender.attachments }),
+      ...(attachments === undefined ? {} : { attachments }),
       ...(from === undefined ? {} : { from }),
     });
     if (handoff === false) submitted.delete(id);
@@ -157,9 +157,28 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
     const turnId = crypto.randomUUID();
     const since = Date.now();
     kept.admitted.set(turnId, id);
-    dispatch(chat, { type: 'chat/turnStarted', turnId, startedAt: new Date(since).toISOString(), message, queuedMessageId: id });
-    // Ended by this host, so nothing held against the turn is let go by anything else.
-    const ended = (errorType: string, why: string): void => {
+    /*
+     * The turn of whoever queued the message: the owner it was queued for, a
+     * message of this host's, or the person on the connection that sent it.
+     * Who that is goes on the turn's start and into the store, as every start
+     * this host says carries its sender.
+     */
+    const start: Bag = { type: 'chat/turnStarted', turnId, startedAt: new Date(since).toISOString(), message, queuedMessageId: id };
+    const by = sender?.owner ?? (sender?.connection === undefined ? undefined : ctx.ownerFor(sender.connection));
+    if (by !== undefined) {
+      ctx.senders.set(turnId, by);
+      ctx.kept.setSender(idOf(owner.uri), turnId, by);
+    }
+    dispatch(chat, by === undefined ? start : ctx.withSenderSaid(start, by));
+    /*
+     * Ended by this host, so nothing held against the turn is let go by
+     * anything else, and its `turn_end` says how: `rejected` for a start
+     * refused, which a queued message's sender is taken to hold still, as the
+     * reference host admits a queued turn, and `error` for a send that failed.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L288-L313
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTurnStarter.ts#L95-L111
+     */
+    const ended = (ending: 'rejected' | 'error', errorType: string, why: string): void => {
       ctx.forgetSender(turnId);
       ctx.forgetKeys(turnId);
       dispatch(chat, {
@@ -168,23 +187,38 @@ export function createQueueDrain(ctx: HostContext): QueueDrain {
         duration: Math.max(0, Date.now() - since),
         part: { kind: 'error', error: { errorType, message: why } },
       });
+      const error = { errorType, message: why };
+      ctx.raiseTurnEnd({
+        session: owner.uri, channel: chat, turnId, queuedMessageId: id,
+        reason: ending === 'rejected' ? { kind: 'rejected', error, recoverable: true } : { kind: 'error', error, resumable: false },
+        ...(by === undefined ? {} : { sender: by }),
+      });
     };
     const lead = sessions.get(owner.uri);
-    const provider = lead === undefined ? 'This provider' : ctx.chatAgent(lead, chat).provider;
-    // A message of this host's is the turn of the owner it was queued for.
-    if (sender?.owner !== undefined) ctx.senders.set(turnId, sender.owner);
+    const provider = lead === undefined ? 'This provider' : ctx.getProviderForChat(lead, chat).provider;
+    /*
+     * The chats the message attaches, read out as the turn is sent, as a
+     * client's start's are: one that cannot be read ends the turn, as the
+     * reference host's send resolves a turn's attachments.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2380-L2409
+     */
+    const attached = ctx.messageAttachments(message, sender?.connection);
+    if (attached.refusal !== undefined) {
+      ended('error', 'sendFailed', attached.refusal);
+      return;
+    }
     // Its start is the drain's, said above, so nothing more is said for it.
     ctx.beginTurn(
       () => ctx.beginOrRun(owner.chat, provider, turnId, String(message.text ?? ''), ctx.modelIn(message.model), ctx.messageFrom(message),
-        sender?.connection, sender?.attachments, () => undefined, () => ctx.cancelledTurns.get(chat)?.has(turnId) === true),
-      (why) => { ended('rejected', why); },
-      (why) => { ended('sendFailed', why); },
+        sender?.connection, attached.attachments, () => undefined, () => ctx.cancelledTurns.get(chat)?.has(turnId) === true),
+      (why) => { ended('rejected', 'rejected', why); },
+      (why) => { ended('error', 'sendFailed', why); },
     );
   };
 
   return {
-    pendingSet: (chat, id, connection, attachments) => {
-      keptOf(chat).senders.set(id, { connection, attachments });
+    pendingSet: (chat, id, connection) => {
+      keptOf(chat).senders.set(id, { connection });
       handSteering(chat);
       tryConsume(chat);
     },

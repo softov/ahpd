@@ -91,6 +91,30 @@ it('publishes each account under its own key, to the host and to a role holding 
   expect((await valuesOf(accountant))['ahpd.claudeAccount']).toEqual(SIGNED_IN);
 });
 
+/*
+ * A host with no people directory serves the whole root config to every
+ * connection, as VS Code's host serves it to every client.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4307-L4317
+ */
+it('shows every connection the accounts and the daemon\'s keys on a host with no people directory', async () => {
+  const made = host({
+    agents: [accounting('claude', async () => ({ account: SIGNED_IN }))],
+    rootConfig: {
+      schema: () => ({ type: 'object', properties: { 'ahpd.port': { type: 'number', title: 'Port' } } }),
+      values: async () => ({ 'ahpd.port': 7600 }),
+      write: async () => ({}),
+    },
+  });
+  const seen = watching();
+  const plain = made.accept(seen);
+  await hello(plain, 'plain');
+  await settle();
+  const config = await configOf(plain);
+  expect((config.values as Bag)['ahpd.claudeAccount']).toEqual(SIGNED_IN);
+  expect((config.values as Bag)['ahpd.port']).toBe(7600);
+  expect(((config.schema as Bag).properties as Bag)).toHaveProperty('ahpd.port');
+});
+
 it('shows no account to a connection without the grant, in its snapshot or in anything it is told', async () => {
   let release!: () => void;
   const held = new Promise<void>((resolve) => { release = resolve; });
@@ -142,7 +166,10 @@ it('refuses a client write to an account key', async () => {
   const refused = seen.seen
     .filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
     .map((one) => String(one.params.rejectionReason));
-  expect(refused).toEqual(['root config does not declare ahpd.claudeAccount']);
+  // In the words VS Code's host refuses a remote client's change to a
+  // property it holds read-only.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2830-L2840
+  expect(refused).toEqual(['Host configuration property is read-only: ahpd.claudeAccount']);
   // A refusal, not a stored value: a client cannot say who the operator is.
   expect((await valuesOf(client))['ahpd.claudeAccount']).toEqual(SIGNED_IN);
 });

@@ -322,9 +322,9 @@ it('forgets the record of a machine the CLI made once it is removed', async () =
   // By the name the create gave it, which is the name the listing answers.
   const id = dockerHeld(dockerState).machines[0]?.labels?.['ahpd.name'] ?? '';
   expect(id).not.toBe('');
-  const remove = options.resourceProviders?.computer?.remove as
+  const erase = options.resourceProviders?.computer?.delete as
     ((uri: string) => Promise<void>) | undefined;
-  await remove?.(`computer://${id}`);
+  await erase?.(`computer://${id}`);
   await until(() => dockerHeld(dockerState).machines.length === 0);
 
   // An entry for a machine that is gone is a claim on an id nothing holds, and

@@ -32,9 +32,12 @@ const sdk = vi.hoisted(() => {
   return {
     options: [] as Record<string, unknown>[],
     streams,
+    /** What a CLI's close throws, while it is set. */
+    stuck: undefined as string | undefined,
     reset() {
       streams.length = 0;
       sdk.options = [];
+      sdk.stuck = undefined;
     },
     open(): Stream {
       const one: Stream = { held: [], wake: undefined, closed: false };
@@ -61,7 +64,7 @@ const sdk = vi.hoisted(() => {
   };
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: (given: { options: Record<string, unknown> }) => {
     sdk.options.push(given.options);
@@ -87,7 +90,10 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [],
       streamInput: async () => {},
-      close: () => sdk.close(stream),
+      close: () => {
+        if (sdk.stuck !== undefined) throw new Error(sdk.stuck);
+        sdk.close(stream);
+      },
     };
   },
 }));
@@ -165,7 +171,10 @@ it('registers the claude engine, its template and host-only field', async () => 
   // record's config is what this engine runs and nothing a second engine spells.
   const fields = Object.keys((engine?.schema.properties ?? {}) as Bag).sort();
   expect(fields).toEqual([
-    'enableTasks', 'env', 'extraArgs', 'hostTasks', 'hostTools', 'keepCliModels', 'logins', 'modelSources', 'models', 'outputStyle', 'sandbox', 'thinking',
+    'dontAsk', 'enableTasks', 'env', 'extraArgs', 'fileMostBytes', 'hostTasks', 'hostTools', 'keepCliModels', 'keepFramed', 'logins', 'maxShellInitScript',
+    'maxTerminalOutputBytes', 'modelSources', 'models', 'outputStyle', 'portFailures', 'ruleDepth', 'ruleMost', 'sandbox', 'stopEnds',
+    'subagentStartTimeoutMs', 'subagentTitleMax', 'subagentsFrom', 'taskOutputFirstWaitMs', 'taskOutputLongestWaitMs', 'taskOutputQuietReads',
+    'thinking', 'watchWaitMs',
   ]);
   for (const owned of ['name', 'description', 'icon', 'model']) expect(fields).not.toContain(owned);
 
@@ -182,12 +191,12 @@ it('opens one backend per record, with the record\'s own id, name and values', a
   expect([one.provider, one.displayName]).toEqual(['claude-one', 'One']);
   expect([two.provider, two.displayName]).toEqual(['claude-two', 'Two']);
 
-  one.create(startOf('one'));
+  startedNow(one.create(startOf('one'))).sendMessage('t1', 'hello');
   await settle();
-  two.create(startOf('two'));
+  startedNow(two.create(startOf('two'))).sendMessage('t1', 'hello');
   await settle();
 
-  // Each query is built from its own record: the first has thinking off, the
+  // Each query its first send started is built from its own record: the first has thinking off, the
   // second the fallback and its own sandbox.
   expect(sdk.options.map((held) => held['thinking'])).toEqual([{ type: 'disabled' }, { type: 'adaptive' }]);
   expect(sdk.options.map((held) => held['settings'])).toEqual([undefined, { sandbox: { enabled: true } }]);
@@ -200,10 +209,10 @@ it('applies an edit at the next turn, restarting the CLI on the conversation it 
   const agent = engine.open(viewOf('claude-live', () => held));
   const session = startedNow(agent.create(startOf('live')));
   await settle();
-  expect(sdk.options.map((one) => one['thinking'])).toEqual([{ type: 'disabled' }]);
 
   session.sendMessage('t1', 'first');
   await settle();
+  expect(sdk.options.map((one) => one['thinking'])).toEqual([{ type: 'disabled' }]);
   // The turn already running stays on the CLI it started on, even after the
   // record changes under it.
   held = { thinking: 'adaptive' };
@@ -218,4 +227,30 @@ it('applies an edit at the next turn, restarting the CLI on the conversation it 
   // conversation the first one was answering.
   expect(sdk.options.map((one) => one['thinking'])).toEqual([{ type: 'disabled' }, { type: 'adaptive' }]);
   expect(sdk.options[1]?.['resume']).toBe('s1');
+});
+
+/*
+ * A CLI that will not close fails the send that would replace it in the
+ * error's own words, as VS Code shows a failed send.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2565
+ */
+it('fails the send in the error\'s own words when the CLI an edit would replace will not close', async () => {
+  const engine = await engineOf();
+  let held: Bag = { thinking: 'disabled' };
+  sdk.reset();
+  const said: Bag[] = [];
+  const agent = engine.open(viewOf('claude-stuck', () => held));
+  const session = startedNow(agent.create({ ...startOf('stuck'), emit: (_channel, action) => { said.push(action as Bag); } }));
+  await settle();
+  session.sendMessage('t1', 'first');
+  await settle();
+  sdk.push(ended('s1'));
+  await settle();
+
+  held = { thinking: 'adaptive' };
+  sdk.stuck = 'the CLI would not let go';
+  session.sendMessage('t2', 'second');
+  await settle();
+  const failed = said.find((one) => one.type === 'chat/error' && one.turnId === 't2');
+  expect(((failed?.part as Bag | undefined)?.error as Bag | undefined)?.message).toBe('the CLI would not let go');
 });

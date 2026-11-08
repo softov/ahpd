@@ -1644,6 +1644,19 @@ export function gitChanges(): ChangesetSource {
     },
 
     /*
+     * And what some of a session's turns did, from what the tracker saw in
+     * them: a chat's own turns, folded as a session's are.
+     */
+    chatSummary: (session, turns) => {
+      const held = seen.get(session);
+      const files = turns.flatMap((turn) => {
+        const one = held?.get(turn);
+        return one === undefined ? [] : [one];
+      });
+      return files.length === 0 ? undefined : summaryOf(fold(files));
+    },
+
+    /*
      * The `before` side, out of git rather than off the disk.
      *
      * `git show HEAD:<path>` is what the file was at the last commit, which is
@@ -1909,12 +1922,13 @@ export function gitChanges(): ChangesetSource {
          * it decides whether to draw a `before` side at all - one rule, so a
          * row that shows as a creation reverts as one.
          */
+        // And the agent is told what was undone of its edits, as its file.
         if (sides.before === undefined || sides.before === '') {
           await rm(at, { force: true });
-          return { message: `Removed ${named}, which this changeset created` };
+          return { message: `Removed ${named}, which this changeset created`, discarded: [{ resource: uriOf(at), deleted: true }] };
         }
         await writeFile(at, sides.before, 'utf8');
-        return { message: `Reverted ${named}` };
+        return { message: `Reverted ${named}`, discarded: [{ resource: uriOf(at), deleted: false }] };
       }
 
       if (operationId === 'stage') {

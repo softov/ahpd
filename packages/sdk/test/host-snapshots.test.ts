@@ -8,8 +8,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, hostTools, machine, open, peer,
- sdk, serving, sessionQueries, settle, running,
+  resetSdk, actions, builtServer, claude, createHost, echo, emit, firstMessage, flushed, hello, hostTools, machine, open, peer,
+ sdk, serving, sessionQueries, settle, showExternal, running,
 } from './support/host.js';
 import type { Agent, Listed, Start } from '../src/types/agent.js';
 import type { HostTool } from '../src/types/host.js';
@@ -120,6 +120,44 @@ describe('what it says it is doing', () => {
   });
 
   /*
+   * A chat's row on its session takes the chat's activity with a status change
+   * and with nothing else, as VS Code forwards a chat's summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3280-L3294
+   */
+  it('says a chat\'s activity on its session only with a status change', async () => {
+    const { host, p, uri } = await begun(doing('Reading'));
+    const updates = actions(p, uri).filter((e) => e.action.type === 'session/chatUpdated')
+      .map((e) => e.action.changes as { status?: unknown; activity?: unknown });
+    expect(updates.filter((one) => one.activity !== undefined && one.status === undefined)).toEqual([]);
+    await host.close();
+  });
+
+  /*
+   * A row whose activity went away says so as `null`, the widening
+   * `docs/sdk/AHP.md` records under "Server notifications": a change is
+   * spread over the row a client holds, so a field left off would keep the
+   * last activity showing, and the reference host says `null` where its
+   * client reads it cleared.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L319-L331
+   */
+  it('says a session\'s activity that went away as null on its catalogue row', async () => {
+    const { host, client, p, uri } = await begun(doing('Reading'));
+    await flushed();
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+    });
+    await flushed();
+    const said = p.notes
+      .filter((note) => note.method === 'root/sessionSummaryChanged' && (note.params as { session?: string }).session === uri)
+      .map((note) => (note.params as { changes: { activity?: unknown } }).changes)
+      .filter((changes) => 'activity' in changes)
+      .map((changes) => changes.activity);
+    expect(said).toEqual(['Reading', null]);
+    await host.close();
+  });
+
+  /*
    * A backend's own word for what its session is doing is said as it came, as
    * VS Code's host says what its agent reports.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
@@ -158,8 +196,10 @@ describe('what it says it is doing', () => {
       items: { activity?: string }[];
     };
     expect(listed.items[0]?.activity).toBeUndefined();
+    await flushed();
 
     await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
+    await flushed();
     expect(named(uri)).toEqual([]);
     expect(named(chatUri)).toEqual([]);
   });
@@ -177,12 +217,14 @@ describe('what it says it is doing', () => {
     expect(retitled?.action.title).toBe('a question about paging');
   });
 
-  it('takes a title from a client, for the row or for one chat, and refuses a blank one', async () => {
+  it('takes a title from a client, for the row or for one chat, a blank one as sent', async () => {
     const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
     client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/titleChanged', title: 'Paging' } } });
     await settle();
-    expect(actions(p, uri).find((e) => e.action.type === 'session/titleChanged')?.action.title).toBe('Paging');
+    await flushed();
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/titleChanged').at(-1)?.action.title).toBe('Paging');
     const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
     expect((row?.params as { changes: { title?: string } }).changes.title).toBe('Paging');
     // On a chat channel it names the chat; the default chat is the session,
@@ -192,9 +234,8 @@ describe('what it says it is doing', () => {
     expect(actions(p, uri).filter((e) => e.action.type === 'session/titleChanged').at(-1)?.action.title).toBe('Paging, again');
     client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/titleChanged', title: '  ' } } });
     await settle();
-    expect(actions(p, uri).find((e) => e.rejectionReason?.includes('blank'))).toBeDefined();
-    const kept = actions(p, uri).filter((e) => e.action.type === 'session/titleChanged' && e.rejectionReason === undefined);
-    expect(kept.at(-1)?.action.title).toBe('Paging, again');
+    expect(actions(p, uri).some((e) => e.rejectionReason !== undefined)).toBe(false);
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/titleChanged').at(-1)?.action.title).toBe('  ');
   });
 
   it('brings a renamed peer chat back with its title after a restart on the same file', async () => {
@@ -289,12 +330,15 @@ describe('what it says it is doing', () => {
     });
     await settle();
     const id = 'titled';
-    expect(store.chatTitlesOf(id)).toEqual({ [peerChat]: 'Tests' });
+    // Beside the default chat's, which took the session's title as its own
+    // once the session had another chat.
+    const lead = { [chatUriFor(uri)]: 'New session' };
+    expect(store.chatTitlesOf(id)).toEqual({ ...lead, [peerChat]: 'Tests' });
 
     await client.handle({ method: 'disposeChat', params: { channel: peerChat } });
     await settle();
     // The session is still here; the chat and the name that was its own are not.
-    expect(store.chatTitlesOf(id)).toBeUndefined();
+    expect(store.chatTitlesOf(id)).toEqual(lead);
   });
 
   it('reports what the turn cost, while there is still a turn to hang it on', async () => {
@@ -360,14 +404,17 @@ describe('the fields a client reads by name', () => {
     .map((n) => ({ method: n.method, params: n.params as Record<string, unknown> }));
 
   it('adds a session before any change to its row, which a client holds only once it is added', async () => {
-    const { peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
+    await flushed();
     const about = catalogue(p).filter((n) => n.params.session === uri
       || (n.params.summary as { resource?: string } | undefined)?.resource === uri);
     expect(about[0]?.method).toBe('root/sessionAdded');
   });
 
   it('names the session in root/sessionRemoved', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
 
     const gone = catalogue(p).find((n) => n.method === 'root/sessionRemoved');
@@ -384,6 +431,7 @@ describe('the fields a client reads by name', () => {
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
+    await flushed();
 
     const moves = catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged');
     expect(moves).not.toHaveLength(0);
@@ -396,23 +444,30 @@ describe('the fields a client reads by name', () => {
       expect(changes).not.toHaveProperty('provider');
       expect(changes).not.toHaveProperty('createdAt');
     }
-    // What moved is in there under its own name: the row a client holds, each
+    // What moved is in there under its own name: the row a client holds, the
+    // one the session was added with at this, its first message, and each
     // change spread over the one before, says the session is running, the read
     // bit beside it the person's and not the turn's.
-    const row = moves.reduce<Record<string, unknown>>((held, moved) => ({ ...held, ...(moved.params.changes as Record<string, unknown>) }), {});
+    const row = rowOf(p, 'ahp-session:/live') ?? {};
     expect(Number(row.status) & (Status.IsRead - 1)).toBe(Status.InProgress);
     expect(row.title).toEqual(expect.any(String));
   });
 
   it('still says what moved on a session no agent is running for', async () => {
-    sdk.sessions.push({ sessionId: 'browsed', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
+    // A transcript this host never ran, written an hour ago, which a client
+    // lists by the root's `showExternalSessions`.
+    sdk.sessions.push({ sessionId: 'browsed', summary: 'Read me', lastModified: Date.now() - 60 * 60 * 1000, cwd: '/home/softov' });
     const host = serving('/home/softov');
     const seen = peer();
     const watching = host.accept(seen);
     await watching.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await showExternal(watching);
     // Reading the catalogue is what teaches this host the row exists.
     await watching.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    // The pass that answer started behind it has landed.
+    await flushed();
 
+    const marked = catalogue(seen).length;
     watching.handle({
       method: 'dispatchAction',
       params: { channel: 'ahp-session:/browsed', action: { type: 'session/isReadChanged', isRead: true } },
@@ -430,13 +485,50 @@ describe('the fields a client reads by name', () => {
     expect((moved?.params.changes as Record<string, unknown>).status)
       .toBe(Status.Idle | Status.IsRead);
     // The mark is the first record the store holds for the row, and the row
-    // keeps the name it was listed by: the pass over the catalogue that lands
-    // after it says the row's fields under that name, and adds it under none.
-    await vi.waitFor(() => {
-      expect(summaries().some((n) => (n.params.changes as Record<string, unknown>).title !== undefined)).toBe(true);
-    });
-    expect(summaries().every((n) => n.params.session === 'ahp-session:/browsed')).toBe(true);
-    expect(catalogue(seen).filter((n) => n.method === 'root/sessionAdded')).toEqual([]);
+    // keeps the name it was listed by: a listing after it answers the row
+    // under that name, and the pass behind that answer, which reads the store
+    // the mark wrote, says nothing of it under another or removes it.
+    const passes = sdk.listed;
+    const again = await watching.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: { resource: string }[] };
+    expect(again.items.map((one) => one.resource)).toEqual(['ahp-session:/browsed']);
+    await vi.waitFor(() => { expect(sdk.listed).toBeGreaterThan(passes); });
+    await flushed();
+    const after = catalogue(seen).slice(marked);
+    expect(after.every((n) => n.params.session === 'ahp-session:/browsed')).toBe(true);
+    expect(after.filter((n) => n.method !== 'root/sessionSummaryChanged')).toEqual([]);
+    // Added once, by the mode that shows it, under the name it is listed by.
+    expect(catalogue(seen).filter((n) => n.method === 'root/sessionAdded')
+      .map((n) => (n.params.summary as { resource: string }).resource)).toEqual(['ahp-session:/browsed']);
+  });
+
+  /*
+   * A chat's draft is kept in the session's record whatever runs the chat, and
+   * comes back when the chat opens again, here on the next process, as VS
+   * Code's host keeps a chat's draft and restores it when the chat opens.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatDraft/chatDraftContribution.ts#L14-L68
+   */
+  it('keeps a running chat\'s draft in the session\'s record, which the chat opens with on the next process', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-draft-'));
+    try {
+      const { client, chatUri } = await running({ sessions: fileSessions({ dir }) });
+      const draft = { text: 'half a thought', origin: { kind: 'user' } };
+      client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/draftChanged', draft } } });
+      await settle();
+
+      // The next process finds the conversation where its CLI keeps it.
+      sdk.sessions.push({ sessionId: 'live', summary: 'Half done', lastModified: 1, cwd: '/home/softov' });
+      const next = serving('/home/softov', [], { sessions: fileSessions({ dir }) });
+      const back = next.accept(peer());
+      await back.handle(hello(['0.9.0']));
+      await back.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+      const state = (await back.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+        snapshot: { state: { draft?: unknown } };
+      }).snapshot.state;
+      expect(state.draft).toEqual(draft);
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('holds a draft typed into a session nothing is running for', async () => {
@@ -772,7 +864,7 @@ describe('the fields a client reads by name', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chat, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
+      params: { channel: chat, clientSeq: 7, action: { type: 'chat/inputAnswerChanged', requestId: 'r1', questionId: 'q1', answer: {} } },
     });
     await settle();
 
@@ -781,11 +873,11 @@ describe('the fields a client reads by name', () => {
     expect(refused).toHaveLength(1);
     // Which dispatch it answers, so the client knows what to put back.
     expect(refused[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
-    expect(refused[0]?.action.type).toBe('chat/truncated');
+    expect(refused[0]?.action.type).toBe('chat/inputAnswerChanged');
     // The reason names what actually happened rather than the type again:
-    // this chat has no turn by that name, so there is nothing to truncate to.
+    // this chat is waiting on no question by that id.
     expect((refused[0] as { rejectionReason?: string }).rejectionReason)
-      .toContain('not a completed turn');
+      .toContain('not a question this chat is waiting on');
     // An envelope after a snapshot carries a greater number than the one the
     // snapshot was taken at, a refusal included: "Subsequent actions will have
     // `serverSeq > fromSeq`".
@@ -808,11 +900,12 @@ describe('the fields a client reads by name', () => {
     }) as { type: string; actions: { serverSeq: number; rejectionReason?: string }[] };
     expect(answer.type).toBe('replay');
     expect(answer.actions.find((one) => one.serverSeq === refused[0]?.serverSeq)?.rejectionReason)
-      .toContain('not a completed turn');
+      .toContain('not a question this chat is waiting on');
   });
 
   it('leaves createdAt where it was while the session goes on', async () => {
     const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     const added = catalogue(p).find((n) => n.method === 'root/sessionAdded');
     const born = (added?.params.summary as Record<string, unknown>).createdAt as string;
     expect(born).toEqual(expect.any(String));
@@ -867,8 +960,21 @@ describe('the fields a client reads by name', () => {
   const sessionStatus = (p: ReturnType<typeof peer>, session: string) =>
     rowOf(p, session)?.status as number | undefined;
 
+  /**
+   * A session's first turn, answered, and its default chat read: the session
+   * is announced at its first message, and its turn's end leaves the chat and
+   * the session unread until the chat is read.
+   */
+  const settledIn = async (client: Awaited<ReturnType<typeof running>>['client'], chatUri: string): Promise<void> => {
+    await firstMessage(client, chatUri);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+    void client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/isReadChanged', isRead: true } } });
+    await settle();
+  };
+
   it("marks one chat read without moving its other chats", async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await settledIn(client, chatUri);
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     // Subscribed, because a notification goes to the connections watching a
@@ -897,6 +1003,7 @@ describe('the fields a client reads by name', () => {
     expect(updated?.action.chat).toBe(second);
     expect((updated?.action.changes as { status?: number } | undefined)?.status).toBe(Status.Idle | Status.IsRead);
     // The row a client lists says it too, and says it about that chat alone.
+    await flushed();
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.Idle | Status.IsRead);
     const others = chatsOf(p, 'ahp-session:/live').filter((one) => one.resource !== second);
     expect(others.map((one) => one.status)).toEqual(others.map(() => Status.Idle | Status.IsRead));
@@ -931,7 +1038,12 @@ describe('the fields a client reads by name', () => {
     expect((after[0]?.params as { origin?: { clientSeq?: number } }).origin?.clientSeq).toBe(2);
   });
 
-  it('marks a worker chat read, which the row lists like any other', async () => {
+  /*
+   * A worker read back opens read where nothing marked it, as VS Code's host
+   * restores one, and takes a client's bit as any chat does.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1824-L1828
+   */
+  it('reads back a worker read and marks it unread, which its session lists like any other chat and no row lists', async () => {
     sdk.sessions.push({ sessionId: 'restored', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
     const host = serving('/home/softov', [], {
       agents: [{
@@ -951,20 +1063,26 @@ describe('the fields a client reads by name', () => {
     });
     await settle(8);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    await flushed();
+    const listed = async () => (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } }) as {
+      snapshot: { state: { chats: { resource: string; status?: number; interactivity?: string }[] } };
+    }).snapshot.state.chats;
 
-    const worker = chatsOf(p, 'ahp-session:/restored').find((one) => one.interactivity === 'read-only');
+    const worker = (await listed()).find((one) => one.interactivity === 'read-only');
     expect(worker?.resource).toContain('toolu_task');
+    expect(worker?.status).toBe(Status.Idle | Status.IsRead);
     p.notes.length = 0;
 
+    // Read is the client's own bit and outlives every reason the turns are
+    // read-only, so a worker takes it as any chat of its session does.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: worker?.resource as string, action: { type: 'chat/isReadChanged', isRead: true } },
+      params: { channel: worker?.resource as string, action: { type: 'chat/isReadChanged', isRead: false } },
     });
-    await settle();
-    // Read is the client's own bit and outlives every reason the turns are
-    // read-only: somebody who has read what a subagent did does not want it
-    // back as unread when they open the session again.
-    expect(statusOf(p, 'ahp-session:/restored', worker?.resource as string)).toBe(Status.Idle | Status.IsRead);
+    await flushed();
+    expect((await listed()).find((one) => one.resource === worker?.resource)?.status).toBe(Status.Idle);
+    // And no row lists it: a client draws a worker under the call that spawned it.
+    expect(chatsOf(p, 'ahp-session:/restored').some((one) => one.resource === worker?.resource)).toBe(false);
   });
 
   it('reads back a worker\'s call that never finished as cancelled, with no link it cannot carry', async () => {
@@ -994,8 +1112,36 @@ describe('the fields a client reads by name', () => {
     expect(call).not.toHaveProperty('content');
   });
 
+  /*
+   * A worker's call read from the record that holds the worker, as VS Code
+   * reads a spawned chat's call from its recorded origin: a name the record
+   * holds no worker under is no chat here.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L801
+   */
+  it('answers a worker chat of a session nothing runs from its record, and refuses a name the record holds none under', async () => {
+    sdk.sessions.push({ sessionId: 'kept', summary: 'Kept', lastModified: 1, cwd: '/home/softov' });
+    const host = serving('/home/softov', [], {
+      agents: [{
+        ...claude({ paths: ['/home/softov'] }),
+        subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }],
+      }],
+    } as never);
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    const session = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/kept' } }) as {
+      snapshot: { state: { chats: { resource: string }[] } };
+    };
+    const worker = session.snapshot.state.chats.map((one) => one.resource).find((one) => one.includes('toolu_task')) as string;
+    const opened = await client.handle({ method: 'subscribe', params: { channel: worker } }) as { snapshot: { state: Record<string, unknown> } };
+    expect(opened.snapshot.state.origin).toEqual({ kind: 'tool', chat: chatUriFor('ahp-session:/kept'), toolCallId: 'toolu_task' });
+    const none = worker.replace('toolu_task', 'toolu_none');
+    await expect(client.handle({ method: 'subscribe', params: { channel: none } }))
+      .rejects.toMatchObject({ code: -32001, message: `No chat at ${none}` });
+  });
+
   it('archives one chat, and restores it, without archiving the session', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await settledIn(client, chatUri);
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     const archive = (on: boolean) => client.handle({
@@ -1004,14 +1150,14 @@ describe('the fields a client reads by name', () => {
     });
 
     archive(true);
-    await settle();
+    await flushed();
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.Idle | Status.IsRead | Status.IsArchived);
     // The session is not archived with it. One chat put away is a chat, and a
     // session that went with it would take the other chats off the list too.
     expect(sessionStatus(p, 'ahp-session:/live')).toBe(Status.Idle | Status.IsRead);
 
     archive(false);
-    await settle();
+    await flushed();
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.Idle | Status.IsRead);
   });
 
@@ -1024,6 +1170,7 @@ describe('the fields a client reads by name', () => {
    */
   it('refuses an archive of the default chat, and archives a session without its chats', async () => {
     const { host, client, peer: p, uri, chatUri } = await running();
+    await settledIn(client, chatUri);
     // A second client on the same session and chat.
     const q = peer();
     const other = host.accept(q);
@@ -1089,7 +1236,7 @@ describe('the fields a client reads by name', () => {
       method: 'dispatchAction',
       params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
     });
-    await settle();
+    await flushed();
     // Unread, as the protocol's chat reducer makes it on a turn's start.
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.InProgress);
 
@@ -1097,7 +1244,7 @@ describe('the fields a client reads by name', () => {
       method: 'dispatchAction',
       params: { channel: second, action: { type: 'chat/isReadChanged', isRead: true } },
     });
-    await settle();
+    await flushed();
     // Both bits, because they are different facts about one chat: work is
     // happening in it, and the person has read what it said so far.
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.InProgress | Status.IsRead);
@@ -1204,6 +1351,43 @@ describe('a session\'s annotations', () => {
     expect(seen.snapshot.state.annotations[0]?.entries[0]?.text).toBe('this is the bit');
   });
 
+  /*
+   * The marks outlive the process, as VS Code's host keeps a session's
+   * annotations in its own record and reads them back for the channel.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10936-L10963
+   */
+  it('keeps the marks across a restart on the same store', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-marks-'));
+    try {
+      const { client, uri } = await running({ sessions: fileSessions({ dir }) });
+      const marks = `${uri}/annotations`;
+      await client.handle({ method: 'subscribe', params: { channel: marks } });
+      await client.handle({
+        method: 'dispatchAction',
+        params: {
+          channel: marks,
+          action: { type: 'annotations/set', annotation: { id: 'a1', origin: { session: uri }, resource: 'file:///home/softov/x.ts', resolved: false, entries: [{ id: 'e1', text: 'kept' }] } },
+        },
+      });
+      await settle();
+      // The write is coalesced onto the next tick.
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      // A second host on the same store, which is what a restart is.
+      sdk.sessions.push({ sessionId: 'live', summary: 'Live', lastModified: 1, cwd: '/home/softov' });
+      const second = serving('/home/softov', [], { sessions: fileSessions({ dir }) }).accept(peer());
+      await second.handle(hello(['0.9.0']));
+      await second.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+      const seen = await second.handle({ method: 'subscribe', params: { channel: marks } }) as {
+        snapshot: { state: { annotations: { id: string; entries: { text: string }[] }[] } };
+      };
+      expect(seen.snapshot.state.annotations.map((one) => [one.id, one.entries[0]?.text])).toEqual([['a1', 'kept']]);
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('echoes each of the five to everyone watching, carrying the origin', async () => {
     const { client, peer: p, uri } = await running();
     const marks = `${uri}/annotations`;
@@ -1242,21 +1426,44 @@ describe('a session\'s annotations', () => {
     expect(gone.annotations).toEqual([]);
   });
 
-  it('refuses one that names a mark the session does not have', async () => {
+  /*
+   * VS Code's host emits an accepted annotation action whether or not the
+   * reducer moved the state, and the reducer leaves a mark it does not have
+   * as it was, in the host and in every client.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654
+   */
+  it('says one that names a mark the session does not have, and keeps nothing for it', async () => {
     const { client, peer: p, uri } = await running();
     const marks = `${uri}/annotations`;
     await client.handle({ method: 'subscribe', params: { channel: marks } });
-    // The reducer answers an unknown id by handing back the state it was
-    // given. Echoing that as though it applied leaves the client holding an
-    // optimistic mark this host never kept.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: marks, action: { type: 'annotations/updated', annotationId: 'nope', resolved: true } },
+      params: { channel: marks, clientSeq: 3, action: { type: 'annotations/updated', annotationId: 'nope', resolved: true } },
     });
-    const refused = p.notes.filter((note) => note.method === 'action').at(-1);
-    expect(refused?.params).toMatchObject({
-      rejectionReason: expect.stringContaining('does not have'),
+    await settle();
+    const said = actions(p, marks).at(-1);
+    expect(said).toMatchObject({ origin: { clientSeq: 3 }, action: { type: 'annotations/updated' } });
+    expect(said?.rejectionReason).toBeUndefined();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: marks } }) as {
+      snapshot: { state: { annotations: unknown[] } };
+    }).snapshot.state;
+    expect(state.annotations).toEqual([]);
+  });
+
+  /*
+   * A mark for a session this host does not have is refused in the words VS
+   * Code's host refuses an annotation action whose session it cannot find.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14280-L14284
+   */
+  it('refuses a mark for a session that is not here, as VS Code does', async () => {
+    const { client, peer: p } = await running();
+    const marks = 'ahp-session:/nobody/annotations';
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: marks, clientSeq: 5, action: { type: 'annotations/removed', annotationId: 'a1' } },
     });
+    await settle();
+    expect(actions(p, marks).map((note) => note.rejectionReason)).toEqual(['Session not found: ahp-session:/nobody']);
   });
 });
 
@@ -1315,8 +1522,8 @@ describe('a chat another backend serves', () => {
     const session = 'ahp-session:/mine';
     await client.handle({ method: 'createSession', params: { channel: session, provider: 'claude' } });
     await settle(8);
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const tool = servers?.host?.tools.find((one) => one.name === 'make_chat');
+    const served = builtServer('host') as { tools: Tool[] } | undefined;
+    const tool = served?.tools.find((one) => one.name === 'make_chat');
     if (tool === undefined) throw new Error('no make_chat');
     const made = await tool.handler({ provider: 'other', prompt: 'say hi' });
     if (made.isError === true) throw new Error(made.content[0]?.text ?? 'make_chat failed');
@@ -1333,29 +1540,28 @@ describe('a chat another backend serves', () => {
     return answer.snapshot.state;
   };
 
-  it("says the chat's backend, and leaves the session on its own", async () => {
+  /*
+   * A chat on another agent than its session's says that agent as its own
+   * `provider`, on its state and on its session's list of chats, as VS Code's
+   * host gives a chat a provider only where it differs from its session's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L128-L131
+   */
+  it("says the chat's agent as its provider, and leaves the session on its own", async () => {
     const { client, session, chatUri } = await chatsOnAnother();
     expect(chatUri).toMatch(/^ahp-chat:\/[0-9a-f-]+$/);
 
-    // The chat says which backend serves it, in `_meta` because `ChatState`
-    // declares no provider.
-    const chat = await stateOf(client,chatUri);
-    expect((chat._meta as Record<string, unknown> | undefined)?.['ahpd.provider']).toBe('other');
+    const chat = await stateOf(client, chatUri);
+    expect(chat.provider).toBe('other');
+    expect((chat._meta as Record<string, unknown> | undefined)?.['ahpd.provider']).toBeUndefined();
+    const listed = (await stateOf(client, session)).chats as { resource: string; provider?: string }[];
+    expect(listed.find((one) => one.resource === chatUri)?.provider).toBe('other');
 
     // And the session keeps its own: a chat on another harness does not
-    // rename the session it is a chat of.
-    const one = await stateOf(client,session);
+    // rename the session it is a chat of, and a chat of the session's own
+    // agent carries none, the session already saying `claude`.
+    const one = await stateOf(client, session);
     expect(one.provider).toBe('claude');
-  });
-
-  it("leaves a chat of the session's own backend without the key", async () => {
-    const { client, session } = await chatsOnAnother();
-    const chatUri = (await stateOf(client,session)).defaultChat as string;
-    const chat = await stateOf(client,chatUri);
-    // The session already says `claude`; a key repeating it on every chat would
-    // be two answers to one question, and could disagree with the session.
-    expect(Object.prototype.hasOwnProperty.call((chat._meta as object | undefined) ?? {}, 'ahpd.provider'))
-      .toBe(false);
+    expect(await stateOf(client, String(one.defaultChat))).not.toHaveProperty('provider');
   });
 });
 
@@ -1366,7 +1572,8 @@ describe("a browsed session's _meta", () => {
    * The state of a session nothing runs is composed by `describes`, which asks
    * the backend's running agent for `_meta` while there is one. A browsed row
    * has no agent, so its keys are the ones the backend put on the row it
-   * listed - and the running agent's replace them once the session starts.
+   * listed, beside the mark of a session this host never ran - and the running
+   * agent's replace them once the session starts.
    */
   const PATH = '/home/softov';
   const STAMP = '2026-10-25T00:00:00.000Z';
@@ -1416,7 +1623,9 @@ describe("a browsed session's _meta", () => {
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as {
       snapshot: { state: State };
     };
-    expect(opened.snapshot.state._meta).toEqual({ bot: 'motion', color: 'red' });
+    // The keys the backend listed, and the mark VS Code's host puts on a
+    // session it never ran.
+    expect(opened.snapshot.state._meta).toEqual({ bot: 'motion', color: 'red', 'vscode.external': true });
   });
 
   it("replaces a listed row's _meta with the running agent's own", async () => {
@@ -1556,6 +1765,45 @@ describe('what a backend offers, asked again', () => {
     await settle();
     expect(probes).toBe(3);
     expect(most).toBe(1);
+    await host.close();
+  });
+});
+
+describe('a chat no session holds', () => {
+  /*
+   * Refused in VS Code's words: its subscribe finds no owner for the chat,
+   * restores nothing, and answers what it could not subscribe to as a resource
+   * not found.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11638-L11640
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2188-L2199
+   */
+  it('refuses a subscribe -32001, the chat named as a resource not found, as VS Code\'s host', async () => {
+    const { client } = await running();
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/nobody' } }))
+      .rejects.toMatchObject({ code: -32001, message: 'Resource not found: ahp-chat:/nobody' });
+  });
+});
+
+describe('a subscribe another overtook', () => {
+  /*
+   * One subscription of a channel per connection, as VS Code's host keeps one
+   * per client: a second subscribe of a channel not yet watched takes the
+   * first's place, and an unsubscribe takes the place away, so the subscribe
+   * left without one is refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2163-L2199
+   */
+  it('refuses the earlier of two subscribes of one channel, and one an unsubscribe overtook, as VS Code\'s host', async () => {
+    const { host, uri } = await running();
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const subscribe = (): Promise<unknown> => client.handle({ method: 'subscribe', params: { channel: uri } });
+    const [first, second] = await Promise.allSettled([subscribe(), subscribe()]);
+    expect(first).toMatchObject({ status: 'rejected', reason: { code: -32603, message: `Subscription cancelled: ${uri}` } });
+    expect(second).toMatchObject({ status: 'fulfilled', value: { snapshot: { resource: uri } } });
+
+    const third = subscribe();
+    void client.handle({ method: 'unsubscribe', params: { channel: uri } });
+    await expect(third).rejects.toMatchObject({ code: -32603, message: `Subscription cancelled: ${uri}` });
     await host.close();
   });
 });

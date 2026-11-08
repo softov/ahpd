@@ -236,7 +236,7 @@ A chat with a bot is a session, so opening one needs what any session needs: the
 
 A make is `added`, an edit is `updated` and a delete is `deleted`, one change per `resourceWatch/changed`.
 
-A watcher hears only the bots it may read, by the table above, and a watch on `bot://` also hears every bot when the reader holds `bot:list`. The reader is the one that opened the watch, so a membership changed after that applies at the next watch.
+A watcher hears only the bots it may read, by the table above, and a watch on `bot://` also hears every bot when the reader holds `bot:list`. Each reader subscribed to a watch has a watcher of their own, attached at their first subscribe, so a membership changed after that applies once their watcher is attached again.
 
 A watch needs `bot:watch`, or a bot the reader may read: a watch on `bot://` is open to anybody signed in, and a watch on one bot to whoever may read it. A slug that does not exist is refused, as a read of it is.
 

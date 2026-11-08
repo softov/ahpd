@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ROOT } from '../src/host.js';
-import { claude, createHost, hello, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
+import { claude, createHost, hello, machine, peer, resetSdk, sdk, sendAnswered, sessionQueries, settle } from './support/host.js';
 import type { Fake } from './support/claude-sdk.js';
 
 /*
@@ -23,7 +23,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 vi.mock('../../agent-claude/src/mcp.js', () => ({
   // The host offers none of its own here.
-  offeredServers: () => ({}),
+  toClaudeMcpServers: () => ({}),
   serversFor: () => ({
     desk: { type: 'http', url: 'https://desk.example/desk' },
     tickets: { type: 'http', url: 'https://desk.example/tickets' },
@@ -47,6 +47,9 @@ const THREE = 'ahp-session:/three';
 
 /** A target, as a client names the server whose sign-in it answers. */
 const at = (session: string, customizationId: string) => ({ kind: 'mcpServer', session, customizationId });
+
+/** A server's row id: no file here declares a server, so each is named by its internal uri. */
+const serverId = (name: string): string => `claude-internal:/mcp/${name}#mcp=${name}`;
 
 /**
  * One client with two Claude sessions, each with three servers that wait for a
@@ -72,7 +75,9 @@ const twoSessions = async () => {
       params: { channel: uri, provider: 'claude', workingDirectories: [`file://${DIR}`] },
     });
     await client.handle({ method: 'subscribe', params: { channel: uri } });
-    // `describe` answers on its own clock; the servers' states arrive with it.
+    // The CLI its first send starts, whose `describe` answers on its own
+    // clock; the servers' states arrive with it.
+    await sendAnswered(client, uri);
     await settle(8);
     const cli = sessionQueries().at(-1);
     if (cli === undefined) throw new Error(`no CLI runs for ${uri}`);
@@ -100,7 +105,7 @@ it('gives a targeted token to that server in that session alone', async () => {
   const { client, one, two } = await twoSessions();
   await expect(client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: DESK, token: 'tickets-two', target: at(TWO, 'mcp:tickets') },
+    params: { channel: ROOT, resource: DESK, token: 'tickets-two', target: at(TWO, serverId('tickets')) },
   })).resolves.toEqual({});
   await settle(8);
 
@@ -113,7 +118,12 @@ it('gives a targeted token to that server in that session alone', async () => {
   expect(sdk.mcpReconnected).toEqual(['tickets']);
 });
 
-it('refuses a target it cannot find, and gives the token to nobody', async () => {
+/*
+ * VS Code refuses a target only for a kind other than an MCP server, and for
+ * one naming no MCP server of an existing session, in its words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2155-L2164
+ */
+it('refuses a target it cannot find in VS Code\'s words, and gives the token to nobody', async () => {
   const { client } = await twoSessions();
   const state = (await client.handle({ method: 'subscribe', params: { channel: TWO } }) as {
     snapshot: { state: { customizations: { id: string; type: string }[] } };
@@ -121,31 +131,30 @@ it('refuses a target it cannot find, and gives the token to nobody', async () =>
   const skills = state.customizations.find((one) => one.type !== 'mcpServer');
   expect(skills).toBeDefined();
 
-  for (const target of [
-    // A kind this host does not know names a consumer it cannot confine the token to.
-    { ...at(TWO, 'mcp:tickets'), kind: 'hostOwned' },
-    at('ahp-session:/nowhere', 'mcp:tickets'),
-    at(TWO, 'mcp:nowhere'),
-    at(TWO, skills?.id ?? ''),
-    'mcp:tickets',
-  ]) {
+  for (const target of [{ ...at(TWO, serverId('tickets')), kind: 'hostOwned' }, serverId('tickets')]) {
     await expect(client.handle({
       method: 'authenticate',
       params: { channel: ROOT, resource: DESK, token: 'lost', target },
-    })).rejects.toMatchObject({ code: -32602 });
+    })).rejects.toMatchObject({ code: -32602, message: 'Unsupported authentication target kind' });
+  }
+  for (const target of [at('ahp-session:/nowhere', serverId('tickets')), at(TWO, serverId('nowhere')), at(TWO, skills?.id ?? '')]) {
+    await expect(client.handle({
+      method: 'authenticate',
+      params: { channel: ROOT, resource: DESK, token: 'lost', target },
+    })).rejects.toMatchObject({ code: -32602, message: 'Authentication target must identify an MCP server in an existing session' });
   }
   await settle(8);
   expect(sdk.mcpDeclared).toEqual([]);
 });
 
-it('refuses a targeted token for a resource its server is not waiting for', async () => {
+it('takes a targeted token whatever resource it names, as VS Code\'s, and hands it to no server not waiting for it', async () => {
   const { client } = await twoSessions();
   // A resource this host advertises, for the backend itself, and not the one
   // this server waits for.
   await expect(client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-wrong', target: at(TWO, 'mcp:tickets') },
-  })).rejects.toMatchObject({ code: -32602 });
+    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-wrong', target: at(TWO, serverId('tickets')) },
+  })).resolves.toEqual({});
   await settle(8);
   expect(sdk.mcpDeclared).toEqual([]);
 });
@@ -154,7 +163,7 @@ it('never starts a session on a token aimed at a server, even one that shares th
   const { client, two } = await twoSessions();
   await client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-keys', target: at(TWO, 'mcp:keys') },
+    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-keys', target: at(TWO, serverId('keys')) },
   });
   await settle(8);
   expect(header(two, 'keys')).toBe('Bearer sk-keys');
@@ -176,18 +185,19 @@ it('withdraws a targeted token and keeps the one pushed for the resource', async
   });
   await client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-keys', target: at(TWO, 'mcp:keys') },
+    params: { channel: ROOT, resource: ANTHROPIC, token: 'sk-keys', target: at(TWO, serverId('keys')) },
   });
   await settle(8);
   await expect(client.handle({
     method: 'authenticate',
-    params: { channel: ROOT, resource: ANTHROPIC, token: '', target: at(TWO, 'mcp:keys') },
+    params: { channel: ROOT, resource: ANTHROPIC, token: '', target: at(TWO, serverId('keys')) },
   })).resolves.toEqual({});
 
   await client.handle({
     method: 'createSession',
     params: { channel: THREE, provider: 'claude', workingDirectories: [`file://${DIR}`] },
   });
+  await sendAnswered(client, THREE);
   await settle(8);
   // Revoked "limited to `target`", so the client's token for the backend stands.
   expect(spent()).toBe('sk-agent');
@@ -199,7 +209,7 @@ it('says a targeted token ran out on the session of its server', async () => {
   try {
     await client.handle({
       method: 'authenticate',
-      params: { channel: ROOT, resource: DESK, token: 'tickets-short', expiresIn: 60, target: at(TWO, 'mcp:tickets') },
+      params: { channel: ROOT, resource: DESK, token: 'tickets-short', expiresIn: 60, target: at(TWO, serverId('tickets')) },
     });
     await vi.advanceTimersByTimeAsync(60_000);
     const expired = wire.notes.filter((one) => one.method === 'auth/required'

@@ -4,13 +4,11 @@ import type { ChildProcess } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 
 /**
- * What the Claude SDK's `spawnClaudeCodeProcess` hands back.
- *
- * Declared here rather than imported so this file does not depend on the SDK's
- * type surface for four fields: a `ChildProcess` satisfies it as it is, which
- * is what makes the host case a plain `spawn`.
+ * What the Claude SDK's `spawnClaudeCodeProcess` hands back: the SDK's
+ * `SpawnedProcess`, the fields of it this backend uses. A `ChildProcess`
+ * satisfies it as it is, which is what makes the host case a plain `spawn`.
  */
-export interface Spawned {
+export interface SpawnedProcess {
   stdin: Writable;
   stdout: Readable;
   readonly killed: boolean;
@@ -45,14 +43,14 @@ export interface Asked {
  * to spawn is delivered as `error`, which is the same event a failed
  * `spawn` raises, so the SDK's own handling covers both.
  */
-class Deferred implements Spawned {
+class Deferred implements SpawnedProcess {
   readonly stdin = new PassThrough();
   readonly stdout = new PassThrough();
   #child: ChildProcess | undefined;
   #killed = false;
   #signal: NodeJS.Signals | undefined;
   #exit: ((code: number | null, signal: NodeJS.Signals | null) => void)[] = [];
-  #fail: ((error: Error) => void)[] = [];
+  #error: ((error: Error) => void)[] = [];
   #settled = false;
 
   get killed(): boolean {
@@ -74,7 +72,7 @@ class Deferred implements Spawned {
     if (this.#settled) return;
     this.#settled = true;
     if (child instanceof Error) {
-      for (const listener of this.#fail) listener(child);
+      for (const listener of this.#error) listener(child);
       this.stdout.end();
       return;
     }
@@ -98,7 +96,7 @@ class Deferred implements Spawned {
     this.stdin.pipe(child.stdin as Writable);
     (child.stdout as Readable).pipe(this.stdout);
     child.on('exit', (code, signal) => { for (const listener of this.#exit) listener(code, signal); });
-    child.on('error', (error) => { for (const listener of this.#fail) listener(error); });
+    child.on('error', (error) => { for (const listener of this.#error) listener(error); });
     if (this.#killed) child.kill(this.#signal ?? 'SIGTERM');
   }
 
@@ -110,7 +108,7 @@ class Deferred implements Spawned {
 
   on(event: 'exit' | 'error', listener: never): void {
     if (event === 'exit') this.#exit.push(listener);
-    else this.#fail.push(listener);
+    else this.#error.push(listener);
   }
 
   once(event: 'exit' | 'error', listener: never): void {
@@ -124,7 +122,7 @@ class Deferred implements Spawned {
   }
 
   off(event: 'exit' | 'error', listener: never): void {
-    const held = event === 'exit' ? this.#exit : this.#fail;
+    const held = event === 'exit' ? this.#exit : this.#error;
     const at = held.indexOf(listener);
     if (at !== -1) held.splice(at, 1);
   }
@@ -143,7 +141,8 @@ export const spawnInside = (
   asked: Asked,
   how: (asked: Asked) => Promise<{ command: string; args?: string[]; env?: Record<string, string> } | undefined>,
   where: string,
-): Spawned => {
+  failures: 'spawn' | 'message' = 'spawn',
+): SpawnedProcess => {
   const held = new Deferred();
   void how(asked).then(
     (moved) => {
@@ -174,11 +173,13 @@ export const spawnInside = (
        * `code` is left alone, because that sentence keeps the errno.
        *
        * A machine that is not there is not named: its sentence is ours, holds
-       * no path, and is the one thing a person needs to know.
+       * no path, and is the one thing a person needs to know. A record whose
+       * `portFailures` is `message` passes the failure on as it is, so the turn
+       * fails in its own message, as VS Code's host shows a failed send's.
        */
       const failed = error instanceof Error ? error : new Error(String(error));
       const named = failed as { syscall?: string };
-      if (named.syscall?.startsWith('spawn') !== true) named.syscall = 'spawn';
+      if (failures === 'spawn' && named.syscall?.startsWith('spawn') !== true) named.syscall = 'spawn';
       held.settle(failed);
     },
   );

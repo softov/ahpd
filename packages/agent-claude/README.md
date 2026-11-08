@@ -35,21 +35,21 @@ Update, remove and one-run flags such as `--plugin` are in [Plugins](https://git
 }
 ```
 
-The ordinary install takes no options: it catalogues whatever directories the daemon was started on. `paths` is the one option a person sets most often, because it narrows the catalogue the daemon serves. Everything else has a default that fits most installs. The daemon loads the change on its next restart.
+The ordinary install takes no options: it lists every session the CLI's store holds, wherever each ran, and works in the directories the daemon was started on. Everything else has a default that fits most installs. The daemon loads the change on its next restart.
 
 Every option below is a key under `options` in the plugin's entry, and the daemon checks each value against the schema before `apply` runs. These are the plugin's answers for every agent it serves, not any one agent's: what one agent runs on is its record's `config`, below. `provider`, `displayName` and `name` are not options at all - a record's id is the provider and its `name` is what a client draws.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `paths` | the host's directories | The directories it catalogues, and where a session goes by default |
+| `paths` | the host's directories | The directories it works in; the first is where a session goes when a client names none |
 | `computerExecutable` | `claude` | Where the CLI is *inside a machine* |
 | `computerCli` | `part` | Where the CLI a machine runs comes from |
 | `computerCliFallback` | `refuse` | With `computerCli: "part"`, what a machine gets when the `claude` part cannot be built |
 | `computerConfigDir` | `/ahpd/<id>`, or `/ahpd/claude` for the first record | The configuration directory the CLI reads *inside a machine*; `false` leaves the image's own |
-| `handshakeTimeoutMs` | `120000` | How long the CLI has to answer its handshake before its session treats it as a CLI that died |
+| `handshakeTimeoutMs` | `120000` | How long the CLI has to answer its handshake, the bound the SDK's `startup` is handed |
 | `hostTools` | `true` | Whether the host's own tools reach each session. A record can turn them off for one agent |
 
-`computerCli` is `part`, the `claude` part this host builds at its pinned version, or `host`, which mounts this host's own installed CLI. `computerCliFallback` is `refuse`, which refuses a Claude session in a machine and names the part, or `host`, which mounts this host's own CLI instead and logs that it did. `handshakeTimeoutMs` is how long a CLI has to take the control request that says it is up: a cold start with several MCP servers is slow, and a machine slower than that is what the option is for. A CLI that misses the bound is treated as one that died: the turn fails with that reason, the query is closed, and the next send starts a CLI that resumes the conversation.
+`computerCli` is `part`, the `claude` part this host builds at its pinned version, or `host`, which mounts this host's own installed CLI. `computerCliFallback` is `refuse`, which refuses a Claude session in a machine and names the part, or `host`, which mounts this host's own CLI instead and logs that it did. `handshakeTimeoutMs` is how long a CLI has to take the control request that says it is up: a cold start with several MCP servers is slow, and a machine slower than that is what the option is for. A session starts its CLI through the SDK's `startup`, as VS Code's Claude does, and hands it this bound: a CLI that misses it did not start, the SDK closes it, the turn fails in the SDK's words, and the next send starts a CLI again.
 
 ### A record of the engine
 
@@ -68,7 +68,23 @@ An agent is a record on `x-ahpd-agents`: `{ id, engine, owner, name, description
 | `extraArgs` | none | Arguments the CLI is started with beyond the ones this backend builds. **Host records only** |
 | `hostTasks` | `true` | Whether Claude leaves its own task tools to the host's `task_add`. Off keeps them, and their calls write the session's plan |
 | `hostTools` | `true` | Whether the host's own tools reach this agent's sessions. Off drops them and keeps each client's tools |
-| `enableTasks` | `true` | Start the CLI with `CLAUDE_CODE_ENABLE_TASKS=1` whenever Claude keeps its own task tools |
+| `enableTasks` | `true` | Whether Claude's own Task tools are on when Claude keeps its task tools; off starts the CLI with `CLAUDE_CODE_ENABLE_TASKS=0`, which gives it `TodoWrite` instead |
+| `dontAsk` | `true` | Whether the Approvals control offers the SDK's `dontAsk` beside VS Code's five modes; off offers VS Code's five alone |
+| `taskOutputFirstWaitMs` | `500` | The first wait between the reads that follow a background shell's output, in milliseconds, as VS Code's output monitor waits |
+| `taskOutputLongestWaitMs` | `10000` | The longest wait between those reads, in milliseconds, each wait twice the last until it |
+| `taskOutputQuietReads` | `2` | How many reads in a row that find nothing new count the shell quiet, so its next output brings the wait back to the first, as VS Code's output monitor counts |
+| `subagentTitleMax` | `60` | The longest title, in characters, a worker chat takes from its task before it is cut, as VS Code's |
+| `subagentStartTimeoutMs` | `30000` | How long, in milliseconds, a worker's frames are held for its spawn to be recorded, as VS Code's |
+| `maxShellInitScript` | `65536` | The longest shell init script, in characters, a client may send, as VS Code's |
+| `maxTerminalOutputBytes` | `10485760` | The largest saved shell output, in bytes, a call names a terminal for, as VS Code's |
+| `keepFramed` | `64` | How many ids of the client tool calls the CLI framed are kept for a handler that runs late |
+| `watchWaitMs` | `300` | How long, in milliseconds, the customization folders' watch waits after a change before it reads them again, as VS Code's Claude watcher |
+| `fileMostBytes` | `65536` | The most of a customization file, in bytes, read for its frontmatter |
+| `ruleDepth` | `32` | How many folders deep a rules folder is walked |
+| `ruleMost` | `1000` | The most rule files read from one rules folder |
+| `stopEnds` | `turn` | What a stop ends: `turn` interrupts the turn through the SDK and keeps the CLI, ending only the workers the stopped turn spawned, and a steering message the CLI holds is answered after the stop in a turn of its own; `query` aborts the query as VS Code's agent does, its workers, its tasks and the steering it holds with it |
+| `portFailures` | `spawn` | How a machine's port that could not start the CLI is said: `spawn` files it as a failure to start, so the turn fails in the SDK's one sentence for that, with no host path; `message` passes on the failure's own message, as VS Code's host shows a failed send's |
+| `subagentsFrom` | `meta` | Where a restored session's worker chats are read from: `meta` reads the CLI's worker files and links each by the call its meta file names, which tells two identical delegations apart; `sdk` reads them through the SDK's `listSubagents` and `getSubagentMessages` and links each as VS Code's agent does, by the `agentId` line of its call's result, else its prompt, else its last answer |
 
 `extraArgs` is host-only: a team's or a person's record that sets one is refused, because an argument is where a command would come from. `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` in `env` are the engine's key variables, so any owner may set them; every other `env` variable is the host's alone, because a free environment can run a program.
 
@@ -86,7 +102,7 @@ A record is checked against the engine's schema when it is put, and opened again
 
 A Claude session uses the host's task tools by default. When the tasks plugin is loaded and offers `task_add`, the session's own `TodoWrite`, `TaskCreate`, `TaskUpdate`, `TaskList` and `TaskGet` are denied. The model adds its tasks with the host's tool, so every session works one list. A host that offers no `task_add` has nothing to put in their place, and the session keeps its own tools there.
 
-`hostTasks: false` in a record keeps Claude's own tools; so does a host with no tasks plugin loaded. In either case the CLI is started with `CLAUDE_CODE_ENABLE_TASKS=1`, which `enableTasks` does and which is on by default. A value the record's own `env` gives the variable is kept rather than written over. Each `TodoWrite`, `TaskCreate` and `TaskUpdate` is then written into the session's plan, and [The task list](https://github.com/softov/ahpd/blob/main/docs/plugins/TASK-LIST.md) says how.
+`hostTasks: false` in a record keeps Claude's own tools; so does a host with no tasks plugin loaded. The CLI's own Task tools are its default; `enableTasks: false` starts it with `CLAUDE_CODE_ENABLE_TASKS=0`, which gives it the legacy `TodoWrite` instead ([environment variables](https://code.claude.com/docs/en/env-vars)). A value the record's own `env` gives the variable is kept rather than written over. Each `TodoWrite`, `TaskCreate` and `TaskUpdate` is then written into the session's plan, and [The task list](https://github.com/softov/ahpd/blob/main/docs/plugins/TASK-LIST.md) says how.
 
 ## In your own host
 
@@ -171,9 +187,8 @@ It starts the [Claude agent SDK](https://www.npmjs.com/package/@anthropic-ai/cla
 | --- | --- |
 | `claude(options)` | the `Agent` to pass to `createHost` |
 | `createSession(options)` | one live session |
-| `catalogue(dir)` | Claude's sessions in a directory, as rows a host can list |
-| `turnsOf(sessionId, dir)` | a past session read from its transcript, as turns |
-| `subagentsOf(sessionId, dir, turns)` | the subagent chats a past session ran, linked to the calls that spawned them |
+| `catalogue()` | every session Claude's store holds, wherever it ran, as rows a host can list |
+| `turnsOf(sessionId)` | a past session read from its transcript, as turns |
 | `probe(options)` | runs a CLI at startup to read the available models and commands |
 | `apply(host, options)` | the plugin entry, with `name` and `title` beside it |
 
@@ -181,7 +196,9 @@ It starts the [Claude agent SDK](https://www.npmjs.com/package/@anthropic-ai/cla
 
 Turns and streaming, tool calls and approvals, questions from the agent, model and effort selection, permission modes, MCP servers and OAuth sign-in, skills and slash commands, multiple chats per session, forking a chat from a turn, truncating a chat back to a turn, resuming a failed turn, session titles, token usage, and context compaction.
 
-An approval offers Allow once, an "always" choice and Deny when the SDK suggests a permission to keep for the call. The "always" choice is labelled by what the suggestions do, and picking it returns them to the SDK as `updatedPermissions`. With no suggestion, the approval is approve or deny.
+An approval is the host's. Claude says what the call asks for beside its question, as VS Code's Claude agent does, and offers no options of its own, so the host's are put; the CLI is given the host's answer.
+
+The operator's managed settings, `Start.managedSettings`, reach the CLI as Claude Code's own policy tier, the SDK's [`managedSettings`](https://code.claude.com/docs/en/managed-settings#let-an-embedding-host-add-policy), which the CLI holds on every call, the calls it answers without asking the host among them. A rule is written in Claude Code's [grammar](https://code.claude.com/docs/en/permissions#permission-rule-syntax) where a Claude Code rule names the calls it names, as [VS Code's bridge](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L27-L30) writes a setting in its runtime's grammar: a `Shell` rule as a `Bash` and a `PowerShell` rule, a `Read` rule as `Read` and a `Write` rule as `Edit`, a path anchored where the host anchors it, and a `Domain` rule as `WebFetch(domain:<host>)`. A rule Claude Code would read as naming other calls is left out: a read deny, which Claude Code applies to the path's edits and writes as well, a shell pattern the host reads as a regular expression or against the whole line, a path with brackets or braces, and `limitTo`. Each tool `eligibleForAutoApproval` sets `false` is an `ask` rule naming it by the CLI's name for it: `<name>` for the CLI's own tool, and `mcp__<server>__<tool>` for an MCP server's `<server>/<tool>`, the host's tools among them as `host/<name>`, on the server [VS Code](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21) names `host`. A client's tool of a key's name the CLI calls `mcp__client__<clientId>__<name>`, one name for each client offering it, and a session's clients come and go under a policy tier the CLI is given once, as it starts, so no rule names that call, and a tool's name set `false` turns on the bypass lock below, as [VS Code's bridge](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L31-L40) falls back to the lock for a tool no rule family names. Claude Code asks about a call an ask rule names in [every mode](https://code.claude.com/docs/en/permission-modes#actions-no-mode-auto-approves), `bypassPermissions` included, and the managed `disableBypassPermissionsMode` is Claude Code's own, which takes `bypassPermissions` away. Under that lock a session's Approvals control offers Ask Before Edits and Plan Mode, with Don't Ask where the record offers it, the modes [VS Code's window](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSessionPermissions.ts#L65-L94) leaves open for Claude under the auto-approval restriction it sets from the lock, and a session holding another mode runs Ask Before Edits. On a machine whose administrator deploys Claude Code's managed settings, the CLI takes these where that policy sets `parentSettingsBehavior` to `merge`.
 
 A subagent Claude runs is its own chat. Every `Task` and `Agent` call opens one through the host's `Start.subagent`, read-only and named `ahp-chat://subagent/…`, and the subagent's text, thinking, tool calls and permission asks are drawn there instead of in the turn that spawned it. A stop given in the subagent's chat stops that subagent through the SDK's `stopTask`, and the turn that started it goes on and sees the call end. Before Claude has named the subagent's task, the stop stops nothing else. On a host without `Start.subagent` the subagent's output stays inline. A session read back from disk rebuilds each subagent's chat from the CLI's `subagents/*.meta.json` and `.jsonl` files.
 
@@ -189,35 +206,43 @@ A `Bash` result too large to send shows its whole output in a terminal, as VS Co
 
 Sessions the host is not running are read from Claude's transcripts, so clients can browse and read them without starting a process. The agent starts when a turn is sent.
 
+A session starts no CLI until its first send, as VS Code's Claude agent keeps a session provisional until its first send materializes it. Until a CLI answers what it has, the session lists the agent's own models and customizations, which the host seeds it with, and what its disk scan finds: each file of its scopes, under the name the CLI knows it by, and each MCP server a settings file declares, `stopped`. A switch of a server or a plugin made before then is the first CLI's: it starts with the plugins switched in its settings, and its servers are switched before the first prompt goes out, as VS Code's send brings a CLI to a session's switches. A start or a stop of a server is refused, there being none running. A CLI that does not answer what it has leaves the lists as they were, and the next CLI the session starts is asked.
+
 A question somebody answered reads back answered, in the session and in a subagent's chat. The CLI writes the answers as the `toolUseResult` of the transcript entry that holds the question's result. The SDK's `getSessionMessages` leaves that field out, so a session's own file is read for it, one line at a time.
 
 A turn that failed on a model call can be resumed. The turn reopens with its message and its parts, the conversation is cut back to the end of the turn before with `resumeSessionAt`, and the prompt is sent again. A conversation whose first turn failed has nothing to cut back to, so it is deleted and started over under its id. The calls the failed turn ran run again, because the cut drops them with the prompt. Only the latest turn, in error, whose last part is a resumable error, can be resumed, and only while the conversation has a turn to cut back to. A turn refused before the CLI, a turn whose CLI went under it and a login the CLI refused end with no resumable error, and a resume whose conversation cannot be started over ends the turn with the reason and no resumable error either.
 
-A session the host resumes picks up the conversation the CLI wrote under that id, in any project folder. The CLI writes a conversation when its first message reaches it, so a chat nobody spoke to, or one whose CLI could not sign in, has none, and the CLI refuses to resume it. Neither has a CLI closed after its prompt arrived and before it wrote the prompt's entry, which leaves a transcript with no entry of a conversation in it. Such a session starts a new conversation under that id instead, under the chat's own id where it has one, as VS Code's agent host does. The CLI starts a conversation under an id only when its folder's project holds no transcript for it, so a transcript there with no entry is deleted first, as VS Code's agent host deletes a transcript before it starts a conversation over under the same id.
+A session the host resumes picks up the conversation the SDK holds under that id, in any project folder, asked of the SDK's `getSessionInfo` as its first CLI starts, as VS Code's agent host asks as it materializes a session at its first send. The CLI writes a conversation when its first message reaches it, so a chat nobody spoke to, or one whose CLI could not sign in, has none, and the CLI refuses to resume it. Such a session starts a new conversation under that id, under the chat's own id where it has one, as VS Code's agent host does. The CLI starts a conversation under an id only when its folder's project holds no transcript for it, so a transcript there in which the SDK finds no session is deleted first, through the SDK's `deleteSession` and once the CLI that could write it has exited, as VS Code's agent host shuts the live CLI down and deletes a transcript through the SDK before it starts a conversation over under the same id.
 
 ## Where a customization comes from
 
-The CLI reports the names of the skills, commands and agents it loaded, and not their files. The backend reads the folders the CLI reads, finds each name there, and lists the entry in the directory of its scope with its file as the uri.
+The CLI reports the names of the skills, commands and agents it loaded, and not their files. The backend reads the folders the CLI reads, finds each name there, and lists the entry in the directory of its scope with its file as the uri, in the tree VS Code's Claude discovery lays out. A command is a skill: its file in `commands` is listed among the skills of its scope. Before a session's first send the names are those of the files themselves, and an entry with no description from the CLI takes its file's own.
 
-| Scope | Folder | A person writes there |
+| Scope | Directories | A person writes there |
 | --- | --- | --- |
-| project | `<cwd>/.claude/agents`, `skills`, `commands` and `rules` | yes |
-| user | `CLAUDE_CONFIG_DIR`, or `~/.claude`, with the same four folders | yes |
-| managed | `.claude/skills` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode` | no |
+| project | `<cwd>/.claude/agents`, `skills`, `rules` and `hooks` | yes |
+| user | `CLAUDE_CONFIG_DIR`, or `~/.claude`, with the same four | yes |
+| managed | `.claude/skills` and `.claude/agents` in `/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode` | no |
 | synced | `<config dir>/skills/synced/<id>/<name>/SKILL.md`, listed by each `manifest.json` | no |
-| builtin | `claude-internal:/skills`, `/commands` and `/agents` | no |
+| builtin | `agent-builtin:/skills` | no |
 
-A name found in more than one scope takes the managed file first, then the personal one, then the project one. A synced skill is matched by `anthropic-skills:<name>` and by its bare name. A skill, command or agent with no file is one the CLI ships, and goes in a `builtin` directory with a `claude-internal:` uri. A plugin's entries stay under the plugin.
+A skill found in more than one scope takes the managed file first, then the personal one, then the project one; an agent takes the managed file, then the project one, then the personal one. A synced skill is matched by `anthropic-skills:<name>` and by its bare name, and listed once. A skill or command with no file is one the CLI ships, and goes in the `builtin` skills directory with the uri `agent-builtin:/skill/<name>`; an agent with no file is the CLI's own, and is listed among the personal agents with the uri `claude-internal:/agent/<name>`, `<name>` being the name the CLI runs it by, a plugin's namespace among it. A plugin the CLI loaded from a root on this disk is a container id'd by its root's URI and named by its `enabledPlugins` id, the `source` the CLI reports, holding what its directory holds as [VS Code](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L65-L88) lists a plugin: its agents, skills, rules, hooks file and MCP servers, read off its `.claude-plugin/plugin.json` and the places it names, each by its file's URI. What the CLI reports of them is listed there alone, and one the plugin holds no file for as an entry with no file; a plugin's commands are among the built-in skills. A plugin the CLI ships has no root and no container, as VS Code lists a plugin it resolves to a root, and what the CLI reports of one is listed as the CLI's own. A plugin's switch is the CLI's `enabledPlugins` setting under that id. Every entry's id is its uri, as VS Code's agents mint one, and a skill's argument hint is `_meta['vscode.skill.argumentHint']`.
+
+A scope's `hooks` directory lists each of its settings files that declares a hook: the working directory's `.claude/settings.json` and `settings.local.json` for the project, the personal `settings.json` for the user. A file declares one when it names a command for a lifecycle event and does not say `disableAllHooks`.
+
+An MCP server the CLI reports is listed at the top level, named by the file that declares it, as VS Code's Claude names one: the working directory's `.claude/settings.json`, then its `.mcp.json`, then the personal `settings.json`, the first file to declare a name taking it. The server's uri is that file, and its id the file's uri with `#mcp=<name>`. A server no file there declares has the uri `claude-internal:/mcp/<name>` and the id `claude-internal:/mcp/<name>#mcp=<name>`.
 
 A session started in the home folder has no project scope, because its `.claude` is the personal folder; the home folder's `CLAUDE.md` is then a personal rule.
 
-The project and user directories are sent with nothing in them too, so a client can offer to write the first one there. The read-only directories are sent only with something in them.
+The project and user directories of agents, skills and rules are sent with nothing in them too, so a client can offer to write the first one there. A `hooks` directory and the read-only directories are sent only with something in them.
 
 The rules are the `CLAUDE.md` files and every `*.md` under a `rules` folder: `<config dir>/CLAUDE.md`, and `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` in the working directory. A rule whose frontmatter has `paths` carries them as `globs`; any other rule is `alwaysApply`.
 
-A session in a machine has its CLI read the machine's own config, and not this host's folders. Its entries are listed with no file, all in the `builtin` directories, and no writable directory is sent.
+A file's frontmatter is what lies between the `---` line that opens it and the next `---` line, as VS Code splits one, read as YAML with the host's own reader, the `parseYaml` the plugin context hands every plugin. Only a file's first 64 KB is read.
 
-A file written, edited or deleted in these folders shows without a restart. Each session watches its personal and project folders and asks the CLI for its lists again, and the host does the same for the personal folder before any session exists. A session in a machine is not watched.
+A session in a machine has its CLI read the machine's own config volume. Its entries are listed with no file: its skills and commands in the `builtin` skills directory, its agents in a read-only `builtin` agents directory, `claude-internal:/agents`. No writable directory is sent.
+
+A file written, edited or deleted in these folders shows without a restart. Each session watches its personal and project folders from the moment it is made, reads them again before its first CLI has answered and asks the CLI for its lists again after, and the host does the same for the personal folder before any session exists. A session in a machine is not watched.
 
 ## The agent a message picks
 
@@ -225,13 +250,15 @@ A client sends the agent on every message, as `message.agent`, and the turn runs
 
 A uri becomes the name the SDK is given: an agent's own file, `file://…/agents/reviewer.md`, gives its frontmatter `name`, or the file's own name when it has none or has been deleted since the listing was made; a built-in agent's `claude-internal:/agent/Explore` gives its last segment; any other uri names no agent, rather than naming one the CLI does not have.
 
-The SDK reads the agent when its query is built and has no way to change it on a CLI already running, so a message picking a different agent closes the query and starts another resumed into the same conversation, before that turn's prompt goes out. The send that switches pays a restart; a client that sends the same agent on every message, which is the usual case, pays nothing.
+The SDK reads the agent when its query is built and has no way to change it on a CLI already running, so a session's first send starts its CLI on the agent its message picked, and a later message picking a different agent closes the query and starts another resumed into the same conversation, before that turn's prompt goes out. The send that switches pays a restart; a client that sends the same agent on every message, which is the usual case, pays nothing.
 
 A session is not tied to an agent: nothing is stored per session, because the next message carries the pick again.
 
 ## Credentials
 
 Sessions use whatever the Claude CLI is signed in with. A client can push a token instead. Pushed tokens are held per connection and are not used for other clients' sessions.
+
+An agent offers its models only where a credential is set up: the CLI's own sign-in, a token, a key or another provider, a key or a provider's switch in the record's own `env`, or an open login the record names. With none, the picker offers none, as VS Code's Claude agent offers no models where no account is set up; a login that opens or stops reads the list again.
 
 ### Several logins
 

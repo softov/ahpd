@@ -111,7 +111,12 @@ export interface ClientCalls {
   complete(toolCallId: string, clientId: string, answer: ClientCallAnswer): boolean;
   /** The client a call is out with. */
   owner(toolCallId: string): string | undefined;
-  /** Fail one client's calls, because that client is no longer here. */
+  /**
+   * Fail one client's calls, because that client is no longer here.
+   *
+   * @deprecated The host fails each call a gone client owes, in VS Code's
+   * words, and settles it here through `complete`; see `Session.clientGone`.
+   */
   gone(clientId: string): void;
   /** Fail every call, for a turn that was stopped or a session that is closing. */
   release(why: string): void;
@@ -121,6 +126,7 @@ export interface ClientCalls {
   methods: {
     toolCallOwner(toolCallId: string): string | undefined;
     completeToolCall(toolCallId: string, clientId: string, result: ClientCallAnswer): boolean;
+    /** @deprecated See `Session.clientGone`: the host calls it on no backend. */
     clientGone(clientId: string): void;
   };
 }

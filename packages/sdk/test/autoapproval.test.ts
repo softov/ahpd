@@ -3,20 +3,26 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
+import { memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { questionOf, questioning } from './support/questions.js';
 import type { Agent, Start } from '../src/types/agent.js';
+import type { Bag } from '../src/types/common.js';
 import type { Peer } from '../src/types/rpc.js';
+import type { SessionStore } from '../src/types/sessions.js';
 import type { Users } from '../src/types/users.js';
 
 /*
  * A session's commands, answered by the host's rules.
  *
- * `Start.getAutoApproval` is the host's answer to "does this run without
- * asking?", and it is read from the host's one value of each rule, which the
- * last push from any window set, as the reference host reads it. This file is
- * the answer in each of the cases that can decide it: one window, two windows
- * pushing, and a window that turned the check off.
+ * The host decides a backend's question with its approval chain, reading the
+ * host's one value of each rule, which the last push from any window set, as
+ * the reference host reads it: a command the rules approve is answered with
+ * nobody asked, and any other is put to a window. This file is the answer in
+ * each of the cases that can decide it: one window, two windows pushing, and
+ * a window that turned the check off.
  * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L361
  */
 
@@ -68,36 +74,44 @@ const settle = async (): Promise<void> => {
   for (let i = 0; i < 20; i++) await new Promise((done) => { setTimeout(done, 0); });
 };
 
-/** The example backend, keeping the last start it was asked to make. */
-function backend() {
-  const base = echo({ path: DIR, pace: 0 });
-  let start: Start | undefined;
-  const agent: Agent = {
-    ...base,
-    provider: 'echo',
-    displayName: 'Echo backend',
-    create: (given: Start) => {
-      start = given;
-      return base.create(given);
-    },
-  };
-  return { agent, start: (): Start | undefined => start };
-}
+/** VS Code's options for a question a managed rule asks, in its words. */
+const ONCE = [
+  { id: 'allow-once', label: 'Allow Once', kind: 'approve' },
+  { id: 'skip', label: 'Skip', kind: 'deny', group: 2 },
+];
 
-/** What the last start's check says about a command line, run by one tool. */
-const approval = (start: Start | undefined, line: string, tool?: string): string | undefined =>
-  start?.getAutoApproval?.('shell', line, 'bash', tool);
-
-/** What the last start's check says about a call that is not a command line. */
-const toolApproval = (start: Start | undefined, name: string): string | undefined =>
-  start?.getAutoApproval?.('tool', name);
-
-/** A host with a people directory, and one connection per token. */
-function serving(terminalAutoApproveDefaults: 'vscode' | 'none' = 'vscode') {
-  const { agent, start } = backend();
-  const host = createHost({ path: DIR, agents: [agent], users: directory(), terminalAutoApproveDefaults });
+/**
+ * A host with a people directory, and one connection per token: on `store`
+ * and with the backend `listed` where a case gives them, and with the
+ * operator's `eligibleForAutoApproval` where a case sets it. `listed` has the
+ * backend know the one session a daemon before this one made, so a turn opens
+ * it again.
+ */
+function serving(
+  terminalAutoApproveDefaults: 'vscode' | 'none' = 'vscode',
+  { store, listed = false, eligibleForAutoApproval }: { store?: SessionStore; listed?: boolean; eligibleForAutoApproval?: Record<string, boolean> } = {},
+) {
+  const backend = questioning(DIR, listed ? {
+    list: async () => [{
+      id: 'bo-one',
+      title: 'Bo one',
+      createdAt: '2026-10-06T00:00:00.000Z',
+      modifiedAt: '2026-10-06T09:00:00.000Z',
+      workingDirectories: [uriOf(DIR)],
+    }],
+    transcript: async () => [],
+  } : {});
+  const host = createHost({
+    path: DIR, agents: [backend.agent], users: directory(), terminalAutoApproveDefaults,
+    ...(store === undefined ? {} : { sessions: store }),
+    ...(eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval }),
+  });
+  /** What each connection heard. */
+  const heard = new Map<Client, { method: string; params: unknown }[]>();
   const join = async (token: string, clientId: string): Promise<Client> => {
-    const client = host.accept(peer());
+    const p = peer();
+    const client = host.accept(p);
+    heard.set(client, p.notes);
     await client.handle({
       method: 'initialize',
       params: { clientId, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
@@ -114,7 +128,7 @@ function serving(terminalAutoApproveDefaults: 'vscode' | 'none' = 'vscode') {
     });
     await settle();
   };
-  /** A session one window asked for, watched by it. */
+  /** A session one window asked for, watched by it with its chat. */
   const opening = async (client: Client, name: string): Promise<void> => {
     const uri = `ahp-session:/${name}`;
     await client.handle({
@@ -122,139 +136,188 @@ function serving(terminalAutoApproveDefaults: 'vscode' | 'none' = 'vscode') {
       params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(DIR)] },
     });
     await client.handle({ method: 'subscribe', params: { channel: uri } });
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
     await settle();
   };
-  return { signedIn, pushing, opening, start };
+  let turns = 0;
+  /**
+   * What the host did with a question its backend put in a turn the window
+   * sends on a session: `approved` where it answered the backend itself, and
+   * the options of the question it said otherwise.
+   */
+  const decided = async (client: Client, session: string, tool: string, asked: Bag): Promise<'approved' | unknown> => {
+    turns += 1;
+    const turnId = `q${turns}`;
+    const chat = chatUriFor(`ahp-session:/${session}`);
+    backend.ask(tool, asked);
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } } },
+    });
+    await settle();
+    const question = questionOf(heard.get(client) ?? [], turnId);
+    return question === undefined && backend.answerOf(turnId) === true ? 'approved' : question?.options;
+  };
+  /** A command line, run by `tool`, in bash. */
+  const command = (client: Client, session: string, line: string, tool = 'bash'): Promise<'approved' | unknown> =>
+    decided(client, session, tool, { permissionKind: 'shell', shellCommand: line, shellLanguage: 'bash' });
+  /** A call that is not a command line, of the tool named. */
+  const call = (client: Client, session: string, name: string): Promise<'approved' | unknown> =>
+    decided(client, session, name, { permissionKind: 'custom-tool' });
+  return { signedIn, pushing, opening, command, call };
 }
 
 it('answers a command from the rules a window pushed', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, pushing, opening, command } = serving();
   const ana = await signedIn('admin', 'ana');
   // A rule of its own, to show the pushed table is the one that answers: `ls`
   // is in the default table and `make test` is in neither.
   await pushing(ana, { terminalAutoApproveRules: { 'make test': true } });
   await opening(ana, 'ana-one');
 
-  expect(approval(start(), 'make test')).toBe('not-needed');
+  expect(await command(ana, 'ana-one', 'make test')).toBe('approved');
   // The table pushed is the whole table: a command the default approves asks.
-  expect(approval(start(), 'ls -la')).toBeUndefined();
-  expect(approval(start(), 'rm -rf /')).toBeUndefined();
+  expect(await command(ana, 'ana-one', 'ls -la')).not.toBe('approved');
+  expect(await command(ana, 'ana-one', 'rm -rf /')).not.toBe('approved');
 });
 
 it('reads the last push of any window when two windows push rules', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, pushing, opening, command } = serving();
   const ana = await signedIn('admin', 'ana');
   const bo = await signedIn('admin-two', 'bo');
   await pushing(ana, { terminalAutoApproveRules: { 'make test': true } });
   await opening(ana, 'ana-one');
-  expect(approval(start(), 'make test')).toBe('not-needed');
+  expect(await command(ana, 'ana-one', 'make test')).toBe('approved');
 
   // Bo's push is the host's table now, Ana's session's among them: one value,
   // which the last push set.
   await pushing(bo, { terminalAutoApproveRules: { 'make build': true } });
-  expect(approval(start(), 'make build')).toBe('not-needed');
-  expect(approval(start(), 'make test')).toBeUndefined();
+  expect(await command(ana, 'ana-one', 'make build')).toBe('approved');
+  expect(await command(ana, 'ana-one', 'make test')).not.toBe('approved');
 
   // An empty table pushed is a table with nothing in it, not a window that
   // never spoke: the answers above fall back to none, and the default table
   // does not come back.
   await pushing(ana, { terminalAutoApproveRules: {} });
-  expect(approval(start(), 'make build')).toBeUndefined();
-  expect(approval(start(), 'ls -la')).toBeUndefined();
+  expect(await command(ana, 'ana-one', 'make build')).not.toBe('approved');
+  expect(await command(ana, 'ana-one', 'ls -la')).not.toBe('approved');
+});
+
+/*
+ * The rules answer a session's lines whoever sent the turn that started it, as
+ * VS Code's host reads its one value of each for every question.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L380
+ */
+it('answers a command by the host\'s rules in a session somebody other than its owner started again', async () => {
+  const store = memorySessions();
+  const first = serving('vscode', { store });
+  const bo = await first.signedIn('admin-two', 'bo');
+  await first.opening(bo, 'bo-one');
+  // One turn, so the session is one the next daemon reads back.
+  await bo.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't0', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
+  await settle();
+
+  // The daemon again on the same store, where Ana's turn starts Bo's session.
+  const second = serving('vscode', { store, listed: true });
+  const ana = await second.signedIn('admin', 'ana');
+  await second.pushing(ana, { terminalAutoApproveRules: { 'make test': true } });
+
+  expect(await second.command(ana, 'bo-one', 'make test')).toBe('approved');
 });
 
 it('approves VS Code\'s table when the window pushed no rules', async () => {
-  const { signedIn, opening, start } = serving();
+  const { signedIn, opening, command } = serving();
   const ana = await signedIn('admin', 'ana');
   await opening(ana, 'ana-one');
 
   // No window has pushed a table, so the daemon's `vscode` default answers.
-  expect(approval(start(), 'ls -la')).toBe('not-needed');
-  expect(approval(start(), 'make test')).toBeUndefined();
+  expect(await command(ana, 'ana-one', 'ls -la')).toBe('approved');
+  expect(await command(ana, 'ana-one', 'make test')).not.toBe('approved');
 });
 
 it('approves nothing under none when the window pushed no rules', async () => {
-  const { signedIn, pushing, opening, start } = serving('none');
+  const { signedIn, pushing, opening, command } = serving('none');
   const ana = await signedIn('admin', 'ana');
   await opening(ana, 'ana-one');
 
   // A command the default table approves is still a command nothing approved.
-  expect(approval(start(), 'ls -la')).toBeUndefined();
-  expect(approval(start(), 'echo hi')).toBeUndefined();
+  expect(await command(ana, 'ana-one', 'ls -la')).not.toBe('approved');
+  expect(await command(ana, 'ana-one', 'echo hi')).not.toBe('approved');
 
   // And a table the window pushes answers as it always did: the setting is
   // only what applies when the window said nothing.
   await pushing(ana, { terminalAutoApproveRules: { 'make test': true } });
-  expect(approval(start(), 'make test')).toBe('not-needed');
+  expect(await command(ana, 'ana-one', 'make test')).toBe('approved');
 });
 
 it('asks every command when the window turned the check off', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, pushing, opening, command } = serving();
   const ana = await signedIn('admin', 'ana');
   await pushing(ana, { terminalAutoApproveRules: { 'make test': true }, terminalAutoApproveEnabled: false });
   await opening(ana, 'ana-one');
 
-  expect(approval(start(), 'make test')).toBeUndefined();
+  expect(await command(ana, 'ana-one', 'make test')).not.toBe('approved');
 
   // Turned back on, the rules it pushed while off are still its rules.
   await pushing(ana, { terminalAutoApproveEnabled: true });
-  expect(approval(start(), 'make test')).toBe('not-needed');
+  expect(await command(ana, 'ana-one', 'make test')).toBe('approved');
 });
 
+/*
+ * The operator's rule is the daemon's `eligibleForAutoApproval`, as VS Code's
+ * host takes the setting from its policy value alone: a question about a tool
+ * it names is a managed one, Allow Once and Skip.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L42
+ */
 it('asks for a tool the rule names, in every session', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, opening, call } = serving('vscode', { eligibleForAutoApproval: { 'tracker/create': false, 'mail/send': true } });
   const ana = await signedIn('admin', 'ana');
   const bo = await signedIn('admin-two', 'bo');
-  await pushing(ana, { eligibleForAutoApproval: { 'tracker/create': false, 'mail/send': true } });
   await opening(ana, 'ana-one');
 
-  expect(toolApproval(start(), 'tracker/create')).toBe('ask');
+  expect(await call(ana, 'ana-one', 'tracker/create')).toEqual(ONCE);
   // `true` is eligible, which is the same as saying nothing about it.
-  expect(toolApproval(start(), 'mail/send')).toBeUndefined();
-  expect(toolApproval(start(), 'tracker/close')).toBeUndefined();
+  expect(await call(ana, 'ana-one', 'mail/send')).not.toEqual(ONCE);
+  expect(await call(ana, 'ana-one', 'tracker/close')).not.toEqual(ONCE);
 
-  // The rule is the host's, not the window's: a session another window starts
-  // is asked too, unlike the terminal rules above.
+  // The rule is the host's: a session another window starts is asked too.
   await opening(bo, 'bo-one');
-  expect(toolApproval(start(), 'tracker/create')).toBe('ask');
+  expect(await call(bo, 'bo-one', 'tracker/create')).toEqual(ONCE);
 });
 
 it('matches a whole server with `/*`, and an exact key wins', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, opening, call } = serving('vscode', { eligibleForAutoApproval: { 'tracker/*': false, 'tracker/read': true } });
   const ana = await signedIn('admin', 'ana');
-  await pushing(ana, { eligibleForAutoApproval: { 'tracker/*': false, 'tracker/read': true } });
   await opening(ana, 'ana-one');
 
-  expect(toolApproval(start(), 'tracker/create')).toBe('ask');
-  expect(toolApproval(start(), 'tracker/close')).toBe('ask');
+  expect(await call(ana, 'ana-one', 'tracker/create')).toEqual(ONCE);
+  expect(await call(ana, 'ana-one', 'tracker/close')).toEqual(ONCE);
   // The exact key is read before the server's wildcard, as VS Code reads it.
-  expect(toolApproval(start(), 'tracker/read')).toBeUndefined();
-  expect(toolApproval(start(), 'mail/send')).toBeUndefined();
+  expect(await call(ana, 'ana-one', 'tracker/read')).not.toEqual(ONCE);
+  expect(await call(ana, 'ana-one', 'mail/send')).not.toEqual(ONCE);
 });
 
 it('asks for a shell the rule names, before a terminal rule answers', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, pushing, opening, command } = serving('vscode', { eligibleForAutoApproval: { Bash: false } });
   const ana = await signedIn('admin', 'ana');
-  await pushing(ana, {
-    terminalAutoApproveRules: { 'ls -la': true },
-    eligibleForAutoApproval: { Bash: false },
-  });
+  await pushing(ana, { terminalAutoApproveRules: { 'ls -la': true } });
   await opening(ana, 'ana-one');
 
   // The terminal rule approves the line, and the tool it runs under is one
   // that asks every time.
-  expect(approval(start(), 'ls -la', 'Bash')).toBe('ask');
+  expect(await command(ana, 'ana-one', 'ls -la', 'Bash')).toEqual(ONCE);
   // A line under a tool the rule does not name is answered by the terminal
-  // rules, as before.
-  expect(approval(start(), 'ls -la', 'pwsh')).toBe('not-needed');
-  // Without a tool to name - a backend that does not pass one - the rule has
-  // nothing to match and the terminal rules answer.
-  expect(approval(start(), 'ls -la')).toBe('not-needed');
-  // And the rule is not the terminal check: turning that check off leaves the
-  // named tool asking.
+  // rules.
+  expect(await command(ana, 'ana-one', 'ls -la', 'pwsh')).toBe('approved');
+  // And the rule is the managed layer's, apart from the terminal check:
+  // turning that check off leaves the named tool asking, Allow Once and Skip.
   await pushing(ana, { terminalAutoApproveEnabled: false });
-  expect(approval(start(), 'ls -la', 'pwsh')).toBeUndefined();
-  expect(approval(start(), 'ls -la', 'Bash')).toBe('ask');
+  expect(await command(ana, 'ana-one', 'ls -la', 'pwsh')).not.toBe('approved');
+  expect(await command(ana, 'ana-one', 'ls -la', 'Bash')).toEqual(ONCE);
 });
 
 /*
@@ -265,12 +328,12 @@ it('asks for a shell the rule names, before a terminal rule answers', async () =
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L774-L815
  */
 it('takes the sensitive edit locations, and asks for a write into one', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, pushing, opening, command } = serving();
   const ana = await signedIn('admin', 'ana');
   await pushing(ana, { editAutoApprovePatterns: { '**/*': true } });
   await opening(ana, 'ana-sensitive');
   const channel = 'ahp-session:/ana-sensitive';
-  expect(approval(start(), 'echo hi > .github/hooks/a.json')).toBe('not-needed');
+  expect(await command(ana, 'ana-sensitive', 'echo hi > .github/hooks/a.json')).toBe('approved');
 
   const locations = [{ path: '.github/hooks', isDirectory: true }];
   await ana.handle({
@@ -285,8 +348,8 @@ it('takes the sensitive edit locations, and asks for a write into one', async ()
   };
   expect(snapshot.state.config.schema.properties['sensitiveEditLocations']?.sessionMutable).toBe(true);
   expect(snapshot.state.config.values['sensitiveEditLocations']).toEqual(locations);
-  expect(approval(start(), 'echo hi > .github/hooks/a.json')).toBeUndefined();
-  expect(approval(start(), 'echo hi > out.txt')).toBe('not-needed');
+  expect(await command(ana, 'ana-sensitive', 'echo hi > .github/hooks/a.json')).not.toBe('approved');
+  expect(await command(ana, 'ana-sensitive', 'echo hi > out.txt')).toBe('approved');
 });
 
 /*
@@ -349,7 +412,7 @@ it('hands the sensitive edit locations to the backend at its start and as they m
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentConfigurationService.ts#L544-L566
  */
 it('reads no locations from a value one entry of which does not fit', async () => {
-  const { signedIn, pushing, opening, start } = serving();
+  const { signedIn, pushing, opening, command } = serving();
   const ana = await signedIn('admin', 'ana');
   await pushing(ana, { editAutoApprovePatterns: { '**/*': true } });
   await opening(ana, 'ana-malformed');
@@ -360,5 +423,5 @@ it('reads no locations from a value one entry of which does not fit', async () =
     params: { channel, action: { type: 'session/configChanged', config: { sensitiveEditLocations: locations } } },
   });
   await settle();
-  expect(approval(start(), 'echo hi > .github/hooks/a.json')).toBe('not-needed');
+  expect(await command(ana, 'ana-malformed', 'echo hi > .github/hooks/a.json')).toBe('approved');
 });

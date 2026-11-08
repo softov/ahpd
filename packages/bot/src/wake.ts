@@ -127,6 +127,12 @@ export interface Answering {
   handle: TurnHandle;
   /** The bot's name, which the notice is said in, where the option asks for one. */
   bot: string;
+  /**
+   * The back session's chat this turn waits on: a turn that ends there answers
+   * it, and one that ends in another chat of that session, a worker's, does
+   * not.
+   */
+  chat: string;
   /** True once the back session has posted into this turn. */
   posted?: boolean;
   /**
@@ -763,7 +769,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post', cont
         const waiting = same ? before.waiting : new Map<string, string | undefined>();
         waiting.set(queuedId, message.steering);
         answering.set(session, {
-          session: message.session, turnId: message.turnId, handle, bot: bot.name, waiting,
+          session: message.session, turnId: message.turnId, handle, bot: bot.name, chat: looked.chat, waiting,
           ...(same && before.posted === true ? { posted: true } : {}),
           ...(same && before.ended !== undefined ? { ended: before.ended } : {}),
         });

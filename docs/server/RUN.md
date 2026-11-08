@@ -167,7 +167,7 @@ Serve /work/new? [y/N]:
 Yes adds it to `paths`. To never ask, pass `--no-cwd`. It serves only `paths` and `--path`.
 
 ::: tip
-A path is where sessions are listed and created by default. It is not a fence: a client may still open a session in any folder on the machine. The [connection token](REMOTE.md#the-connection-token) decides who may connect.
+The first path is where a session is created when a client names no folder. It is not a fence: a client may still open a session in any folder on the machine. The [connection token](REMOTE.md#the-connection-token) decides who may connect.
 :::
 
 ## Output for scripts

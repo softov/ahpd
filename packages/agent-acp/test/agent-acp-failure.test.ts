@@ -52,10 +52,20 @@ const pause = async (times: number): Promise<void> => {
 };
 
 /** A session of `command`, with every action it emits kept, and every line the agent logs. */
-function start(command: string, args: string[] = []): { session: Session; actions: Bag[]; logged: string[] } {
+async function start(
+  command: string,
+  args: string[] = [],
+  stderrTail?: 'sentence' | 'log',
+): Promise<{ session: Session; actions: Bag[]; logged: string[] }> {
   const actions: Bag[] = [];
   const logged: string[] = [];
-  const agent = acpAgent({ command, args, provider: 'acp-failure', log: (line) => { logged.push(line); } });
+  const agent = acpAgent({
+    command,
+    args,
+    provider: 'acp-failure',
+    log: (line) => { logged.push(line); },
+    ...(stderrTail === undefined ? {} : { stderrTail }),
+  });
   const opening: Start = {
     uri: 'ahp-session:/failure',
     chatUri: 'ahp-chat:/failure',
@@ -70,7 +80,7 @@ function start(command: string, args: string[] = []): { session: Session; action
     // otherwise` - so the folder is one the host vouched for.
     trusted: () => true,
   };
-  const session = agent.create(opening);
+  const session = await agent.create(opening);
   started.push(session);
   return { session, actions, logged };
 }
@@ -83,7 +93,7 @@ const failure = (actions: Bag[]): string | undefined => {
 };
 
 it('fails the first turn of a session whose command is missing, and nothing escapes', async () => {
-  const { session, actions } = start(MISSING);
+  const { session, actions } = await start(MISSING);
   session.sendMessage('t1', 'hi');
   await until(() => failure(actions) !== undefined);
 
@@ -104,17 +114,24 @@ it('rejects the handshake with a sentence naming a missing command', async () =>
   expect(escaped).toEqual([]);
 });
 
-it('answers a listing with the watched sessions when the command is missing', async () => {
+/*
+ * A listing the server cannot make is the host's to ask again, so it rejects
+ * rather than answering the watched sessions as the whole catalogue, as VS
+ * Code's Codex agent answers a listing it cannot make.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8043-L8052
+ */
+it('rejects a listing whose command is missing, and logs it', async () => {
   watchSession({ provider: 'acp-missing-list', id: 'kept', cwd: '/tmp', additional: [], title: 'Kept' });
-  const agent = acpAgent({ command: MISSING, provider: 'acp-missing-list' });
-  const listed = await agent.list?.() ?? [];
-  expect(listed.map((row) => row.id)).toEqual(['kept']);
+  const lines: string[] = [];
+  const agent = acpAgent({ command: MISSING, provider: 'acp-missing-list', log: (line) => { lines.push(line); } });
+  await expect(agent.list?.()).rejects.toThrow(`${MISSING} was not found`);
+  expect(lines.some((line) => line.startsWith('acp-missing-list: session/list failed:'))).toBe(true);
   await pause(20);
   expect(escaped).toEqual([]);
 });
 
 it('fails the turn with the exit code when the server exits mid-prompt', async () => {
-  const { session, actions } = start(process.execPath, [FIXTURE]);
+  const { session, actions } = await start(process.execPath, [FIXTURE]);
   session.sendMessage('t1', 'die now');
   await until(() => failure(actions) !== undefined);
 
@@ -122,25 +139,27 @@ it('fails the turn with the exit code when the server exits mid-prompt', async (
   expect(escaped).toEqual([]);
 });
 
-it('fails the turn with the failure\'s own words, as a failed send, and logs what the server wrote on stderr', async () => {
-  const { session, actions, logged } = start(process.execPath, [FIXTURE]);
+it('fails the turn as a failed send with what the server wrote on stderr before it died, and logs it', async () => {
+  const { session, actions, logged } = await start(process.execPath, [FIXTURE]);
   session.sendMessage('t1', 'be noisy');
   await until(() => failure(actions) !== undefined && logged.some((line) => line.includes('backend.js:41')));
 
   // The error a client is shown is the failure's own, typed by the stage VS
-  // Code's host names for a send that failed; the trace went to the log, as
-  // VS Code's agents log a runtime's stderr.
+  // Code's host names for a send that failed, with the trace under it, since
+  // a person on a client cannot read the daemon's log; the trace went to the
+  // log as well, as VS Code's agents log a runtime's stderr.
   const error = (actions.find((action) => action.type === 'chat/error') as { part?: { error?: Bag } } | undefined)?.part?.error;
   expect(error?.errorType).toBe('sendFailed');
   expect(failure(actions)).toContain('exited with code 4');
-  expect(failure(actions)).not.toContain('the model backend refused the request');
+  expect(failure(actions)).toContain('the model backend refused the request');
+  expect(failure(actions)).toContain('at Backend.send (backend.js:41)');
   expect(logged.join('\n')).toContain('stderr: the model backend refused the request');
   expect(logged.join('\n')).toContain('stderr:     at Backend.send (backend.js:41)');
   expect(escaped).toEqual([]);
 });
 
 it('never surfaces the stderr of a server that answered, and logs it', async () => {
-  const { session, actions, logged } = start(process.execPath, [FIXTURE]);
+  const { session, actions, logged } = await start(process.execPath, [FIXTURE]);
   session.sendMessage('t1', 'chatter a little');
   await until(() => actions.some((action) => action.type === 'chat/turnComplete') && logged.length > 0);
 
@@ -151,6 +170,89 @@ it('never surfaces the stderr of a server that answered, and logs it', async () 
   expect(logged.some((line) => line.endsWith('stderr: a line the server said to nobody'))).toBe(true);
   expect(escaped).toEqual([]);
 });
+
+/*
+ * A record whose `stderrTail` is `log` leaves the trace to the log, as VS
+ * Code's agents log a runtime's stderr, and the error a client is shown is the
+ * failure's own words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2716
+ */
+it('leaves the stderr to the log when the record says stderrTail log', async () => {
+  const { session, actions, logged } = await start(process.execPath, [FIXTURE], 'log');
+  session.sendMessage('t1', 'be noisy');
+  await until(() => failure(actions) !== undefined && logged.some((line) => line.includes('backend.js:41')));
+
+  expect(failure(actions)).toContain('exited with code 4');
+  expect(failure(actions)).not.toContain('the model backend refused the request');
+  expect(logged.join('\n')).toContain('stderr: the model backend refused the request');
+  expect(escaped).toEqual([]);
+});
+
+it('keeps the last 8 KB of stderr, cut at a line boundary', async () => {
+  const lines = Array.from({ length: 2000 }, (_one, at) => `line ${String(at)}`);
+  const connection = connectAcp({
+    command: process.execPath,
+    args: ['-e', `process.stderr.write(${JSON.stringify(lines.join('\n'))}, () => { process.exit(5); });`],
+    handlers: { update: () => {} },
+  });
+  await expect(connection.initialize()).rejects.toThrow('exited with code 5');
+  const tail = await connection.stderrTail();
+
+  expect(tail.length).toBeLessThanOrEqual(8 * 1024);
+  // The oldest line went, and what is left begins at a whole one rather than at
+  // the middle of it.
+  expect(tail).not.toContain('line 0\n');
+  expect(tail.split('\n')[0]).toMatch(/^line \d+$/);
+  expect(tail.endsWith('line 1999')).toBe(true);
+  await connection.close();
+});
+
+it('keeps as much of the stderr as the record\'s stderrBytes names', async () => {
+  const lines = Array.from({ length: 2000 }, (_one, at) => `line ${String(at)}`);
+  const connection = connectAcp({
+    command: process.execPath,
+    args: ['-e', `process.stderr.write(${JSON.stringify(lines.join('\n'))}, () => { process.exit(5); });`],
+    handlers: { update: () => {} },
+    stderrBytes: 1024,
+  });
+  await expect(connection.initialize()).rejects.toThrow('exited with code 5');
+  const tail = await connection.stderrTail();
+  expect(tail.length).toBeLessThanOrEqual(1024);
+  expect(tail.endsWith('line 1999')).toBe(true);
+  await connection.close();
+});
+
+it('waits the record\'s exitGraceMs for the exit of a server that closed its stream', async () => {
+  const connection = connectAcp({
+    command: process.execPath,
+    args: ['-e', 'process.stdout.end(); setInterval(() => {}, 1000);'],
+    handlers: { update: () => {} },
+    exitGraceMs: 50,
+  });
+  try {
+    const began = Date.now();
+    await expect(connection.initialize()).rejects.toThrow();
+    // Well inside the 1000 ms a record that names none waits.
+    expect(Date.now() - began).toBeLessThan(800);
+  }
+  finally {
+    await connection.close();
+  }
+});
+
+it('kills a server that takes no SIGTERM once the record\'s killGraceMs has passed', async () => {
+  const connection = connectAcp({
+    command: process.execPath,
+    args: ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+    handlers: { update: () => {} },
+    killGraceMs: 100,
+  });
+  await new Promise((resolve) => { setTimeout(resolve, 200); });
+  const began = Date.now();
+  await connection.close();
+  // Well inside the 5000 ms a record that names none grants.
+  expect(Date.now() - began).toBeLessThan(2_000);
+}, 15_000);
 
 it('settles a close once the server process has gone, and never rejects', async () => {
   const connection = connectAcp({

@@ -31,6 +31,7 @@ import {
   createMinuteMeter,
   doorOf,
   fileResources,
+  ripgrepFiles,
   fileSessions,
   fileUsage,
   filePolicies,
@@ -72,7 +73,7 @@ import { controlIn, controlServer } from '../control.js';
 import type { ControlServer } from '../control.js';
 import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
-import { agentPluginsDir, automationsDir, automationsPath, automationStatePath, configDir, configPath, customizationStatePath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
+import { agentPluginsDir, automationsDir, automationsPath, automationStatePath, configDir, configPath, customizationStatePath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, rootConfigPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
 import { API_PREFIX, PROXY_PREFIX, apiHandler, isUnder, json, listenApi, plainRequests, pluginRoutes, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { isRootPath } from '../proxy/dialects.js';
 import { mcpHandler } from '../mcp.js';
@@ -89,10 +90,12 @@ import { applyPresets, planPresets, splitModels } from '../agents/migrate.js';
 import { handedAgent } from '../agents/handed.js';
 import { fileVault } from '../vault.js';
 import { daemonRootConfig } from '../rootconfig.js';
+import { fileRootConfigStore } from '../rootconfigstore.js';
 import { pty } from '../pty.js';
 import { shellIntegrationOf } from '../shellintegration.js';
 import { screen } from '../screen.js';
 import { realManager } from '../service.js';
+import type { Manager, Service } from '../service.js';
 import { migrateAutomations, scheduledAutomations } from '../scheduled.js';
 import type { ScheduledStore } from '../scheduled.js';
 import { fileEnablement } from '../enablement.js';
@@ -222,7 +225,7 @@ export function daemonAutomations(told: (message: string) => void, store?: Autom
  * the configuration directory, the machine owners and the vault included. The
  * owners file is the computer plugin's and the vault is this daemon's own port
  * until a plugin registers one, and this daemon's own start is the only place
- * that knows all five at once - which is why the sweep happens here rather than
+ * that knows all six at once - which is why the sweep happens here rather than
  * beside any one of the writers.
  */
 export const wholeFiles = (users?: string): string[] => [
@@ -230,6 +233,7 @@ export const wholeFiles = (users?: string): string[] => [
   policiesPath(),
   automationStatePath(),
   customizationStatePath(),
+  rootConfigPath(),
   join(configDir(), 'computers.json'),
   vaultPath(),
 ];
@@ -1311,6 +1315,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       screen,
     }),
     directories: gitBranches(),
+    // The files `@` completes, listed by `rg` on the path as `git` is run.
+    workspaceFiles: ripgrepFiles(),
     changes: gitChanges(),
     worktrees: gitWorktrees(),
     /*
@@ -1450,6 +1456,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * a daemon setting, not a per-session one.
      */
     closedChats: options.closedChats,
+    unofferedModel: options.unofferedModel,
+    workspacelessFolder: options.workspacelessFolder,
+    rootOwner: options.rootOwner,
+    turnSenders: options.turnSenders,
+    steerReadBack: options.steerReadBack,
+    backendBackgroundWork: options.backendBackgroundWork,
+    agentOrchestrationLimitsScope: options.agentOrchestrationLimitsScope,
     archiveDirtyWorktree: options.archiveDirtyWorktree,
     pullRequestLookup: options.pullRequestLookup,
     // What a session on a joined node does when that node's join restarts.
@@ -1461,6 +1474,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * is the same answer and one place should hold it.
      */
     ...(options.clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs: options.clientToolTimeoutMs }),
+    // And how long a gone client keeps its place and its calls, the host's own thirty seconds unless the operator said.
+    ...(options.clientToolCallDisconnectTimeoutMs === undefined ? {} : { clientToolCallDisconnectTimeoutMs: options.clientToolCallDisconnectTimeoutMs }),
     /*
      * The environment the operator names for the shells this host starts.
      *
@@ -1479,6 +1494,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * way.
      */
     terminalAutoApproveDefaults: options.terminalAutoApproveDefaults,
+    // The operator's managed permissions and per-tool eligibility, handed on as the file says them.
+    ...(options.managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions: options.managedSettingsPermissions }),
+    ...(options.eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval: options.eligibleForAutoApproval }),
+    managedRules: options.managedRules,
     /*
      * The reader a configured module exports, which takes the sdk's own
      * splitter's place.
@@ -1496,6 +1515,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     ...(options.deltaWindowMs === undefined ? {} : { deltaWindowMs: options.deltaWindowMs }),
     ...(options.sleepAfterMinutes === undefined ? {} : { sleepAfterMinutes: options.sleepAfterMinutes }),
     ...(options.sessionResidencyLimit === undefined ? {} : { sessionResidencyLimit: options.sessionResidencyLimit }),
+    ...(options.attachmentFetchLimitBytes === undefined ? {} : { attachmentFetchLimitBytes: options.attachmentFetchLimitBytes }),
+    ...(options.toolResultResourceLimitBytes === undefined ? {} : { toolResultResourceLimitBytes: options.toolResultResourceLimitBytes }),
     /*
      * The daemon's own settings, as the keys root config carries.
      *
@@ -1505,6 +1526,16 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * the host only shows what it is given and hands writes on.
      */
     rootConfig: daemonRootConfig(options, typed, openWire, (servers) => { mcpServers = servers as typeof mcpServers; }, async () => (await applyNow()).restart),
+    /*
+     * The root config a client pushed, kept between restarts, as VS Code's
+     * host keeps its own: a daemon restarted for an upgrade comes back with
+     * the settings its windows set, an Always Allow among them, and the
+     * approval and policy keys from each window's next push.
+     */
+    rootConfigStore: fileRootConfigStore({
+      file: rootConfigPath(),
+      onProblem: (message) => process.stderr.write(`${message}\n`),
+    }),
     /*
      * What this host adds on top of a backend, kept between restarts.
      *
@@ -1602,14 +1633,14 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      *
      * The version out of the manifest, the log a detached daemon writes to and
      * every file of the wire capture when there is one - a capture that stops
-     * at the last roll is missing its start - and a shutdown that runs the same
-     * way down `ahpd stop` does, so it stops the daemon gracefully on every
-     * platform rather than signalling itself.
+     * at the last roll is missing its start - and a shutdown that stops the
+     * daemon the way `ahpd stop` does, through the service manager that holds
+     * it where one does.
      */
     diagnostics: {
       version: version(),
       logs: () => [daemonLog(), ...(capture.at === undefined ? [] : filesOf(capture.at))],
-      shutdown: daemonShutdown(() => wayDown),
+      shutdown: daemonShutdown(() => wayDown, service === undefined ? undefined : { service, name: serviceName, manager: realManager() }),
     },
   };
 
@@ -2031,7 +2062,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   });
   // The plugin channel's marks reach the host that now serves it.
   markRestart = () => { host.markRestartNeeded(); };
-  valuesMoved = () => host.daemonValuesMoved();
+  valuesMoved = () => host.daemonValuesChanged();
   /*
    * The host the plugins were loaded for, handed over now that it exists.
    *
@@ -2462,8 +2493,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
 }
 
 /**
- * What a `shutdown` request does to this daemon: the way down once there is
- * one, and the signal it sent itself before that.
+ * What a `shutdown` request does to this daemon once it has been answered:
+ * stops it the way `ahpd stop` does.
+ *
+ * A daemon a service manager holds is stopped through the manager, as `ahpd
+ * stop` stops one, so a unit that starts its daemon again whenever it exits
+ * does not bring it back. Any other runs its way down once there is one, and
+ * the signal it sent itself before that.
  *
  * `way` answers the way down the daemon has now, or nothing in the window
  * between the host being built with this and the lifecycle being made - the
@@ -2474,7 +2510,14 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
  * connections, the listeners and `host.close()` all happen - which sending
  * `SIGTERM` to itself never did on Windows, where Node makes that a hard kill.
  */
-export const daemonShutdown = (way: () => (() => void) | undefined): (() => void) => () => {
+export const daemonShutdown = (
+  way: () => (() => void) | undefined,
+  held?: { service: Service; name?: string | undefined; manager: Pick<Manager, 'stop'> },
+): (() => Promise<void>) => async () => {
+  if (held !== undefined) {
+    await held.manager.stop(held.service, held.name);
+    return;
+  }
   const down = way();
   if (down === undefined) {
     process.kill(process.pid, 'SIGTERM');

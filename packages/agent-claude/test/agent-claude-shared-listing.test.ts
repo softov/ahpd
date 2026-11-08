@@ -14,7 +14,7 @@ const sdk = vi.hoisted(() => ({
   options: [] as Record<string, unknown>[],
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   listSessions: async () => {
     sdk.listed += 1;
     // A tick, so callers meant to share a listing really do overlap: without
@@ -133,7 +133,7 @@ it('lists on its own when a backend is built outside a plugin load', async () =>
   sdk.listed = 0;
   sdk.sessions = [listed('one', 'One')];
   // The built-in backend, built directly rather than through `apply`: nothing
-  // hands it a listing, so it reads the directory itself.
+  // hands it a listing, so it lists the store itself.
   const { claude } = await import('../src/claude.js');
   const agent = claude({ paths: [PATH] });
   expect((await agent.list?.())?.map((one) => one.id)).toEqual(['one']);
@@ -143,8 +143,7 @@ it('lists on its own when a backend is built outside a plugin load', async () =>
 it('hands the same listing to every record of one load and no other', async () => {
   sdk.listed = 0;
   sdk.sessions = [listed('one', 'One')];
-  // Two loads of the plugin, so two listings: the sharing is within a load,
-  // and a record that read a different `paths` would have to get its own.
+  // Two loads of the plugin, so two listings: the sharing is within a load.
   const first = await opened(RECORDS);
   const second = await opened(['claude', 'claude-other']);
   expect(first).toHaveLength(3);

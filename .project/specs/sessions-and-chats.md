@@ -34,8 +34,8 @@ refs:
   - "[code://packages/sdk/src/host/lifecycle.ts#L435-L458](../../packages/sdk/src/host/lifecycle.ts#L435-L458) - `deleted`, the backend copy of a session"
   - "[code://packages/sdk/src/host/lifecycle.ts#L527-L541](../../packages/sdk/src/host/lifecycle.ts#L527-L541) - `mayDispose`, who may delete a session"
   - "[code://packages/sdk/src/host/lifecycle.ts#L560-L640](../../packages/sdk/src/host/lifecycle.ts#L560-L640) - `removeSession`"
-  - "[code://packages/sdk/src/host/catalogue.ts#L700-L787](../../packages/sdk/src/host/catalogue.ts#L700-L787) - the session list: provider choice and pruning"
-  - "[code://packages/sdk/src/host/history.ts#L298-L397](../../packages/sdk/src/host/history.ts#L298-L397) - `past`, a transcript read"
+  - "[code://packages/sdk/src/host/catalogue.ts#L989-L1245](../../packages/sdk/src/host/catalogue.ts#L989-L1245) - the session list: provider choice and pruning"
+  - "[code://packages/sdk/src/host/history.ts#L312-L423](../../packages/sdk/src/host/history.ts#L312-L423) - `restoreSession`, a stored session restored and its transcript read"
   - "[code://packages/sdk/src/sessions/sessions.ts#L505-L560](../../packages/sdk/src/sessions/sessions.ts#L505-L560) - `fileSessions`, the session store"
   - "[code://packages/sdk/src/sessions/sessions.ts#L854-L880](../../packages/sdk/src/sessions/sessions.ts#L854-L880) - `migrateSessions`"
   - "[code://packages/sdk/src/host/attachments.ts#L85-L260](../../packages/sdk/src/host/attachments.ts#L85-L260) - `needsWriting` and `snapshot`, attachment bytes written to disk"
@@ -145,21 +145,22 @@ The Claude backend calls it only for lead turns, and the pi backend calls it wit
 WHEN a turn starts
 THEN the host records its id as the transcript id it began under, in one file in the session's folder, under its chat.
 WHEN the host reads a chat back from a transcript
-THEN from the first turn the record holds on, a turn the record does not hold joins the turn before it
-AND so does a turn recorded as the same turn as the one before it
-AND a local turn stays a turn of its own
+THEN each turn the transcript holds is a turn of its own
+AND a turn recorded as the same turn as the one before it joins that turn
 AND a joined turn keeps the first turn's id, start and message, takes both turns' parts and ends as the later one ended
-AND its usage adds up what both spent.
+AND its duration adds both durations
+AND its usage takes the later turn's counts and model, and adds both costs.
 WHEN a local turn's anchor is a turn that joined another
 THEN the local turn goes after the turn it joined.
 WHEN a truncation drops turns, a fork copies them, or a chat is removed or moves to another session
 THEN the record follows, as the chat's local turns do.
 
-The reason: a backend may write one turn as several of its own.
-Claude's CLI writes a steering message it runs after the turn's last answer as a prompt.
-The reference keeps that message's answer in the turn it steered.
+The reason: VS Code's replay starts a turn at every prompt a transcript holds.
+A steering message Claude's CLI runs as a prompt of its own is one of them.
+A turn recorded twice is one turn its backend ran again, as a resumed turn's prompt is written down again.
+VS Code's host keeps a resumed turn as one turn, its durations added and its usage merged.
 A chat with no record, from before it or on a store with no session folder, reads as its transcript gives it.
-See [`code://packages/sdk/src/host/localturns.ts`](../../packages/sdk/src/host/localturns.ts).
+See [`code://packages/sdk/src/host/localturns.ts`](../../packages/sdk/src/host/localturns.ts), https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L282-L292 and https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L966-L974.
 
 ### The host keeps a `!` command's turn as a local turn
 
@@ -240,11 +241,12 @@ See [`code://packages/sdk/src/host/history.ts`](../../packages/sdk/src/host/hist
 ### A compacted session keeps its history and shows a notice
 
 WHEN the Claude backend gets a `compact_boundary` message during a turn
-THEN it adds a `systemNotification` part: "Context compacted" or "Context compacted automatically"
-AND when it knows the token counts it adds ": X tokens to Y."
+THEN it adds a `systemNotification` part in the CLI's own words for the boundary: "Conversation compacted"
 AND it does not send `chat/truncated`, so the earlier turns stay.
 
-The cofold backend uses the same words, live and when it reads a transcript back.
+The cofold backend says it in cofold's own app's words, live and when it reads a transcript back.
+It says "Context compacted: X tokens to Y." when it knows the token counts.
+It says "Context compacted: the conversation so far was folded into this summary; the model continues from it." when it does not.
 A Claude transcript read back skips the summary frame and shows no notice.
 
 ### A listed session belongs to the provider the host recorded
@@ -272,8 +274,7 @@ WHEN a client creates a session on `<provider>:/<id>` and the request names that
 THEN the host holds it under that URI.
 
 WHEN a client creates a session on any other channel
-THEN the host holds it as `ahp-session:/<id>`
-AND the client's URI is an alias.
+THEN the host holds it under that URI, as VS Code's host holds a session under the URI a client sends.
 
 WHEN the host makes a session by itself
 THEN its name is `ahp-session:/<uuid>`.

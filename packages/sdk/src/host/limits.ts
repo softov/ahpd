@@ -11,9 +11,14 @@ import type { Bag } from '../types/common.js';
  * carrying large tool outputs are a thousand envelopes, whatever they weigh.
  *
  * Both are root config keys with defaults, so a host nobody configured is
- * bounded the way a configured one is. They are read where they are used
- * rather than held, so a value pushed while the host runs is in force for the
- * next send and not at the next restart.
+ * bounded the way a configured one is, and `0` sets no limit, VS Code's: its
+ * host writes to an open socket whatever the socket holds and replays by the
+ * count alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/webSocketTransport.ts#L80-L85
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4247-L4250
+ *
+ * They are read where they are used rather than held, so a value pushed while
+ * the host runs is in force for the next send and not at the next restart.
  */
 
 /** What one client's queue may hold before this host stops writing to it, 16 MiB. */
@@ -23,18 +28,18 @@ export const CLIENT_QUEUE_BYTES = 16 * 1024 * 1024;
 export const REPLAY_BYTES = 32 * 1024 * 1024;
 
 /**
- * The least either key may be pushed to, 1 MiB.
+ * The least limit either key may be pushed to, 1 MiB.
  *
  * Below it is a host that closes a client under any burst at all and a replay
  * buffer that cannot hold a page of a busy session's turns, which is not a
- * limit anybody means. A value under it, and one that is not a safe integer,
- * reads as the key's default rather than as itself.
+ * limit anybody means. A value under it other than `0`, and one that is not a
+ * safe integer, reads as the key's default rather than as itself.
  */
 export const MINIMUM_LIMIT_BYTES = 1024 * 1024;
 
 /**
- * One of the two, as it stands now: the pushed value where it is usable, and
- * the default otherwise.
+ * One of the two, as it stands now: the pushed value where it is usable, no
+ * limit for `0`, and the default otherwise.
  *
  * The schema's `minimum` is not what holds a value off the wire - a client
  * pushes what it likes under a declared key and `actions.ts` keeps it - so the
@@ -43,6 +48,7 @@ export const MINIMUM_LIMIT_BYTES = 1024 * 1024;
  */
 const limitOf = (rootConfig: Bag, key: string, fallback: number): number => {
   const pushed = rootConfig[key];
+  if (pushed === 0) return Number.POSITIVE_INFINITY;
   return typeof pushed === 'number' && Number.isSafeInteger(pushed) && pushed >= MINIMUM_LIMIT_BYTES ? pushed : fallback;
 };
 

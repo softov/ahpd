@@ -146,7 +146,16 @@ it('runs a person\'s command as a terminal call that names its terminal while it
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
   });
-  await until(() => sent('chat/toolCallContentChanged') !== undefined);
+  /*
+   * The command's shell names its terminal once it has printed its prompt, the
+   * command is typed into it, and the shell integration's mark that it
+   * finished ends it, as the reference host runs its own `!` command.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L117
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L224-L285
+   */
+  await until(() => pty.started.length > 0);
+  pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
+  await until(() => sent('chat/toolCallContentChanged') !== undefined && pty.typed.at(-1) === ' make preview\r');
 
   expect(sent('chat/toolCallStart')).toMatchObject({ toolName: 'terminal', displayName: 'Terminal', intention: 'make preview' });
   expect(sent('chat/toolCallReady')).toMatchObject({ invocationMessage: 'make preview', toolInput: 'make preview' });
@@ -156,12 +165,11 @@ it('runs a person\'s command as a terminal call that names its terminal while it
   const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, notes, chatUri)));
 
-  pty.say('built\r\n');
-  pty.exit(0);
+  pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
   await until(() => sent('chat/turnComplete') !== undefined);
   expect((sent('chat/toolCallComplete')?.result as Bag).content).toEqual([
-    { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
-    { type: 'text', text: 'built\r\n' },
+    { ...named, result: { exitCode: 0, preview: 'built' } },
+    { type: 'text', text: 'built' },
   ]);
   const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, notes, chatUri)));

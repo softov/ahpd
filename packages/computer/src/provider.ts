@@ -94,7 +94,7 @@ export interface ComputerProvider extends ResourceProvider {
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string): Promise<Read>;
   write(uri: string, content: Write, owner?: Owner): Promise<void>;
-  remove(uri: string, recursive?: boolean): Promise<void>;
+  delete(uri: string, recursive?: boolean): Promise<void>;
   describe(): SchemeDescription;
   /** Make a machine under this name from a manifest body, owned by `owner`. */
   create(name: string, manifest: Write, owner?: Owner): Promise<void>;
@@ -497,7 +497,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
      * A leaf under a machine is not a thing to delete, and the root is a
      * listing: both are refused rather than passed to the runtime as a name.
      */
-    remove: async (uri) => {
+    delete: async (uri) => {
       const held = at(uri);
       if (held.id === '' || !isDirectory(held)) {
         throw new RpcError(-32602, `${uri} is not a computer to destroy; delete computer://<name>`);

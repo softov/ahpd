@@ -14,6 +14,7 @@
  * is exactly where `begin` reads it from.
  */
 
+import { getReasoningEffortDescription, getReasoningEffortLabel, resolveDefaultReasoningEffort } from '@ahpd/sdk';
 import type { Offered } from '@ahpd/sdk';
 
 /** As much of a pi model as anything here needs. */
@@ -46,14 +47,21 @@ export const idOf = (model: PiModel): string => `${model.provider}/${model.id}`;
  * takes an image, and the thinking levels pi's rule gives it as the model's
  * `configSchema`, as VS Code's agents list each model; the host adds the
  * provider.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L120-L144
  *
  * The one shape both answer with, so the list the host holds from boot and the
- * one a session reports later name every model the same way. `configSchema` is
- * present only when the model has more than one thinking level to choose
- * between: a form with one option is a control that cannot be used.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L120-L144
+ * one a session reports later name every model the same way. The level is the
+ * property VS Code's agent host draws, over pi's own levels in pi's words, a
+ * one-level picker included as VS Code's hosts draw one: each level's label
+ * and description from VS Code's shared helpers, a level they do not name
+ * taking the helpers' label and no description. Its default is `startsOn`, the
+ * level pi starts a session on for the model, where it is offered, as VS Code
+ * prefers a declared default, else VS Code's own resolution.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L4536-L4553
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/claudeModelConfig.ts#L107-L126
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/reasoningEffort.ts#L101-L111
  */
-export function listed(model: PiModel, levels: readonly string[]): Offered['models'][number] {
+export function listed(model: PiModel, levels: readonly string[], startsOn?: string): Offered['models'][number] {
   return {
     id: idOf(model),
     name: model.name ?? model.id,
@@ -61,16 +69,18 @@ export function listed(model: PiModel, levels: readonly string[]): Offered['mode
     ...(typeof model.contextWindow === 'number' && model.contextWindow > 0 ? { maxContextWindow: model.contextWindow } : {}),
     ...(typeof model.maxTokens === 'number' && model.maxTokens > 0 ? { maxOutputTokens: model.maxTokens } : {}),
     ...(model.input === undefined ? {} : { supportsVision: model.input.includes('image') }),
-    ...(levels.length > 1 ? {
+    ...(levels.length > 0 ? {
       configSchema: {
         type: 'object',
         properties: {
           [THINKING_KEY]: {
             type: 'string',
-            title: 'Thinking',
-            description: 'How much the model reasons before it answers.',
+            title: 'Effort Level',
+            description: 'Controls how much reasoning effort the model uses.',
+            default: resolveDefaultReasoningEffort(levels, startsOn, model.id),
             enum: [...levels],
-            default: levels[0],
+            enumLabels: levels.map(getReasoningEffortLabel),
+            enumDescriptions: levels.map((level) => getReasoningEffortDescription(level) ?? ''),
           },
         },
       },

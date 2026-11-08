@@ -137,12 +137,15 @@ AND `authorization_servers` and `scopes_supported` are there only when some issu
 AND the record is built again on every read, so a new record issuer shows with no restart.
 The library alone, with no address, falls back to the identifier `ahpd://users`.
 
-### An authorized connection is told sign-in is not required
+### The host's sign-in is on no agent
 
-WHEN a root connection, or a connection that is already a person, reads the agent list
-THEN the host's own sign-in resource in it says `required: false`
-AND every other connection sees `required: true`.
-This is so that a client does not prompt a person who is already signed in.
+WHEN a connection reads the agent list
+THEN no agent lists the host's own sign-in resource
+AND a command refused before somebody signs in answers `-32007` with the sign-in record in `data.resources`
+AND a sign-in that runs out is `auth/required` on the root, `reason: 'expired'`, naming the identifier alone.
+The reason: VS Code's host says its host-level sign-in only in the data of the request it refuses, and its expiry with the identifier alone.
+A VS Code client asks for a token for every resource an agent lists.
+See https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2634-L2642 and https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/missionControl/missionControlProtocolServer.ts#L217.
 
 ### A person's sign-in is never lent
 

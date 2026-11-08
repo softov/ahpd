@@ -53,7 +53,7 @@ WHEN a cofold session names a computer
 THEN the host starts `ahpd --stdio --plugin @ahpd/agent-cofold` inside the machine
 AND the session runs there.
 The reason: cofold's loop, tools and shell all run in its own process, so only a whole host can take them into a machine.
-cofold's configuration reaches the machine as a machine need, and `COFOLD_CONFIG` names the file there.
+cofold's configuration reaches the machine as a machine need, and `PAPO_CONFIG` names the file there.
 
 ### The host inside loads the agent's own plugin
 

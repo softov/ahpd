@@ -49,7 +49,7 @@ const sdk = vi.hoisted(() => {
 
 const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== undefined);
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/warmed.js')).warmed({
   listSessions: async () => [],
   getSessionMessages: async () => [],
   query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
@@ -84,7 +84,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const { createHost } = await import('../src/host.js');
 const { fileSessions } = await import('../src/sessions/sessions.js');
-const { chatUriFor, retainedTerminalOf } = await import('../src/host/channels.js');
+const { chatUriFor, nonPtyShellTerminalOf } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 const { shellTerminals } = await import('../src/machines/terminals.js');
 const { uriOf } = await import('../src/resources/fileuri.js');
@@ -448,7 +448,7 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
     { type: 'text', text: notice },
     {
       type: 'terminal',
-      resource: expect.stringMatching(/^ahp-terminal:\/\/shell\//),
+      resource: expect.stringMatching(/^agenthost-terminal:\/\/shell\//),
       title: 'Run shell command',
       isPty: false,
       result: { exitCode: 0, preview: 'BEGIN', truncated: true },
@@ -456,7 +456,7 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
   ]);
   // Named after the call's chat, as the host holds it, and the call.
   const resource = String(call?.content?.[1]?.resource);
-  expect(retainedTerminalOf(resource)).toEqual({ chat: chatUriFor(uri), key: 'toolu_big' });
+  expect(nonPtyShellTerminalOf(resource)).toEqual({ chat: chatUriFor(uri), toolCallId: 'toolu_big' });
 
   /*
    * The channel the call names, subscribed after the command is over: exited,
@@ -473,6 +473,11 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
 
 it('reduces a chat reordered inside its session', async () => {
   const { client, peer: p, uri, opened } = await running();
+  // Moving chats on, as a VS Code window with its move setting on turns it on.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+  });
   const other = 'ahp-chat:/other';
   await client.handle({ method: 'createChat', params: { channel: uri, chat: other } });
   await settle();
@@ -742,7 +747,9 @@ it('opens a terminal on the shell a client asked for', async () => {
     method: 'createTerminal',
     params: { channel: 'ahp-terminal:/a', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///home/softov' },
   });
-  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: '/usr/bin/fish' } });
+  // A shell this machine can run, which is the one a pushed shell is taken as:
+  // the executable this test runs under.
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: process.execPath } });
   await settle();
   await client.handle({
     method: 'createTerminal',
@@ -750,7 +757,7 @@ it('opens a terminal on the shell a client asked for', async () => {
   });
 
   // The store's own choice before anybody said, and the client's after.
-  expect(asked).toEqual([undefined, '/usr/bin/fish']);
+  expect(asked).toEqual([undefined, process.execPath]);
 });
 
 /*
@@ -857,7 +864,7 @@ it('still refuses something that is not a URI at all', async () => {
  * asks a backend to; VS Code's own hosts advertise different properties for
  * Copilot and for Claude.
  */
-it('advertises the five modes VS Code\'s Claude has, under the name the CLI has them', async () => {
+it('advertises the five modes VS Code\'s Claude has and the SDK\'s dontAsk, under the name the CLI has them', async () => {
   const { client } = await running();
   const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
     schema: { properties: Record<string, { enum?: string[] }> };
@@ -872,8 +879,10 @@ it('advertises the five modes VS Code\'s Claude has, under the name the CLI has 
    */
   expect(Object.keys(cfg.schema.properties)).not.toContain('autoApprove');
   expect(Object.keys(cfg.schema.properties)).not.toContain('mode');
+  // VS Code's five, and the SDK's `dontAsk`, which a session nobody watches
+  // refuses with rather than waiting on a person.
   expect(cfg.schema.properties.permissionMode?.enum)
-    .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions']);
+    .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
 });
 
 it('takes one on a running session, and leaves the advertised control saying what happened', async () => {
@@ -968,6 +977,8 @@ it("says a session's chats in its row as the session's own state says them", asy
   await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
   dispatch(client, second, started('t1', 'go'));
   await settle();
+  // Past the catalogue's 100 ms debounce, which says a session's moves together.
+  await new Promise((r) => { setTimeout(r, 120); });
 
   let row: Record<string, unknown> | undefined;
   for (const note of p.notes) {
@@ -1011,6 +1022,14 @@ it('still starts the harness on what the schema says', async () => {
   await client.handle({
     method: 'createSession',
     params: { channel: 'ahp-session:/one', provider: 'claude', config: { permissionMode: 'bypassPermissions' } },
+  });
+  // The CLI its first send starts.
+  const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as {
+    snapshot: { state: { defaultChat: string } };
+  }).snapshot.state.defaultChat;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
   });
   await settle();
   expect(sessionQueries().at(-1)?.options.permissionMode).toBe('bypassPermissions');

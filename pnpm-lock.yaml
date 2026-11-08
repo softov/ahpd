@@ -125,6 +125,9 @@ importers:
       '@ahpd/sdk':
         specifier: workspace:*
         version: link:../sdk
+      '@cofold/yaml':
+        specifier: ^0.3.0
+        version: 0.3.0
       '@microsoft/agent-host-protocol':
         specifier: ^1.0.0
         version: 1.0.0
@@ -137,6 +140,9 @@ importers:
       '@cofold/commands':
         specifier: ^0.3.0
         version: 0.3.0
+      '@cofold/config':
+        specifier: ^0.3.1
+        version: 0.3.1
       '@cofold/model-openai-compat':
         specifier: ^0.2.1
         version: 0.2.1(@cofold/agents@0.4.0)

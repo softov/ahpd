@@ -10,7 +10,6 @@ import { fileResources } from '../../sdk/src/resources/resources.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import type { Agent, Bag, Emit, MessageAttachment, Session, Start } from '@ahpd/sdk';
 import { acpAgent } from '../src/index.js';
-import { startedNow } from '../../sdk/test/support/started.js';
 
 /*
  * What a prompt carries, what a queued message keeps, and what a session is
@@ -98,10 +97,10 @@ const opening = (id: string, over: Partial<Start> = {}): Start => ({
   ...over,
 });
 
-/** One session of a backend, watched and remembered for cleanup. */
-function start(agent: Agent, id: string, over: Partial<Start> = {}): { session: Session; watch: Watcher } {
+/** One session of a backend, answered once its server has opened, watched and remembered for cleanup. */
+async function start(agent: Agent, id: string, over: Partial<Start> = {}): Promise<{ session: Session; watch: Watcher }> {
   const watch = watcher();
-  const session = startedNow(agent.create(opening(id, { ...over, emit: watch.emit })));
+  const session = await agent.create(opening(id, { ...over, emit: watch.emit }));
   started.push(session);
   return { session, watch };
 }
@@ -180,18 +179,23 @@ const written = (path: string, label: string, type: string): MessageAttachment =
   _meta: { [SNAPSHOT_TAG]: { isSnapshot: true, contentType: type } },
 });
 
+/*
+ * An image as an image block, its bytes and its type, with no URI: a pasted
+ * image has nothing to point at, and ACP makes the block's URI optional.
+ * https://agentclientprotocol.com/protocol/content#image-content
+ */
 it('sends an image as an image block to a server that takes images', async () => {
   const { agent } = backend(['--prompt-caps']);
-  const { session, watch } = start(agent, 'image');
+  const { session, watch } = await start(agent, 'image');
   expect(await prompt(session, watch, [PICTURE]))
-    .toBe('blocks=text:what are these blocks?|image:acp-attachment:acp/shot.png');
+    .toBe('blocks=text:what are these blocks?|image:image/png');
 });
 
 it('names the image in the text for a server that does not take them', async () => {
   // The handshake said nothing about images, so an image block would be a block
   // this server never agreed to read.
   const { agent } = backend();
-  const { session, watch } = start(agent, 'no-image');
+  const { session, watch } = await start(agent, 'no-image');
   expect(await prompt(session, watch, [PICTURE]))
     .toBe('blocks=text:what are these blocks?|text:The user provided the following references:\n- shot.png');
 });
@@ -201,7 +205,7 @@ it('sends a file the host wrote as an embedded resource to a server that takes c
   const path = join(dir, 'notes.txt');
   writeFileSync(path, 'the notes\n');
   const { agent } = backend(['--prompt-caps']);
-  const { session, watch } = start(agent, 'context');
+  const { session, watch } = await start(agent, 'context');
   /*
    * The URI is the file the host wrote, which is one an agent with tools of its
    * own can open, and the text is the file's own words: the report names the URI
@@ -217,14 +221,14 @@ it('inlines an attachment that never reached a file, which names no resource', a
   // What the client pasted, on a host that wrote nothing for it: a resource
   // block would name a URI nothing here can open, so the text goes as text.
   const { agent } = backend(['--prompt-caps']);
-  const { session, watch } = start(agent, 'no-file');
+  const { session, watch } = await start(agent, 'no-file');
   expect(await prompt(session, watch, [NOTES]))
     .toBe('blocks=text:what are these blocks?|text:notes.txt (lines 1-1):\n```\nnotes\n```');
 });
 
 it('names what the server cannot take rather than dropping it', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'named');
+  const { session, watch } = await start(agent, 'named');
   // A pasted file is the text it holds, which is what any server takes; a
   // simple attachment is the text its producer wrote for the model.
   const said = await prompt(session, watch, [NOTES, carried({
@@ -246,7 +250,7 @@ it('names a file the client gave by URI, and does not read it', async () => {
   const asked: string[] = [];
   const store = fileResources();
   const { agent } = backend(['--prompt-caps']);
-  const { session, watch } = start(agent, 'referenced', {
+  const { session, watch } = await start(agent, 'referenced', {
     resources: { ...store, read: (uri: string, wanted?: string) => { asked.push(uri); return store.read(uri, wanted); } },
   });
   const said = await prompt(session, watch, [carried({
@@ -272,7 +276,7 @@ it.skipIf(!posix)('names a large file, a pipe and a device without reading them'
   // is forever, a device is endless and six megabytes is more than the helper
   // sends, so each is named by its path and none of them is opened.
   const { agent } = backend(['--prompt-caps']);
-  const { session, watch } = start(agent, 'limits');
+  const { session, watch } = await start(agent, 'limits');
   const said = await prompt(session, watch, [
     carried({ type: 'resource', label: 'huge.bin', uri: `file://${big}`, contentType: 'application/octet-stream' }),
     carried({ type: 'resource', label: 'a-pipe', uri: `file://${pipe}` }),
@@ -297,7 +301,7 @@ const turn = async (session: Session, watch: Watcher, text: string): Promise<voi
  */
 it('puts the send\'s instructions in that turn\'s prompt, ahead of what was said', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'told');
+  const { session, watch } = await start(agent, 'told');
   session.sendMessage('t1', 'what are these blocks?', undefined, undefined, { instructions: () => ['Report back to the chat this came from.', ' '] });
   await until(() => watch.ended() > 0);
   const said = watch.prose();
@@ -306,18 +310,19 @@ it('puts the send\'s instructions in that turn\'s prompt, ahead of what was said
 
 it('sends a turn handed while another runs with its attachments when its turn starts', async () => {
   const { agent } = backend(['--prompt-caps']);
-  const { session, watch } = start(agent, 'queued');
+  const { session, watch } = await start(agent, 'queued');
   // Handed while the turn before it is still running, so it runs after that
   // one: what it sends then is its text and its attachments.
   session.sendMessage('t1', 'hello');
   session.sendMessage('t2', 'what are these blocks?', undefined, [PICTURE]);
   await until(() => watch.prose().includes('blocks='));
-  expect(watch.prose()).toContain('blocks=text:what are these blocks?|image:acp-attachment:acp/shot.png');
+  const prose = watch.prose();
+  expect(prose.slice(prose.indexOf('blocks='))).toBe('blocks=text:what are these blocks?|image:image/png');
 });
 
 it('sends the directories beside the working one only to a server that advertised them', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'beside', { additional: ['/tmp/beside'] });
+  const { session, watch } = await start(agent, 'beside', { additional: ['/tmp/beside'] });
   await turn(session, watch, 'hi');
   // A field a server never said it knows is one it may reject the whole call
   // over, and the directories are kept on the session either way.
@@ -325,7 +330,7 @@ it('sends the directories beside the working one only to a server that advertise
     .not.toHaveProperty('additionalDirectories');
 
   const allowed = backend(['--extra-dirs']);
-  const second = start(allowed.agent, 'beside-allowed', { additional: ['/tmp/beside'] });
+  const second = await start(allowed.agent, 'beside-allowed', { additional: ['/tmp/beside'] });
   await turn(second.session, second.watch, 'hi');
   expect(requests(allowed.log).find((one) => one.method === 'session/new')?.params)
     .toMatchObject({ additionalDirectories: ['/tmp/beside'] });

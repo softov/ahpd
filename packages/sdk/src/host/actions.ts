@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { annotationsReducer, IS_CLIENT_DISPATCHABLE } from '@microsoft/agent-host-protocol';
 import type { AnnotationsAction } from '@microsoft/agent-host-protocol';
 import { idOf, Status } from '../sessions/catalog.js';
@@ -5,11 +6,11 @@ import { disableConditionsProblem } from '../automations/automations.js';
 import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn } from './gate.js';
-import { chatUriFor, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { ANNOTATIONS_PATH_SEGMENT, AUTOMATIONS, chatUriFor, isAutomationResource, isRootChannel, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
-import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './merged.js';
-import { RESTART_KEY } from './root.js';
+import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './sessionlifecycle.js';
+import { accountKey, RESTART_KEY } from './root.js';
 import { claimOf } from './terminals.js';
 import type { HeldCopies, TemplatePlugin } from '../types/clientplugins.js';
 import type { Bag } from '../types/common.js';
@@ -46,11 +47,11 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    * read that took one would say so only by being wrong.
    */
   const {
-    agents, byChat, cancelRun, changed, changesetAt, channelKind, connections, daemonKey, decided, declaresConfigKey,
+    agents, byChat, cancelRun, changed, changesetAt, channelKind, daemonKey, decided,
     dir, dispatch, homeId, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
-    ownerFor, owners, past, permitted, presence, relayed, restart, retool,
-    rootConfig, served, sessionFor, sessions, shown, starting, subagents, summaryMoved, terminals, toolDefinitions,
-    value, waitingFor,
+    ownerFor, owners, restoreSession, permitted, presence, restart, retool,
+    rootConfig, served, sessionFor, sessions, shown, starting, subagents, markSummaryDirty, terminals, toolDefinitions,
+    value, unavailableProvider,
   } = ctx;
   /**
    * Whether this host knows a session: running, listed in the catalogue, or
@@ -83,10 +84,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       ? params.action
       : {}) as Record<string, unknown>;
     const type = String(action.type ?? '');
-    /** Whether the sender has passed the gate; until then a refusal is its alone. */
-    let gated = false;
     /** Refuse this dispatch, in the words of whatever would not have it. */
-    const no = (reason: string, alone = !gated): void => refuse(connection.peer, channel, action, origin, reason, alone);
+    const no = (reason: string): void => refuse(connection.peer, channel, action, origin, reason);
     /*
      * A plugin channel has one writer, its plugin, so a client's action on
      * one is refused before anything reads it - and on an `x-` scheme no
@@ -105,10 +104,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * every other refused action gets, which is the only "no" this
      * direction has.
      *
-     * First in the function, before the relayed watch below and before
-     * anything is read or written, because every branch under here drives
-     * something: `terminal/input` runs a command, `chat/turnStarted` runs a
-     * model, `root/configChanged` changes a setting for everybody.
+     * First in the function, before anything is read or written, because
+     * every branch under here drives something: `terminal/input` runs a
+     * command, `chat/turnStarted` runs a model, `root/configChanged` changes
+     * a setting for everybody.
      *
      * A host with no user directory refuses nothing, exactly as at the
      * other boundary.
@@ -175,36 +174,19 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
     }
-    gated = true;
     /*
-     * Whether a client is allowed to originate this at all, asked of the
-     * protocol rather than answered here.
-     *
-     * `IS_CLIENT_DISPATCHABLE` is exhaustive over `StateAction` and its
-     * own docstring says servers should check it, so it grows with the
-     * protocol and the switch below does not have to. Refused with its own
-     * reason: a host-only action arriving from a client is a client
-     * claiming something happened, which is not the same complaint as an
-     * action this host has not got round to serving - and told apart only
-     * here, because both used to fall into the one default.
+     * A type the protocol does not let a client send, a type it does not know
+     * included, and the two chat folder actions no host serves, refused in the
+     * reference host's words before anything reads them.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2811-L2815
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L139-L142
      */
-    /*
-     * A watch this client itself keeps, whose reports this host relays.
-     *
-     * `resourceWatch/changed` is a host's to say - except on a watch over
-     * a client's own resources, where that client is the only thing that
-     * can see the files move: it was asked for the watch through
-     * `createResourceWatch` and answered with the channel. Passed
-     * straight through to whoever subscribed, and refused from anybody
-     * else by the check below - a change to somebody else's files is not
-     * a thing a third client may claim happened.
-     */
-    if (relayed.get(channel)?.owner === connection && type === 'resourceWatch/changed') {
-      dispatch(channel, action, origin);
+    if (ownIn(dispatchable, type) !== true) {
+      no(`Server-only action: ${type}`);
       return;
     }
-    if (ownIn(dispatchable, type) === false) {
-      no(`${type} is this host's to say, not a client's`);
+    if (type === 'chat/workingDirectorySet' || type === 'chat/workingDirectoryRemoved') {
+      no(`Unsupported action: ${type}`);
       return;
     }
     /*
@@ -229,52 +211,44 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * with five cases written here: every client applies its own dispatch
      * with that function, and a host that reduced the same action even
      * slightly differently would hand out a state its clients disagree
-     * with. It returns the state it was given when the action names
-     * something that is not there, which is what makes a no-op tellable
-     * from a change - and a no-op echoed as though it had applied is a
-     * client left holding an optimistic mark this host never kept.
+     * with. The client's action is said whether or not the reducer moved the
+     * state, as the reference host emits an accepted annotation action.
+     *
+     * The marks are kept by the session's id, read without the session's
+     * agent, so a session whose agent this host is not serving keeps them too,
+     * as the reference host reads a session's annotations without restoring
+     * its provider. Only the name the session is published under reads as
+     * that id, as for a subscribe to its marks, and the catalogue is read
+     * first, which is what names a row no listing reached. A mark under any
+     * other name is refused in the reference host's words for a session it
+     * cannot find.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14267-L14295
      */
     if (type.startsWith('annotations/')) {
-      if (!channel.endsWith(MARKS)) {
-        no(`${type} belongs on a session's ${MARKS} channel, not ${channel}`);
+      if (!channel.endsWith(ANNOTATIONS_PATH_SEGMENT)) {
+        no(`${type} belongs on a session's ${ANNOTATIONS_PATH_SEGMENT} channel, not ${channel}`);
         return;
       }
-      const owning = channel.slice(0, -MARKS.length);
+      const owning = channel.slice(0, -ANNOTATIONS_PATH_SEGMENT.length);
       const id = idOf(owning);
-      // A mark on a session this host cannot open is a mark kept for a
-      // harness that is not here: refusing by name is what tells a client
-      // the row is waiting rather than gone.
-      const marked = waitingFor(id);
-      if (marked !== undefined) {
-        no(`${marked} is not loaded on this host`);
-        return;
-      }
       const mark = (): void => {
-        const before = marksOf(id);
-        const after = annotationsReducer(before, action as unknown as AnnotationsAction);
-        if (after === before) {
-          no(`${type} names an annotation this session does not have`);
-          return;
-        }
-        marks.set(id, after);
+        const next = annotationsReducer(marksOf(id), action as unknown as AnnotationsAction);
+        marks.set(id, next);
+        // Written down as it lands, so the marks outlive the process, as the
+        // reference host persists a session's annotations on each action.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10936-L10963
+        kept.setAnnotations?.(id, next as unknown as Bag);
         dispatch(channel, action, origin);
       };
-      if (sessions.has(owning) || owners.has(owning)) {
+      const found = (): boolean => (sessions.has(owning) || owners.has(owning) || unavailableProvider(id) !== undefined)
+        && ctx.nameOf(id) === owning;
+      if (found()) {
         mark();
         return;
       }
-      /*
-       * The marks are kept by the session's id, and only the name the session
-       * is published under reads as that id, as for a subscribe to its marks.
-       * The catalogue is read first, which is what names a row no listing
-       * reached. A mark under any other name names a session that does not
-       * exist here, and is dropped with nothing kept and nothing said, as the
-       * protocol has a server ignore such an action.
-       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
-       */
-      return past(id).then(() => {
-        if (ctx.connections.has(connection) && ctx.nameOf(id) === owning) mark();
+      return restoreSession(id).then(() => {
+        if (found()) mark();
+        else no(`Session not found: ${owning}`);
       });
     }
     /*
@@ -309,27 +283,25 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         ? action.config
         : {}) as Record<string, unknown>;
       /*
-       * The keys nobody declares, taken out before anything is applied.
+       * Every key pushed is applied and kept, as VS Code's host applies a root
+       * patch whatever keys it carries, a client learning what the host has
+       * from the properties the schema declares. A start brings back the
+       * declared keys alone: the daemon's from its configuration and the rest
+       * from `HostOptions.rootConfigStore`, as VS Code's host restores its
+       * persisted values by its schemas (`createRoot`).
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2878-L2898
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1371-L1399
        *
-       * A value with no property in the schema is one no client can draw a
-       * control for, so keeping it would be reporting a setting that is not
-       * one - the opposite of the reason a declared key this host does not act
-       * on is kept. It is a log line rather than a refusal while any declared
-       * key is left, because a client newer than this host sends its whole
-       * patch at connect and one unknown key must not lose the other forty.
-       *
-       * A key is offered here whether or not this connection is *shown* it:
-       * `seesConfig` decides what a connection reads, not what exists, and the
-       * daemon's keys are the ones that difference is about.
+       * Except a backend's account, which the harness says and no client may:
+       * a push that moves one is refused in the words VS Code's host refuses a
+       * remote client's change to a property the host holds read-only.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2830-L2840
        */
-      const refused = Object.keys(pushed).filter((key) => !declaresConfigKey(key));
-      if (Object.keys(pushed).length > 0 && refused.length === Object.keys(pushed).length) {
-        // The path a refused daemon write takes: `behind` logs it and answers
-        // the sender with this reason, and nobody else hears it.
-        return Promise.reject(new Error(`root config does not declare ${refused.join(', ')}`));
-      }
-      if (refused.length > 0) log(`root config: refused ${refused.join(', ')}`);
-      const config = Object.fromEntries(Object.entries(pushed).filter(([key]) => declaresConfigKey(key)));
+      const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
+      const account = Object.keys(pushed).find((key) => [...agents.values()].some((agent) => accountKey(agent.provider) === key)
+        && !isDeepStrictEqual(pushed[key], held[key]));
+      if (account !== undefined) return Promise.reject(new Error(`Host configuration property is read-only: ${account}`));
+      const config = pushed;
       /*
        * A `changeWords` naming a backend this host cannot ask, refused before
        * anything is applied.
@@ -372,6 +344,21 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * back what was pushed exactly as the conformance suite pins it.
        */
       const apply = (): void => {
+        // What the echo carries, which is what a log line about it says too:
+        // a value the daemon holds back is not a value the log may print.
+        const echoConfig = { ...config, ...said };
+        /*
+         * A `replace` keeps what is not the pusher's to clear: the daemon's
+         * values and every backend's account stay where they are, so the echo
+         * carries them, and the root's state a client reduces from it is the
+         * one this host holds. The reference host keeps its provider-backed
+         * values in a replace the same way.
+         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2863-L2868
+         */
+        const echoed = action.replace === true ? { ...ctx.keptOnReplace(config), ...echoConfig } : echoConfig;
+        // A push leaving the root's values as they are is neither kept nor
+        // said, as VS Code's host does nothing with it.
+        if (ctx.changesNothing(echoed, action.replace === true)) return;
         /*
          * The host's keys are kept, and the daemon's are not. Every key a
          * client pushes, the window's own among them - the shell, the trust,
@@ -404,34 +391,18 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
             else target[key] = value;
           }
         };
+        const showing = rootConfig.showExternalSessions;
         if (action.replace === true) {
           for (const key of Object.keys(rootConfig)) delete rootConfig[key];
-          delete connection.trustedFolders;
         }
         into(rootConfig, ours);
+        // The external sessions mode moved: what it shows is said again, as
+        // VS Code reconciles its listing on a change of mode.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L1560-L1571
+        if (rootConfig.showExternalSessions !== showing) void ctx.reconcileExternalSessions();
         // A merged sessions key moved: the pass runs now, with the new days.
-        if (Object.prototype.hasOwnProperty.call(config, AUTO_ARCHIVE_KEY) || Object.prototype.hasOwnProperty.call(config, AUTO_DELETE_KEY)) ctx.mergedSoon();
-        /*
-         * A `workspaceTrust` push answers for every folder at once, so the
-         * folders this window said yes to one at a time are behind it: a window
-         * that has just said which folders it trusts is not still vouching for
-         * one it answered about earlier. A pushed `null` takes the key back,
-         * which is a new answer like any other and clears them too.
-         */
-        if (Object.prototype.hasOwnProperty.call(config, 'workspaceTrust')) delete connection.trustedFolders;
-        // What the echo carries, which is what a log line about it says too:
-        // a value the daemon holds back is not a value the log may print.
-        const echoConfig = { ...config, ...said };
+        if (Object.prototype.hasOwnProperty.call(config, AUTO_ARCHIVE_KEY) || Object.prototype.hasOwnProperty.call(config, AUTO_DELETE_KEY)) ctx.scheduleSessionLifecycle();
         log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
-        /*
-         * A `replace` keeps what is not the pusher's to clear: the daemon's
-         * values and every backend's account stay where they are, so the echo
-         * carries them, and the root's state a client reduces from it is the
-         * one this host holds. The reference host keeps its provider-backed
-         * values in a replace the same way.
-         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2863-L2868
-         */
-        const echoed = action.replace === true ? { ...ctx.keptOnReplace(config), ...echoConfig } : echoConfig;
         /*
          * Said back whole, like every other action a client originates:
          * nothing in a client applies its own dispatch, and a second client
@@ -439,12 +410,18 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          *
          * One envelope and one `serverSeq` for everybody, because the
          * sequence and the replay buffer are one per host. What each
-         * connection reads in it is `seenBy`'s: the daemon's keys go out as
+         * connection reads in it is `projectActionForClient`'s: the daemon's keys go out as
          * the port answered them rather than as this client sent them, so a
          * value the port holds back is not carried to the second admin by
          * the echo.
          */
         dispatch(ROOT, { ...action, config: echoed }, origin);
+        // Kept for the next start, as VS Code's host persists the root config
+        // after each push a client makes.
+        // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13661-L13662
+        ctx.persistRootConfig();
+        // Moving chats turned on or off moves every chat's offer of a move.
+        if (Object.hasOwn(config, 'chatMoves.enabled')) for (const chat of byChat.keys()) ctx.updateChatMovability(chat);
       };
       /*
        * The daemon's keys, which are not this host's to keep.
@@ -497,7 +474,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           ctx.advancedTools = asked;
           ctx.contributing = permitted(ctx.contributed);
           for (const uri of sessions.keys()) {
-            dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
+            ctx.serverToolsMoved(uri);
             retool(uri);
           }
         }
@@ -528,7 +505,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           ctx.sessionTools = offering;
           ctx.sessionToolsProviders = narrowing;
           for (const uri of sessions.keys()) {
-            dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
+            ctx.serverToolsMoved(uri);
             retool(uri);
           }
         }
@@ -540,6 +517,24 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          */
         const closing = theirs['closedChats'];
         if ((closing === 'hidden' || closing === 'delete') && closing !== ctx.closedChats) ctx.closedChats = closing;
+        // And what a turn naming a model its agent does not offer does, read the same way: as the next turn is sent.
+        const unoffered = theirs['unofferedModel'];
+        if (unoffered === 'fail' || unoffered === 'keep') ctx.unofferedModel = unoffered;
+        // And where a session that names no folder works, read the same way: as the next session is made.
+        const workspaceless = theirs['workspacelessFolder'];
+        if (workspaceless === 'first' || workspaceless === 'scratch') ctx.workspacelessFolder = workspaceless;
+        // And whose a root connection's session is, read the same way: as the next session is made.
+        const rootOwner = theirs['rootOwner'];
+        if (rootOwner === 'host' || rootOwner === 'none') ctx.rootOwner = rootOwner;
+        // And whether a turn's sender is said, read the same way: as the next start is said or turn read back.
+        const senders = theirs['turnSenders'];
+        if (senders === 'said' || senders === 'kept') ctx.turnSenders = senders;
+        // And what a backend's own background work actions come to, read as the next one arrives.
+        const work = theirs['backendBackgroundWork'];
+        if (work === 'drop' || work === 'say') ctx.backendBackgroundWork = work;
+        // And what the session tools' counts are kept per, read as the next call is counted.
+        const per = theirs['agentOrchestrationLimitsScope'];
+        if (per === 'sessionTree' || per === 'session') ctx.agentOrchestrationLimitsScope = per;
         // And what archive does with a dirty tree, read the same way: when a tree is given back.
         const dirtyTree = theirs['archiveDirtyWorktree'];
         if (dirtyTree === 'keep' || dirtyTree === 'commit') ctx.archiveDirtyWorktree = dirtyTree;
@@ -650,8 +645,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const store = options.automations;
       if (!store) { no(`${type} needs an automations store, and this host has none`); return; }
       const resource = String(action.resource ?? '');
-      if (!resource.startsWith('ahp-automation:/')) {
-        no(`${resource || 'That'} is not an automation URI`);
+      // Any URI in the scheme, as VS Code's automation service takes one, and refused in its words.
+      if (!isAutomationResource(resource)) {
+        no(`Automation resource must use the ahp-automation scheme: ${resource}`);
         return;
       }
       /*
@@ -665,6 +661,28 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const problem = disableConditionsProblem(written['disableConditions']);
       if (problem !== undefined) { no(problem); return; }
       /*
+       * A create where an automation is already kept: the same definition is
+       * said again as it is held, and another is refused, as the reference
+       * host's service takes a create; an update of none is refused in its
+       * words.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L318-L329
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L358-L363
+       */
+      const existing = store.get(resource);
+      if (type === 'automation/createRequested' && existing !== undefined) {
+        if (!isDeepStrictEqual(existing.definition, withPinOf(resource, (action.definition ?? {}) as Bag))) {
+          no(`Automation already exists: ${resource}`);
+          return;
+        }
+        dispatch(AUTOMATIONS, { type: 'automation/set', automation: existing });
+        dispatch(channel, action, origin);
+        return;
+      }
+      if (type === 'automation/updateRequested' && existing === undefined) {
+        no(`Automation not found: ${resource}`);
+        return;
+      }
+      /*
        * Client plugins on the template, copied while the client that named
        * them is still here.
        *
@@ -677,7 +695,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * loads nothing.
        */
       const port = options.clientPlugins;
-      const named = templatePlugins(keyed(written['session'])['customizations']);
+      /*
+       * A patch that carries the template's session carries its plugins too,
+       * so a session naming none leaves the automation with none, as VS
+       * Code's host captures them again whenever an update carries a session.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L376-L378
+       */
+      const session = written['session'];
+      const named = templatePlugins(keyed(session)['customizations'])
+        ?? (type === 'automation/updateRequested' && session !== undefined ? [] : undefined);
       // A list with something in it is what cannot be honoured - an empty one
       // names no plugin, and a host that refuses it would be refusing a
       // template for saying it has none.
@@ -686,8 +712,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
       /*
-       * Nothing to copy. A patch that says nothing about plugins is a patch
-       * about something else, so the copies this automation already has stay -
+       * Nothing to copy. A patch that carries no session is a patch about
+       * something else, so the copies this automation already has stay -
        * which is the `undefined` the store reads as "leave them alone". An
        * empty list is not that: it says the template has no plugins, so the
        * copies it had go with the last one.
@@ -699,7 +725,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         // `onChanged` is what dispatches. A store that told the host
         // nothing would be one whose own timers were invisible, so
         // everything goes out the same way.
-        if (!kept) no(`No automation at ${resource}`);
+        if (!kept) no(`Automation not found: ${resource}`);
         else dispatch(channel, action, origin);
         return;
       }
@@ -720,7 +746,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         }
         /*
          * The copies are this write's until it has been stored or refused.
-         * Another write's prune may run in between, and what it would find at
+         * Another write's garbage collection may run in between, and what it would find at
          * their names is a copy no automation names yet - which is what it
          * removes, and what would leave this entry pointing at nothing.
          */
@@ -728,9 +754,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           const made = type === 'automation/createRequested'
             ? store.create(resource, withPinOf(resource, (action.definition ?? {}) as Bag), ownerFor(connection), undefined, held.copies)
             : store.update(resource, withPinOf(resource, (action.changes ?? {}) as Bag), held.copies);
-          if (!made) { no(`No automation at ${resource}`); return; }
+          if (!made) { no(`Automation not found: ${resource}`); return; }
           dispatch(channel, action, origin);
-          pruneCopies();
+          collectGarbage();
         }
         finally {
           held.release();
@@ -758,13 +784,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         dispatch(channel, action, origin);
         return;
       }
+      // In the reference host's words for an operation an automation does not offer.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationService.ts#L1538-L1542
       if (!found.operations.includes('remove')) {
-        no(`${resource} does not offer remove`);
+        no(`Automation operation 'remove' is not available: ${resource}`);
         return;
       }
       store.remove(resource);
       // And the copies its template named, which nothing names any more.
-      pruneCopies();
+      collectGarbage();
       return;
     }
 
@@ -806,8 +834,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     const knownChat = (): boolean => byChat.has(channel) || subagents.has(channel) || homeId(channel) !== undefined
       || knownSession(sessionFor(channel));
     if (spaceOf(asked) === 'chat' && !knownChat()) {
-      return past(idOf(sessionFor(channel))).then(() => {
-        if (!connections.has(connection)) return;
+      return restoreSession(idOf(sessionFor(channel))).then(() => {
         if (knownChat()) return conn.applyNow(params, origin);
         const refusal = type === 'chat/isReadChanged' ? 'Only a known chat can change its read state.'
           : type === 'chat/isArchivedChanged' ? 'Only a known independently manageable non-default chat can be archived.'
@@ -818,30 +845,16 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     }
 
     if (type === 'session/activeClientSet') {
-      // `titles` is keyed by the bare id, so the URI has to come off before
-      // it is asked. Under the whole channel this never matched, and every
-      // client announcing itself in a session read from a transcript - the
-      // ordinary way one is opened - was dropped in silence. It became
-      // audible only once dropping stopped being silent.
       /*
-       * Known to this host, which is not the same as running here.
-       *
-       * `owners` is every session the catalogue has listed and every one
-       * this host started; `titles` is only the ones whose transcript
-       * somebody has opened. Asking `titles` turned away a client
-       * announcing itself in a row `listSessions` had returned a moment
-       * earlier - which is the ordinary case, because a client announces
-       * itself when it opens a row rather than after reading it.
+       * A session this host runs, or one the catalogue lists, takes the entry,
+       * whatever became of its backend: a client announces itself when it
+       * opens a row, before or after reading it. Any other session is refused
+       * as the reference host's restore refuses a session it finds no agent
+       * for.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14103-L14108
        */
       if (!sessions.has(channel) && !owners.has(channel)) {
-        no(`${channel} is not a session here`);
-        return;
-      }
-      // A session whose backend has ended takes no client into it, and says why.
-      const running = sessions.get(channel);
-      const over = running === undefined ? undefined : ctx.leadOf(running)?.ended?.();
-      if (over !== undefined) {
-        no(over);
+        no(`No agent for session: ${channel}`);
         return;
       }
       const activeClient = (typeof action.activeClient === 'object' && action.activeClient !== null
@@ -894,6 +907,31 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       return;
     }
 
+    if (type === 'session/activeClientRemoved') {
+      /*
+       * A client leaving a session by its own action: the entry held under
+       * the id it names goes, and every chat is offered the tools that are
+       * left, as the reference host's reducer removes the entry and its side
+       * effect removes the client's tools. A call already out with the client
+       * stays its to complete while it is connected, and fails when it goes,
+       * as every call a gone client owes does. A session it does not know is
+       * refused as `activeClientSet` is.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2012-L2015
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L569-L573
+       */
+      if (!sessions.has(channel) && !owners.has(channel)) {
+        no(`No agent for session: ${channel}`);
+        return;
+      }
+      const named: unknown = action.clientId;
+      const held = presence.get(idOf(channel));
+      held?.delete(named);
+      if (held !== undefined && held.size === 0) presence.delete(idOf(channel));
+      dispatch(channel, action, origin);
+      retool(channel);
+      return;
+    }
+
     if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
       /*
        * A session this host does not know, once the catalogue has been read
@@ -906,8 +944,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
       if (!knownSession(sessionFor(channel))) {
-        return past(idOf(sessionFor(channel))).then(() => {
-          if (connections.has(connection) && knownSession(sessionFor(channel))) return conn.applyNow(params, origin);
+        return restoreSession(idOf(sessionFor(channel))).then(() => {
+          if (knownSession(sessionFor(channel))) return conn.applyNow(params, origin);
         });
       }
       // The session's own bits, kept beside it and never seen by a backend.
@@ -961,8 +999,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
        */
-      return past(idOf(uri)).then(() => {
-        if (ctx.connections.has(connection) && ctx.nameOf(idOf(uri)) === uri) flag();
+      return restoreSession(idOf(uri)).then(() => {
+        if (ctx.nameOf(idOf(uri)) === uri) flag();
       });
     }
     const terminal = terminals.get(channel);
@@ -1018,7 +1056,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
             no('a claim names a client by its id, or a session and its chat');
             break;
           }
-          terminal.setClaim(claimed);
+          ctx.setTerminalClaim(channel, claimed);
           dispatch(channel, action, origin);
           ctx.terminalSaid(channel, action);
           break;
@@ -1039,15 +1077,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
   /**
    * The client plugins a template names, in the shape the port is handed them.
    *
-   * Nothing where the template says nothing about plugins, which is not the
-   * same as an empty list: a create that mentions none has none, while a patch
-   * that mentions none is a patch about something else and leaves this
-   * automation's copies where they are.
+   * Nothing where the session says nothing about plugins, which the write
+   * reads as none for a create or a patch carrying the session, and leaves a
+   * patch about something else to keep this automation's copies where they
+   * are.
    *
    * Every entry of a list that *is* there is kept, even a malformed one, so
-   * that the check for a usable id is the port's and answers in its own words -
-   * dropping one here would be this host quietly storing a template it cannot
-   * honour.
+   * that the check for a usable id is the port's, which refuses it in VS
+   * Code's words - dropping one here would be this host quietly storing a
+   * template it cannot honour.
    */
   const templatePlugins = (value: unknown): TemplatePlugin[] | undefined => {
     if (!Array.isArray(value)) return undefined;
@@ -1071,12 +1109,12 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    * holds still reference, read back off them rather than remembered here - a
    * host that restarted holds the same answer.
    */
-  const pruneCopies = (): void => {
+  const collectGarbage = (): void => {
     const port = options.clientPlugins;
     if (port === undefined) return;
     const kept = (options.automations?.list() ?? [])
       .flatMap((one) => (one.customizations ?? []).map((copy) => localPath(copy.uri)));
-    port.prune(kept);
+    port.collectGarbage(kept);
   };
 
   /**

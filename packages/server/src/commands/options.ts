@@ -18,9 +18,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type OptionSpec } from '@cofold/commands';
 import { isRecord, secretRef } from '@ahpd/sdk';
-import type { IssuerVerify, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
+import type { IssuerVerify, ManagedSettingsPermissions, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
 import type { Config, HttpSetting, RoutesSetting } from '../config.js';
-import { asSpec, configDir, configPath, loadConfig, shellEnvProblems } from '../config.js';
+import { asSpec, configDir, configPath, eligibilityProblems, loadConfig, managedPermissionsProblems, shellEnvProblems } from '../config.js';
 import { READY_TIMEOUT_MS } from '../daemon.js';
 import { ICON_LIMIT, ICON_TIMEOUT_MS } from '../icons.js';
 import { sourceOf, pluginIdOf, pluginIdsOf, runPlugins } from '../plugins.js';
@@ -98,6 +98,19 @@ export interface Options {
   sessionToolsProviders: string[];
   /** What closing one chat of a session does to that chat's conversation in the backend. */
   closedChats: 'hidden' | 'delete';
+  /** What a turn naming a model its chat's agent does not offer does. */
+  unofferedModel: 'fail' | 'keep';
+  /** Where a session that names no folder works. */
+  workspacelessFolder: 'first' | 'scratch';
+  /** Whose work a session a root connection starts is. */
+  rootOwner: 'host' | 'none';
+  /** Whether a turn's sender is said on what clients read. */
+  turnSenders: 'said' | 'kept';
+  steerReadBack: 'inTurn' | 'ownTurn';
+  /** What a backend's own background work actions come to. */
+  backendBackgroundWork: 'drop' | 'say';
+  /** What the session tools' counts are kept per. */
+  agentOrchestrationLimitsScope: 'sessionTree' | 'session';
   /** What archiving a session does with a working tree that has changes nobody committed. */
   archiveDirtyWorktree: 'keep' | 'commit';
   /** What a session on a joined node does when that node's `ahpd join` restarts. */
@@ -118,10 +131,18 @@ export interface Options {
   readyTimeoutMs: number;
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
+  /** How long a gone client keeps its place and its calls, absent when the deployment said nothing. */
+  clientToolCallDisconnectTimeoutMs?: number;
   /** The environment every shell this host starts is given, absent when the deployment named none. */
   shellEnv?: ShellEnv;
-  /** The rules a session's commands are matched against when its window pushed none. */
+  /** The rules a session's commands are matched against when no window pushed any. */
   terminalAutoApproveDefaults: 'vscode' | 'none';
+  /** The managed permissions every session is held to, absent when the deployment set none. */
+  managedSettingsPermissions?: ManagedSettingsPermissions;
+  /** The tools whose calls ask every time, by `false`, absent when the deployment named none. */
+  eligibleForAutoApproval?: Record<string, boolean>;
+  /** Who checks the managed rules on a tool question: the host, or the backends it hands them to. */
+  managedRules: 'checked' | 'handed';
   /**
    * A module whose default export reads a session's shell commands, as the
    * file's `commandParser` names it.
@@ -137,6 +158,10 @@ export interface Options {
   sleepAfterMinutes?: number;
   /** How many sessions are resident at most, absent when the deployment said nothing. */
   sessionResidencyLimit?: number;
+  /** The largest file a client is asked for, in bytes, absent when the deployment said nothing. */
+  attachmentFetchLimitBytes?: number;
+  /** The most bytes of one tool result's inline content kept, absent when the deployment said nothing. */
+  toolResultResourceLimitBytes?: number;
   /** Where automations are kept, and whether a clock fires them. */
   automations: 'file' | 'memory';
   /** What an automation that names no owner wakes on. */
@@ -513,6 +538,22 @@ const shellEnvField: MapSchema = {
 };
 
 /**
+ * The operator's per-tool approval eligibility, with the declaration and the
+ * words of VS Code's `chat.tools.eligibleForAutoApproval`, which VS Code's
+ * host takes from that setting's policy value alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26
+ *
+ * The value schema is what a client draws a row from. Each value is held by
+ * `eligibilityProblems`, because `check` copies a map value without a check.
+ */
+const eligibleForAutoApprovalField: MapSchema = {
+  type: 'object',
+  title: 'Eligible for Auto Approval',
+  additionalProperties: { type: 'boolean', title: 'Eligible' },
+  description: "Controls which tools are eligible for automatic approval. Tools set to 'false' will always present a confirmation and will never offer the option to auto-approve. The default behavior (or setting a tool to 'true') may result in the tool offering auto-approval options. A tool is named as its backend names it, a tool this host offers as ahp/<name>, an MCP server's tool as <server>/<tool>, and every tool of a server as <server>/*. Set in the configuration file only.",
+};
+
+/**
  * The MCP servers every session is offered, by the name a person gave them.
  *
  * The value schema is one server, so a client draws a row per server; the
@@ -645,6 +686,41 @@ export const serverFields = {
     enum: ['hidden', 'delete'],
     description: 'What closing one chat of a session does to its conversation in the backend: hidden keeps it, delete removes it.',
   },
+  unofferedModel: {
+    type: 'string',
+    enum: ['fail', 'keep'],
+    description: 'What a turn naming a model its chat\'s agent does not offer does: fail ends the turn, keep keeps the chat\'s model as VS Code does.',
+  },
+  workspacelessFolder: {
+    type: 'string',
+    enum: ['first', 'scratch'],
+    description: 'Where a session that names no folder works: first, the first folder this daemon serves; scratch, a folder of its own under ~/.copilot/chats, removed with the session, as VS Code does.',
+  },
+  rootOwner: {
+    type: 'string',
+    enum: ['host', 'none'],
+    description: 'Whose work a session a root connection starts is, under a users directory: host, the host itself as root:<hostName>; none, no one, as VS Code does.',
+  },
+  turnSenders: {
+    type: 'string',
+    enum: ['said', 'kept'],
+    description: 'Whether a turn\'s sender is said on what clients read: said puts it on each start and message, kept keeps it on the host alone as VS Code does.',
+  },
+  steerReadBack: {
+    type: 'string',
+    enum: ['inTurn', 'ownTurn'],
+    description: 'How a chat read back after a restart shows a steering message the agent ran as a prompt of its own: inTurn inside the turn it steered, as it showed live; ownTurn as a turn of its own, as VS Code does.',
+  },
+  backendBackgroundWork: {
+    type: 'string',
+    enum: ['drop', 'say'],
+    description: 'What a backend\'s own background work actions come to: drop leaves every background row to the host, say says the backend\'s action as VS Code does.',
+  },
+  agentOrchestrationLimitsScope: {
+    type: 'string',
+    enum: ['sessionTree', 'session'],
+    description: 'What the session tools\' counts of sessions and chats made and messages sent are kept per: sessionTree keeps one count for a session and every session grown from it, session keeps each session\'s own as VS Code does.',
+  },
   archiveDirtyWorktree: {
     type: 'string',
     enum: ['keep', 'commit'],
@@ -714,11 +790,35 @@ export const serverFields = {
     description: 'How long a call a client runs may wait. Default ten minutes; 0 waits for ever.',
     cli: { value: 'MS' },
   },
+  clientToolCallDisconnectTimeoutMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long a client whose connections all closed keeps its place in a session and the tool calls it owes there, as VS Code does. Default thirty seconds; 0 releases it at once.',
+    cli: { value: 'MS' },
+  },
   shellEnv: asJsonSchema(shellEnvField),
   terminalAutoApproveDefaults: {
     type: 'string',
     enum: ['vscode', 'none'],
-    description: 'The rules a session\'s shell commands are matched against when the window that started it pushed none: vscode uses VS Code\'s terminal auto-approve table, none approves no command.',
+    description: 'The rules a session\'s shell commands are matched against when no window pushed any: vscode uses VS Code\'s terminal auto-approve table, none approves no command.',
+  },
+  managedSettingsPermissions: {
+    type: 'object',
+    title: 'Managed permissions',
+    properties: {
+      disableBypassPermissionsMode: { type: 'string', enum: ['disable'] },
+      deny: { type: 'array', items: { type: 'string' } },
+      ask: { type: 'array', items: { type: 'string' } },
+      limitTo: { type: 'array', items: { type: 'string' } },
+    },
+    additionalProperties: false,
+    description: 'The managed permissions every session on the host is held to, in VS Code\'s shape: deny and ask rules in the managed rule grammar (Shell, Read, Write, Domain), disableBypassPermissionsMode "disable" to take Allow All away, and limitTo, the Domain rules a fetch stays within, each Domain or Domain(<host>) with the host as VS Code\'s network filter normalizes it. A Domain rule names a host whatever the scheme, port or path of a URL. A rule the managed grammar refuses stops the start. The host checks each rule on the tool questions of its kind beside the session\'s permissions, and hands the whole to every backend. Set in the configuration file only.',
+  },
+  eligibleForAutoApproval: asJsonSchema(eligibleForAutoApprovalField),
+  managedRules: {
+    type: 'string',
+    enum: ['checked', 'handed'],
+    description: 'Who checks managedSettingsPermissions and eligibleForAutoApproval on a tool question: checked has the host check each on every question of its kind; handed hands them to the backends and checks none, putting a question a backend marked managed with Allow Once and Skip, as VS Code does.',
   },
   commandParser: {
     type: 'string',
@@ -743,6 +843,18 @@ export const serverFields = {
     minimum: 0,
     description: 'How many sessions are resident at most, running or with their state held. Over it, the least recently used one that nothing holds is let go, with its state. Default 10; 0 sets no limit.',
     cli: { value: 'COUNT' },
+  },
+  attachmentFetchLimitBytes: {
+    type: 'integer',
+    minimum: 0,
+    description: 'The largest file a client is asked for when a message attaches one the daemon has no copy of; a larger one is left as it was sent. Default 33554432 (32 MiB); 0 sets no limit.',
+    cli: { value: 'BYTES' },
+  },
+  toolResultResourceLimitBytes: {
+    type: 'integer',
+    minimum: 0,
+    description: 'The most bytes the daemon keeps of one content a tool result or an agent\'s message carries inline, which a client reads back by a session-db-resource URI; larger content is left out. Default 8388608 (8 MiB), VS Code\'s bound; 0 sets no limit.',
+    cli: { value: 'BYTES' },
   },
   automations: {
     type: 'string',
@@ -1092,7 +1204,11 @@ export const servedPluginWriteFields = {
  * still writes `providers` is refused too. That is a bad value rather than an
  * unknown key, so it stops the start the same way one does. `shellEnv` is checked the same way for
  * the same reason: its names and values are held on their own, because the
- * schema cannot say that an object is a map.
+ * schema cannot say that an object is a map, and so is
+ * `eligibleForAutoApproval`, whose every value is a boolean.
+ * `managedSettingsPermissions` is too, for its rules: a rule of the managed
+ * grammar, and a `Domain` boundary rule with its host written as VS Code's
+ * network filter normalizes one, are more than a schema pattern says.
  */
 export function checkConfig(file: object, source: (key: string) => string): string[] {
   const warnings: string[] = [];
@@ -1114,6 +1230,10 @@ export function checkConfig(file: object, source: (key: string) => string): stri
   if (pluginsNamed.length > 0) stop(pluginsNamed.map((one) => `${source('plugins')}: ${one}`).join('\n'));
   const shellEnvBad = shellEnvProblems((file as Config).shellEnv);
   if (shellEnvBad.length > 0) stop(shellEnvBad.map((one) => `${source('shellEnv')}: ${one}`).join('\n'));
+  const managedBad = managedPermissionsProblems((file as Config).managedSettingsPermissions);
+  if (managedBad.length > 0) stop(managedBad.map((one) => `${source('managedSettingsPermissions')}: ${one}`).join('\n'));
+  const eligibleBad = eligibilityProblems((file as Config).eligibleForAutoApproval);
+  if (eligibleBad.length > 0) stop(eligibleBad.map((one) => `${source('eligibleForAutoApproval')}: ${one}`).join('\n'));
   return warnings;
 }
 
@@ -1305,12 +1425,17 @@ const noCwd = input['noCwd'] === true;
   const issuerVerify = given('issuerVerify');
   const wire = given('wire');
   const clientToolTimeoutMs = given('clientToolTimeoutMs');
+  const clientToolCallDisconnectTimeoutMs = given('clientToolCallDisconnectTimeoutMs');
   const shellEnv = given('shellEnv');
+  const managedSettingsPermissions = given('managedSettingsPermissions');
+  const eligibleForAutoApproval = given('eligibleForAutoApproval');
   // File-only, and already absolute: `anchored` resolved it against the file.
   const commandParser = file.commandParser;
   const deltaWindowMs = given('deltaWindowMs');
   const sleepAfterMinutes = given('sleepAfterMinutes');
   const sessionResidencyLimit = given('sessionResidencyLimit');
+  const attachmentFetchLimitBytes = given('attachmentFetchLimitBytes');
+  const toolResultResourceLimitBytes = given('toolResultResourceLimitBytes');
   const usageZone = given('usage')?.timezone;
   const serviceName = given('service')?.name;
   const httpApi = httpOf('httpApi', file.httpApi, source('httpApi'));
@@ -1343,6 +1468,13 @@ const noCwd = input['noCwd'] === true;
     sessionTools: given('sessionTools') ?? true,
     sessionToolsProviders: given('sessionToolsProviders') ?? [],
     closedChats: given('closedChats') ?? 'hidden',
+    unofferedModel: given('unofferedModel') ?? 'fail',
+    workspacelessFolder: given('workspacelessFolder') ?? 'first',
+    rootOwner: given('rootOwner') ?? 'host',
+    turnSenders: given('turnSenders') ?? 'said',
+    steerReadBack: given('steerReadBack') ?? 'inTurn',
+    backendBackgroundWork: given('backendBackgroundWork') ?? 'drop',
+    agentOrchestrationLimitsScope: given('agentOrchestrationLimitsScope') ?? 'sessionTree',
     archiveDirtyWorktree: given('archiveDirtyWorktree') ?? 'keep',
     nodeRestart: given('nodeRestart') ?? 'end',
     pullRequestLookup: given('pullRequestLookup') ?? 'url',
@@ -1353,12 +1485,18 @@ const noCwd = input['noCwd'] === true;
     iconTimeoutMs: given('iconTimeoutMs') ?? ICON_TIMEOUT_MS,
     readyTimeoutMs: given('readyTimeoutMs') ?? READY_TIMEOUT_MS,
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
+    ...(clientToolCallDisconnectTimeoutMs === undefined ? {} : { clientToolCallDisconnectTimeoutMs }),
     ...(shellEnv === undefined ? {} : { shellEnv }),
     terminalAutoApproveDefaults: given('terminalAutoApproveDefaults') ?? 'vscode',
+    ...(managedSettingsPermissions === undefined ? {} : { managedSettingsPermissions }),
+    ...(eligibleForAutoApproval === undefined ? {} : { eligibleForAutoApproval }),
+    managedRules: given('managedRules') ?? 'checked',
     ...(commandParser === undefined ? {} : { commandParser }),
     ...(deltaWindowMs === undefined ? {} : { deltaWindowMs }),
     ...(sleepAfterMinutes === undefined ? {} : { sleepAfterMinutes }),
     ...(sessionResidencyLimit === undefined ? {} : { sessionResidencyLimit }),
+    ...(attachmentFetchLimitBytes === undefined ? {} : { attachmentFetchLimitBytes }),
+    ...(toolResultResourceLimitBytes === undefined ? {} : { toolResultResourceLimitBytes }),
     automations: given('automations') ?? 'file',
     unownedAutomations: given('unownedAutomations') ?? 'every',
     sessions: given('sessions') ?? 'file',

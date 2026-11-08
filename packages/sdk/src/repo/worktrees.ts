@@ -2,7 +2,7 @@
 
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { cp, lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import type { Worktree, Worktrees } from '../types/worktrees.js';
 import { gitArgv } from './hardened.js';
@@ -73,6 +73,18 @@ export const worktreesOf = (repository: string, root?: string): string =>
   root === undefined
     ? join(dirname(repository), `${basename(repository)}.worktrees`)
     : join(root, basename(repository));
+
+/**
+ * Whether `candidate` is one of a repository's own worktrees: a folder under
+ * its `<repo>.worktrees`, and never that folder itself, as VS Code decides
+ * which working directory may inherit its repository's trust. A tree under a
+ * configured root is outside the layout.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/worktreePaths.ts#L26-L42
+ */
+export const isWorktreeUnderRepository = (candidate: string, repository: string): boolean => {
+  const inside = relative(resolve(worktreesOf(repository)), resolve(candidate));
+  return inside !== '' && inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside);
+};
 
 /** The directory name for a branch: no slashes, since it has to be one segment. */
 export const worktreeFor = (branch: string): string =>
@@ -162,6 +174,31 @@ export function gitWorktrees(): Worktrees {
         seen.add(name.replace(/^origin\//, ''));
       }
       return [...seen];
+    },
+
+    /*
+     * The remote's `HEAD`, `origin`'s where there is one and the first
+     * remote's otherwise, named as VS Code's host names it: the upstream of
+     * the local branch it points at, the local branch where that tracks
+     * nothing, or the remote branch where there is no local one.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitService.ts#L107-L137
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1036-L1044
+     */
+    defaultBranch: async (repository) => {
+      const remotes = (await git(repository, ['remote'], 5_000).catch(() => '')).split('\n').map((one) => one.trim()).filter((one) => one !== '');
+      const remote = remotes.includes('origin') ? 'origin' : remotes[0];
+      if (remote === undefined) return undefined;
+      const prefix = `refs/remotes/${remote}/`;
+      const pointed = (await git(repository, ['symbolic-ref', '--quiet', `${prefix}HEAD`], 5_000).catch(() => '')).trim();
+      if (!pointed.startsWith(prefix)) return undefined;
+      const name = pointed.slice(prefix.length);
+      const local = await git(repository, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`], 5_000).then(() => true, () => false);
+      if (!local) {
+        const remoteBranch = await git(repository, ['show-ref', '--verify', '--quiet', pointed], 5_000).then(() => true, () => false);
+        return remoteBranch ? `${remote}/${name}` : undefined;
+      }
+      const upstream = (await git(repository, ['rev-parse', '--abbrev-ref', `${name}@{upstream}`], 5_000).catch(() => '')).trim();
+      return upstream === '' ? name : upstream;
     },
 
     create: async (worktree: Worktree) => {

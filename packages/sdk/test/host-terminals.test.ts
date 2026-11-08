@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdirSync, mkdtempSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
-import type { OpenedTerminal, SpawnPty } from '../src/types/terminals.js';
+import { shellOf } from '../src/machines/terminals.js';
+import type { OpenedTerminal, SpawnPty, SpawnScreen } from '../src/types/terminals.js';
+import { DEFAULT_SHELL_COMMAND_TIMEOUT_MS } from '../src/machines/shellcommand.js';
 import { uriOf } from '../src/resources/resources.js';
 import { localPath } from '../src/resources/fileuri.js';
+import { chatUriFor } from '../src/host/channels.js';
 import {
   resetSdk, actions, claude, createHost, emit, hello, machine,
   peer, sdk, settle, shellTerminals,
@@ -32,13 +35,13 @@ beforeEach(resetSdk);
  * transcript that lost the command would be a conversation with a gap in it.
  */
 describe('a command typed into the conversation', () => {
-  /** A Claude session on a host with a shell: pipes, or the pseudoterminal `pty` binds. */
-  const shelled = async (pty?: SpawnPty) => {
+  /** A Claude session on a host with a shell: pipes, or the pseudoterminal `pty` binds, with `screen` where one is given. */
+  const shelled = async (pty?: SpawnPty, screen?: SpawnScreen) => {
     const host = createHost({
       path: tmpdir(),
       agents: [claude({ paths: [tmpdir()] })],
       ...machine(),
-      ...(pty === undefined ? {} : { terminals: shellTerminals({ pty }) }),
+      ...(pty === undefined ? {} : { terminals: shellTerminals({ pty, ...(screen === undefined ? {} : { screen }) }) }),
     });
     const p = peer();
     const client = host.accept(p);
@@ -119,58 +122,256 @@ describe('a command typed into the conversation', () => {
    * The terminal as soon as it opens, as the reference host names its own:
    * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
    */
-  it('names its terminal while it runs, and says a pseudoterminal runs it', async () => {
+  /*
+   * A pseudoterminal is listed, and its create answered, once its shell has
+   * printed, as VS Code's terminal manager waits for the prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L470-L508
+   */
+  it('lists a client\'s pseudoterminal, and answers its create, once its shell has printed', async () => {
     const pty = fakePty();
-    const { client, peer: p, chatUri, opened } = await shelled(pty.spawn);
+    const { client, peer: p } = await shelled(pty.spawn);
+    const uri = 'ahp-terminal:/prompted';
+    let answered = false;
+    const made = client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(tmpdir()) },
+    }).then(() => { answered = true; });
+    await settle();
+    const listed = (): boolean => actions(p, 'ahp-root://')
+      .filter((e) => e.action.type === 'root/terminalsChanged')
+      .some((e) => (e.action.terminals as { resource: string }[]).some((one) => one.resource === uri));
+    expect(listed()).toBe(false);
+    expect(answered).toBe(false);
+
+    pty.say('$ ');
+    await made;
+    expect(listed()).toBe(true);
+    await client.handle({ method: 'disposeTerminal', params: { channel: uri } });
+  });
+
+  /*
+   * A terminal this host does not hold is closed already: two windows
+   * closing the same terminal are both answered `null`, as the reference
+   * host answers them.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L937-L947
+   */
+  it('answers null for a terminal it does not hold, as for one it closed', async () => {
+    const pty = fakePty();
+    const { client } = await shelled(pty.spawn);
+    const uri = 'ahp-terminal:/twice';
+    const made = client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(tmpdir()) },
+    });
+    // Its shell started once the folder it opens in is read, and then its prompt.
+    await settle();
+    pty.say('$ ');
+    await made;
+    await expect(client.handle({ method: 'disposeTerminal', params: { channel: uri } })).resolves.toBeNull();
+    await expect(client.handle({ method: 'disposeTerminal', params: { channel: uri } })).resolves.toBeNull();
+    await expect(client.handle({ method: 'disposeTerminal', params: { channel: 'ahp-terminal:/never' } })).resolves.toBeNull();
+  });
+
+  /** Every terminal the root's last list names, with its lifecycle. */
+  const rootList = (p: ReturnType<typeof peer>): { resource: string; lifecycle?: { status: string } }[] =>
+    (actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').at(-1)?.action.terminals as
+      { resource: string; lifecycle?: { status: string } }[] | undefined) ?? [];
+
+  /** Run `!<command>` as turn t1 of the chat, without waiting on it. */
+  const bang = (client: Awaited<ReturnType<typeof shelled>>['client'], chatUri: string, command: string): void => {
     void client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: `!${command}`, origin: { kind: 'user' } } } },
     });
-    const changed = () => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
-    for (const until = Date.now() + WAIT_MS; changed() === undefined && Date.now() < until;) {
+  };
+
+  /** Wait, a few milliseconds at a time, for `ready` to hold. */
+  const until = async (ready: () => boolean): Promise<void> => {
+    for (const end = Date.now() + WAIT_MS; !ready() && Date.now() < end;) {
       await new Promise((r) => { setTimeout(r, 5); });
     }
-    // Before the command has printed anything, and with no `_meta`, which the
-    // reducer would put in place of the call's own.
+  };
+
+  /*
+   * As the reference host's `!` command runs one: the shell opens to sit in,
+   * and is listed and named once it has printed; the command is typed into
+   * it, kept out of the shell's history by its leading space; and the shell
+   * integration's mark that it finished ends the call, with the command's own
+   * part of the output. The shell sits on at its prompt after it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L117
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L224-L285
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L470-L508
+   */
+  it('names its terminal once its shell has printed, types the command in, and ends it when the shell marks it finished', async () => {
+    const pty = fakePty();
+    const { client, peer: p, chatUri, opened } = await shelled(pty.spawn);
+    bang(client, chatUri, 'make preview');
+    await until(() => pty.started.length > 0);
+    await settle();
+    const changed = () => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
+    // A shell to sit in, and neither named nor listed before it has printed.
+    expect(pty.started.at(-1)?.args).toEqual([]);
+    expect(changed()).toBeUndefined();
+    expect(rootList(p)).toEqual([]);
+
+    pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
+    await until(() => changed() !== undefined && pty.typed.length > 0);
+    // With no `_meta`, which the reducer would put in place of the call's own.
     const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
     expect(changed()?.content).toEqual([named]);
     expect(changed()).not.toHaveProperty('_meta');
+    expect(rootList(p).map((one) => one.resource)).toEqual([(changed()?.content as { resource: string }[])[0]?.resource]);
+    expect(pty.typed).toEqual([' make preview\r']);
     // A client that subscribes while the command runs reads what a watching one holds.
     const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
     expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 
-    pty.say('built\r\n');
-    pty.exit(0);
+    pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
     const said = await ended(p, chatUri, 't1');
-    const done = said.find((one) => one.type === 'chat/toolCallComplete');
-    expect((done?.result as { content: unknown[] }).content).toEqual([
-      { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
-      { type: 'text', text: 'built\r\n' },
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; pastTenseMessage: string; content: unknown[] };
+    expect(done).toMatchObject({ success: true, pastTenseMessage: 'Ran command' });
+    expect(done.content).toEqual([
+      { ...named, result: { exitCode: 0, preview: 'built' } },
+      { type: 'text', text: 'built' },
     ]);
+    expect(rootList(p).map((one) => one.lifecycle)).toEqual([{ status: 'running' }]);
     const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
     expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
     expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
   });
 
-  it('leaves the chat and the session read', async () => {
+  /*
+   * A command still running after VS Code's two minutes is a call that timed
+   * out, and its terminal's block says no ending, since the command has not
+   * exited.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L271-L276
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L149-L150
+   */
+  it('says a command still running after two minutes timed out', async () => {
+    const pty = fakePty();
+    const { client, peer: p, chatUri } = await shelled(pty.spawn);
+    bang(client, chatUri, 'sleep 300');
+    await until(() => pty.started.length > 0);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      pty.say('$ ');
+      for (let turns = 0; pty.typed.length === 0 && turns < 100; turns += 1) await vi.advanceTimersByTimeAsync(0);
+      expect(pty.typed.length).toBeGreaterThan(0);
+      await vi.advanceTimersByTimeAsync(DEFAULT_SHELL_COMMAND_TIMEOUT_MS - 1);
+      expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallComplete')).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+    const said = await ended(p, chatUri, 't1');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; pastTenseMessage: string; content: Record<string, unknown>[] };
+    expect(done).toMatchObject({ success: false, pastTenseMessage: 'Command timed out' });
+    expect(done.content[0]).not.toHaveProperty('result');
+  });
+
+  /*
+   * A client that takes the call off the terminal's claim lets the command go
+   * on in the background, and the call ends there, as the reference host
+   * reads a narrowed claim.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L264-L269
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L153-L154
+   */
+  it('says a command a client let go on in the background is running in the background', async () => {
+    const pty = fakePty();
+    const { client, peer: p, uri, chatUri } = await shelled(pty.spawn);
+    bang(client, chatUri, 'sleep 300');
+    await until(() => pty.started.length > 0);
+    pty.say('$ ');
+    const changed = () => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
+    await until(() => changed() !== undefined && pty.typed.length > 0);
+    const terminal = (changed()?.content as { resource: string }[])[0]?.resource ?? '';
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: terminal, action: { type: 'terminal/claimed', claim: { kind: 'session', session: uri, chat: chatUri } } },
+    });
+    const said = await ended(p, chatUri, 't1');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; pastTenseMessage: string; content: Record<string, unknown>[] };
+    expect(done).toMatchObject({ success: true, pastTenseMessage: 'Command is running in the background' });
+    expect(done.content).toEqual([{ type: 'terminal', resource: terminal, title: 'Terminal', isPty: true }]);
+  });
+
+  /*
+   * A command that switches to the alternate screen opened a full-screen
+   * program, and the call ends there, as the reference host reads one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L211-L222
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L155-L156
+   */
+  it('says a command that opened a full-screen program opened an interactive terminal', async () => {
+    let alternate = false;
+    let show: () => void = () => {};
+    const shown = new Promise<void>((done) => { show = () => { alternate = true; done(); }; });
+    const screen: SpawnScreen = () => ({
+      write: async () => {},
+      resize: () => {},
+      isInAltBuffer: () => alternate,
+      isBracketedPasteMode: () => false,
+      whenAltBuffer: () => shown,
+      dispose: () => {},
+    });
+    const pty = fakePty();
+    const { client, peer: p, chatUri } = await shelled(pty.spawn, screen);
+    bang(client, chatUri, 'vim notes');
+    await until(() => pty.started.length > 0);
+    pty.say('$ ');
+    await until(() => pty.typed.length > 0);
+    show();
+    const said = await ended(p, chatUri, 't1');
+    expect(said.find((one) => one.type === 'chat/toolCallComplete')?.result).toMatchObject({
+      success: true,
+      pastTenseMessage: 'Command opened an interactive terminal',
+    });
+  });
+
+  /*
+   * A command that ends the shell it was typed into is a shell that exited,
+   * which the reference host says failed, with the shell's code.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L341-L346
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L151-L152
+   */
+  it('says a command that ended its shell is a shell that exited unexpectedly', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    bang(client, chatUri, 'exit 3');
+    const said = await ended(p, chatUri, 't1');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete')?.result as { success: boolean; pastTenseMessage: string; content: Record<string, unknown>[] };
+    expect(done).toMatchObject({ success: false, pastTenseMessage: 'Shell exited unexpectedly' });
+    expect(done).not.toHaveProperty('error');
+    expect(done.content[0]).toMatchObject({ result: { exitCode: 3 } });
+  });
+
+  /*
+   * A command turn's end says nothing of read state, as the reference host's
+   * markUnread leaves a local command's: the chat stays as the turn's start
+   * left it, and the session as it was.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L31
+   */
+  it('says nothing of read state at a command turn\'s end, the chat unread from its start and the session read', async () => {
     const { client, peer: p, uri, chatUri } = await shelled();
+    // Read before the turn, as a new session starts unread, and what that said
+    // set aside.
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/isReadChanged', isRead: true } } });
+    await settle();
+    p.notes.length = 0;
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!echo read' } } },
     });
     const said = await ended(p, chatUri);
-    // Unread while it runs, as a client reduces the turn's start, and read
-    // again at its end: somebody who ran a command watched it run.
-    expect(said.filter((one) => one.type === 'chat/isReadChanged').map((one) => one.isRead)).toEqual([false, true]);
-    for (const channel of [uri, chatUri]) {
-      const state = (await client.handle({ method: 'subscribe', params: { channel } }) as {
-        snapshot: { state: { status: number } };
-      }).snapshot.state;
-      expect(state.status & 32).toBe(32);
-    }
+    expect(said.filter((one) => one.type === 'chat/isReadChanged')).toEqual([]);
+    const read = async (channel: string): Promise<number> => ((await client.handle({ method: 'subscribe', params: { channel } }) as {
+      snapshot: { state: { status: number } };
+    }).snapshot.state.status & 32);
+    expect(await read(chatUri)).toBe(0);
+    expect(await read(uri)).toBe(32);
   });
 
-  it('leaves each chat read when two chats run a command turn of the same id', async () => {
+  it('leaves each session read when two chats run a command turn of the same id', async () => {
     // A client names its own turns, so two chats can each run turn `t1` at
     // once. The short one ends first, and the long one still ends as a
     // command turn of its own chat.
@@ -181,6 +382,10 @@ describe('a command typed into the conversation', () => {
       snapshot: { state: { defaultChat: string } };
     }).snapshot.state.defaultChat;
     await client.handle({ method: 'subscribe', params: { channel: otherChat } });
+    // Both read before their turns, as a new session starts unread.
+    for (const session of [uri, other]) {
+      await client.handle({ method: 'dispatchAction', params: { channel: session, action: { type: 'session/isReadChanged', isRead: true } } });
+    }
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!sleep 0.5; echo long' } } },
@@ -191,31 +396,35 @@ describe('a command typed into the conversation', () => {
     });
     await ended(p, otherChat);
     await ended(p, chatUri);
-    for (const channel of [uri, chatUri, other, otherChat]) {
+    // Each end is its own chat's command turn, so neither session is marked
+    // unread, and each chat stays as its turn's start left it.
+    for (const [channel, read] of [[uri, 32], [chatUri, 0], [other, 32], [otherChat, 0]] as const) {
       const state = (await client.handle({ method: 'subscribe', params: { channel } }) as {
         snapshot: { state: { status: number } };
       }).snapshot.state;
-      expect([channel, state.status & 32]).toEqual([channel, 32]);
+      expect([channel, state.status & 32]).toEqual([channel, read]);
     }
   });
 
   /*
    * A command that ran and exited with a code is a call that failed with no
    * error, since nothing went wrong running it, and its turn is complete, as
-   * the reference host completes the call and ends every local command's turn.
+   * the reference host completes the call and ends every local command's turn;
+   * the shell it was typed into sits on, as the reference keeps it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L141-L148
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L212
    */
-  it('says a command that exited with a code failed, with no error, and holds its turn complete', async () => {
+  it('says a command that exited with a code failed, with no error, holds its turn complete, and keeps its shell', async () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '!exit 3' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: "!sh -c 'exit 3'" } } },
     });
     const said = await ended(p, chatUri, 't1');
     const result = said.find((one) => one.type === 'chat/toolCallComplete')?.result as Record<string, unknown> | undefined;
     expect(result).toMatchObject({ success: false, pastTenseMessage: 'Command exited with code 3' });
     expect(result).not.toHaveProperty('error');
+    expect(rootList(p).map((one) => one.lifecycle)).toEqual([{ status: 'running' }]);
     const held = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { turns: { id: string; state: string }[] } };
     }).snapshot.state.turns;
@@ -639,6 +848,73 @@ describe('a shell on this machine', () => {
     expect(found.snapshot.state.supportsCommandDetection).toBe(false);
   });
 
+  /*
+   * VS Code's terminal manager refuses a name already open with a plain error
+   * in its words, and takes a claim as it was sent.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L306-L310
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L421
+   */
+  it('refuses a second terminal under one name in VS Code\'s words', async () => {
+    const { client } = await opened();
+    const uri = 'ahp-terminal:/twice';
+    await client.handle({ method: 'createTerminal', params: { channel: uri, cwd: uriOf(tmpdir()) } });
+    await expect(client.handle({ method: 'createTerminal', params: { channel: uri, cwd: uriOf(tmpdir()) } }))
+      .rejects.toMatchObject({ message: `Terminal already exists: ${uri}` });
+    await client.handle({ method: 'disposeTerminal', params: { channel: uri } });
+  });
+
+  it('takes a claim as the client sent it, and a client\'s with no id where it sent none', async () => {
+    const { client } = await opened();
+    await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/unclaimed', cwd: uriOf(tmpdir()) } });
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: 'ahp-terminal:/half', claim: { kind: 'session', session: 'ahp-session:/x' }, cwd: uriOf(tmpdir()) },
+    });
+    const claimed = async (channel: string): Promise<unknown> => ((await client.handle({ method: 'subscribe', params: { channel } })) as {
+      snapshot: { state: { claim: unknown } };
+    }).snapshot.state.claim;
+    expect(await claimed('ahp-terminal:/unclaimed')).toEqual({ kind: 'client', clientId: '' });
+    expect(await claimed('ahp-terminal:/half')).toEqual({ kind: 'session', session: 'ahp-session:/x' });
+    for (const channel of ['ahp-terminal:/unclaimed', 'ahp-terminal:/half']) await client.handle({ method: 'disposeTerminal', params: { channel } });
+  });
+
+  /*
+   * A folder that is not there, or none, opens in the home folder, as VS
+   * Code's terminal manager resolves a terminal's folder: a shell started in a
+   * folder that is not there exits at once.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L962-L992
+   */
+  it('opens in the home folder where the folder it names is not there, or it names none, as VS Code\'s', async () => {
+    const { client } = await opened();
+    const gone = join(tmpdir(), `ahpd-not-there-${crypto.randomUUID()}`);
+    await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/gone', cwd: uriOf(gone) } });
+    await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/nowhere' } });
+    const where = async (channel: string): Promise<string> => ((await client.handle({ method: 'subscribe', params: { channel } })) as {
+      snapshot: { state: { cwd: string } };
+    }).snapshot.state.cwd;
+    const home = process.env.HOME || process.env.USERPROFILE || process.cwd();
+    expect(await where('ahp-terminal:/gone')).toBe(uriOf(home));
+    expect(await where('ahp-terminal:/nowhere')).toBe(uriOf(home));
+    for (const channel of ['ahp-terminal:/gone', 'ahp-terminal:/nowhere']) await client.handle({ method: 'disposeTerminal', params: { channel } });
+  });
+
+  /*
+   * A pushed `defaultShell` this machine cannot run opens the system's shell,
+   * as VS Code's terminal manager falls back from one it cannot access.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L949-L960
+   */
+  it('opens the system shell where the pushed defaultShell cannot run here, as VS Code\'s', async () => {
+    const { client } = await opened();
+    client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', clientSeq: 1, action: { type: 'root/configChanged', config: { defaultShell: '/no/such/shell' } } } });
+    await settle();
+    await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/fallen-back', cwd: uriOf(tmpdir()) } });
+    const state = ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-terminal:/fallen-back' } })) as {
+      snapshot: { state: { title: string } };
+    }).snapshot.state;
+    expect(state.title).toBe(basename(shellOf()));
+    await client.handle({ method: 'disposeTerminal', params: { channel: 'ahp-terminal:/fallen-back' } });
+  });
+
   it('lists them on the root channel, and stops when one is disposed', async () => {
     const { client, peer: p } = await opened();
     const uri = 'ahp-terminal:/three';
@@ -788,6 +1064,60 @@ describe('a shell on this machine', () => {
       .at(-1)?.action.terminals as { resource: string; lifecycle?: { status?: string; exitCode?: number } }[] | undefined;
     expect(listed?.find((one) => one.resource === uri)?.lifecycle)
       .toEqual({ status: 'exited', exitCode: 5 });
+  });
+
+  /*
+   * The root's list is said after every title and every claim, a title set
+   * again to what it was included, as VS Code's terminal manager broadcasts
+   * its list at each.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L626-L641
+   */
+  it('says the root\'s list after every title and claim, one that moved nothing included', async () => {
+    const { client, peer: p } = await opened();
+    const uri = 'ahp-terminal:/titled';
+    await client.handle({
+      method: 'createTerminal',
+      params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(tmpdir()) },
+    });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
+    const listed = (): number => actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').length;
+    const before = listed();
+    for (const action of [
+      { type: 'terminal/titleChanged', title: 'Build' },
+      { type: 'terminal/titleChanged', title: 'Build' },
+      { type: 'terminal/claimed', claim: { kind: 'client', clientId: 'probe' } },
+    ]) client.handle({ method: 'dispatchAction', params: { channel: uri, action } });
+    await settle();
+    expect(listed() - before).toBe(3);
+    await client.handle({ method: 'disposeTerminal', params: { channel: uri } });
+  });
+
+  /*
+   * A session's terminals go with it, the root's list said as each one goes,
+   * and not at all for a session that held none, as VS Code's terminal
+   * manager broadcasts its list at each disposal.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L941-L946
+   */
+  it('says the root\'s list once per terminal a disposed session held, and not for one that held none', async () => {
+    const { client, peer: p } = await opened();
+    const listed = (): number => actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').length;
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/bare', provider: 'claude' } });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/shelled', provider: 'claude' } });
+    for (const name of ['one', 'two']) {
+      await client.handle({
+        method: 'createTerminal',
+        params: { channel: `ahp-terminal:/${name}`, claim: { kind: 'session', session: 'ahp-session:/shelled', chat: chatUriFor('ahp-session:/shelled') }, cwd: uriOf(tmpdir()) },
+      });
+    }
+    await settle();
+    let before = listed();
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/bare' } });
+    await settle();
+    expect(listed() - before).toBe(0);
+    before = listed();
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/shelled' } });
+    await settle();
+    expect(listed() - before).toBe(2);
   });
 
   it('says a terminal that is still running is running', async () => {
@@ -959,6 +1289,66 @@ describe('a terminal a backend opens', () => {
     // shell running would be one nothing lists and nothing can stop.
     expect(listed()).toEqual([]);
     await expect(opened.waitForExit()).resolves.toBeDefined();
+  });
+
+  /*
+   * VS Code's shell tool claims an agent's terminal with the session, the
+   * chat, the turn and the tool call.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts#L196-L202
+   */
+  it('claims it with the turn running in its chat and the tool call it runs for', async () => {
+    const held: OpenedTerminal[] = [];
+    const inner = claude({ paths: [tmpdir()] });
+    const agent: Agent = {
+      ...inner,
+      create: (start) => {
+        const session = inner.create(start);
+        const send = session.sendMessage.bind(session);
+        session.sendMessage = (...args: Parameters<typeof send>) => {
+          const opened = start.terminals?.open({ cwd: tmpdir(), command: 'sleep', args: ['30'], toolCallId: 'tc-1' });
+          if (opened !== undefined) held.push(opened);
+          return send(...args);
+        };
+        return session;
+      },
+    };
+    const host = createHost({ path: tmpdir(), agents: [agent], ...machine() });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    const uri = 'ahp-session:/claimed';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUriFor(uri), action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'run it' } } },
+    });
+    await settle(8);
+    const listed = actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/terminalsChanged').at(-1)
+      ?.action.terminals as { resource: string; claim?: unknown }[] | undefined;
+    expect(held).toHaveLength(1);
+    expect(listed?.find((one) => one.resource === held[0]?.uri)?.claim)
+      .toEqual({ kind: 'session', session: uri, chat: chatUriFor(uri), turnId: 't1', toolCallId: 'tc-1' });
+    held[0]?.release();
+  });
+
+  it('lists a pseudoterminal a backend opens once its shell has printed', async () => {
+    const held: OpenedTerminal[] = [];
+    const pty = fakePty();
+    const host = createHost({ path: tmpdir(), agents: [opening(held)], ...machine(), terminals: shellTerminals({ pty: pty.spawn }) });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/shells', provider: 'claude' } });
+    await settle();
+    const listed = (): boolean => actions(p, 'ahp-root://')
+      .filter((e) => e.action.type === 'root/terminalsChanged')
+      .some((e) => (e.action.terminals as { resource: string }[]).some((one) => one.resource === held[0]?.uri));
+    expect(held).toHaveLength(1);
+    expect(listed()).toBe(false);
+    pty.say('$ ');
+    await settle();
+    expect(listed()).toBe(true);
+    held[0]?.release();
   });
 
   it('says whether a pseudoterminal runs it', async () => {

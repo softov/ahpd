@@ -8,6 +8,7 @@ import { createFileStore } from '@cofold/store-file';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { idOf } from '@ahpd/sdk';
+import type { Bag } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
@@ -111,7 +112,10 @@ it('turns text into turnStarted, an opened part, deltas and turnComplete, in tha
     || type === 'chat/delta');
   expect(order.slice(0, 3)).toEqual(['chat/turnStarted', 'chat/responsePart', 'chat/delta']);
   expect(types(p, chatUri)).toContain('chat/turnComplete');
-  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread
+  // says it at every turn's end.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L49
+  expect(types(p, chatUri).slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
 
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { turns: { responseParts: { content: string }[] }[] } };
@@ -149,7 +153,8 @@ it('keeps the origin a client sent with the message, on the wire and in the cata
 
 it('carries the model a turn runs on, on the message', async () => {
   const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
-  const { client, peer: p, chatUri } = await talking(model);
+  // A model the agent offers: the host ends a turn naming one it does not.
+  const { client, peer: p, chatUri } = await talking(model, [], { model: 'open_router/x' });
   client.handle({
     method: 'dispatchAction',
     params: {
@@ -189,8 +194,8 @@ it('runs a turn on the model the turn names, with no model in the session config
   const home = mkdtempSync(join(tmpdir(), 'ahpd-cofold-turn-model-'));
   const was = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = home;
-  mkdirSync(join(home, 'cofold'), { recursive: true });
-  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify({
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({
     providers: [
       { id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k-open' },
       { id: 'moonshot', baseUrl: 'https://api.moonshot.ai/v1', apiKey: 'k-moon' },
@@ -233,6 +238,53 @@ it('runs a turn on the model the turn names, with no model in the session config
     expect(sent.at(-1)?.body.model).toBe('moonshotai/kimi-k3.1-pro');
     expect(sent.at(-1)?.authorization).toBe('Bearer k-moon');
     await until(() => listed >= 2);
+  }
+  finally {
+    globalThis.fetch = real;
+    if (was === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = was;
+  }
+});
+
+/*
+ * The thinking level a turn's model selection carries, the answer to that
+ * model's own `configSchema`, reaches the request as cofold sends a level.
+ */
+it('sends the thinking level the turn\'s model selection carries', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-cofold-turn-level-'));
+  const was = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = home;
+  mkdirSync(join(home, 'papo'), { recursive: true });
+  writeFileSync(join(home, 'papo', 'config.json'), JSON.stringify({
+    providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k-open' }],
+  }));
+  const real = globalThis.fetch;
+  const sent: Record<string, unknown>[] = [];
+  const json = (body: unknown): Response => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+  globalThis.fetch = (async (input: unknown, init?: { body?: string }) => {
+    if (String(input).endsWith('/models')) return json({ data: [{ id: 'deepseek/deepseek-r1', supported_parameters: ['reasoning'] }] });
+    sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return json({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }], usage: {} });
+  }) as typeof fetch;
+  try {
+    const host = createHost({ path: mkdtempSync(join(tmpdir(), 'ahpd-cofold-turn-level-host-')), agents: [cofoldAgent({ memory: true })] });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle({
+      method: 'initialize',
+      params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+    });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/level', provider: 'cofold' } });
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/level') } });
+    const model = { id: 'open_router/deepseek/deepseek-r1', config: { thinkingLevel: 'high' } };
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUriFor('ahp-session:/level'),
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi', model } },
+      },
+    });
+    await until(() => ended(p, chatUriFor('ahp-session:/level')));
+    expect(sent.at(-1)?.reasoning_effort).toBe('high');
   }
   finally {
     globalThis.fetch = real;
@@ -928,8 +980,10 @@ it('runs a !command in a shell rather than asking a model', async () => {
 
 /*
  * The reference host's own `!` command: a `terminal` call whose content names
- * the terminal as soon as it opens.
- * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L65-L117
+ * the terminal once its shell has printed, the command typed into that shell
+ * and ended by the shell integration's mark that it finished.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L52-L117
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/shellCommandExecution.ts#L224-L285
  */
 it('names a !command\'s terminal while it runs, and holds the call a watching client holds', async () => {
   const pty = fakePty();
@@ -954,7 +1008,10 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
     params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: '!make preview', origin: { kind: 'user' } } } },
   });
   const changed = (): Note['action'] | undefined => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
-  await until(() => changed() !== undefined);
+  await until(() => pty.started.length > 0);
+  // The shell's prompt, which names its terminal, and the command typed in.
+  pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
+  await until(() => changed() !== undefined && pty.typed.length > 0);
 
   // The command as the call's intention and its line, as the reference starts its own.
   expect(actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart')?.action.intention).toBe('make preview');
@@ -968,13 +1025,14 @@ it('names a !command\'s terminal while it runs, and holds the call a watching cl
   const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
   expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 
-  pty.say('built\r\n');
-  pty.exit(0);
-  await until(() => ended(p, chatUri));
+  expect(pty.typed).toEqual([' make preview\r']);
+
+  pty.say('\u001b]633;C\u0007built\r\n\u001b]633;D;0\u0007\u001b]633;A\u0007$ ');
+  await until(() => ended(p, chatUri), 4000);
   const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
   expect((done?.action.result as { content: unknown[] }).content).toEqual([
-    { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
-    { type: 'text', text: 'built\r\n' },
+    { ...named, result: { exitCode: 0, preview: 'built' } },
+    { type: 'text', text: 'built' },
   ]);
   const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
@@ -1000,10 +1058,13 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
     begin(client, chatUriFor('ahp-session:/none'), 't1', 'hi');
     const failure = () => actions(p, chatUriFor('ahp-session:/none')).find((e) => e.action.type === 'chat/error');
     await until(() => failure() !== undefined);
-    const part = failure()?.action.part as { error?: { message?: string }; resumable?: unknown };
+    const part = failure()?.action.part as { error?: { errorType?: string; message?: string }; resumable?: unknown };
     const message = String(part?.error?.message);
     expect(message).toContain('add "model"');
-    expect(message).toContain(join(home, 'cofold', 'config.json'));
+    expect(message).toContain(join(home, 'papo', 'config.json'));
+    // Typed by the stage it failed at, as VS Code's host types a send whose
+    // model nothing resolves.
+    expect(part?.error?.errorType).toBe('modelSelectionFailed');
     // A turn that never ran is not a turn a resume can put back: there is
     // nothing the session could cut to and run again.
     expect(part).not.toHaveProperty('resumable');
@@ -1017,20 +1078,27 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
 /**
  * The status the catalogue announced as a turn ended.
  *
- * The host moves the session's row on every chat action, reading the status
- * as that action passes; the row sent right after the ending is the one a
- * client's list is left with when nothing else about the session moves.
+ * The first row carrying a status said after the action of `type` that ended
+ * turn `turnId`, or the first such action where no turn is named, once that
+ * row is said: the row a client's list is left with when nothing else about
+ * the session moves. A running session's moves are said together once they
+ * have been quiet for 100 ms, as VS Code's host flushes a session marked dirty.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L212-L330
  */
-const statusAtEnd = (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string): unknown => {
-  const at = p.notes.findIndex((n) => n.method === 'action'
-    && (n.params as Note).channel === chatUri
-    && (n.params as Note).action.type === type);
-  if (at < 0) return undefined;
-  // By id: the row is published under the provider's name, whatever the
-  // client created the session as.
-  const row = p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
-    && idOf((n.params as { session: string }).session) === idOf(uri));
-  const status = (row?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
+const statusAtEnd = async (p: ReturnType<typeof peer>, uri: string, chatUri: string, type: string, turnId?: string): Promise<unknown> => {
+  const rowAfter = () => {
+    const at = p.notes.findIndex((n) => n.method === 'action'
+      && (n.params as Note).channel === chatUri
+      && (n.params as Note).action.type === type
+      && (turnId === undefined || (n.params as Note).action.turnId === turnId));
+    // By id: the row is published under the provider's name, whatever the
+    // client created the session as.
+    return at < 0 ? undefined : p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
+      && idOf((n.params as { session: string }).session) === idOf(uri)
+      && (n.params as { changes: { status?: unknown } }).changes.status !== undefined);
+  };
+  await until(() => rowAfter() !== undefined, 4000);
+  const status = (rowAfter()?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
   // Without the read bit, which is the person's and not the turn's.
   return typeof status === 'number' ? status & ~Status.IsRead : status;
 };
@@ -1040,7 +1108,7 @@ it('announces the session idle with the turnComplete that ends its turn', async 
   const { client, peer: p, uri, chatUri } = await talking(model);
   begin(client, chatUri, 't1', 'hi');
   await until(() => ended(p, chatUri));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
 });
 
 it('announces the session idle with the turnCancelled that ends its turn', async () => {
@@ -1052,7 +1120,7 @@ it('announces the session idle with the turnCancelled that ends its turn', async
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
   });
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnCancelled')).toBe(Status.Idle);
 });
 
 /** A model that fails its first `failures` calls and then answers `text`. */
@@ -1078,7 +1146,7 @@ it('announces the session failed with the chat/error that ends its turn', async 
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/error'));
   expect(types(p, chatUri)).toContain('chat/error');
-  expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
 });
 
 it('marks a failed run resumable, on the stream and on the turn', async () => {
@@ -1091,8 +1159,11 @@ it('marks a failed run resumable, on the stream and on the turn', async () => {
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/error'));
 
+  // Typed by the runtime's own code for the failure, as VS Code's Copilot agent
+  // carries its SDK's error type: cofold's `internal` for a model that threw.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSdkChatError.ts#L54-L64
   const said = actions(p, chatUri).find((e) => e.action.type === 'chat/error');
-  expect(said?.action.part).toMatchObject({ kind: 'error', resumable: true });
+  expect(said?.action.part).toMatchObject({ kind: 'error', resumable: true, error: { errorType: 'internal', message: 'the model gave up' } });
 
   const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
     snapshot: { state: { turns: { state: string; responseParts: { kind?: string; resumable?: boolean }[] }[] } };
@@ -1100,6 +1171,44 @@ it('marks a failed run resumable, on the stream and on the turn', async () => {
   const turn = opened.snapshot.state.turns.at(-1);
   expect(turn?.state).toBe('error');
   expect(turn?.responseParts.at(-1)).toMatchObject({ kind: 'error', resumable: true });
+});
+
+/*
+ * A turn whose record cannot be used fails as a send that never reached the
+ * runtime, typed `sendFailed` and with no resume, as VS Code's host fails a
+ * deferred turn it cannot send; a resume whose record cannot be used fails the
+ * same way and stays resumable, as VS Code's host ends a failed resume.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1854-L1872
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2349
+ */
+it('fails a turn whose record cannot be used as a failed send, and a resume of one resumable', async () => {
+  let broken = false;
+  const extra = {
+    recordOf: () => {
+      if (broken) throw new Error('the vault would not read a key back');
+      return {};
+    },
+  };
+  const { client, peer: p, chatUri } = await talking(failingModel(1), [], extra);
+  const errors = () => actions(p, chatUri).filter((e) => e.action.type === 'chat/error').map((e) => e.action.part as Bag);
+
+  // A run that failed on its own, which a resume can put back.
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => errors().length === 1);
+  broken = true;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+  });
+  await until(() => errors().length === 2);
+  expect(errors()[1]).toMatchObject({ resumable: true, error: { errorType: 'sendFailed' } });
+  expect(String((errors()[1]?.error as Bag).message)).toContain('the record cannot be used');
+
+  // A new turn on the same record: a send that never reached the runtime.
+  begin(client, chatUri, 't2', 'again');
+  await until(() => errors().length === 3);
+  expect(errors()[2]).toMatchObject({ error: { errorType: 'sendFailed' } });
+  expect(errors()[2]).not.toHaveProperty('resumable');
 });
 
 /** A model whose first call streams a word, waits for `fail`, and throws; later calls answer. */
@@ -1210,7 +1319,8 @@ it('runs a failed turn again on chat/turnResume, with its prompt said once', asy
   // what it did, as a live run does.
   expect(said.filter((type) => type === 'chat/turnResume')).toHaveLength(1);
   expect(said.indexOf('chat/turnResume')).toBeGreaterThan(said.indexOf('chat/error'));
-  expect(said.at(-1)).toBe('chat/turnComplete');
+  // The turn's end, and the chat said unread after it, as VS Code's markUnread does.
+  expect(said.slice(-2)).toEqual(['chat/turnComplete', 'chat/isReadChanged']);
   expect(said.filter((type) => type === 'chat/turnStarted')).toHaveLength(1);
   // The cut dropped the failed prompt with what the run wrote after it, so the
   // conversation holds the prompt once rather than once per attempt.
@@ -1433,10 +1543,10 @@ it('clears a failure when the next turn starts', async () => {
   const { client, peer: p, uri, chatUri } = await talking(failingModel(1));
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/error'));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
   begin(client, chatUri, 't2', 'again');
   await until(() => types(p, chatUri).includes('chat/turnComplete'));
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
 });
 
 it('announces the session idle with the turnComplete that ends a !command', async () => {
@@ -1455,10 +1565,32 @@ it('announces the session idle with the turnComplete that ends a !command', asyn
   const chatUri = chatUriFor('ahp-session:/bang');
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
-  begin(client, chatUri, 't1', '!echo cofold-ran-it');
-  await until(() => ended(p, chatUri), 4000);
+  // A first message the model answers, which announces the session: one made
+  // fresh is provisional until its first send, as VS Code's host keeps it.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
+  begin(client, chatUri, 't1', 'hi');
+  expect(await statusAtEnd(p, uri, chatUri, 'chat/turnComplete', 't1')).toBe(Status.Idle);
+  const command = 't2';
+  begin(client, chatUri, command, '!echo cofold-ran-it');
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2, 4000);
   expect(types(p, chatUri)).toContain('chat/toolCallComplete');
-  expect(statusAtEnd(p, uri, chatUri, 'chat/turnComplete')).toBe(Status.Idle);
+  /*
+   * The status a client's list holds once the command's moves were quiet:
+   * idle, whether the command's running was said or its moves were coalesced
+   * into a row that says only what moved since the last one said. Read from
+   * the session's announcement and every row after it, as a list holds them.
+   */
+  const told = () => p.notes.filter((n) => (n.method === 'root/sessionSummaryChanged'
+    && idOf((n.params as { session: string }).session) === idOf(uri))
+    || (n.method === 'root/sessionAdded' && idOf((n.params as { summary: { resource: string } }).summary.resource) === idOf(uri)));
+  const commandEnd = p.notes.findIndex((n) => n.method === 'action' && (n.params as Note).channel === chatUri
+    && (n.params as Note).action.type === 'chat/turnComplete' && (n.params as Note).action.turnId === command);
+  await until(() => p.notes.slice(commandEnd + 1).some((n) => told().includes(n)), 4000);
+  const held = told()
+    .map((n) => (n.params as { summary?: { status?: unknown } }).summary?.status ?? (n.params as { changes?: { status?: unknown } }).changes?.status)
+    .filter((status) => typeof status === 'number')
+    .at(-1) as number;
+  expect(held & ~Status.IsRead).toBe(Status.Idle);
 });
 
 it('starts a queued turn only after the one before it has ended', async () => {

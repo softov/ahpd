@@ -444,6 +444,78 @@ describe('the shellEnv key', () => {
   });
 });
 
+/*
+ * Managed permissions are held as VS Code's host holds a document before it
+ * takes one: its four keys alone, and a boundary of `Domain` rules with the
+ * host as VS Code's network filter normalizes it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L270-L283
+ */
+describe('the managedSettingsPermissions key', () => {
+  it('takes a boundary of Domain rules, and refuses one that is not, naming it', () => {
+    expect(folded({ managedSettingsPermissions: { limitTo: ['Domain', 'Domain(example.com)', 'Domain(*.example.com)'] } }).managedSettingsPermissions)
+      .toEqual({ limitTo: ['Domain', 'Domain(example.com)', 'Domain(*.example.com)'] });
+    for (const rule of ['Domain(*)', 'Domain(Example.com)', 'Domain(https://example.com)', 'Shell(curl)']) {
+      expect(refusal({ managedSettingsPermissions: { limitTo: [rule] } })).toBe(`${config}: managedSettingsPermissions.limitTo holds ${JSON.stringify(rule)}, `
+        + 'which is not a Domain boundary rule: Domain, or Domain(<host>) with the host written as VS Code\'s network filter normalizes it, such as Domain(example.com) or Domain(*.example.com)');
+    }
+  });
+
+  it('refuses a key VS Code\'s managed permissions do not have', () => {
+    expect(refusal({ managedSettingsPermissions: { allow: ['Shell'] } })).toBe(`${config}: managedSettingsPermissions.allow is not a field`);
+  });
+
+  /*
+   * The runtime that takes a managed document parses every rule with a strict
+   * grammar and refuses the whole document for a rule it cannot read, so the
+   * start refuses one, naming it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L58-L63
+   */
+  const grammar = 'which the managed rule grammar refuses: Shell, Read, Write (or Edit) or Domain, alone or with an argument holding no ")" or line break:'
+    + ' Shell(<command>) with a command before any trailing " *", Read(<glob>) and Write(<glob>) with no leading "!" and every brace closed,'
+    + ' and Domain(<host>) that reads as a URL with a host and holds no shell substitution (Domain alone is every domain),'
+    + ' such as Shell(git *), Read(src/**), Write(**/*.txt) or Domain(example.com)';
+
+  it('takes deny rules of the managed grammar, and refuses one the grammar refuses, naming it', () => {
+    const deny = ['Shell', 'Shell(git *)', 'Read(src/**)', 'Edit(**/*.txt)', 'Domain(example.com)'];
+    expect(folded({ managedSettingsPermissions: { deny } }).managedSettingsPermissions).toEqual({ deny });
+    expect(refusal({ managedSettingsPermissions: { deny: ['Shell( *)'] } })).toBe(`${config}: managedSettingsPermissions.deny holds "Shell( *)", ${grammar}`);
+  });
+
+  it('takes ask rules of the managed grammar, and refuses one the grammar refuses, naming it', () => {
+    const ask = ['Domain', 'Domain(*.example.com)', 'Write(**/.env)'];
+    expect(folded({ managedSettingsPermissions: { ask } }).managedSettingsPermissions).toEqual({ ask });
+    expect(refusal({ managedSettingsPermissions: { ask: ['Domain(*)'] } })).toBe(`${config}: managedSettingsPermissions.ask holds "Domain(*)", ${grammar}`);
+  });
+});
+
+/*
+ * The operator's per-tool eligibility is a daemon setting in VS Code's map
+ * shape, a tool's name to a boolean, held at the start as the managed
+ * permissions are.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L22-L26
+ */
+describe('the eligibleForAutoApproval key', () => {
+  it('takes a map of tools to booleans, and refuses a value that is not one, naming the tool', () => {
+    const eligible = { 'ahp/create_session': false, 'tracker/*': false, 'tracker/read': true };
+    expect(folded({ eligibleForAutoApproval: eligible }).eligibleForAutoApproval).toEqual(eligible);
+    expect(refusal({ eligibleForAutoApproval: { Bash: 'no' } })).toBe(`${config}: eligibleForAutoApproval.Bash holds "no", which is not true or false`);
+  });
+});
+
+/*
+ * Who checks the managed rules is a daemon setting: this host's own check, or
+ * VS Code's, which hands them to the backends and checks none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L43-L47
+ */
+describe('the managedRules key', () => {
+  it('is checked where the file says nothing, takes checked or handed, and refuses another value by name', () => {
+    expect(folded({}).managedRules).toBe('checked');
+    expect(folded({ managedRules: 'checked' }).managedRules).toBe('checked');
+    expect(folded({ managedRules: 'handed' }).managedRules).toBe('handed');
+    expect(refusal({ managedRules: 'backend' })).toBe(`${config}: managedRules must be one of checked, handed`);
+  });
+});
+
 describe('the modelProxy key', () => {
   it('is the model names and nothing else, with no providers of its own', () => {
     expect(folded({}).modelProxy).toEqual({ models: {}, sessionCalls: 'record', keyRefusal: 'hostError' });

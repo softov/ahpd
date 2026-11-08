@@ -24,7 +24,7 @@
  * - text containing `write` asks it to write one and says it did;
  * - text containing `term` opens a terminal, waits for it, reads it, releases it;
  * - text containing `ask` asks for permission on a destructive call and reports
- *   which option came back;
+ *   which option came back, the call failing where the answer allowed nothing;
  * - text containing `elicitform` asks the client for a form on a call it is
  *   making, with one field of each shape the protocol names, and says what the
  *   answer carried back as `elicit=<action>|branch=…|force=…|retries=…|mode=…|tags=…`;
@@ -81,6 +81,8 @@
  * - text containing `name` sends a `session_info_update` naming the session;
  * - text containing `shift` moves the mode and the model by itself, saying so
  *   with a `current_mode_update` and a `config_option_update`;
+ * - text containing `widen` offers a third model, `careful`, from then on,
+ *   saying so with a `config_option_update`;
  * - text containing `reauth` answers the prompt with the protocol's
  *   `auth_required`, which is what a server whose sign-in went stale says;
  * - text containing `spend` sends two `usage_update`s carrying a session cost
@@ -101,9 +103,10 @@
  * - text containing `erroratend` does whatever else the text asks and then
  *   answers the prompt with a JSON-RPC error, so a turn fails after its calls;
  * - text containing `blocks` reports the content blocks the prompt arrived in,
- *   as `blocks=text|image|resource` with each block's text or its URI - a
- *   resource block saying its URI and then its own text on the next line - so a
- *   test can read exactly what a client sent;
+ *   as `blocks=text|image|resource` with each block's text, an image's type and
+ *   the URI it names, or a resource's URI - a resource block saying its URI and
+ *   then its own text on the next line - so a test can read exactly what a
+ *   client sent;
  * - text containing `chatter` says one line on stderr and answers normally, so
  *   a test can read that a healthy server's noise never reaches a client;
  * - text containing `noisy` says two lines on stderr and then exits with code
@@ -132,6 +135,10 @@
  * account of the same thing the legacy modes carry: a client sets the mode
  * through `session/set_config_option` rather than `session/set_mode`.
  *
+ * `--described` gives the modes and the values of each select the descriptions
+ * ACP lets a server give them, as the protocol's own example does, leaving the
+ * legacy `code` mode without one.
+ *
  * `--refuse-mode` answers every `session/set_mode` with an error of its own,
  * which is a server that names its modes and stays in the one it is in.
  *
@@ -139,12 +146,17 @@
  * set to `thorough`, which is a server whose options hang together: the
  * answer to one value set names another that moved with it.
  *
+ * `--model-levels` gives the thinking option the levels of the model in force:
+ * `off` and `deep` on `fast`, and `max` beside them on `thorough`, named in the
+ * server's own words and described not at all, which is a server whose
+ * reasoning levels move with its model.
+ *
  * Three flags take one capability away: `--no-load` makes the handshake stop
  * advertising `loadSession`, which is a server that cannot reopen a
  * conversation, `--no-resume` stops it advertising
  * `sessionCapabilities.resume`, which is a server a conversation cannot be
  * taken back from without a replay, and `--no-close` stops it advertising
- * `session/close`.
+ * `session/close`. `--close-silent` advertises it and never answers it.
  *
  * `--no-delete` stops the handshake advertising `sessionCapabilities.delete`,
  * which is a server that keeps every conversation it has been given, and
@@ -158,9 +170,13 @@
  * `sessionCapabilities.additionalDirectories`. A server started without them
  * advertises neither, which is what a prompt and a session have to survive.
  *
- * `--pages` makes `session/list` answer in two pages, the first with a
- * `nextCursor`, which is what a server whose catalogue does not fit in one
- * answer looks like.
+ * `session/list` answers the sessions of the folder it is asked about, as ACP's
+ * `cwd` filter does, and every session it holds when asked about none.
+ * `--pages` makes it answer in two pages, the first with a `nextCursor`, which
+ * is what a server whose catalogue does not fit in one answer looks like.
+ * `--cursors=cycle` hands back two cursors in turn for ever and
+ * `--cursors=endless` a new one on every page, which are two servers that would
+ * page a client for ever.
  *
  * `--no-http-mcp` stops the handshake advertising that it takes an MCP server
  * over HTTP, which is what makes a client leave those out of the list it hands
@@ -206,7 +222,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 /** The file every request is recorded in, when a test named one. */
@@ -226,6 +242,7 @@ const AUTH_STATUSES = {
   gateway: { kind: 'gateway', label: 'Custom model gateway', detail: 'an internal gateway' },
   none: { kind: 'none', label: 'Not logged in' },
   external: { kind: 'external', label: 'AWS Bedrock' },
+  workspace_sso: { kind: 'workspace_sso', label: 'A sign-in of a kind no bridge knows yet' },
 };
 
 /** The kind this server was started to report, or nothing when it reports none. */
@@ -258,18 +275,24 @@ const nextSession = () => {
   return session;
 };
 
+/** What a `--described` server says of a mode or a value, and a server without it says nothing. */
+const about = (description) => (process.argv.includes('--described') ? { description } : {});
+
 /** The modes this server offers, with the one currently in force. */
 let mode = 'ask';
 const modes = () => ({
   currentModeId: mode,
   availableModes: [
-    { id: 'ask', name: 'Ask' },
+    { id: 'ask', name: 'Ask', ...about('Request permission before making any changes') },
     { id: 'code', name: 'Code' },
   ],
 });
 
 /** The model this server currently serves. */
 let model = 'fast';
+
+/** Whether this server offers `careful` beside its two models, which `widen` turns on. */
+let widened = false;
 
 /** How hard this server thinks, and whether it reports what it did. */
 let thinking = 'off';
@@ -293,6 +316,7 @@ const configOptions = () => [
     options: [
       { value: 'fast', name: 'Fast' },
       { value: 'thorough', name: 'Thorough' },
+      ...(widened ? [{ value: 'careful', name: 'Careful' }] : []),
     ],
   },
   ...(process.argv.includes('--modes')
@@ -303,8 +327,8 @@ const configOptions = () => [
         category: 'mode',
         currentValue: mode,
         options: [
-          { value: 'ask', name: 'Ask' },
-          { value: 'code', name: 'Code' },
+          { value: 'ask', name: 'Ask', ...about('Request permission before making any changes') },
+          { value: 'code', name: 'Code', ...about('Write and modify code with full tool access') },
         ],
       }]
     : []),
@@ -315,8 +339,9 @@ const configOptions = () => [
     category: 'thought_level',
     currentValue: thinking,
     options: [
-      { value: 'off', name: 'Off' },
-      { value: 'deep', name: 'Deep' },
+      { value: 'off', name: 'Off', ...about('Answers at once') },
+      { value: 'deep', name: 'Deep', ...about('Thinks before it answers') },
+      ...(process.argv.includes('--model-levels') && model === 'thorough' ? [{ value: 'max', name: 'All out' }] : []),
     ],
   },
   { type: 'boolean', id: 'telemetry', name: 'Telemetry', currentValue: telemetry },
@@ -340,18 +365,52 @@ const LISTED = [
   { sessionId: 'listed-2', cwd: '/tmp/two', additionalDirectories: ['/tmp/two-b'] },
 ];
 
+/*
+ * The sessions an earlier server of the same log was asked to delete, which
+ * this one does not hold either, as a server keeps its conversations in a store
+ * every process of it reads: each listing spawns a server of its own. A server
+ * whose deletes fail keeps them all.
+ */
+if (LOG !== undefined && existsSync(LOG) && !process.argv.includes('--delete-fails')) {
+  for (const line of readFileSync(LOG, 'utf8').split('\n')) {
+    if (line === '') continue;
+    const logged = JSON.parse(line);
+    if (logged.method !== 'session/delete') continue;
+    const at = LISTED.findIndex((one) => one.sessionId === logged.params?.sessionId);
+    if (at >= 0) LISTED.splice(at, 1);
+  }
+}
+
 /**
- * The same two sessions as two pages, for a server whose catalogue does not fit
- * in one answer.
+ * The sessions asked about as two pages, for a server whose catalogue does not
+ * fit in one answer.
  *
  * The first answer carries a cursor and the second does not, which is what tells
  * a client that asked for the first one to come back for the rest. A bridge
  * that reads one page reports a catalogue of one session rather than a failure,
  * so this is the only way a test can see the difference.
  */
-const paged = (cursor) => (cursor === undefined || cursor === null
-  ? { sessions: LISTED.slice(0, 1), nextCursor: 'page-2' }
-  : { sessions: LISTED.slice(1) });
+const paged = (held, cursor) => (cursor === undefined || cursor === null
+  ? { sessions: held.slice(0, 1), nextCursor: 'page-2' }
+  : { sessions: held.slice(1) });
+
+/** How a `--cursors=<kind>` server hands back its cursors, when it was started with one. */
+const cursors = process.argv.find((one) => one.startsWith('--cursors='))?.slice('--cursors='.length);
+
+/** How many cursors this server has handed back. */
+let handed = 0;
+
+/**
+ * One page of a `--cursors` server: its sessions on the first page, and after
+ * every page a cursor that never runs out, two in turn or a new one each time.
+ */
+const unending = (cursor) => {
+  handed += 1;
+  return {
+    sessions: cursor === undefined || cursor === null ? LISTED : [],
+    nextCursor: cursors === 'cycle' ? (handed % 2 === 1 ? 'cycle-a' : 'cycle-b') : `page-${handed}`,
+  };
+};
 
 /** The host's own MCP server, as `session/new` named it, once there is one. */
 let hostTools;
@@ -362,7 +421,7 @@ let hostTools;
  * By the name the bridge gives it, because the list also holds whatever else
  * the deployment configured: what a script here reaches for is the host's.
  */
-const named = (servers) => (Array.isArray(servers) ? servers : []).find((one) => one?.name === 'ahp');
+const named = (servers) => (Array.isArray(servers) ? servers : []).find((one) => one?.name === 'host');
 
 /** How many requests this server has made on that MCP server. */
 let called = 0;
@@ -593,6 +652,21 @@ const scriptFor = (text) => {
     return updates;
   }
 
+  // An answer with content in it that is not text: an image, audio, an
+  // embedded resource and a link, between two runs of prose.
+  if (text.includes('media')) {
+    const block = (content) => ({ sessionUpdate: 'agent_message_chunk', content });
+    updates.push(
+      message('Here: '),
+      block({ type: 'image', data: Buffer.from('png bytes').toString('base64'), mimeType: 'image/png' }),
+      block({ type: 'audio', data: Buffer.from('wav bytes').toString('base64'), mimeType: 'audio/wav' }),
+      block({ type: 'resource', resource: { uri: 'file:///tmp/notes.txt', text: 'notes', mimeType: 'text/plain' } }),
+      block({ type: 'resource_link', uri: 'file:///tmp/report.md', name: 'report.md', mimeType: 'text/markdown', size: 120 }),
+      message('and done.'),
+    );
+    return updates;
+  }
+
   if (text.includes('blank')) {
     updates.push(thought('first thought'), message(' '), ...listing, thought('second thought'));
     updates.push(message(' '), message('\n'), message('the answer'));
@@ -752,12 +826,17 @@ const promptScript = async (id, params) => {
     const blocks = Array.isArray(params?.prompt) ? params.prompt : [];
     /*
      * One block as `<type>:<what it carries>`, which is enough to tell an image
-     * block from a text block naming the same image. A resource block says its
-     * URI and then its own text on the next line, so a test can read the words
-     * a client sent for a file as well as which file they are under.
+     * block from a text block naming the same image. An image block says its
+     * type, and after an `@` the URI it names where it names one. A resource
+     * block says its URI and then its own text on the next line, so a test can
+     * read the words a client sent for a file as well as which file they are
+     * under.
      */
     const said = blocks.map((block) => {
       if (block?.type === 'text') return `text:${String(block.text ?? '')}`;
+      if (block?.type === 'image') {
+        return `image:${String(block.mimeType ?? '')}${block.uri === undefined || block.uri === null ? '' : `@${String(block.uri)}`}`;
+      }
       if (block?.type === 'resource') {
         return `resource:${String(block.resource?.uri ?? '')}\n${String(block.resource?.text ?? '')}`;
       }
@@ -797,6 +876,14 @@ const promptScript = async (id, params) => {
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'shifted' } });
   }
 
+  if (text.includes('widen')) {
+    // A model the server offers from now on, said as the options list that
+    // now names it.
+    widened = true;
+    notify({ sessionUpdate: 'config_option_update', configOptions: configOptions() });
+    notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'widened' } });
+  }
+
   if (text.includes('name')) {
     // What the agent calls the conversation, which is a `session_info_update`
     // and not a turn's word: it names the session rather than answering.
@@ -830,7 +917,7 @@ const promptScript = async (id, params) => {
         sessionUpdate: 'tool_call',
         toolCallId,
         title: tool,
-        name: `mcp__ahp__${tool}`,
+        name: `mcp__host__${tool}`,
         kind: 'other',
         status: 'in_progress',
         // `-` for a report that says no arguments, which an agent need not: a
@@ -924,10 +1011,12 @@ const promptScript = async (id, params) => {
       options: PERMISSION,
     });
     const chosen = answer?.outcome?.outcome === 'selected' ? String(answer.outcome.optionId) : 'cancelled';
+    // A call the client allowed runs, and one it refused never does, which the
+    // server reports as the call failing.
     notify({
       sessionUpdate: 'tool_call_update',
       toolCallId: 'call-perm',
-      status: 'completed',
+      status: chosen.startsWith('yes-') ? 'completed' : 'failed',
       content: [{ type: 'content', content: { type: 'text', text: `answer=${chosen}` } }],
     });
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `perm=${chosen}` } });
@@ -1000,10 +1089,12 @@ const promptScript = async (id, params) => {
     });
     const answer = await asking;
     const chosen = answer?.outcome?.outcome === 'selected' ? String(answer.outcome.optionId) : 'cancelled';
+    // A call the client refused never runs, which the server reports as the
+    // call failing, as it does for the call it asks about first.
     notify({
       sessionUpdate: 'tool_call_update',
       toolCallId: 'call-hold',
-      status: 'completed',
+      status: chosen.startsWith('yes-') ? 'completed' : 'failed',
       content: [{ type: 'content', content: { type: 'text', text: `answer=${chosen}` } }],
     });
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `perm=${chosen}` } });
@@ -1720,6 +1811,12 @@ const onLine = (line) => {
     }
 
     case 'session/load': {
+      // `--load-missing`: the server holds no such conversation, ACP's
+      // resource not found.
+      if (process.argv.includes('--load-missing')) {
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32002, message: 'Resource not found' } });
+        return;
+      }
       // The loaded id is the one the request named, so every update after it
       // belongs to the conversation the client asked to continue.
       session = String(message.params?.sessionId ?? nextSession());
@@ -1767,11 +1864,14 @@ const onLine = (line) => {
       return;
     }
 
-    case 'session/list':
-      respond(message.id, process.argv.includes('--pages')
-        ? paged(message.params?.cursor)
-        : { sessions: LISTED });
+    case 'session/list': {
+      const asked = message.params?.cwd;
+      const held = typeof asked === 'string' ? LISTED.filter((one) => one.cwd === asked) : LISTED;
+      respond(message.id, cursors !== undefined ? unending(message.params?.cursor)
+        : process.argv.includes('--pages') ? paged(held, message.params?.cursor)
+          : { sessions: held });
       return;
+    }
 
     case 'session/set_mode':
       if (process.argv.includes('--refuse-mode')) {
@@ -1812,7 +1912,7 @@ const onLine = (line) => {
       return;
 
     case 'session/close':
-      respond(message.id, {});
+      if (!process.argv.includes('--close-silent')) respond(message.id, {});
       return;
 
     case 'session/delete': {

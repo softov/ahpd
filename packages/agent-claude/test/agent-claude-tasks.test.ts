@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { BoundTool } from '@ahpd/sdk';
+import type { Bag, BoundTool } from '@ahpd/sdk';
 
 /*
  * Claude's own task tools, and the host tools that take their place.
@@ -16,7 +16,7 @@ import type { BoundTool } from '@ahpd/sdk';
  * host through `planUpdate`.
  */
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: ({ prompt, options }: { prompt: AsyncIterable<unknown>; options: Record<string, unknown> }) => {
     sdk.options.push(options);
@@ -58,7 +58,7 @@ const taskAdd = (): BoundTool => ({
   run: async () => '',
 }) as unknown as BoundTool;
 
-/** One session's `query()` options, over the tools and values given here. */
+/** The `query()` options one session's first send started its CLI with, over the tools and values given here. */
 const queried = async (given: {
   preset?: Record<string, unknown>;
   tools?: BoundTool[];
@@ -84,7 +84,7 @@ const queried = async (given: {
         spawnConfigDir: '/ahpd/claude',
       }
       : {}),
-  });
+  }).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');
@@ -111,23 +111,27 @@ it('keeps its own task tools when the host offers no task_add', async () => {
   expect(options.disallowedTools).toBeUndefined();
 });
 
-it('keeps the deny list of a person, and adds the task tools to it', async () => {
+it('takes the task tools from the model, and leaves a person\'s denials to the permission check', async () => {
   const options = await queried({
     tools: [taskAdd()],
     settings: { permissions: { deny: ['Bash', 'TodoWrite'] } },
   });
-  // A name a person already denied is not written twice.
-  expect(options.disallowedTools).toEqual(['Bash', 'TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet']);
+  expect(options.disallowedTools).toEqual(['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet']);
 });
 
-it('turns Claude\'s own task tools on when it keeps them', async () => {
+/*
+ * The Task tools are the CLI's default, and `CLAUDE_CODE_ENABLE_TASKS=0`
+ * selects the legacy `TodoWrite`: the switch is set only to turn them off.
+ * https://code.claude.com/docs/en/env-vars
+ */
+it('leaves Claude\'s own task tools at the CLI\'s default when it keeps them', async () => {
   const options = await queried({ preset: { hostTasks: false }, tools: [taskAdd()] });
-  expect(options.env).toMatchObject({ CLAUDE_CODE_ENABLE_TASKS: '1' });
+  expect((options.env as Bag | undefined)?.CLAUDE_CODE_ENABLE_TASKS).toBeUndefined();
 });
 
-it('turns them on in a machine too', async () => {
-  const options = await queried({ preset: { hostTasks: false }, tools: [taskAdd()], machine: true });
-  expect(options.env).toMatchObject({ CLAUDE_CODE_ENABLE_TASKS: '1', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
+it('turns them off in a machine too', async () => {
+  const options = await queried({ preset: { hostTasks: false, enableTasks: false }, tools: [taskAdd()], machine: true });
+  expect(options.env).toMatchObject({ CLAUDE_CODE_ENABLE_TASKS: '0', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
 });
 
 it('sets no variable when the host holds the list', async () => {
@@ -135,9 +139,9 @@ it('sets no variable when the host holds the list', async () => {
   expect(options.env).toBeUndefined();
 });
 
-it('sets no variable when enableTasks is off', async () => {
+it('selects TodoWrite when enableTasks is off', async () => {
   const options = await queried({ preset: { hostTasks: false, enableTasks: false }, tools: [taskAdd()] });
-  expect(options.env).toBeUndefined();
+  expect(options.env).toMatchObject({ CLAUDE_CODE_ENABLE_TASKS: '0' });
 });
 
 it('keeps a value a preset gives for the variable', async () => {

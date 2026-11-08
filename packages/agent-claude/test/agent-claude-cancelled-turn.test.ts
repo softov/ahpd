@@ -9,10 +9,10 @@ import type { Bag } from '@ahpd/sdk';
  * A turn stopped by a person leaves the session idle, not failed.
  *
  * The host says the stop, and the session's `abort` ends the turn cancelled
- * and closes the CLI. A CLI that is interrupted ends its turn with a result of
- * its own, `error_during_execution` with `is_error: true`, copied below from
- * the SDK this package depends on: what a closed CLI says after the stop is
- * read by nobody, so it fails nothing.
+ * and interrupts the CLI, which it keeps. The interrupted CLI ends its turn
+ * with a result of its own, `error_during_execution` with `is_error: true`,
+ * copied below from the SDK this package depends on: it says the turn was
+ * stopped, so it fails nothing.
  */
 
 /** The SDK's stream as a queue a test pushes frames into, read one at a time. */
@@ -20,7 +20,9 @@ const sdk = vi.hoisted(() => {
   const state = {
     held: [] as Record<string, unknown>[],
     wake: undefined as (() => void) | undefined,
-    reset() { state.held = []; state.wake = undefined; },
+    /** Whether the CLI was interrupted or closed, in the order it was. */
+    heard: [] as string[],
+    reset() { state.held = []; state.wake = undefined; state.heard = []; },
     push(...frames: Record<string, unknown>[]) {
       state.held.push(...frames);
       state.wake?.();
@@ -34,13 +36,13 @@ const sdk = vi.hoisted(() => {
   return state;
 });
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: () => ({
     async *[Symbol.asyncIterator]() {
       for (;;) yield await sdk.next();
     },
-    interrupt: async () => {},
+    interrupt: async () => { sdk.heard.push('interrupt'); },
     setPermissionMode: async () => {},
     setModel: async () => {},
     applyFlagSettings: async () => {},
@@ -53,7 +55,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
     reloadPlugins: async () => ({ plugins: [] }),
     supportedModels: async () => [],
     streamInput: async () => {},
-    close: () => {},
+    close: () => { sdk.heard.push('close'); },
   }),
 }));
 
@@ -145,11 +147,13 @@ const callIn = (state: Bag, id: string): Bag | undefined => ((state.turns ?? [])
   .map((part) => part.toolCall as Bag | undefined)
   .find((call) => call?.toolCallId === id);
 
-it('leaves a session idle when its turn was stopped, whatever its closed CLI says after', async () => {
+it('leaves a session idle when its turn was stopped and the interrupt result comes after', async () => {
   const { session, sent } = await started();
 
   session.abort();
   await settle();
+  // Interrupted through the SDK, and the CLI kept.
+  expect(sdk.heard).toEqual(['interrupt']);
   sdk.push(interrupted);
   await settle();
 

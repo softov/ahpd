@@ -509,7 +509,7 @@ it('queues a call\'s text as an agent\'s message, holding the chat\'s subscripti
   expect(told).toEqual([]);
   (handlers.get('turn_start') as (event: unknown) => void)({ chat: 'ahp-chat:/c1', turn: 't1', queuedMessageId: 'm1' });
   expect(seams.turnOf('ahp-chat:/c1', 'm1')).toBe('t1');
-  (handlers.get('turn_end') as (event: unknown) => void)({ chat: 'ahp-chat:/c1', turn: 't1', status: 'complete' });
+  (handlers.get('turn_end') as (event: unknown) => void)({ channel: 'ahp-chat:/c1', turnId: 't1', reason: { kind: 'success' } });
   expect(await end).toEqual({ turn: 't1', status: 'complete', text: 'done' });
   expect(told).toEqual(['unsubscribe ahp-chat:/c1']);
 

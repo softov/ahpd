@@ -113,7 +113,7 @@ const load = async (pluginOptions: Record<string, unknown>, agents: Agent[] = []
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
   write(uri: string, content: { data: string; encoding: string }, owner?: string): Promise<void>;
   list(uri: string): Promise<{ name: string }[]>;
-  remove(uri: string): Promise<void>;
+  delete(uri: string): Promise<void>;
 };
 
 it('turns resolved needs into flags, a copy, a label and a same-path folder', async () => {
@@ -1754,7 +1754,7 @@ it('names a dev container’s state volume by its id, and removes it with the ma
   const up = (JSON.parse(readFileSync(devState, 'utf8')) as { calls: string[][] }).calls.find((one) => one[0] === 'up') ?? [];
   expect(up).toContain(`type=volume,source=${named(`ahpd-state-${id}-claude`, id, 'claude')},target=/ahpd/claude`);
 
-  await providerOf(options).remove(`computer://${id}`);
+  await providerOf(options).delete(`computer://${id}`);
   const calls = (JSON.parse(readFileSync(state, 'utf8')) as Held).calls;
   expect(calls).toContainEqual(['volume', 'rm', named(`ahpd-state-${id}-claude`, id, 'claude')]);
 });
@@ -1763,7 +1763,7 @@ it('keeps a profile’s state volume when its machine is removed', async () => {
   const state = join(temp(), 'docker.json');
   const { options } = await load(sameRuntime(state, { box: { agents: ['claude'] } }), [CLAUDE_STATE('claude')]);
   await written(options, 'box', { profile: 'box' }, 'user:alice');
-  await providerOf(options).remove('computer://box');
+  await providerOf(options).delete('computer://box');
   expect((JSON.parse(readFileSync(state, 'utf8')) as Held).calls.filter((one) => one[0] === 'volume')).toEqual([]);
 });
 

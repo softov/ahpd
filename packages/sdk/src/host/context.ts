@@ -7,9 +7,11 @@ import type { Session } from '../types/session.js';
 import type { Bag } from '../types/common.js';
 import type { AnnotationsState } from '@microsoft/agent-host-protocol';
 import type { Terminal } from '../types/terminals.js';
+import type { Principal } from '../types/users.js';
 import type { StoredWorktree } from '../types/sessions.js';
 import type { DebugLogs } from '../sessions/debuglogs.js';
 import type { CallLinks } from '../automations/calllinks.js';
+import type { ToolResultResources } from '../resources/toolresults.js';
 import type { Claiming, Claimed, Held, HeldState, Learned, LiveSubagent, Origin } from './state.js';
 import type { Admission } from './admission.js';
 import type { Relay } from './relay.js';
@@ -39,9 +41,29 @@ import type { SessionEvents } from './sessionevents.js';
 import type { Sleep } from './sleep.js';
 import type { Wakes } from './wakes.js';
 import type { QueueDrain } from './queuedrain.js';
-import type { Merged } from './merged.js';
+import type { SessionLifecycle } from './sessionlifecycle.js';
 import type { Canvases } from './canvases.js';
 import type { Asking } from './asking.js';
+
+/**
+ * A tree the window made for itself, cut for a creating session and held by
+ * the window under a handle, as VS Code's detached worktree record.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L671-L724
+ */
+export interface DetachedWorktree {
+  repository: string;
+  path: string;
+  base: string;
+  branch?: string;
+  /** The folders linked into it, whose links are not work in it. */
+  linked: string[];
+  claimed: boolean;
+  archived: boolean;
+  /** Whether the window asked for the tree to go, which it does once nothing uses it. */
+  deleting: boolean;
+  createdAt: number;
+  lastSeenAt: number;
+}
 
 /**
  * Everything an area of the host reaches for, in one object.
@@ -52,13 +74,15 @@ import type { Asking } from './asking.js';
  * used rather than copied onto the factory's own scope at construction - so
  * the order the areas are built in never matters and nothing is frozen.
  */
-export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Outputs, LocalTurns, Automations, Sleep, Wakes, QueueDrain, Merged {
+export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Outputs, LocalTurns, Automations, Sleep, Wakes, QueueDrain, SessionLifecycle {
   /** The background tasks a backend reported, by chat. */
   background: Background;
   /** The canvases each chat shows, and the plugin that opened each one. */
   canvases: Canvases;
   /** The shells each chat's agent runs its commands in, one set a chat. */
   shells: HostShells;
+  /** The content backends hand this host to keep, and the provider a client reads it back through. */
+  toolResults: ToolResultResources;
   /** The options `createHost` was given. */
   options: HostOptions;
   /** The directory this host serves. */
@@ -95,18 +119,31 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /** The person who first signed in under each client id, by client id. */
   holders: Map<string, string>;
   /**
-   * Every client this host has handshaken with, by the id it gave.
+   * Every client this host has handshaken with and still keeps a record of,
+   * by the id it gave.
    *
    * What `reconnect` is answerable *against*. A client comes back saying "I am
    * this id and I had seen up to here", and both halves are meaningless to a
    * host that has never met it: this one's sequence numbers are its own, so
-   * "everything after 419" means nothing if 419 was another process's.
-   *
-   * Per host and for its lifetime, because that is the span the sequence
-   * covers. A daemon that restarts has genuinely forgotten every client, and
-   * saying so is the point - see the refusal in `reconnect`.
+   * "everything after 419" means nothing if 419 was another process's. A
+   * daemon that restarts has forgotten every client, and a record is forgotten
+   * once its client has been gone for the reference host's retention.
    */
   known: Set<string>;
+  /** When each client with no connection open went, by client id: what its record's retention counts from. */
+  lastSeen: Map<string, number>;
+  /**
+   * The state channels each client holds a subscription to and was never
+   * given a baseline for by this process, by client id, as VS Code's host
+   * owes them: a channel subscribed at `initialize` with no state held here
+   * owes one, and a `reconnect` that names one is answered with snapshots.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L692-L704
+   */
+  baselineDebt: Map<string, Set<string>>;
+  /** A baseline given to a client for a channel, or a channel it let go of: its debt there is settled. */
+  clearBaselineDebt(clientId: string, channel: string): void;
+  /** Every wait one client's closed connections began is over, because it is back. */
+  waitsOver(clientId: string): void;
   /**
    * The last locale each client sent, by client id.
    *
@@ -123,6 +160,15 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351
    */
   clientNames: Map<string, string>;
+  /**
+   * The protocol version each client agreed at `initialize`, by client id.
+   *
+   * Kept beside `known` and for the same span, because a `reconnect` offers
+   * no versions and a connection it resumes is held to the one agreed, as the
+   * reference host takes it from the client's record.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1351-L1362
+   */
+  clientVersions: Map<string, string>;
   /** The last locale a client sent, or `undefined` when it sent none. */
   localeOf: (clientId: string) => string | undefined;
   /**
@@ -153,6 +199,13 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /** Set by `close`: no session, terminal or automation run starts after it. */
   closed: boolean;
   /**
+   * The host's close, once: every backend stopped and every store closed, the
+   * process left running, as the reference host's shutdown shuts its providers
+   * down.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16018-L16051
+   */
+  shutdown(): Promise<void>;
+  /**
    * Why this host is taking no new turn, or nothing: what `refuseTurns` was
    * last given, in the embedder's words.
    */
@@ -169,15 +222,23 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   bareSessions: Set<string>;
   /**
-   * The turns that run a `!` command, by chat and turn id while they run
-   * (`commandTurnKey`), each with whether its chat was read when the turn
-   * started.
-   *
-   * Held under the queued message's id while one waits, and moved to the turn
-   * id when it starts. A command turn ran what the person typed, so its end
-   * puts the chat's read bit back as it was.
+   * The sessions that started workspace-less, kept from the start that
+   * found one working in its scratch folder, before its tools are bound, so a
+   * workspace it takes since leaves `set_workspace` offered as it was, as VS
+   * Code's host keeps them: a tool list that moved would miss the prompt
+   * cache.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L2206-L2213
    */
-  commandTurns: Map<string, boolean>;
+  startedWorkspaceless: Set<string>;
+  /**
+   * The turns that run a `!` command, by chat and turn id while they run
+   * (`commandTurnKey`).
+   *
+   * A command turn ran what the person typed, so its end says nothing of the
+   * chat's read bit or its session's, as the reference host's markUnread leaves
+   * a local command's.
+   */
+  commandTurns: Set<string>;
   /** The title each chat's backend said last, so a move of it is noticed. */
   described: Map<string, string>;
   /** The side index a worker's link is written from, fed from `dispatch`. */
@@ -216,34 +277,38 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * audience leaves this connection out.
    *
    * The one place an envelope is rewritten for a connection, which is why the
-   * live broadcast and both replay paths call it: a rewrite anywhere else
-   * would be a second opinion about the same delivery.
+   * live broadcast and both replay paths call it, as VS Code's host projects
+   * an action for a client.
    */
-  seenBy: <E extends { channel: string; action: Record<string, unknown>; origin?: Origin | undefined; audience?: PublishOptions }>(
+  projectActionForClient: <E extends { channel: string; action: Record<string, unknown>; origin?: Origin | undefined; audience?: PublishOptions }>(
     connection: Connection,
     envelope: E,
   ) => E | undefined;
-  /** A person left a channel no connection of theirs is watching. */
-  leaves: (asked: string, clientId: string) => void;
+  /** A client released from a session no connection of theirs is watching. */
+  releaseActiveClientForSession: (asked: string, clientId: string) => void;
   /** The sequence number every snapshot and action is taken at. */
   serverSeq: number;
-  /** The watches clients have asked for, by the channel each was given. */
+  /**
+   * The resource watches running, by channel: each attached at its channel's
+   * first subscribe, with one watcher per reader among its subscribers, by the
+   * reader's id, `''` for a connection that is nobody.
+   */
   watches: Claiming<{
     state: Bag;
-    watcher: { close(): void };
-    /** The connection that asked for it, which keeps it alive until it subscribes. */
-    owner: Connection;
-    /** Whether anybody has ever subscribed. Until they have, there is nothing to have stopped. */
-    opened: boolean;
+    watchers: Map<string, {
+      watcher: { close(): void };
+      /** The release armed when that reader's last subscriber left, which a subscribe calls off. */
+      grace?: ReturnType<typeof setTimeout> | undefined;
+    }>;
   }>;
+  /** A resource watch's watcher, attached on its channel's first subscribe, or nothing for a name that is no watch. */
+  attachWatch(channel: string, principal?: Principal): Promise<Bag | undefined>;
   /** The marks a session carries, as a snapshot of its annotations channel reports them. */
   marksOf: (id: string) => AnnotationsState;
-  /** The live sessions started by resuming a recorded one, whose workers are read back. */
-  resumedSessions: Set<string>;
+  /** The live sessions restored from a recorded one, whose workers are read back. */
+  restoredSessions: Set<string>;
   /** Who is in a session, as its state reports them. */
   activeClientsOf: (uri: string) => Bag[];
-  /** What a person typed into a row and has not sent. */
-  drafts: Map<string, Bag>;
   /** Whether the advanced tools are offered, a daemon key that takes hold while the daemon runs. */
   advancedTools: boolean;
   /**
@@ -264,6 +329,52 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * and read where a chat is dropped rather than held per chat.
    */
   closedChats: 'hidden' | 'delete';
+  /**
+   * What a turn naming a model its chat's agent does not offer does: `fail`
+   * ends it, `keep` keeps the chat's model, as VS Code's host does. A daemon
+   * key that takes hold while the daemon runs, read as each turn is sent.
+   */
+  unofferedModel: 'fail' | 'keep';
+  /**
+   * Where a session that names no folder works: the first folder this host
+   * serves, `first`, or a scratch folder of its own, `scratch`, as VS Code's
+   * host works one. A daemon key that takes hold while the daemon runs, read
+   * as each session is made.
+   */
+  workspacelessFolder: 'first' | 'scratch';
+  /**
+   * Whose work a session a root connection starts is: the host itself,
+   * `host`, or no one, `none`, as VS Code's host. A daemon key that takes hold
+   * while the daemon runs, read as each session is made.
+   */
+  rootOwner: 'host' | 'none';
+  /**
+   * Whether a turn's sender is said on what clients read, `said`, or kept by
+   * the host alone, `kept`, as VS Code's host keeps it. A daemon key that
+   * takes hold while the daemon runs, read as each start is said and each
+   * turn read back.
+   */
+  turnSenders: 'said' | 'kept';
+  /**
+   * How a chat read back shows a turn it never began, such as a steering
+   * message the backend ran as a prompt of its own: `inTurn` inside the turn
+   * it steered, `ownTurn` as a turn of its own, as VS Code's replay. A daemon
+   * key that takes hold while the daemon runs, read as each transcript is read.
+   */
+  steerReadBack: 'inTurn' | 'ownTurn';
+  /**
+   * What a backend's own background work actions come to: `drop`, the host
+   * drawing every row, or `say`, VS Code's, the backend's action said as the
+   * host's. A daemon key that takes hold while the daemon runs, read as each
+   * action arrives.
+   */
+  backendBackgroundWork: 'drop' | 'say';
+  /**
+   * What the session tools' counts are kept per: each `sessionTree`, or each
+   * `session`, as VS Code's host counts them. A daemon key that takes hold
+   * while the daemon runs, read as each tool call is counted.
+   */
+  agentOrchestrationLimitsScope: 'sessionTree' | 'session';
   /**
    * What archiving a session does with a tree that has changes nobody
    * committed: `keep` it, or `commit` them and remove it. A daemon key that
@@ -303,6 +414,28 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * start has: with the failure's words when the start failed.
    */
   restarting: Map<string, Promise<string | undefined>>;
+  /**
+   * The relaunch each running session owes, by its own uri: a change of
+   * config or of folders its backend reads only when it starts, already said,
+   * and taken when the backend starts again at the session's next turn
+   * boundary, with the credentials and the connection of the change that
+   * asked for it. `folders` is set where the folders changed, and that start
+   * resumes the session's conversation in them.
+   */
+  relaunches: Map<string, {
+    config: Bag;
+    folders?: true;
+    credentials: Record<string, string>;
+    sender: Connection | undefined;
+    tokensFor: (provider: string) => Record<string, string>;
+  }>;
+  /**
+   * The relaunch each moved chat owes, by the chat's uri: its runtime goes on
+   * under the session it was launched for until the chat's next turn
+   * boundary starts it again under the session that holds it now, in the
+   * folder it worked in, with the credentials and the connection of the move.
+   */
+  chatRelaunches: Map<string, { credentials: Record<string, string>; sender: Connection | undefined; directory: string | undefined }>;
   /**
    * The turns a client resumed that run now, by their chat and their id: the
    * time each ran before and what it used, and when it ran again, which its
@@ -359,9 +492,9 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     chosen?: string,
   ) => Promise<{ schema: Bag; defaults: Record<string, unknown>; repository?: string }>;
   /** The host-owned config keys a client sent, as this host reads them. */
-  mineOf: (config: Record<string, unknown>) => Record<string, unknown>;
-  /** A token any connected client lent for a resource, and has not run out. */
-  lent: (resource: string) => string | undefined;
+  hostOwnedSessionConfig: (config: Record<string, unknown>) => Record<string, unknown>;
+  /** A token any connected client authenticated for a resource and the scopes asked for, unexpired, for the host's own work. */
+  getAuthToken: (resource: string, scopes?: readonly string[]) => string | undefined;
   /**
    * Say one thing on one channel.
    *
@@ -413,24 +546,11 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   letStateGo: (session: string) => void;
   /**
-   * The channels each client holds a state of that this host let go of since
-   * it served it, by client id. Such a client is owed the state the channel
-   * holds now before any action on it is replayed to it.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
-   */
-  lapsed: Map<string, Set<string>>;
-  /**
-   * The sessions this host put to sleep and has not disposed, by their own
-   * URI: open sessions with no agent running, counted with the running ones.
-   */
-  asleep: Set<string>;
-  /**
    * Answer one client's dispatch with the reason it was not applied, at the
    * next `serverSeq`.
    *
    * Sent to every client the accepted action would reach, and held for
-   * replay; `alone`, to that client only and not held. No client's state
-   * takes it.
+   * replay. No client's state takes it.
    */
   refuse: (
     peer: Peer,
@@ -438,23 +558,16 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     action: Record<string, unknown>,
     origin: Origin | undefined,
     reason: string,
-    alone?: boolean,
   ) => void;
   /** The host's own log. */
   log: (message: string) => void;
   /** What the window's "collect logs" gets, and reads back. */
   logs: DebugLogs;
-  /** The worktree handles the window holds, by the handle it asked under. */
-  detached: Map<string, {
-    session: string;
-    repository: string;
-    path: string;
-    branch?: string;
-    claimed: boolean;
-    archived: boolean;
-    createdAt: number;
-    lastSeenAt: number;
-  }>;
+  /**
+   * The trees the window made for itself, by the handle it holds each one
+   * under, each kept until its tree is gone.
+   */
+  detached: Map<string, DetachedWorktree>;
 }
 
 /** What one connection's gate is built from. */
@@ -508,6 +621,17 @@ export interface ConnectionContext {
   alive: boolean;
   /** A dispatch applied now, under the origin its client sent it with, and what it waits on when it waits. */
   applyNow: (params: Record<string, unknown>, origin: Origin) => Promise<void> | undefined;
+  /**
+   * The subscription each channel holds on this connection, by channel: the
+   * one a subscribe still being answered took, or the one that stands.
+   *
+   * One per channel, as the reference host's client record keeps one: a
+   * subscribe of a channel not yet watched takes the place, one of a watched
+   * channel shares the place that stands, and an unsubscribe empties it. A
+   * subscribe whose place was taken before it was answered is refused.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2163-L2199
+   */
+  subscriptions: Map<string, object>;
   /**
    * The dev containers this connection opened, by the client's own name.
    *

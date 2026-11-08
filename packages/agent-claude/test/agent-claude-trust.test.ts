@@ -14,7 +14,7 @@ import { claude } from '../src/claude.js';
  * and all of it loads as before where the host says the folder is trusted.
  */
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: ({ options }: { options: Record<string, unknown> }) => {
     sdk.options.push(options);
@@ -60,7 +60,7 @@ const project = (): string => {
   return dir;
 };
 
-/** The `query()` options one session in that folder is built with. */
+/** The `query()` options one session in that folder starts its CLI with at its first send. */
 const created = async (
   dir: string,
   trusted: ((folder: string) => boolean) | undefined,
@@ -77,7 +77,7 @@ const created = async (
     clientToolTimeoutMs: 0,
     schema: () => ({ type: 'object', properties: {} }),
     emit: () => {},
-  });
+  }).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');

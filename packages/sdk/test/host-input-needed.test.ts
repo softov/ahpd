@@ -10,11 +10,10 @@ import type { Peer } from '../src/types/rpc.js';
  *
  * "Host-managed: the host upserts entries with `session/inputNeededSet` as
  * chats raise requests and removes them with `session/inputNeededRemoved` once
- * the underlying request resolves." The reference host keeps an entry while
- * the chat's running turn holds its request open, and takes every entry of a
- * chat down with its turn (sessionInputNeededContribution.ts L40-L83 at
- * a4e689ae). The backend here raises entries and never takes one down, as a
- * backend that forgets is the case this guards.
+ * the underlying request resolves." The reference host raises an entry from
+ * the chat's state while the chat's running turn holds its request open, under
+ * an id of its own, and takes every entry of a chat down with its turn; no
+ * agent raises one (sessionInputNeededContribution.ts L19-L83 at 6b68d3fe).
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L243-L245
  */
 
@@ -186,31 +185,26 @@ it('takes an answer of a kind the protocol does not list', async () => {
   })).toBeUndefined();
 });
 
-it('takes a chat\'s entries down with its turn', async () => {
+it('raises a call\'s confirmation under VS Code\'s id, and takes it down with its turn', async () => {
   const { start, entries } = await opened();
   start.emit('chat', { type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'c1', toolName: 'write', displayName: 'Write' });
   start.emit('chat', { type: 'chat/toolCallReady', turnId: 't1', toolCallId: 'c1', invocationMessage: 'Write a file' });
-  start.emit('session', {
-    type: 'session/inputNeededSet',
-    request: { id: 'own', kind: 'toolConfirmation', chat: start.chatUri, turnId: 't1', toolCall: { toolCallId: 'c1', status: 'pending-confirmation' } },
-  });
   await settle();
-  expect((await entries()).map((one) => one.id)).toEqual(['own']);
+  expect((await entries()).map((one) => [one.id, one.kind, one.turnId]))
+    .toEqual([[`toolConfirmation:${start.chatUri}:t1:c1`, 'toolConfirmation', 't1']]);
 
   start.emit('chat', { type: 'chat/turnComplete', turnId: 't1', duration: 1 });
   await settle();
   expect(await entries()).toEqual([]);
 });
 
-it('takes a question\'s entry down once the question has its response', async () => {
+it('raises a question under VS Code\'s id, and takes it down once the question has its response', async () => {
   const { start, entries } = await opened();
   start.emit('chat', { type: 'chat/inputRequested', request: { id: 'q1', message: 'Which one?' } });
-  start.emit('session', {
-    type: 'session/inputNeededSet',
-    request: { id: 'own-q', kind: 'chatInput', chat: start.chatUri, request: { id: 'q1', message: 'Which one?' } },
-  });
   await settle();
-  expect((await entries()).map((one) => one.id)).toEqual(['own-q']);
+  expect(await entries()).toEqual([
+    { id: `chatInput:${start.chatUri}:q1`, kind: 'chatInput', chat: start.chatUri, request: { id: 'q1', message: 'Which one?' } },
+  ]);
 
   start.emit('chat', { type: 'chat/inputCompleted', requestId: 'q1', response: 'cancel' });
   await settle();
@@ -221,10 +215,11 @@ it('takes a question\'s entry down once the question has its response', async ()
  * An entry names a call in the state its kind is raised for: the reference
  * host raises a confirmation at a pending confirmation, a client execution
  * while the call runs with a client contributor, and an authentication at
- * auth-required. A call still being announced is in none of them.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L117-L157
+ * auth-required. A call still being announced is in none of them, and an
+ * entry a backend raises itself is not said.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L105-L157
  */
-it('takes down an entry whose call is still being announced', async () => {
+it('raises nothing for a call still being announced, nor for an entry a backend raises itself', async () => {
   const { start, entries } = await opened();
   start.emit('chat', { type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'c1', toolName: 'write', displayName: 'Write' });
   for (const [id, kind] of [['own', 'toolConfirmation'], ['client', 'toolClientExecution'], ['auth', 'toolAuthentication']] as const) {
@@ -234,24 +229,14 @@ it('takes down an entry whose call is still being announced', async () => {
     });
   }
   await settle();
-  expect((await entries()).map((one) => one.id)).toEqual(['own', 'client', 'auth']);
-
-  // The next action about the chat reads each entry against its call, which is
-  // still streaming.
-  start.emit('chat', { type: 'chat/responsePart', turnId: 't1', part: { id: 'p1', kind: 'markdown', content: 'thinking' } });
-  await settle();
   expect(await entries()).toEqual([]);
 });
 
-it('keeps an entry while its call waits on a confirmation', async () => {
+it('keeps a call\'s entry while it waits on a confirmation', async () => {
   const { start, entries } = await opened();
   start.emit('chat', { type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'c1', toolName: 'write', displayName: 'Write' });
   start.emit('chat', { type: 'chat/toolCallReady', turnId: 't1', toolCallId: 'c1', invocationMessage: 'Write a file' });
-  start.emit('session', {
-    type: 'session/inputNeededSet',
-    request: { id: 'own', kind: 'toolConfirmation', chat: start.chatUri, turnId: 't1', toolCall: { toolCallId: 'c1', status: 'pending-confirmation' } },
-  });
   start.emit('chat', { type: 'chat/responsePart', turnId: 't1', part: { id: 'p1', kind: 'markdown', content: 'thinking' } });
   await settle();
-  expect((await entries()).map((one) => one.id)).toEqual(['own']);
+  expect((await entries()).map((one) => one.id)).toEqual([`toolConfirmation:${start.chatUri}:t1:c1`]);
 });

@@ -25,23 +25,24 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activityOf, bag, createClientCalls, ensureWorkspacelessScratchDir, idFor, mergeLogicalTurnUsage, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
+import { bag, createClientCalls, ensureWorkspacelessScratchDir, idFor, mergeLogicalTurnUsage, partsOf, reason, statusOf, titleFrom, uriOf } from '@ahpd/sdk';
 import type {
-  Bag, BoundTool, Chosen, CommandTerminal, MessageAttachment, MessageFrom, Session, Start, StatusBits, ToolEffects, TurnOptions,
+  Bag, BoundTool, Chosen, CommandTerminal, MessageAttachment, MessageFrom, PendingConfirmation, PermissionKind, Session, Start, StatusBits, ToolEffects, TurnOptions,
 } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
-import { isUuid, openPi } from './backend.js';
+import { openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf as saidFor, addUsage, callPartOf, describe, mapEvent, readyRow, stampStart, untime } from './mapping.js';
+import { piCustomizations, switchedOffPaths } from './customizations.js';
+import type { PiResources } from './customizations.js';
+import { addUsage, callPartOf, describe, mapEvent, readyRow, stampStart, untime } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import type { ReplayPi } from './replay.js';
 import { toPiTool } from './tools.js';
-import type { RunByClient } from './tools.js';
 import type { PiOptions, PiTurn, WatchedSession, WatchedTurn } from './types.js';
-import { MESSAGE_ENTRY, modeOf, PERMISSION_MODES, permissionModeProperty, UNTITLED } from './types.js';
+import { INTERRUPTED, MESSAGE_ENTRY, modeOf, PERMISSION_MODES, permissionModeProperty, UNTITLED } from './types.js';
 
 /** The space characters pi folds to a plain space before it reads a path. */
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -162,7 +163,8 @@ export function piSession(
    */
   let recordedModel = options.model;
 
-  const settings: Record<string, unknown> = { ...start.settings };
+  /** The config values in force, by key, which `setConfig` moves and each turn reads. */
+  const values: Record<string, unknown> = { ...start.settings };
   /**
    * The tools this session offers the model, as the host and its clients bound
    * them.
@@ -178,6 +180,15 @@ export function piSession(
   /** Finished turns. The running one is `active` and is deliberately not here. */
   const turns: Bag[] = [...(start.seed ?? [])];
   const seeds: Bag[] = [...(start.seedCustomizations ?? [])];
+  /*
+   * pi's own skills, prompt templates and extensions, as the last pi built for
+   * this session found them, and the ids of those this session switched off.
+   */
+  let found: PiResources | undefined;
+  let own: Bag[] = [];
+  const off = new Set<string>();
+  /** The list as this session last said it. */
+  let saidCustomizations = JSON.stringify(seeds);
   let active: Bag | undefined;
   /** The running turn's mapping, so an event knows what it belongs to. */
   let mapping: PiTurn | undefined;
@@ -211,8 +222,6 @@ export function piSession(
   let kept = false;
   /** The turns a later one took the place of, which run on and end in no history. */
   const replaced = new Set<string>();
-  /** What it is doing, and the one handle that says it. */
-  const activity = activityOf(emit);
   let title = UNTITLED;
 
   /**
@@ -287,7 +296,9 @@ export function piSession(
    * A resumed session's earlier turns, as pi's file has them. They open the
    * watched record, so a transcript read after this session runs a turn still
    * has them, and they end where the file says, so one can be truncated like a
-   * watched turn. A turn this session watched keeps the end it saw.
+   * watched turn. A turn this session watched keeps the end it saw. The agent
+   * reads them before it builds the session, so a file that cannot be read
+   * fails the start, and hands them in through `replay`.
    */
   if (start.resume !== undefined) {
     void replay(start.resume, where).then((rebuilt) => {
@@ -301,8 +312,12 @@ export function piSession(
   /** The running turn's record in `watchedTurns`, sealed when the turn ends. */
   let turn: WatchedTurn | undefined;
 
-  /** A steering message pi read into the turn, taken out of the chat, its hand-off answered `true`. */
-  const takenOut = (id: string): void => {
+  /**
+   * A steering message pi read into the turn, VS Code's consumed steering:
+   * taken out of the chat, its hand-off answered `true`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L1624-L1626
+   */
+  const steeringConsumed = (id: string): void => {
     emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
     answers.get(id)?.(true);
     answers.delete(id);
@@ -345,8 +360,8 @@ export function piSession(
       .map((one) => String(one.owner)),
   });
 
-  /** The client that provides a tool, by the name pi calls it. */
-  const clientOf = (toolName: string): string | undefined =>
+  /** The client that provides a tool, by the name pi calls it: the spec's contributor of its call. */
+  const contributorOf = (toolName: string): string | undefined =>
     built.find((one) => one.definition.name === toolName)?.owner;
 
   /**
@@ -358,29 +373,23 @@ export function piSession(
    * sentence the chat's `chat/toolCallReady` carries beside it.
    */
   const openClientCall = (id: string, toolName: string, turnId: string, line: string, input: Bag): void => {
-    const owner = clientOf(toolName);
+    const owner = contributorOf(toolName);
     if (owner === undefined) return;
+    // The name the client announced, off the `<clientId>__<name>` the model was
+    // offered, which the call's row is named and drawn by too.
+    const announced = toolName.slice(owner.length + 2);
     calls.open({
       turnId,
       owner,
       toolCall: {
         toolCallId: id,
-        // The name the client announced: the tool under its own name, not the
-        // `<clientId>__<name>` the model was offered.
-        toolName: toolName.slice(owner.length + 2),
-        displayName: toolName,
+        toolName: announced,
+        displayName: announced,
         invocationMessage: line,
         confirmed: 'not-needed',
         toolInput: JSON.stringify(input),
       },
     });
-  };
-
-  /** Hand a call to the client that provides the tool, and wait for its answer. */
-  const ranByClient: RunByClient = async (bound, toolCallId) => {
-    const owner = bound.owner ?? '';
-    activity.say(`Waiting on ${owner}: ${bound.definition.title ?? bound.definition.name}`);
-    return await calls.wait(toolCallId);
   };
 
   /**
@@ -415,6 +424,8 @@ export function piSession(
    */
   const pending = new Map<string, {
     id: string;
+    /** pi's name for the call's tool, which a refusal names. */
+    toolName: string;
     entry: Bag;
     settle: (answer: ToolCallEventResult | undefined) => void;
     /** Ask the client to run the call, for a call the person then allows. */
@@ -423,9 +434,6 @@ export function piSession(
 
   /** The requests a client can still answer: the person's, and the clients'. */
   const needed = (): Bag[] => [...pending.values()].map((one) => one.entry).concat(calls.entries());
-
-  /** What a declined call answers, which is the reason the model reads. */
-  const DECLINED = 'The person declined this action';
 
   /**
    * Cancel every question still waiting, so pi does not wait for ever.
@@ -455,6 +463,25 @@ export function piSession(
       if (takeDown) emit('session', { type: 'session/inputNeededRemoved', id });
       held.settle({ block: true, reason: why });
     }
+  };
+
+  /**
+   * What each of pi's own tools asks to do, in VS Code's permission kinds, as
+   * VS Code's Claude table rows the CLI's tools: a read and a search of a path,
+   * a write and an edit of one, and a command in the shell the tool is named
+   * for. Any other tool, a host's or a client's, is a custom tool, as VS
+   * Code's table falls back.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L134
+   */
+  const PI_PERMISSIONS: Record<string, PermissionKind> = {
+    read: 'read',
+    grep: 'read',
+    find: 'read',
+    ls: 'read',
+    edit: 'write',
+    write: 'write',
+    bash: 'shell',
+    powershell: 'shell',
   };
 
   /** What pi's own tools do to the world, by the name pi calls them. */
@@ -518,45 +545,11 @@ export function piSession(
     (typeof input.path === 'string' ? input.path : input.cwd);
 
   /**
-   * Whether the owner's rules already allow this shell call.
-   *
-   * The host answers from the rules the window that started this session
-   * pushed, and only an approval reaches here: a rule that denied the line, a
-   * line no rule could read and a host that says nothing all answer
-   * `undefined`, and the question is put as it always was. `bash` and
-   * `powershell` are pi's two shells and the check's two, and each carries its
-   * own rules; the command is the one the model wrote, which is the input pi
-   * is about to run. A call whose input names no command line is not one the
-   * check can read, so it asks.
+   * What to do about one call: run it, put it to the host as a question, or
+   * refuse it, by the siblings' six modes. A question is the host's to decide,
+   * its chain reading the owner's rules on it.
    */
-  const allowedByRule = async (toolName: string, input: Bag): Promise<boolean> => {
-    const shell = toolName === 'bash' ? 'bash' : toolName === 'powershell' ? 'powershell' : undefined;
-    const command = input.command;
-    if (shell === undefined || typeof command !== 'string') return false;
-    return (await start.getAutoApproval?.('shell', command, shell)) === 'not-needed';
-  };
-
-  /**
-   * What to do about one call: run it, ask a person, or refuse it.
-   *
-   * The operator's rule is read first, by the tool's name, because it is the
-   * host's setting rather than a window's: a matched call is `ask` in every
-   * mode, `bypassPermissions` included, and `dontAsk`, which never asks,
-   * refuses it. Otherwise the modes are the siblings' six. A shell command the
-   * owner's rules already allow is taken out of the ones a mode would ask
-   * about; the check narrows the questions and adds none, so a mode that
-   * refuses a call still refuses it and a mode that runs one still runs it
-   * without consulting the rules.
-   */
-  const decide = async (toolName: string, input: Bag): Promise<ToolCallEventResult | 'ask' | undefined> => {
-    // A tool the host offered is `ahp/<name>` to the rule, the name Claude and
-    // ACP give it on the host's MCP server; pi's own tools keep their own.
-    const ruled = offering.some((one) => one.definition.name === toolName) ? `ahp/${toolName}` : toolName;
-    if (start.getAutoApproval?.('tool', ruled) === 'ask') {
-      return modeOf(settings.permissionMode) === 'dontAsk'
-        ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
-        : 'ask';
-    }
+  const decide = (toolName: string, input: Bag): ToolCallEventResult | 'ask' | undefined => {
     const effects = effectsOf(toolName);
     /** Whether the modes that ask before a change ask about this call. */
     const asks = (): boolean => {
@@ -570,35 +563,28 @@ export function piSession(
       return false;
     };
     const onEffects = (): ToolCallEventResult | 'ask' | undefined => (asks() ? 'ask' : undefined);
-    const byMode = (): ToolCallEventResult | 'ask' | undefined => {
-      switch (modeOf(settings.permissionMode)) {
-        case 'bypassPermissions':
-          return undefined;
-        case 'plan':
-          return effects.writes === true || effects.destructive === true
-            ? { block: true, reason: `${toolName} would change something and the mode is plan` }
-            : onEffects();
-        case 'auto':
-          return effects.destructive === true ? 'ask' : undefined;
-        case 'acceptEdits':
-          // An edit is a write that does not destroy, and only one that names a
-          // path inside the working directory is let through.
-          return effects.writes === true && effects.destructive !== true && insideWorkspace(input.path)
-            ? undefined
-            : onEffects();
-        case 'dontAsk':
-          return asks()
-            ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
-            : undefined;
-        default:
-          return onEffects();
-      }
-    };
-    const decided = byMode();
-    // Only an ask is narrowed: a refusal is a mode's answer about the call,
-    // and a run is one nobody was going to be asked about.
-    if (decided !== 'ask') return decided;
-    return (await allowedByRule(toolName, input)) ? undefined : 'ask';
+    switch (modeOf(values.permissionMode)) {
+      case 'bypassPermissions':
+        return undefined;
+      case 'plan':
+        return effects.writes === true || effects.destructive === true
+          ? { block: true, reason: `${toolName} would change something and the mode is plan` }
+          : onEffects();
+      case 'auto':
+        return effects.destructive === true ? 'ask' : undefined;
+      case 'acceptEdits':
+        // An edit is a write that does not destroy, and only one that names a
+        // path inside the working directory is let through.
+        return effects.writes === true && effects.destructive !== true && insideWorkspace(input.path)
+          ? undefined
+          : onEffects();
+      case 'dontAsk':
+        return asks()
+          ? { block: true, reason: `${toolName} would need approval and the mode is dontAsk` }
+          : undefined;
+      default:
+        return onEffects();
+    }
   };
 
   /*
@@ -653,15 +639,34 @@ export function piSession(
       });
     };
 
-    const decided = await decide(event.toolName, input);
+    const decided = decide(event.toolName, input);
     if (decided === 'ask') {
       const title = `Run ${displayName}?`;
+      /*
+       * What the host decides the question by, said beside its ready, as VS
+       * Code's agents raise a pending confirmation: the kind by pi's tool, the
+       * path a read or a write names in the session's folder, and a command
+       * in the shell its tool is named for, as VS Code's Copilot agent names
+       * the language of a shell tool it knows.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L7983-L7991
+       */
+      const permissionKind = PI_PERMISSIONS[event.toolName] ?? 'custom-tool';
+      const target = permissionKind === 'read' ? readTarget(input) : permissionKind === 'write' ? input.path : undefined;
+      const confirmation: PendingConfirmation = {
+        permissionKind,
+        ...(typeof target === 'string' && target !== '' ? { permissionPath: resolve(where, piPath(target)) } : {}),
+        ...(permissionKind === 'shell' && typeof input.command === 'string'
+          ? { shellCommand: input.command, shellLanguage: event.toolName === 'powershell' ? 'powershell' as const : 'bash' as const }
+          : {}),
+      };
       return await new Promise<ToolCallEventResult | undefined>((settle) => {
-        ready({ confirmationTitle: title });
+        ready({ confirmationTitle: title, ...confirmation });
         const toolCall = row ?? { toolCallId: id, toolName: displayName, displayName };
         const entry: Bag = { id, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall };
         pending.set(id, {
           id,
+          toolName: event.toolName,
           entry,
           settle,
           // A client's tool is asked for the same way as any other call that
@@ -759,15 +764,21 @@ export function piSession(
    * `resumable` marks an error a client may resume: a failed model call, whose
    * reply `resume` can take out of the model's context. A failure before pi had
    * the prompt has no such reply, and is not one.
+   *
+   * `errorType` is what the error is typed by: pi's own stop reason for a run
+   * pi ended in error, as VS Code's agents type a runtime's failure by the
+   * runtime's own code, and `sendFailed`, the stage VS Code's host names, for a
+   * send that failed before pi had the prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2574
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotSdkChatError.ts#L54-L64
    */
-  const finish = (ending: 'complete' | 'cancelled' | 'error', why?: string, resumable = false): void => {
+  const finish = (ending: 'complete' | 'cancelled' | 'error', why?: string, resumable = false, errorType = 'sendFailed'): void => {
     const ended = active;
     if (ended === undefined) return;
     const turnId = String(ended.id);
     namePrompt();
     // A call cut off before its end still owes the `after` it was announced with.
     for (const callId of [...editing.keys()]) settleEdit(callId);
-    activity.say(undefined);
     /*
      * A call the model was still writing when the turn ended is one pi never
      * runs, and a client's reducer skips it on the turn's end; the snapshot
@@ -807,7 +818,7 @@ export function piSession(
       if (!gone) error = message;
       const part: Bag = {
         kind: 'error',
-        error: { errorType: 'turnFailed', message },
+        error: { errorType, message },
         ...(resumable ? { resumable: true } : {}),
       };
       // On the turn as well, so a snapshot holds what a client that watched the
@@ -859,26 +870,24 @@ export function piSession(
       emit('chat', { type: 'chat/usage', turnId: String(active.id), usage });
     }
     if (cancelled) finish('cancelled');
-    else if (answered?.stopReason === 'error') finish('error', answered.errorMessage, true);
+    else if (answered?.stopReason === 'error') finish('error', answered.errorMessage, true, answered.stopReason);
     else finish('complete');
   };
 
   /** Everything pi says while a turn runs, turned into what a client reads. */
   const heard = (event: AgentSessionEvent): void => {
-    const said = saidFor(event);
-    if (said !== false) activity.say(said);
-
     /*
-     * The turn's message as the turn had it, kept just before pi writes the
-     * turn's prompt: pi writes a message after its listeners hear it, so the
-     * entry kept here is the prompt's parent, which is how `replay.ts` pairs
-     * them. The turn's own prompt is the first person's message pi says once it
-     * has the prompt; a steering message after it is not the turn's.
+     * The turn's message as the turn had it, with the model it ran on, kept
+     * just before pi writes the turn's prompt: pi writes a message after its
+     * listeners hear it, so the entry kept here is the prompt's parent, which
+     * is how `replay.ts` pairs them. The turn's own prompt is the first
+     * person's message pi says once it has the prompt; a steering message
+     * after it is not the turn's.
      */
     if (event.type === 'message_end' && event.message.role === 'user' && !kept
       && active !== undefined && live !== undefined && prompted === String(active.id)) {
       kept = true;
-      live.appendEntry(MESSAGE_ENTRY, { message: active.message });
+      live.appendEntry(MESSAGE_ENTRY, { message: turn?.message ?? active.message });
     }
 
     // Each new answer replaces the last, so a retried error is forgotten the
@@ -914,7 +923,7 @@ export function piSession(
        * holds has been read into the turn, or let go, and is taken out.
        */
       case 'queue_update': {
-        for (const id of submittedSteering.splice(0, Math.max(0, submittedSteering.length - event.steering.length))) takenOut(id);
+        for (const id of submittedSteering.splice(0, Math.max(0, submittedSteering.length - event.steering.length))) steeringConsumed(id);
         return;
       }
 
@@ -932,29 +941,6 @@ export function piSession(
         provisional = false;
         if (record !== undefined) record.title = named;
         emit('session', { type: 'session/titleChanged', title });
-        return;
-      }
-
-      /*
-       * The level moved, which is a value in force rather than a turn part:
-       * pi can change it itself, and a client that drew the form should see
-       * where it actually sits.
-       */
-      case 'thinking_level_changed': {
-        settings.thinkingLevel = event.level;
-        // `config`, the action's own field, which a reducer merges into the
-        // values every client holds.
-        emit('session', { type: 'session/configChanged', config: { thinkingLevel: event.level } });
-        return;
-      }
-
-      /*
-       * A run that pi will retry itself is not a turn that ended. `willRetry`
-       * is exactly that case, and closing the turn on it would draw a finished
-       * answer that is about to be replaced.
-       */
-      case 'agent_end': {
-        if (event.willRetry) activity.say('Retrying');
         return;
       }
 
@@ -997,13 +983,14 @@ export function piSession(
     if (first && start.forkAt !== undefined && start.rewindAt !== undefined) {
       throw new Error('pi: a session cannot fork and rewind at once');
     }
-    const trust = settings.projectTrust ?? options.projectTrust ?? 'trust';
+    const trust = values.projectTrust ?? options.projectTrust ?? 'trust';
     // What this backend is built with, so a turn it runs judges owner and
     // effects against the list pi was handed and not one a client changed
     // while the turn ran.
     const building = [...offering];
     built = building;
-    const tools = (await Promise.all(building.map((one) => toPiTool(one, ranByClient, openedFor))))
+    // A client's call waits for the answer its client sends.
+    const tools = (await Promise.all(building.map((one) => toPiTool(one, (_bound, toolCallId) => calls.wait(toolCallId), openedFor))))
       .flatMap((tool) => (tool === undefined ? [] : [tool]));
     // An empty entry is not an instruction, and pi would put a blank paragraph
     // in the system prompt for one.
@@ -1021,9 +1008,9 @@ export function piSession(
       ...(resume !== undefined ? { resume } : {}),
       // Only the first open forks: a rebuild continues the copy it made.
       ...(first && resume !== undefined && start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
-      // Only a UUID: pi is handed a name it can write a file by, and a name a
-      // client made up is left to pi, whose own name the host records after.
-      ...(first && resume === undefined && isUuid(writtenAs) ? { id: writtenAs } : {}),
+      // Offered to pi, whose own check takes it or leaves pi's own name, which
+      // the host records after.
+      ...(first && resume === undefined ? { id: writtenAs } : {}),
       ...(options.sessionDir !== undefined ? { sessionDir: options.sessionDir } : {}),
       ...(tools.length > 0 ? { tools } : {}),
       ...(instructions.length > 0 ? { instructions } : {}),
@@ -1038,8 +1025,21 @@ export function piSession(
        * same answer.
        */
       trustProject: trust !== 'deny' && start.trusted?.(where) === true,
+      // What this session switched off, left out of what pi loads.
+      ...(found === undefined || off.size === 0 ? {} : { switchedOff: switchedOffPaths(found, off) }),
     });
     live = backend;
+    /*
+     * What pi loaded, listed and said where it moved, as the CLI's own list is
+     * said once it answers.
+     */
+    found = backend.resources();
+    own = piCustomizations(found, off);
+    const listing = [...seeds, ...own];
+    if (JSON.stringify(listing) !== saidCustomizations) {
+      saidCustomizations = JSON.stringify(listing);
+      emit('session', { type: 'session/customizationsChanged', customizations: listing });
+    }
     unsubscribe = backend.subscribe(heard);
     record = watch(provider, {
       id: backend.id,
@@ -1060,7 +1060,7 @@ export function piSession(
     // The model list is held for `Session.models()`, which the host reads for
     // a client; pi only knows it once its runtime exists.
     const available = await backend.models();
-    models = available.map((model) => listed(model, backend.levels(model)));
+    models = available.map((model) => listed(model, backend.levels(model), backend.startsOn(model)));
     if (first) {
       /*
        * The model the configuration names, when nobody has chosen one.
@@ -1193,9 +1193,21 @@ export function piSession(
     answered = undefined;
     usage = undefined;
     const startedAt = new Date().toISOString();
-    // The record as it is now: what this turn runs on is the record's, and the
-    // turn before's options are not what a person who just edited it asked for.
-    refreshOptions();
+    /*
+     * The record as it is now: what this turn runs on is the record's, and the
+     * turn before's options are not what a person who just edited it asked for.
+     * A record that can no longer be used is the turn's failure, said once the
+     * turn is open, in the sentence cofold's turn ends with, as VS Code's host
+     * ends a turn it cannot send with `chat/error`.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2328-L2349
+     */
+    let unusable: string | undefined;
+    try {
+      refreshOptions();
+    }
+    catch (why) {
+      unusable = `${provider}: the record cannot be used: ${reason(why)}`;
+    }
     /*
      * Whether the record's model changed since the turn before, which is when
      * pi is moved to it. A record names the model the session runs on when
@@ -1210,6 +1222,11 @@ export function piSession(
      * to, then the model the session is already on, then the record's default.
      */
     const ran = model?.id ?? (moved ? options.model : undefined) ?? live?.modelSelection()?.id ?? options.model;
+    /*
+     * The message as the client sent it, the start every client holds, as VS
+     * Code's host says a client's start; the turn read back names the model
+     * it ran on.
+     */
     const message: Bag = {
       text,
       ...(from?.origin !== undefined ? { origin: from.origin } : { origin: { kind: 'user' } }),
@@ -1217,9 +1234,9 @@ export function piSession(
       // Kept on the turn's own message, so a client reopening the chat reads
       // the picture beside the words the turn was accepted with.
       ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-      ...(ran !== undefined
-        ? { model: { id: ran, ...(model?.config !== undefined ? { config: model.config } : {}) } }
-        : {}),
+      ...(model === undefined
+        ? {}
+        : { model: { id: model.id, ...(model.config !== undefined ? { config: model.config } : {}) } }),
     };
     // No part yet: each is opened when pi starts writing the block it holds.
     // The fields `ActiveTurn` declares; `finish` gives it the `state` a `Turn`
@@ -1236,9 +1253,12 @@ export function piSession(
       blocks: new Map(),
       parts: active.responseParts as Bag[],
       calls: new Map(),
-      ownerOf: clientOf,
+      ownerOf: contributorOf,
     };
-    turn = { turnId, startedAt: String(active.startedAt), message: bag(active.message), parts: active.responseParts as Bag[] };
+    const ranOn: Bag = ran === undefined
+      ? message
+      : { ...message, model: { id: ran, ...(model?.config !== undefined ? { config: model.config } : {}) } };
+    turn = { turnId, startedAt: String(active.startedAt), message: ranOn, parts: active.responseParts as Bag[] };
     watchedTurns.push(turn);
     // A turn's start is the chat's `modifiedAt`, as the reducer moves it, and
     // the record's.
@@ -1246,7 +1266,10 @@ export function piSession(
     if (record !== undefined) record.modifiedAt = modified;
 
     titled(text);
-    activity.say('Thinking');
+    if (unusable !== undefined) {
+      finish('error', unusable);
+      return;
+    }
     // What the host has to say on this turn, asked now that the turn exists.
     const told = (turnOptions?.instructions?.() ?? []).filter((one) => one.trim() !== '');
     // Whether the turn ended, or a stop came, while it prepared: a stop ends it unsent.
@@ -1329,11 +1352,17 @@ export function piSession(
     // included, so it cuts where the turn ended rather than where it began.
     forkPoint: (turnId) => ends.get(turnId),
     endPoint: (turnId) => ends.get(turnId),
-    customizations: () => [...seeds],
+    customizations: () => [...seeds, ...own],
     allTurns: () => turns,
 
     status: (): number => statusOf(bits()),
-    activity: () => activity.current(),
+    /*
+     * Nothing: a chat's activity is a wait before its turn can run, as VS Code's
+     * host says one, and a turn here runs once the host hands it over, its
+     * thinking, its tools and its questions shown in its own parts.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L11709-L11724
+     */
+    activity: () => undefined,
     title: () => title,
     setTitle: (next) => {
       renamed = true;
@@ -1368,8 +1397,7 @@ export function piSession(
       defaultChat: start.chatUri,
       chats: [{ resource: start.chatUri, title }],
       workingDirectories: [uriOf(where)],
-      customizations: [...seeds],
-      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
+      customizations: [...seeds, ...own],
       // The requests still waiting - the questions and the calls a client has
       // to run - each as `session/inputNeededSet` sent it, so a client that
       // subscribes while one waits can answer it.
@@ -1385,7 +1413,7 @@ export function piSession(
        * and a contributed key beside it; `schemaOf()` is the fallback for a
        * session started without one.
        */
-      config: { schema: start.schema?.() ?? schemaOf(), values: { ...settings } },
+      config: { schema: start.schema?.() ?? schemaOf(), values: { ...values } },
     }),
 
     chatState: () => ({
@@ -1395,7 +1423,6 @@ export function piSession(
       modifiedAt: modified,
       turns,
       ...(active !== undefined ? { activeTurn: active } : {}),
-      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
     }),
 
@@ -1462,7 +1489,7 @@ export function piSession(
           if (queued) return;
           const at = submittedSteering.indexOf(id);
           if (at >= 0) submittedSteering.splice(at, 1);
-          if (answers.has(id)) takenOut(id);
+          if (answers.has(id)) steeringConsumed(id);
         })();
       });
     },
@@ -1506,7 +1533,7 @@ export function piSession(
         blocks: new Map(),
         parts,
         calls: new Map(),
-        ownerOf: clientOf,
+        ownerOf: contributorOf,
       };
       // The transcript's own record of the turn, so what the run adds is read
       // back with it, running again until this run ends. A turn read from pi's
@@ -1517,7 +1544,6 @@ export function piSession(
         delete turn.state;
         delete turn.duration;
       }
-      activity.say('Thinking');
 
       void (async () => {
         try {
@@ -1545,7 +1571,6 @@ export function piSession(
       pendingTurns.length = 0;
       if (active === undefined || cancelled) return;
       cancelled = true;
-      activity.say('Stopping');
       handBack();
       // What a client was running for this turn is not coming back, so pi is
       // told the calls failed rather than left waiting on a stopped turn.
@@ -1573,7 +1598,6 @@ export function piSession(
       pending.delete(toolCallId);
       // The entry follows the chat's state: the host took it down when it said
       // the confirmation that moved the call.
-      const toolCall = bag(held.entry.toolCall);
       const part = mapping === undefined ? undefined : callPartOf(mapping, toolCallId);
       if (part !== undefined) {
         const row = bag(part.toolCall);
@@ -1587,11 +1611,14 @@ export function piSession(
         if (approved) stampStart(row, Date.now());
         else untime(row);
       }
-      if (approved) activity.say(`Running ${String(toolCall.displayName ?? '')}`);
-      else activity.say('Thinking');
       // An allowed call is one a client now has to run, so it is asked here.
       if (approved) held.open?.();
-      held.settle(approved ? undefined : { block: true, reason: DECLINED });
+      /*
+       * A call the person refused is blocked in pi's own words for a call its
+       * approval gate refused, the reason its model reads: npm://@earendil-works/pi-coding-agent@1.3.0
+       * docs/extensions.md L169-L178, `{ block: true, reason: \`${event.toolName} was not approved\` }`.
+       */
+      held.settle(approved ? undefined : { block: true, reason: `${held.toolName} was not approved` });
       return true;
     },
     answer: () => false,
@@ -1610,12 +1637,6 @@ export function piSession(
      */
     completeToolCall: (toolCallId, clientId, result) =>
       calls.complete(toolCallId, clientId, result),
-
-    clientGone: (clientId) => {
-      // A call whose client has gone is a turn waiting on a promise nothing
-      // will settle. The agent is told it failed, which is true.
-      calls.gone(clientId);
-    },
 
     /**
      * The tools on offer, replaced whole.
@@ -1638,30 +1659,46 @@ export function piSession(
       return true;
     },
 
+    /*
+     * Take a config value: the two keys the schema declares, each at a value
+     * it offers. A value it does not offer and any other key are refused in
+     * VS Code's two sentences.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L147
+     */
     setConfig: async (key, value) => {
       if (key === 'projectTrust') {
-        if (value !== 'trust' && value !== 'deny') return 'projectTrust is "trust" or "deny"';
-        settings[key] = value;
+        if (value !== 'trust' && value !== 'deny') return `Session configuration '${key}' does not offer '${String(value)}'.`;
+        values[key] = value;
         return true;
       }
       if (key === 'permissionMode') {
         if (typeof value !== 'string' || !(PERMISSION_MODES as readonly string[]).includes(value)) {
-          return `permissionMode is one of ${PERMISSION_MODES.join(', ')}`;
+          return `Session configuration '${key}' does not offer '${String(value)}'.`;
         }
-        settings[key] = value;
+        values[key] = value;
         return true;
       }
-      return `pi sessions have no "${key}" setting`;
+      return `Session configuration '${key}' is not writable.`;
     },
-    settings: () => ({ ...settings }),
+    settings: () => ({ ...values }),
 
     /*
-     * pi's extensions and skills are loaded when it opens and have no runtime
-     * switch, and its MCP servers are an extension's business rather than
-     * pi's. False and false are the real answers, and a control that reported
-     * success and changed nothing would be worse.
+     * A skill, a prompt template or an extension of pi's own, or the folder or
+     * package that holds it, switched for the pi built before the next turn,
+     * which leaves what is off out through pi's loader overrides: pi loads them
+     * when it is built, as it fixes its custom tools, so a switch reaches it as
+     * a tool change does. Anything else is no customization of pi's.
      */
-    setCustomizationEnabled: async () => false,
+    setCustomizationEnabled: async (id, enabled) => {
+      const ids = own.flatMap((one) => [String(one.id), ...((one.children as Bag[] | undefined) ?? []).map((child) => String(child.id))]);
+      if (!ids.includes(id)) return false;
+      if (enabled) off.delete(id);
+      else off.add(id);
+      if (found !== undefined) own = piCustomizations(found, off);
+      if (opening !== undefined || live !== undefined) stale = true;
+      return true;
+    },
+    // pi's MCP servers are its extensions' business.
     startMcpServer: async () => false,
     stopMcpServer: async () => false,
 
@@ -1669,6 +1706,29 @@ export function piSession(
       closed = true;
       calls.release('The turn was stopped');
       releasePending('The turn was stopped', true);
+      /*
+       * A turn still running ends for every client, as VS Code's agent ends a
+       * turn whose runtime goes: an error part not marked resumable, and then
+       * the turn's completion. The words are VS Code's for a turn its agent
+       * left unfinished, said of any agent. Neither pi's own file nor this
+       * process's record of the turn gets an ending, so a read back finds the
+       * turn interrupted and resumable, as VS Code's reader finds one its
+       * runtime never ended.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L4606-L4646
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7991-L7994
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1152-L1155
+       */
+      if (active !== undefined) {
+        const turnId = String(active.id);
+        const duration = resumedFrom === undefined ? Date.now() - Date.parse(String(active.startedAt)) : Date.now() - resumedFrom.at;
+        emit('chat', {
+          type: 'chat/error',
+          turnId,
+          duration,
+          part: { kind: 'error', error: { ...INTERRUPTED } },
+        });
+        emit('chat', { type: 'chat/turnComplete', turnId, duration });
+      }
       unsubscribe?.();
       unsubscribe = undefined;
       namePrompt();

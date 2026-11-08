@@ -39,4 +39,8 @@ No action and no state a client reads carries it.
 - **The store:** `sender`, `setSender` and `moveChat`'s turns go; a row's `senders` is read past and written back without it.
 - **Kept in memory:** the meter's owner, the plugin events' `sender` and the queue drain's sender of a message.
 - **Deleted with their subject:** two sessions cases on the stored sender, and their `naming` helper.
+- **Undone (2026-11-06):** upstream chose the sender on the wire (Softov 2026-10-02: "`_meta` on the wire"; "Claude tells us its id").
+- **Restored:** `ahpd.sender` on every start the host says, a client's included, and on its message.
+- **Read back:** every turn a snapshot or `chat/turnsLoaded` reads back carries it too.
+- **The store:** each turn's sender by turn id, also under the id a backend wrote the turn as; a moving chat carries them.
 

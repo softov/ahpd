@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, expect, it, vi } from 'vitest';
@@ -16,7 +16,7 @@ import type { Bag, Session, Start } from '@ahpd/sdk';
 
 const sdk = vi.hoisted(() => ({ messages: [] as Record<string, unknown>[] }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   getSessionMessages: async () => sdk.messages,
   getSessionInfo: async (id: string, options?: { dir?: string }) => ({ sessionId: id, summary: 'read back', lastModified: 0, cwd: options?.dir }),
@@ -51,22 +51,6 @@ afterAll(() => {
   else process.env.CLAUDE_CONFIG_DIR = before;
   rmSync(home, { recursive: true, force: true });
 });
-
-/**
- * The transcript the CLI writes for a conversation of `FOLDER`, which is what
- * makes a start a resume: its first entry, the prompt, as CLI 2.1.301 wrote it.
- */
-const written = (id: string): void => {
-  const project = join(home, 'config', 'projects', FOLDER.replace(/[^A-Za-z0-9]/g, '-'));
-  mkdirSync(project, { recursive: true });
-  writeFileSync(join(project, `${id}.jsonl`), `${JSON.stringify({
-    parentUuid: null, isSidechain: false, promptId: 'f0829d44-61b9-476c-abb6-cb4427e28cb3', type: 'user',
-    message: { role: 'user', content: 'hi' }, uuid: '6f79faf7-646d-4773-b101-06232d161be1',
-    timestamp: '2026-10-29T22:14:15.249Z', permissionMode: 'auto', promptSource: 'sdk', turnOrigin: 'sdk',
-    turnPosition: { promptIndex: 0, turnIndex: 1 }, userType: 'external', entrypoint: 'sdk-cli',
-    cwd: FOLDER, sessionId: id, version: '2.1.301', gitBranch: 'master',
-  })}\n`);
-};
 
 const frame = (kind: 'user' | 'assistant', uuid: string, message: unknown): Record<string, unknown> => ({
   type: kind, uuid, timestamp: '2020-01-01T00:00:00.000Z', message,
@@ -103,7 +87,6 @@ const START: Start = {
 const readThenStart = async (id: string, start: Partial<Start>, messages = CONVERSATION): Promise<Session> => {
   const agent = claude({ paths: [FOLDER] });
   sdk.messages = messages;
-  written(id);
   const turns = await agent.transcript?.(id, { workingDirectory: FOLDER });
   if (turns === undefined) throw new Error('the read found no conversation');
   return agent.create({ ...START, resume: id, seed: turns as unknown as Bag[], ...start });
@@ -137,24 +120,23 @@ it('ends a turn that stopped after a tool result at its last assistant message',
   expect(session.endPoint?.('u2')).toBeUndefined();
 });
 
-/** A turn whose steering message the CLI ran after its last answer, as a prompt of its own, and a turn after it. */
-const STEERED = [
+/** A turn run again, its prompt written down a second time under a new uuid, and a turn after it. */
+const RUN_TWICE = [
   prompt('u1', 'look around'),
   said('a1', 'm1', [{ type: 'text', text: 'Three files.' }]),
-  prompt('s1', 'and count them'),
-  said('a2', 'm2', [{ type: 'text', text: 'Three.' }]),
+  prompt('s1', 'look around'),
+  said('a2', 'm2', [{ type: 'text', text: 'Three files, again.' }]),
   prompt('u3', 'and now'),
   said('a3', 'm3', [{ type: 'text', text: 'Done.' }]),
 ];
 
-/** The turns a host reads that conversation back as, its record putting the steering message inside the turn it steered. */
+/** The turns a host reads that conversation back as, its record making the turn run twice the one turn it is. */
 const JOINED = [{ id: 'u1', message: { text: 'look around' } }, { id: 'u3', message: { text: 'and now' } }];
 
 it('ends a turn the host read back with another inside it where that other one ended', async () => {
   const agent = claude({ paths: [FOLDER] });
   const id = '0a0a0a0a-2222-4222-8222-000000000006';
-  sdk.messages = STEERED;
-  written(id);
+  sdk.messages = RUN_TWICE;
   await agent.transcript?.(id, { workingDirectory: FOLDER });
   const session = agent.create({ ...START, resume: id, seed: JOINED });
   expect(session.endPoint?.('u1')).toBe('a2');
@@ -165,10 +147,9 @@ it('ends a turn the host read back with another inside it where that other one e
 it('keeps a turn the host read back with another inside it to the rewind point, past which nothing is kept', async () => {
   const agent = claude({ paths: [FOLDER] });
   const id = '0a0a0a0a-2222-4222-8222-000000000007';
-  sdk.messages = STEERED;
-  written(id);
+  sdk.messages = RUN_TWICE;
   await agent.transcript?.(id, { workingDirectory: FOLDER });
-  // Cut back to the end of the first turn, which is the end of the message inside it.
+  // Cut back to the end of the first turn, which is the end of its later run.
   const session = agent.create({ ...START, resume: id, seed: JOINED.slice(0, 1), rewindAt: 'a2' });
   expect(session.endPoint?.('u1')).toBe('a2');
   expect(session.endPoint?.('u3')).toBeUndefined();
@@ -186,7 +167,6 @@ it('answers no point read back for a session that forks the conversation', async
 it('answers no point for a session that resumes a conversation nothing read', async () => {
   const agent = claude({ paths: [FOLDER] });
   const id = '0a0a0a0a-2222-4222-8222-000000000005';
-  written(id);
   const session = agent.create({ ...START, resume: id, seed: [{ id: 'u1', message: { text: 'look around' } }] });
   expect(session.forkPoint?.('u1')).toBeUndefined();
   expect(session.endPoint?.('u1')).toBeUndefined();

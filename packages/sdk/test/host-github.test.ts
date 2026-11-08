@@ -1,15 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  resetSdk, actions, claude, createHost, emit, gitChanges, hello, hostTools, machine,
- peer, sdk, sessionQueries, settle,
+  resetSdk, actions, builtServer, claude, createHost, emit, firstMessage, flushed, gitChanges, hello, hostTools, machine,
+ peer, sdk, sendAnswered, sessionQueries, settle,
 } from './support/host.js';
 import { uriOf } from '../src/resources/fileuri.js';
+import { chatUriFor } from '../src/host/channels.js';
 
 /** The folder the hosts here serve, as its URI on this system: `file:///C:/home/softov` on Windows. */
 const HOME = uriOf('/home/softov');
@@ -33,7 +35,7 @@ describe('what GitHub knows about the branch', () => {
     meta: () => (git === undefined ? undefined : { git: { ...git } }),
     refresh: async () => false,
   });
-  const lookup = (answer: () => { url: string; state: 'open' | 'closed' | 'merged' }[]) => {
+  const lookup = (answer: () => { url: string; state: 'open' | 'closed' | 'merged'; createdAt?: string }[]) => {
     const asked: { branch: string; token: string | undefined }[] = [];
     return {
       asked,
@@ -48,6 +50,30 @@ describe('what GitHub knows about the branch', () => {
     };
   };
   const onBranch = (branch: string) => ({ branchName: branch, hasGitHubRemote: true, githubOwner: 'softov', githubRepo: 'ahpd' });
+  /**
+   * A session made and watched, and `github`: its GitHub state once a turn
+   * named `turnId` has ended in its chat, which is when the folder is read
+   * again.
+   */
+  const turning = async (client: ReturnType<ReturnType<typeof createHost>['accept']>, session: string) => {
+    await client.handle({ method: 'createSession', params: { channel: session, provider: 'claude' } });
+    await settle();
+    const opened = await client.handle({ method: 'subscribe', params: { channel: session } }) as { snapshot: { state: { defaultChat: string } } };
+    const chat = opened.snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    const github = async (on: string, turnId: string) => {
+      void client.handle({
+        method: 'dispatchAction',
+        params: { channel: on, action: { type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+      });
+      await settle();
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      await settle(8);
+      const state = await client.handle({ method: 'subscribe', params: { channel: session } }) as { snapshot: { state: { _meta?: Record<string, unknown> } } };
+      return state.snapshot.state._meta?.github as { pullRequestUrls?: string[]; pullRequestBranchName?: string } | undefined;
+    };
+    return { chat, github };
+  };
 
   it('advertises the resource on every backend, so a client lends its token', async () => {
     const { port } = lookup(() => []);
@@ -102,8 +128,7 @@ describe('what GitHub knows about the branch', () => {
      *
      * `githubData` keyed by the folder, with `workingDirectoryKeys` naming
      * which working directory that folder is. The key is the working
-     * directory's own `file://` URI, which is what the summary's
-     * `project.uri` already spells it, so the key the host publishes and the
+     * directory's own `file://` URI, so the key the host publishes and the
      * string a client looks it up by are one string.
      */
     expect(state._meta?.workingDirectoryKeys).toEqual({ [HOME]: HOME });
@@ -135,6 +160,7 @@ describe('what GitHub knows about the branch', () => {
     // or a producer that wrote its own part would have erased the git facts.
     expect(meta?.workingDirectoryKeys).toEqual({ [HOME]: HOME });
     expect(meta?.githubData?.[HOME]?.pullRequestState).toBe('merged');
+    await flushed();
     const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
     const rowMeta = (row?.params as {
       changes: {
@@ -148,6 +174,113 @@ describe('what GitHub knows about the branch', () => {
     expect(rowMeta?.github?.pullRequestState).toBe('merged');
     expect(rowMeta?.workingDirectoryKeys).toEqual({ [HOME]: HOME });
     expect(rowMeta?.githubData?.[HOME]?.pullRequestState).toBe('merged');
+  });
+
+  /*
+   * The lists as VS Code's host writes a session's GitHub state: each URL with
+   * its host in lower case and no trailing slash, each once, ten at most.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1435-L1447
+   */
+  it('writes the pull request the branch\'s lookup found as VS Code\'s host writes it, and the baseline each once and ten at most', async () => {
+    const requests = [
+      { url: 'https://GitHub.com/softov/ahpd/pull/12/', state: 'open' as const },
+      { url: 'https://github.com/softov/ahpd/pull/12', state: 'open' as const },
+      ...Array.from({ length: 11 }, (_, at) => ({ url: `https://github.com/softov/ahpd/pull/${11 - at}`, state: 'closed' as const })),
+    ];
+    const { port } = lookup(() => requests);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/kqueue')), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/many', provider: 'claude' } });
+    await settle();
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/many' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    }).snapshot.state;
+    const ten = Array.from({ length: 10 }, (_, at) => `https://github.com/softov/ahpd/pull/${12 - at}`);
+    const github = state._meta?.github as { pullRequestUrls?: string[]; initialPullRequestUrls?: string[] };
+    // The one the lookup resolved, its host in lower case and no trailing slash.
+    expect(github.pullRequestUrls).toEqual(['https://github.com/softov/ahpd/pull/12']);
+    expect(github.initialPullRequestUrls).toEqual(ten);
+    expect(state._meta?.githubData).toEqual({ [HOME]: github });
+  });
+
+  /*
+   * The lookup VS Code's host runs for a session's checkout: never for the
+   * base branch, and once a pull request is known for the branch, no other is
+   * looked for there; a switch to a branch with none keeps the known ones.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L219-L275
+   */
+  it('keeps the pull requests it knew across branches, and asks nothing for the base branch or for another on a branch it answered', async () => {
+    const git: Record<string, unknown> = { ...onBranch('fix/a'), baseBranchName: 'main' };
+    let requests: { url: string; state: 'open' | 'closed' | 'merged' }[] = [{ url: 'https://github.com/softov/ahpd/pull/1', state: 'open' }];
+    const { port, asked } = lookup(() => requests);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(git), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const { chat, github } = await turning(client, 'ahp-session:/moves');
+    expect((await github(chat, 't1'))?.pullRequestUrls).toEqual(['https://github.com/softov/ahpd/pull/1']);
+    // Another pull request on the same branch is not taken: one is known there.
+    requests = [{ url: 'https://github.com/softov/ahpd/pull/2', state: 'open' }];
+    expect((await github(chat, 't2'))?.pullRequestUrls).toEqual(['https://github.com/softov/ahpd/pull/1']);
+    // A branch with none keeps the known one, though it was asked about.
+    git.branchName = 'fix/b';
+    requests = [];
+    expect(await github(chat, 't3')).toMatchObject({ pullRequestUrls: ['https://github.com/softov/ahpd/pull/1'], pullRequestBranchName: 'fix/a' });
+    expect(asked.map((one) => one.branch)).toContain('fix/b');
+    // The base branch's pull request is nobody's work: none is taken there.
+    git.branchName = 'main';
+    requests = [{ url: 'https://github.com/softov/ahpd/pull/9', state: 'open' }];
+    expect(await github(chat, 't4')).toMatchObject({ pullRequestUrls: ['https://github.com/softov/ahpd/pull/1'], pullRequestBranchName: 'fix/a' });
+  });
+
+  /*
+   * With the root's automatic attachment off, VS Code's host looks nothing up
+   * and keeps the pull requests a session recorded as artifacts or associated.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L188-L218
+   */
+  it('looks up no pull request with automatic attachment off', async () => {
+    const { port } = lookup(() => [{ url: 'https://github.com/softov/ahpd/pull/3', state: 'open' }]);
+    // The folder is on its branch from the moment the setting is in force.
+    const git: Record<string, unknown> = {};
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(git), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { autoAttachPullRequests: false } } } });
+    const { chat, github } = await turning(client, 'ahp-session:/off');
+    Object.assign(git, onBranch('fix/c'));
+    expect(await github(chat, 't1')).toEqual({ owner: 'softov', repo: 'ahpd' });
+  });
+
+  /*
+   * Turned off with pull requests held, VS Code's restricted mode keeps each
+   * list to the session's artifacts and associated pull requests: the found
+   * one, the baseline's and the selection all go when none of them is either.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestAssociationResolver.ts#L392-L418
+   */
+  it('keeps the lists to the session\'s own pull requests once automatic attachment is off', async () => {
+    const { port } = lookup(() => [{ url: 'https://github.com/softov/ahpd/pull/4', state: 'open' }]);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/d')), github: port,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const { chat, github } = await turning(client, 'ahp-session:/restricted');
+    expect(await github(chat, 't1')).toMatchObject({
+      pullRequestUrls: ['https://github.com/softov/ahpd/pull/4'],
+      initialPullRequestUrls: ['https://github.com/softov/ahpd/pull/4'],
+    });
+    await client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { autoAttachPullRequests: false } } } });
+    expect(await github(chat, 't2')).toEqual({ owner: 'softov', repo: 'ahpd', initialPullRequestUrls: [], associatedPullRequestUrls: [] });
   });
 
   it('names the owner and repository alone when the branch has no pull request, and keeps what it held when GitHub does not answer', async () => {
@@ -220,6 +353,67 @@ describe('what GitHub knows about the branch', () => {
     expect(store.pullRequests('live')).toEqual({ initialPullRequestUrls: [url], associatedPullRequestUrls: [] });
   });
 
+  /*
+   * VS Code's baseline: a folder session's, of the pull requests GitHub says
+   * were opened before the session began, less five minutes of clock skew;
+   * a worktree session holds none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L396-L411
+   */
+  it('takes into a baseline only the pull requests opened before the session began', async () => {
+    const before = 'https://github.com/softov/ahpd/pull/7';
+    const after = 'https://github.com/softov/ahpd/pull/8';
+    const store = memorySessions();
+    const { port } = lookup(() => [
+      { url: after, state: 'open' as const, createdAt: new Date(Date.now() + 60_000).toISOString() },
+      { url: before, state: 'open' as const, createdAt: '2020-01-01T00:00:00Z' },
+    ]);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/kqueue')), github: port, sessions: store,
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/old', provider: 'claude' } });
+    await settle();
+    expect(store.pullRequests('old')).toEqual({ initialPullRequestUrls: [before], associatedPullRequestUrls: [] });
+  });
+
+  it('keeps no baseline for a session working in a worktree', async () => {
+    const store = memorySessions();
+    const { port, asked } = lookup(() => [{ url: 'https://github.com/softov/ahpd/pull/7', state: 'open' as const, createdAt: '2020-01-01T00:00:00Z' }]);
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('fix/kqueue')), github: port, sessions: store,
+      worktrees: {
+        repository: async () => '/home/softov',
+        branches: async () => ['fix/kqueue'],
+        create: async () => {},
+        dirty: async () => false,
+        remove: async () => {},
+      },
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/tree', provider: 'claude', workingDirectories: [HOME], config: { isolation: 'worktree' } },
+    });
+    await settle();
+    // A turn's end is when the worktree's own folder is asked about.
+    const asks = asked.length;
+    const chat = chatUriFor('ahp-session:/tree');
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    await settle(8);
+    expect(asked.length).toBeGreaterThan(asks);
+    expect(store.pullRequests('tree')).toBeUndefined();
+  });
+
   it('publishes no GitHub state at all where there is no GitHub port', async () => {
     const served = createHost({
       path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
@@ -241,6 +435,36 @@ describe('what GitHub knows about the branch', () => {
     expect(state._meta?.github).toBeUndefined();
     expect(state._meta?.githubData).toBeUndefined();
     expect(state._meta?.workingDirectoryKeys).toBeUndefined();
+  });
+
+  /*
+   * A chat that is not the session's default has its git state under the
+   * scope of its folders, as VS Code's host writes one: `gitData` by the
+   * scope's id, the SHA-1 of the folders' sorted keys, and
+   * `workingDirectoryScopeIds` from the folder list to that id.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostGitStateService.ts#L959-L972
+   */
+  it('puts the git state of a second chat under the scope of its folders', async () => {
+    const served = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(),
+      directories: facts(onBranch('main')),
+    });
+    const client = served.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/scoped', provider: 'claude' } });
+    await settle();
+    const meta = async () => ((await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/scoped' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    }).snapshot.state._meta ?? {});
+    // The default chat alone reads the session's own `git`.
+    expect((await meta()).gitData).toBeUndefined();
+
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/scoped', chat: 'ahp-chat:/second' } });
+    await settle();
+    const scope = createHash('sha1').update(JSON.stringify([HOME])).digest('hex');
+    const now = await meta();
+    expect(now.gitData).toEqual({ [scope]: now.git });
+    expect(now.workingDirectoryScopeIds).toEqual({ [JSON.stringify([HOME])]: scope });
   });
 
   it('has no `_meta` at all for a directory that has answered nothing', async () => {
@@ -286,7 +510,7 @@ describe('what a session recorded', () => {
   };
   const add = (index: number, label: string, link: string) => toolsOf(index)['add_artifact_or_reference']?.handler({ items: [{ type: 'website', label, isArtifact: false, link }] });
   const toolsOf = (index: number) => Object.fromEntries(
-    ((sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).host?.tools ?? [])
+    ((builtServer('host', index) as { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] } | undefined)?.tools ?? [])
       .map((one) => [one.name, one]),
   );
 
@@ -299,7 +523,9 @@ describe('what a session recorded', () => {
   };
 
   it('tells the model when to record one, in the reference host\'s words, beside each prompt', async () => {
-    await withTools();
+    const { client, uri } = await withTools();
+    // The CLI its first send starts.
+    await sendAnswered(client, uri);
     const prompt = sessionQueries().at(-1)?.options.systemPrompt as { type: string; preset: string; append?: string } | undefined;
     expect(prompt).toEqual({ type: 'preset', preset: 'claude_code' });
     expect(await toldOnPrompt()).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
@@ -307,6 +533,7 @@ describe('what a session recorded', () => {
 
   it('gives the long wording whatever a client pushes, and offers every tool the same', async () => {
     const { client, uri } = await withTools({ telemetryLevel: 'off' });
+    await sendAnswered(client, uri);
     const told = await toldOnPrompt();
     expect(told).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
     expect(told).not.toContain('Artifact registration is optional; default to none.');
@@ -327,6 +554,8 @@ describe('what a session recorded', () => {
 
   it('publishes them on the session and its row, and says the change as the whole map', async () => {
     const { client, peer: p, uri } = await withTools();
+    // A session has a row from its first message.
+    await firstMessage(client, chatUriFor(uri));
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
     await client.handle({ method: 'subscribe', params: { channel: uri } });
     expect(String((await add(-1, 'Docs', 'https://example.com/docs'))?.content[0]?.text)).toMatch(/^Added reference: [0-9a-f-]+$/);
@@ -334,6 +563,7 @@ describe('what a session recorded', () => {
     const meta = moved?.action._meta as Record<string, unknown> | undefined;
     const held = meta?.[KEY] as { id: string; label: string }[] | undefined;
     expect(held?.map((one) => one.label)).toEqual(['Docs']);
+    await flushed();
     const row = p.notes.filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
     expect(((row?.params as { changes: { _meta?: Record<string, unknown> } }).changes._meta)?.[KEY]).toEqual(held);
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { _meta?: Record<string, unknown> } } }).snapshot.state;
@@ -359,6 +589,25 @@ describe('what a session recorded', () => {
     const before = actions(p, uri).length;
     await client.handle({ method: 'vscode/removeSessionArtifact', params: { session: uri, artifactId: 'nobody' } });
     expect(actions(p, uri).length).toBe(before);
+  });
+
+  /*
+   * VS Code's params and restore: each refused in its words, a chat's URI
+   * among them, and a session it cannot restore refused -32001.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3400-L3417
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L3600-L3612
+   */
+  it('refuses a removal\'s params and a session it cannot restore, in VS Code\'s words', async () => {
+    const { client, uri } = await withTools();
+    const remove = (params: Record<string, unknown>) => client.handle({ method: 'vscode/removeSessionArtifact', params });
+    await expect(remove({ session: uri, artifactId: ' ' })).rejects.toMatchObject({ code: -32602, message: 'artifactId must be a non-empty string' });
+    await expect(remove({ session: 'not a uri', artifactId: 'a' })).rejects.toMatchObject({ code: -32602, message: 'session must be a valid URI string' });
+    for (const session of ['ahp-chat:/one', 'ahp-session://elsewhere/one', 'ahp-session:/one?x', 'ahp-session:/']) {
+      await expect(remove({ session, artifactId: 'a' })).rejects.toMatchObject({ code: -32602, message: 'session must be an Agent Session URI' });
+    }
+    await expect(remove({ session: 'ahp-session:/nobody', artifactId: 'a' }))
+      .rejects.toMatchObject({ code: -32001, message: 'No agent for session: ahp-session:/nobody' });
+    expect(await remove({ session: uri, artifactId: 'nobody' })).toEqual({});
   });
 });
 
@@ -441,11 +690,11 @@ describe('the pull request a create-pr recorded', () => {
     refresh: async () => false,
   });
 
-  /** A host on a real repository, its changes source and the fake GitHub, with tools. */
-  async function withRepo(baseline?: { initialPullRequestUrls: string[]; associatedPullRequestUrls: string[] }) {
+  /** A host on a real repository, its changes source and the fake GitHub, with tools, GitHub opening `opened`. */
+  async function withRepo(baseline?: { initialPullRequestUrls: string[]; associatedPullRequestUrls: string[] }, opened = URL) {
     const dir = repository();
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
-    const fake = lookup(URL);
+    const fake = lookup(opened);
     const store = memorySessions();
     // A baseline the session already carries. The directory facts are asked
     // again and know nothing of it, which is a session that outlived the
@@ -486,7 +735,7 @@ describe('the pull request a create-pr recorded', () => {
   }
 
   const toolsOf = () => Object.fromEntries(
-    ((sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] }>).host?.tools ?? [])
+    ((builtServer('host') as { tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[] } | undefined)?.tools ?? [])
       .map((one) => [one.name, one]),
   );
 
@@ -510,6 +759,24 @@ describe('the pull request a create-pr recorded', () => {
     expect(held).toHaveLength(1);
     expect(held?.[0]).toMatchObject({ type: 'pullRequest', isArtifact: true, link: URL });
     expect((meta?.github as { pullRequestUrls?: string[] } | undefined)?.pullRequestUrls?.[0]).toBe(URL);
+  });
+
+  /*
+   * The session's lists under the URL VS Code's host writes, its host in lower
+   * case and no trailing slash, and the artifact under the link as opened.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostPullRequestOperationProvider.ts#L267-L286
+   */
+  it('records the pull request it opened under the URL VS Code\'s host writes', async () => {
+    const opened = 'https://GitHub.com/softov/ahpd/pull/1/';
+    const { client, peer: p, uri, changeset } = await withRepo(undefined, opened);
+    await create(client, changeset);
+    await settle(8);
+    const moved = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged').at(-1);
+    const meta = moved?.action._meta as Record<string, unknown> | undefined;
+    const github = meta?.github as { pullRequestUrls?: string[]; associatedPullRequestUrls?: string[] } | undefined;
+    expect(github?.pullRequestUrls).toEqual([URL]);
+    expect(github?.associatedPullRequestUrls).toEqual([URL]);
+    expect((meta?.[KEY] as { link: string }[] | undefined)?.[0]?.link).toBe(opened);
   });
 
   it('moves a pull request the branch already had out of the baseline, in the same move as the artifact', async () => {

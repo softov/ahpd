@@ -10,13 +10,14 @@ Terms, one line each:
 | a scheme | The part of a URI before the colon, which decides who serves it |
 | the file store | `file:`, the filesystem of the machine the daemon runs on |
 | a provider | A store a plugin contributes for one scheme, beside `file:` |
-| a published resource | One a connected client answers for, at `<scheme>://<clientId>/...` |
-| the resource watch | A channel per watched path, `ahp-resource-watch:/<uuid>` |
+| a client's resource | One a connected client answers for, at `vscode-agent-client://<clientId>/<scheme>/<authority>/<path>` |
+| kept content | Bytes a tool result or an agent's message carried inline, kept in the session's folder and read back at `session-db-resource:/<name>?<identity>` |
+| the resource watch | A channel that names what it watches, `ahp-resource-watch://r/<descriptor>` |
 | a scheme's manifest | The JSON Schema a scheme publishes for the form a create is drawn from |
 
 ## What `file:` serves
 
-The whole filesystem this process can see, as the reference host serves it: any directory may be listed and any file read, and the connection token is the boundary rather than the directories the daemon was started with. A window's folder dialog walks the disk through `resourceList` and checks the pick with `resourceResolve`, which a host that refused everything outside its own paths could not answer - `paths` says where the catalogue looks and where a session goes when a client names none, and it never said who may read what.
+The whole filesystem this process can see, as the reference host serves it: any directory may be listed and any file read by a connection the token admits. A window's folder dialog walks the disk through `resourceList` and checks the pick with `resourceResolve`. `paths` says where the catalogue looks and, under the default `workspacelessFolder`, where a session goes when a client names none.
 
 Reading resolves the path through symlinks where it exists, so what is opened is what a listing showed rather than the text that was sent. Writing resolves the *parent* instead, because the thing being written may not be there yet, and the final open carries `O_NOFOLLOW` and refuses a symbolic link rather than following it out of where the write was aimed. A read reports its own encoding: bytes that are valid UTF-8 with no zero byte come back `utf-8`, and anything else comes back `base64` whatever the client asked for, so a client that asked for text and got a PNG is not handed four hundred thousand replacement characters.
 
@@ -34,29 +35,31 @@ One method per act, and the grants below are per operation because of it.
 | `resourceDelete` | Remove a file, or a directory when `recursive` |
 | `resourceMove` | Rename, refused across two schemes |
 | `resourceCopy` | Copy, refused across two schemes |
-| `resourceRequest` | May I read or write this. Answered yes for any `file:` URI without withholding anything, and refused `-32009` for a URI this host does not mediate |
+| `resourceRequest` | May I read or write this. Answered yes for any URI without withholding anything, as VS Code's host answers it; one under the client scheme is asked of the client it names |
 | `createResourceWatch` | A channel that reports what changes under a path |
-| `completions` | `@` completes a path, against the session's own directory |
+| `completions` | `@` completes a file under the session's working directories, listed by the host's `workspaceFiles` port and ranked as VS Code's Quick Open ranks it |
 
-A refusal says what it is by code: `-32601` for a scheme nothing serves, which is a host with nothing for it rather than a client being refused; `-32008` for a path that is not there; `-32009` for one this client may not see; `-32010` for a `createOnly` write onto something already there; `-32011` for a write whose `ifMatch` no longer matches; `-32602` for a request that is not one this host can act on, such as a move across two schemes.
+A refusal says what it is by code: `-32008` for a path that is not there, and for a scheme nothing serves or an operation its provider left out, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95) answers those; `-32009` for one this client may not see; `-32010` for a `createOnly` write onto something already there; `-32011` for a write whose `ifMatch` no longer matches; `-32602` for a request that is not one this host can act on. A move or a copy is the source's store's to carry out.
 
 ## Schemes
 
-`file:` is this host's own. Everything beside it is one of three things.
+`file:` is this host's own, and so is `session-db-resource:`, the content a backend handed the host to keep: bytes a tool result or a part of an agent's message carried inline, an image with no source, audio or an embedded resource, kept in the session's folder. Its URI is VS Code's: the path is a display name only, and the query is the identity, `{ sessionUri, toolCallId, ordinal }` as JSON, the call's id being a message part's own id for a part of a message. A read answers the bytes with their type, and one naming nothing kept is refused `-32008` `Tool result resource not found: toolCallId=<id>, ordinal=<n>`, as VS Code's provider refuses it. Nothing over `toolResultResourceLimitBytes` is kept - [HOST.md](HOST.md), and VS Code's [tool result resource provider](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/toolResultResourceProvider.ts).
+
+Everything beside them is one of three things.
 
 **A plugin's**, registered with `registerResourceProvider(scheme, provider)` - [PLUGINS.md](../plugins/PLUGINS.md#what-you-can-register). The plugin names the scheme, which is kept as written, and `file:` and anything on `ahp-` are refused because they are the host's own. Two plugins cannot serve one scheme. Every scheme beside `file:` comes in this way, the daemon's own included: `computer:` is the computer plugin's, `bot:` is the bot plugin's, `policy:` and `usage:` are providers the daemon registers, and `user:`, `team:`, `project:` and `role:` are the users store's - [COMPUTERS.md](../plugins/COMPUTERS.md), [BOTS.md](../plugins/BOTS.md), [POLICY.md](POLICY.md), [USAGE.md](USAGE.md), [USERS.md](USERS.md). That is the whole of how a scheme comes to be served, because a scheme is a contribution a plugin makes rather than a place the host keeps a list of.
 
-**A client's**, published under `<scheme>://<clientId>/...` and answered by the client whose id is the authority. `file:` is never one, and neither is any `ahp-` channel, whose authority is part of a channel's name and not a client id. A request for one goes to that client and its answer comes back verbatim, refusals included - this host has no standing to soften somebody else's `-32009`. `resourceMove` and `resourceCopy` are refused `-32602` across two clients because neither peer could carry out the other's half. This is how a plugin's virtual files, an editor's unsaved buffers and a filesystem provider reach a session, and it is the same ten methods in both directions.
+**A client's**, under the client scheme VS Code's host addresses one by, `vscode-agent-client://<clientId>/<scheme>/<authority>/<path>`, an empty authority written `-`: `file:///work/a.ts` on client `editor` is `vscode-agent-client://editor/file/-/work/a.ts`. A request for one goes to the client the authority names, about the URI as that client knows it, and its answer comes back as the client gave it, refusals included. `resourceMove` and `resourceCopy` go to the source's client with both URIs as it knows them. A client whose connection has just closed is waited for through VS Code's 5 s grace, and one gone longer, or never here, is refused `-32603` `No connection for authority: <clientId>`. A watch on one is this host's own channel, fed by the watch this host keeps on the client - [AHP.md](AHP.md#server-to-client-commands). This is how a plugin's virtual files, an editor's unsaved buffers and a filesystem provider reach a session, and it is the same ten methods in both directions.
 
-**A provider's claim about itself.** A provider may answer `describe()`, which says what the scheme is called, one line about it, and the JSON Schema a write to the scheme's root makes something from. A provider may implement less than a full store: `read` is the only method required, and every other one it leaves out answers `-32601`, the same answer a read-only store's missing write half gets. That is what lets `computer:` serve bytes and say what a URI is without inventing directories it does not have.
+**A provider's claim about itself.** A provider may answer `describe()`, which says what the scheme is called, one line about it, and the JSON Schema a write to the scheme's root makes something from. A provider may implement less than a full store: `read` is the only method required, and every other one it leaves out answers `-32008` "Resource operation '<operation>' is not supported for: <uri>", the same answer a read-only store's missing write half gets. That is what lets `computer:` serve bytes and say what a URI is without inventing directories it does not have.
 
 ## A watch
 
-`createResourceWatch` hands back a channel, `ahp-resource-watch:/<uuid>`, and the client subscribes to it. Changes arrive as `resourceWatch/changed` with a batch of `added`, `updated` and `deleted` entries, never one event per file: a save that rewrites four files is one batch, and a filesystem that reports an event with no filename reports nothing rather than a directory that changed. `includes` and `excludes` are globs relative to the watched root.
+`createResourceWatch` checks the root first, refusing one that is not there `-32008` `Resource not found: <root>` and one this host may not read `-32009` `Permission denied: <root>`, and hands back a channel, `ahp-resource-watch://r/<descriptor>`, the root, `recursive`, `includes` and `excludes` serialised as base64url JSON into its path, as the reference host names one. The client subscribes to it, and the first subscribe attaches the watcher; a subscribe to a watch channel that names nothing this host can watch is refused `-32001` `Resource watch not found: <channel>`. Changes arrive as `resourceWatch/changed` with a batch of `added`, `updated` and `deleted` entries, never one event per file: a save that rewrites four files is one batch, and a filesystem that reports an event with no filename reports nothing rather than a directory that changed. `includes` and `excludes` are globs relative to the watched root.
 
 Each path in a batch is `added` when it appeared after the watch began and `updated` otherwise, which is read off the file's own creation time rather than from an inventory of the tree - a tree may hold a hundred thousand files and the question is only ever asked about the handful that moved. A path already reported as added is an edit from then on, so a file created and then written twice is one appearance and two edits.
 
-There is no dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. A watch is a read, and it is gated the way a read is - a client already able to read a directory learns nothing new from being told when it moved.
+There is no dispose command, as the protocol has none: the last `unsubscribe`, or the close of the last connection subscribed, releases the watcher 30 seconds later, and a subscribe inside those 30 seconds keeps it running. A client that drops and comes back resumes its watch by the channel it holds, through `reconnect` or a `subscribe`, and a watch let go is attached again by the same name. A watch is a read, and it is gated the way a read is - a client already able to read a directory learns nothing new from being told when it moved.
 
 ## What a client is told
 
@@ -72,7 +75,7 @@ Resources have no key of their own. What changes what a client can reach is whic
 
 | Key | Values | Default | What changes |
 | --- | --- | --- | --- |
-| `paths` | list of directories | the directory the daemon was started in | The directories this host catalogues, and where a session goes when a client names none. It does not restrict what a client may read - the first directory is the session default, not a boundary |
+| `paths` | list of directories | the directory the daemon was started in | The directories this host serves. The first is the session default, where a session goes when a client names none under the default `workspacelessFolder`; a client reads anywhere this process can, as [What `file:` serves](#what-file-serves) says |
 | `plugins` | a list of specs | none | Which plugins are loaded, and so which schemes this host serves |
 
 Everything else about the daemon's keys is [HOST.md](HOST.md#configuration-keys), and a host built from the SDK is given its file store and its schemes directly - [BUILD-A-HOST.md](BUILD-A-HOST.md).
@@ -102,9 +105,9 @@ A resource method is the one method family whose subject is not fixed: it carrie
 
 Two things a scheme may do on top of that. A provider may answer `authorize(uri, reader)` and let a read through that the grant would have refused - the gate asks the provider before it requires the grant, so any scheme can open part of itself to a person without a host change, and only for a read, because nothing opens a write that way. And a person reads their own `user://<id>` record with no grant at all, because a client showing somebody their own account has to be able to.
 
-`createResourceWatch` on a provider's scheme asks for `<scheme>:watch`, and so does the `subscribe` to the channel it hands back, which is checked against the watched root. `authorize` may let either through, the same as a read. The provider's `watch` is handed the reader that opened it, so it can tell each watcher only what that reader may see. A scheme whose provider has `watch` lists `watch` among the operations it advertises.
+`createResourceWatch` on a provider's scheme asks for `<scheme>:watch`, and so does the `subscribe` to the channel it hands back, which is checked against the watched root. `authorize` may let either through, the same as a read. The provider's `watch` is handed the reader whose subscribe attached it, so it can tell each watcher only what that reader may see. A scheme whose provider has `watch` lists `watch` among the operations it advertises.
 
-A scheme nobody serves is `-32601` and not a permission answer: the host has nothing for it, which is a different fact from a client being refused. A provider that implements less than a full store is held to the same answer for each missing method.
+A scheme nobody serves is `-32008` and not a permission answer: the host has nothing for it, which is a different fact from a client being refused, and a client's filesystem reads it as a missing file. A provider that implements less than a full store answers the same code for each missing method.
 
 ## See also
 

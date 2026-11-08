@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { TerminalState } from '@microsoft/agent-host-protocol';
+import { uriOf } from '../resources/fileuri.js';
 import { idOf } from '../sessions/catalog.js';
 import { readJsonObject, writeJsonAtomic } from '../utils/jsonfile.js';
 import { bag, isRecord, reason, str } from '../utils/values.js';
-import { chatUriFor, retainedTerminalOf, retainedTerminalUri } from './channels.js';
+import { buildNonPtyShellTerminalUri } from '../vscode/nonptyshellterminaluri.js';
+import { chatUriFor, nonPtyShellTerminalOf } from './channels.js';
 import type { Bag } from '../types/common.js';
 import type { TerminalOutputs } from '../types/terminals.js';
 import type { OnWire } from '../types/wire.js';
@@ -27,6 +29,14 @@ import type { HostContext } from './context.js';
  * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L10647-L10718
  */
 export interface Outputs {
+  /**
+   * The retained terminal link of a tool call's terminal in a chat of a
+   * session, VS Code's, whose storage is the chat's folder in the session's
+   * own. A store that keeps no folder has the session as its storage, ours:
+   * VS Code's chats always have one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L4021-L4029
+   */
+  nonPtyShellTerminalUri(session: string, chat: string, toolCallId: string): string;
   /** The outputs one chat keeps, as a backend is handed them, or nothing where the store keeps no folder. */
   outputsFor(session: string, chat: string): TerminalOutputs | undefined;
   /**
@@ -45,7 +55,7 @@ export interface Outputs {
    * to any other channel takes its snapshot in the tick it arrived in, so what
    * a client dispatches straight after it is replayed after the snapshot.
    */
-  retainedState(channel: string): Promise<(OnWire<TerminalState> & { exitCode?: number }) | undefined> | undefined;
+  retainedState(channel: string): Promise<OnWire<TerminalState> | undefined> | undefined;
   /** Forget the outputs that some dropped turns of a chat name. */
   forgetTurnOutputs(session: string, chat: string, turns: readonly Bag[]): void;
   /** Forget every output a chat kept. */
@@ -114,8 +124,8 @@ const callNaming = (
       if (!SHOWN.has(str(call.status) ?? '') || !Array.isArray(call.content)) continue;
       const content = call.content.map(bag).find((block) => {
         if (block.type !== 'terminal' || typeof block.resource !== 'string') return false;
-        const names = retainedTerminalOf(block.resource);
-        return names?.chat === named.chat && names.key === named.key;
+        const names = nonPtyShellTerminalOf(block.resource);
+        return names?.chat === named.chat && names.toolCallId === named.key;
       });
       if (content !== undefined) return { toolCallId: str(call.toolCallId), content };
     }
@@ -132,6 +142,10 @@ export function createOutputs(ctx: HostContext): Outputs {
   const fileOf = (session: string, chat: string, key: string): string | undefined => {
     const folder = folderOf(session, chat);
     return folder === undefined ? undefined : join(folder, `${hashOf(key)}.json`);
+  };
+  const nonPtyShellTerminalUri = (session: string, chat: string, toolCallId: string): string => {
+    const folder = folderOf(session, chat);
+    return buildNonPtyShellTerminalUri(folder === undefined ? session : uriOf(folder), session, chat, toolCallId);
   };
 
   /** Write one output. Answers whether it was kept, which it is not over 10 MB or where there is no folder. */
@@ -150,7 +164,7 @@ export function createOutputs(ctx: HostContext): Outputs {
       return true;
     }
     catch (error) {
-      ctx.log(`could not keep the output of ${retainedTerminalUri(chat, key)}: ${reason(error)}`);
+      ctx.log(`could not keep the output of ${nonPtyShellTerminalUri(session, chat, key)}: ${reason(error)}`);
       return false;
     }
   };
@@ -169,7 +183,7 @@ export function createOutputs(ctx: HostContext): Outputs {
   const outputsFor = (session: string, chat: string): TerminalOutputs | undefined => {
     if (folderOf(session, chat) === undefined) return undefined;
     return {
-      uri: (key) => retainedTerminalUri(chat, key),
+      uri: (key) => nonPtyShellTerminalUri(session, chat, key),
       has: (key) => {
         const file = fileOf(session, chat, key);
         return file !== undefined && existsSync(file);
@@ -190,45 +204,45 @@ export function createOutputs(ctx: HostContext): Outputs {
   /**
    * A chat's turns and the session that holds it, read the way its snapshot is.
    *
-   * A live chat's are its session's, the running turn included. Otherwise the
-   * session is the record's for a recorded chat and the one a first chat's
-   * name carries, and the turns are a transcript: the session's own for its
-   * first chat, and a recorded chat's own for any other.
+   * A live chat's are its session's, its local turns among them and the
+   * running turn included. Otherwise the session is the record's for a
+   * recorded chat and the one a first chat's name carries, and the turns are a
+   * transcript: the session's own for its first chat, and a recorded chat's own
+   * for any other.
    * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L10647-L10685
    */
   const turnsOf = async (chat: string): Promise<{ session: string; turns: Bag[] } | undefined> => {
     const live = ctx.byChat.get(chat);
     if (live !== undefined) {
       const active = bag(live.chat.chatState()).activeTurn;
-      // With the commands typed into it, which are this host's own turns.
-      const turns = ctx.withLocalTurns(live.uri, chat, live.chat.allTurns() as Bag[]);
+      const turns = ctx.liveTurnsOf(live.uri, chat, live.chat.allTurns() as Bag[]);
       return { session: live.uri, turns: [...turns, ...(isRecord(active) ? [active] : [])] };
     }
     const owning = ctx.homeId(chat) === undefined ? ctx.sessionOfChat(chat) : ctx.sessionFor(chat);
     if (owning === undefined || !ctx.sessionChannel(owning)) return undefined;
     const id = idOf(owning);
-    if (ctx.waitingFor(id) !== undefined) return undefined;
+    if (ctx.unavailableProvider(id) !== undefined) return undefined;
     // A chat a client closed is gone, whatever its backend still holds of it.
     if (ctx.heldChats(id).some((one) => one.uri === chat && one.closed === true)) return undefined;
-    const own = await ctx.past(id);
+    const own = await ctx.restoreSession(id);
     if (own === undefined) return undefined;
     const session = ctx.nameOf(id);
     const opened = ctx.kept.nested?.(id) === undefined ? ctx.recordedChat(id, chat) : undefined;
     if (opened === undefined || opened.uri === chatUriFor(session)) return { session, turns: own };
     const owner = ctx.owners.get(session) ?? ctx.first;
-    const turns = owner === undefined ? undefined : await ctx.transcriptOf(owner, opened.backendId, ctx.sessionAt(id), session, chat);
+    const turns = owner === undefined ? undefined : await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), session, chat);
     return turns === undefined ? undefined : { session, turns: turns as unknown as Bag[] };
   };
 
-  const retainedState = (channel: string): Promise<(OnWire<TerminalState> & { exitCode?: number }) | undefined> | undefined => {
-    const named = retainedTerminalOf(channel);
-    return named === undefined ? undefined : rebuilt(channel, named);
+  const retainedState = (channel: string): Promise<OnWire<TerminalState> | undefined> | undefined => {
+    const named = nonPtyShellTerminalOf(channel);
+    return named === undefined ? undefined : rebuilt(channel, { chat: named.chat, key: named.toolCallId });
   };
 
   const rebuilt = async (
     channel: string,
     named: { chat: string; key: string },
-  ): Promise<(OnWire<TerminalState> & { exitCode?: number }) | undefined> => {
+  ): Promise<OnWire<TerminalState> | undefined> => {
     const held = await turnsOf(named.chat);
     if (held === undefined) return undefined;
     const found = callNaming(held.turns, named);
@@ -243,23 +257,22 @@ export function createOutputs(ctx: HostContext): Outputs {
     // with the output for a call that carries none: an ACP call's content names
     // its terminal and nothing about how it ended.
     const exitCode = typeof result?.exitCode === 'number' ? result.exitCode : kept?.exitCode;
+    /*
+     * The five fields VS Code's host rebuilds a retained terminal with, its
+     * `isPty` the one kept with the output.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L273-L284
+     */
     return {
       title: str(found.content.title) ?? 'Terminal',
-      // The size, the detection and the flat code every terminal state of this
-      // host carries, so a rebuilt one reads as a live one that exited.
-      cols: 80,
-      rows: 24,
       content: output === '' ? [] : [{ type: 'unclassified', value: output }],
+      lifecycle: { status: 'exited', ...(exitCode === undefined ? {} : { exitCode }) },
       claim: {
         kind: 'session',
         session: held.session,
         chat: named.chat,
         ...(found.toolCallId === undefined ? {} : { toolCallId: found.toolCallId }),
       },
-      supportsCommandDetection: false,
       isPty: kept?.isPty ?? found.content.isPty === true,
-      lifecycle: { status: 'exited', ...(exitCode === undefined ? {} : { exitCode }) },
-      ...(exitCode === undefined ? {} : { exitCode }),
     };
   };
 
@@ -270,12 +283,12 @@ export function createOutputs(ctx: HostContext): Outputs {
         const content = bag(bag(part).toolCall).content;
         for (const block of Array.isArray(content) ? content.map(bag) : []) {
           const named = block.type === 'terminal' && typeof block.resource === 'string'
-            ? retainedTerminalOf(block.resource)
+            ? nonPtyShellTerminalOf(block.resource)
             : undefined;
           // This chat's own only: a fork names the outputs of the chat it was
           // made from, and those are that chat's to keep.
           if (named === undefined || named.chat !== chat) continue;
-          const file = fileOf(session, chat, named.key);
+          const file = fileOf(session, chat, named.toolCallId);
           if (file === undefined) continue;
           try { rmSync(file, { force: true }); }
           catch (error) { ctx.log(`could not remove ${file}: ${reason(error)}`); }
@@ -305,5 +318,5 @@ export function createOutputs(ctx: HostContext): Outputs {
     catch (error) { ctx.log(`could not move ${was} to ${now}: ${reason(error)}`); }
   };
 
-  return { outputsFor, keepExited, retainedState, forgetTurnOutputs, forgetChatOutputs, moveChatOutputs };
+  return { nonPtyShellTerminalUri, outputsFor, keepExited, retainedState, forgetTurnOutputs, forgetChatOutputs, moveChatOutputs };
 }

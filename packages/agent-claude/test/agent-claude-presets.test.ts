@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { startedNow } from '../../sdk/test/support/started.js';
 import type { Agent, Engine, AgentView, Bag, Start } from '@ahpd/sdk';
 
 /*
@@ -12,7 +13,7 @@ import type { Agent, Engine, AgentView, Bag, Start } from '@ahpd/sdk';
  * A record of the `claude` engine is one of these: its id is what clients name, its name is what they read, and its config carries the declared options and the model list alike. The cases here are the shapes that takes: the template with nothing set, a variant beside it with its own name and models, a record holding every declared field, and what each one's config becomes - a session's query, the endpoint it probes, and the environment it hands a CLI in a machine.
  */
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: ({ options }: { options: Record<string, unknown> }) => {
     sdk.options.push(options);
@@ -25,7 +26,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       toggleMcpServer: async () => {},
       reconnectMcpServer: async () => {},
       setMcpServers: async () => {},
-      initializationResult: async () => ({}),
+      // A CLI signed in to claude.ai, which a probe offers models for.
+      initializationResult: async () => ({ account: { email: 'softov@brbyte.com', subscriptionType: 'Claude Max', apiProvider: 'firstParty' } }),
       mcpServerStatus: async () => [],
       reloadSkills: async () => ({ skills: [] }),
       reloadPlugins: async () => ({ plugins: [] }),
@@ -91,28 +93,28 @@ const modelsOf = async (agent: Agent | undefined) => (await agent?.probe?.())?.m
 /** The resource a pushed credential is for. */
 const ANTHROPIC = 'https://api.anthropic.com';
 
-/** One session's `query()` options, on a record holding the given values. */
+/** The `query()` options one session's first send started its CLI with, on a record holding the given values. */
 const queried = async (config: Bag | undefined, credential?: string): Promise<Record<string, unknown>> => {
   sdk.options = [];
   const engine = await engineOf();
-  engine.open(viewOf('claude', () => config ?? {})).create(startOf('preset', {
+  startedNow(engine.open(viewOf('claude', () => config ?? {})).create(startOf('preset', {
     ...(credential === undefined ? {} : { credentials: { [ANTHROPIC]: credential } }),
-  }));
+  }))).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');
   return one;
 };
 
-/** One session's `query()` options in a machine, on a record holding the given values. */
+/** The `query()` options one session's first send started its CLI with in a machine, on a record holding the given values. */
 const queriedInside = async (config: Bag | undefined, credential?: string): Promise<Record<string, unknown>> => {
   sdk.options = [];
   const engine = await engineOf();
-  engine.open(viewOf('claude', () => config ?? {})).create(startOf('inside', {
+  startedNow(engine.open(viewOf('claude', () => config ?? {})).create(startOf('inside', {
     settings: { computer: 'computer://box' },
     computers: { how: async () => ({ command: 'true' }) } as never,
     ...(credential === undefined ? {} : { credentials: { [ANTHROPIC]: credential } }),
-  }));
+  }))).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');
@@ -138,6 +140,15 @@ it('opens the template with nothing set on the CLI\'s own models', async () => {
   const agent = engine.open(viewOf('claude', () => template?.config ?? {}, template?.name));
   expect([agent.provider, agent.displayName]).toEqual(['claude', 'Claude']);
   expect(await modelsOf(agent)).toEqual([]);
+});
+
+it('lists the plugins a session\'s clients handed it before what the CLI loaded', async () => {
+  const engine = await engineOf();
+  const agent = engine.open(viewOf('claude', () => ({})));
+  const loaded = { type: 'skill', id: 'from-the-cli' };
+  const handed = { type: 'plugin', id: 'from-a-client', clientId: 'window' };
+  // The client-pushed tier first, as VS Code's Claude agent projects it.
+  expect(agent.sessionCustomizations?.([loaded], [handed])).toEqual([handed, loaded]);
 });
 
 it('opens one backend per record, each with its own name and models', async () => {
@@ -254,6 +265,7 @@ it('offers the models the harness names once a session has started', async () =>
     settings: {},
     offerModels: async (cli) => [...cli, { id: 'stealth/space-bunny-alpha', name: 'Space Bunny' }],
   });
+  session.sendMessage('t1', 'hello');
   await settle();
   expect(session.models?.()).toEqual([{ id: 'stealth/space-bunny-alpha', name: 'Space Bunny' }]);
 });
@@ -261,23 +273,23 @@ it('offers the models the harness names once a session has started', async () =>
 it("hands a record's own env to the CLI in a machine, and nothing of the daemon's", async () => {
   const env = await withDaemon({ T: 'sk-or', ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-daemon' }, async () =>
     (await queriedInside({ env: { ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: { fromEnv: 'T' } } })).env as Record<string, string>);
-  // `CLAUDE_CODE_ENABLE_TASKS` is there because the host offers no `task_add`
-  // here, so the session keeps Claude's own task tools and turns them on.
-  expect(env).toEqual({ ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' });
+  // No `CLAUDE_CODE_ENABLE_TASKS`: the session keeps Claude's own task tools,
+  // which are the CLI's default.
+  expect(env).toEqual({ ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
 });
 
 it('hands a record no daemon key in a machine unless its env names one', async () => {
   await withDaemon({ ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-daemon' }, async () => {
-    expect((await queriedInside({})).env).toEqual({ CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' });
+    expect((await queriedInside({})).env).toEqual({ CLAUDE_CONFIG_DIR: '/ahpd/claude' });
     expect((await queriedInside({ env: { ANTHROPIC_API_KEY: { fromEnv: 'ANTHROPIC_API_KEY' } } })).env)
-      .toEqual({ ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' });
+      .toEqual({ ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
   });
 });
 
 it('lays a pushed credential over the record env in a machine, and leaves out an unset key', async () => {
   const env = await withDaemon({ ANTHROPIC_BASE_URL: 'https://daemon' }, async () =>
     (await queriedInside({ env: { ANTHROPIC_API_KEY: 'from-record', ANTHROPIC_BASE_URL: null } }, 'signed-in')).env);
-  expect(env).toEqual({ ANTHROPIC_API_KEY: 'signed-in', CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' });
+  expect(env).toEqual({ ANTHROPIC_API_KEY: 'signed-in', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
 });
 
 it('keeps the daemon environment under a record env off a machine', async () => {
@@ -303,10 +315,10 @@ it('gives two records on one machine only their own keys on their docker exec', 
     ];
     for (const agent of agents) {
       sdk.options = [];
-      agent.create(startOf(agent.provider, {
+      startedNow(agent.create(startOf(agent.provider, {
         settings: { computer: 'computer://box' },
         computers: computers as never,
-      }));
+      }))).sendMessage('t1', 'hello');
       await settle();
       const options = sdk.options.at(0) as { spawnClaudeCodeProcess: (asked: unknown) => unknown; env: Record<string, string> };
       options.spawnClaudeCodeProcess({ command: 'claude', args: [], env: options.env });
@@ -314,7 +326,7 @@ it('gives two records on one machine only their own keys on their docker exec', 
     }
   });
   expect(asked).toEqual([
-    { ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude', CLAUDE_CODE_ENABLE_TASKS: '1' },
-    { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/openrouter', CLAUDE_CODE_ENABLE_TASKS: '1' },
+    { ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude' },
+    { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/openrouter' },
   ]);
 });

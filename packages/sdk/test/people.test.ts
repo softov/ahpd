@@ -239,7 +239,7 @@ it('takes each kind of record out, and refuses one something still names', async
 
   // A team a membership still names is refused, and it says who: a membership
   // naming a team the file no longer holds is dropped on every read.
-  const held = await schemes.team!.remove('team://backend').catch((error: Error) => error);
+  const held = await schemes.team!.delete('team://backend').catch((error: Error) => error);
   expect(held).toMatchObject({
     code: -32602,
     message: 'backend is still a team of ana; take them out of it first',
@@ -247,13 +247,13 @@ it('takes each kind of record out, and refuses one something still names', async
   expect(await directory.teams()).toEqual([{ id: 'backend', title: 'Backend' }]);
 
   // The same for a role a record still holds.
-  await expect(schemes.role!.remove('role://keeper')).rejects.toMatchObject({ code: -32602 });
+  await expect(schemes.role!.delete('role://keeper')).rejects.toMatchObject({ code: -32602 });
   expect(await directory.roles()).toEqual([{ id: 'keeper', grants: ['team:read'] }]);
 
   // And a person is taken out whatever they hold.
-  await schemes.user!.remove('user://ana');
-  await schemes.role!.remove('role://keeper');
-  await schemes.team!.remove('team://backend');
+  await schemes.user!.delete('user://ana');
+  await schemes.role!.delete('role://keeper');
+  await schemes.team!.delete('team://backend');
   expect(await schemes.user!.list('user://')).toEqual([]);
   expect(await schemes.role!.list('role://')).toEqual([]);
   expect(await schemes.team!.list('team://')).toEqual([]);

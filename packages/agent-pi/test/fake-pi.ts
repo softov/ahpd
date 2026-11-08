@@ -24,6 +24,7 @@ import { loadPi } from '../src/pi.js';
 import { piSession } from '../src/session.js';
 import type { OpenPi } from '../src/session.js';
 import type { BackendOptions, PiBackend } from '../src/backend.js';
+import type { PiResources } from '../src/customizations.js';
 import type { PiOptions, PiTurn } from '../src/types.js';
 
 // pi's SDK, loaded before any case, so a case that builds pi tools does not
@@ -104,6 +105,8 @@ export function fakePi() {
   let takes = true;
   /** The error pi's next steers throw, or nothing for a steer pi queues. */
   let steers: Error | undefined;
+  /** What pi's loader found for the session. */
+  let found: PiResources = { skills: [], prompts: [], extensions: [] };
   const backend: PiBackend = {
     id: 'pi-session-1',
     file: '/tmp/pi/pi-session-1.jsonl',
@@ -134,6 +137,8 @@ export function fakePi() {
     },
     models: async () => runtime,
     levels: (model) => (model.provider === 'anthropic' ? ['off', 'medium', 'high'] : ['off']),
+    startsOn: (model) => (model.provider === 'anthropic' ? 'medium' : undefined),
+    resources: () => found,
     modelSelection: () => ({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'off' } }),
     supportsVision: () => takes,
     /*
@@ -178,6 +183,8 @@ export function fakePi() {
     noImages: () => { takes = false; },
     /** pi refuses the steers after this one with `error`. */
     failSteer: (error: Error) => { steers = error; },
+    /** What pi's loader finds for the session from here on. */
+    find: (next: PiResources) => { found = next; },
     open: (async (options: BackendOptions) => { opens.push(options); return backend; }) as OpenPi,
   };
 }

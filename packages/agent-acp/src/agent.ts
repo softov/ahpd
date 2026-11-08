@@ -15,6 +15,7 @@
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session } from '@ahpd/sdk';
 import { catalogueOf, deletes, findListed, forgetSession, forks, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
+import type { Choice } from './session/config.js';
 import { turnsOf } from './transcript.js';
 import type { AcpMachine, AcpOptions } from './types.js';
 
@@ -53,14 +54,36 @@ const needsOf = (provider: string, machine: AcpMachine): Record<string, MachineN
  *
  * The provider is per registration rather than per package, so two of these
  * with two commands are two backends, which is how one package serves Copilot
- * and Codex at once.
+ * and Codex at once. A session is answered once its server has opened.
  */
-export function acpAgent(options: AcpOptions): Agent<Session> {
+export function acpAgent(options: AcpOptions): Agent<Promise<Session>> {
   const provider = options.provider ?? 'acp';
   const displayName = options.displayName ?? 'ACP';
 
-  /** The modes the preset names for this agent, which are the agent's own. */
-  const presetModes = (options.modes ?? []).map((one) => ({ ...one }));
+  /**
+   * The modes this agent lists: the preset's, refreshed from the modes the
+   * last session's server reported.
+   *
+   * The preset's list is what a client draws before any session of this agent
+   * has opened, and a session that hears its server's modes hands them here,
+   * so the next session a client sets up offers what the server last named.
+   * Kept in memory: the preset is the answer after a restart, and the server
+   * repeats its own list on every `session/new`. A record whose `modes` is
+   * `preset` keeps the preset's list, as VS Code's agents keep the modes they
+   * declare.
+   */
+  let lastModes = (options.modes ?? []).map((one) => ({ ...one }));
+
+  /**
+   * The thinking levels each model offers, as this agent's sessions heard them.
+   *
+   * A server names the levels of the model it runs on, so a model's are known
+   * once a session has run on it, and kept here, so every session after it
+   * lists that model with them, as the modes this agent lists are refreshed
+   * from the last session's server. Kept in memory: a session's server names
+   * them again as it opens.
+   */
+  const levels = new Map<string, Choice[]>();
 
   /**
    * What a session may be told.
@@ -71,12 +94,16 @@ export function acpAgent(options: AcpOptions): Agent<Session> {
    * arrives on `sendMessage`, so advertising a model here would be a second
    * answer to a question the server already owns.
    *
-   * The approvals control carries the modes the preset names, as its `enum`
+   * The approvals control carries the modes this agent lists, as its `enum`
    * and their names as its labels, so a harness nobody has found the modes for
-   * keeps a text box. The modes each session's server offers are that
+   * keeps a text box. The modes each session's server offers are also that
    * session's own, reported as its read-only `availableApprovalModes`, as VS
    * Code's Copilot agent reports the approval modes its session may take.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L159-L162
+   *
+   * Each chat keeps its own mode, as VS Code's Claude agent marks its mode
+   * `chatMutable`: every chat of an ACP session is an ACP session of its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2283-L2305
    */
   const schema = (): Bag => ({
     type: 'object',
@@ -87,9 +114,10 @@ export function acpAgent(options: AcpOptions): Agent<Session> {
         title: 'Approvals',
         description: 'How the agent handles tool approvals.',
         sessionMutable: true,
-        ...(presetModes.length === 0 ? {} : {
-          enum: presetModes.map((one) => one.id),
-          enumLabels: presetModes.map((one) => one.name),
+        chatMutable: true,
+        ...(lastModes.length === 0 ? {} : {
+          enum: lastModes.map((one) => one.id),
+          enumLabels: lastModes.map((one) => one.name),
         }),
       },
       availableApprovalModes: {
@@ -183,13 +211,13 @@ export function acpAgent(options: AcpOptions): Agent<Session> {
     /**
      * Whether the server can delete a session, and asking it to.
      *
-     * A getter over the capability the handshake carried, so the property is
-     * absent until the server has been asked and has said yes. A server without
-     * `session/delete` is not refused here - it has no delete to send, so the
-     * host takes its own route and logs that the server kept its copy.
+     * A getter over the capability the handshake carried: absent once a
+     * handshake said the server keeps its sessions, so the host takes its own
+     * route and logs that the server kept its copy, and a delete that reads the
+     * handshake at the delete while none has been read.
      */
     get delete() {
-      return deletes(options) ? (id: string) => forgetSession(options, provider, id) : undefined;
+      return deletes(options) === false ? undefined : (id: string) => forgetSession(options, provider, id);
     },
 
     /*
@@ -211,7 +239,7 @@ export function acpAgent(options: AcpOptions): Agent<Session> {
       if (told.length > 0) {
         options.log?.(`${provider}: ${String(told.length)} instruction(s) for the model open the first prompt, because an ACP server keeps its own system prompt`);
       }
-      return acpSession(options, start);
+      return acpSession(options, start, options.modesFrom === 'preset' ? undefined : (heard) => { lastModes = heard; }, levels);
     },
   };
 }

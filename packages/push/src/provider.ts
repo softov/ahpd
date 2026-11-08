@@ -359,7 +359,7 @@ export interface PushProvider extends ResourceProvider {
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string): Promise<Read>;
   write(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
-  remove(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
+  delete(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   describe(): SchemeDescription;
 }
 
@@ -552,7 +552,7 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      * or nothing: there are no children to take with a flag. The public key
      * and the two directories are `PermissionDenied`, as a write to them is.
      */
-    remove: async (uri) => {
+    delete: async (uri) => {
       const place = placeOf(uri);
       if (place.at !== 'device') throw new RpcError(-32009, `Permission denied: ${uri}`);
       if (!store.remove(place.id)) throw absentResource(SCHEME, uri);

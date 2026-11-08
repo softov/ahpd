@@ -186,8 +186,10 @@ it('gives each record the same state need at its own directory', async () => {
  * be told nothing rather than given an empty list.
  */
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
+  // The SDK's read of one session: a conversation a case resumes by name is one it holds.
+  getSessionInfo: async (id: string) => ({ sessionId: id }),
   query: ({ options }: { options: Record<string, unknown> }) => {
     cli.options.push(options);
     return {
@@ -214,8 +216,13 @@ const cli = vi.hoisted(() => ({ options: [] as Record<string, unknown>[] }));
 
 const { createSession } = await import('../src/session.js');
 
-/** The `query()` options one session was built with, given these plugins. */
-const queriedWith = (plugins?: { path: string }[]): Record<string, unknown> => {
+/** The turns a CLI's start takes, waited out. */
+const settle = async (times = 8): Promise<void> => {
+  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+};
+
+/** The `query()` options one session's first send started its CLI with, given these plugins. */
+const queriedWith = async (plugins?: { path: string }[]): Promise<Record<string, unknown>> => {
   cli.options = [];
   createSession({
     uri: 'ahp-session:/plugins',
@@ -223,14 +230,15 @@ const queriedWith = (plugins?: { path: string }[]): Record<string, unknown> => {
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-plugins-')),
     emit: () => {},
     ...(plugins === undefined ? {} : { plugins }),
-  });
+  }).sendMessage('t1', 'hello');
+  await settle();
   const one = cli.options.at(0);
   if (one === undefined) throw new Error('no query was built');
   return one;
 };
 
-it('hands the CLI the session\'s plugins as local directories it need not search', () => {
-  expect(queriedWith([{ path: '/copies/one' }, { path: '/copies/two' }])).toMatchObject({
+it('hands the CLI the session\'s plugins as local directories it need not search', async () => {
+  expect(await queriedWith([{ path: '/copies/one' }, { path: '/copies/two' }])).toMatchObject({
     plugins: [
       { type: 'local', path: '/copies/one', skipMcpDiscovery: true },
       { type: 'local', path: '/copies/two', skipMcpDiscovery: true },
@@ -238,9 +246,9 @@ it('hands the CLI the session\'s plugins as local directories it need not search
   });
 });
 
-it('passes no plugins to a session that has none', () => {
-  expect(queriedWith()).not.toHaveProperty('plugins');
-  expect(queriedWith([])).not.toHaveProperty('plugins');
+it('passes no plugins to a session that has none', async () => {
+  expect(await queriedWith()).not.toHaveProperty('plugins');
+  expect(await queriedWith([])).not.toHaveProperty('plugins');
 });
 
 /*
@@ -251,8 +259,8 @@ it('passes no plugins to a session that has none', () => {
  * to pick up already, so nothing of this is sent beside it.
  */
 
-/** The `query()` options one session was built with, given these start fields. */
-const startedWith = (start: Record<string, unknown>): Record<string, unknown> => {
+/** The `query()` options one session's first send started its CLI with, given these start fields. */
+const startedWith = async (start: Record<string, unknown>): Promise<Record<string, unknown>> => {
   cli.options = [];
   createSession({
     uri: 'ahp-session:/plugins',
@@ -260,7 +268,8 @@ const startedWith = (start: Record<string, unknown>): Record<string, unknown> =>
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-chatid-')),
     emit: () => {},
     ...start,
-  });
+  }).sendMessage('t1', 'hello');
+  await settle();
   const one = cli.options.at(0);
   if (one === undefined) throw new Error('no query was built');
   return one;
@@ -269,13 +278,13 @@ const startedWith = (start: Record<string, unknown>): Record<string, unknown> =>
 const SESSION = '11111111-2222-3333-4444-555555555555';
 const CHAT = '99999999-8888-7777-6666-555555555555';
 
-it('names the conversation after the chat, and after the session when the chat names none', () => {
-  expect(startedWith({ uri: `ahp-session:/${SESSION}` })).toMatchObject({ sessionId: SESSION });
-  expect(startedWith({ uri: `ahp-session:/${SESSION}`, chatId: CHAT })).toMatchObject({ sessionId: CHAT });
+it('names the conversation after the chat, and after the session when the chat names none', async () => {
+  expect(await startedWith({ uri: `ahp-session:/${SESSION}` })).toMatchObject({ sessionId: SESSION });
+  expect(await startedWith({ uri: `ahp-session:/${SESSION}`, chatId: CHAT })).toMatchObject({ sessionId: CHAT });
 });
 
-it('sends no sessionId when the conversation is resumed by name', () => {
-  expect(startedWith({ uri: `ahp-session:/${SESSION}`, chatId: CHAT, resume: SESSION })).not.toHaveProperty('sessionId');
+it('sends no sessionId when the conversation is resumed by name', async () => {
+  expect(await startedWith({ uri: `ahp-session:/${SESSION}`, chatId: CHAT, resume: SESSION })).not.toHaveProperty('sessionId');
 });
 
 /*
@@ -285,15 +294,25 @@ it('sends no sessionId when the conversation is resumed by name', () => {
  * it is handed to the CLI as VS Code's Claude hands its own environment: a
  * name set in the CLI's `settings.env`, which the CLI layers onto the commands
  * it runs, a name removed out of the environment the CLI is spawned with. A
- * command runs as the model wrote it unless a client's script is in force.
+ * client's shell init script in force goes in the same `settings.env`, as the
+ * CLI's session environment file, which it runs before each Bash command. A
+ * command runs as the model wrote it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L129-L150
+ * https://code.claude.com/docs/en/hooks#persist-environment-variables
  */
 
 /** One hook input, as the CLI sends it. */
-interface HookInput { hook_event_name: string; tool_input: Record<string, unknown> }
+interface HookInput { hook_event_name: string; tool_name: string; tool_input: Record<string, unknown>; tool_use_id: string }
 
-/** The callback the CLI runs before a Bash command, in a session built with `start`. */
-const bashHook = (start: Record<string, unknown>): ((input: HookInput) => Promise<unknown>) => {
+/** The `PreToolUse` hooks a query names, each with the tool it is for. */
+type PreToolUse = { matcher?: string; hooks: ((input: HookInput) => Promise<unknown>)[] }[];
+
+/** The query options a session built with `start` handed the SDK, once its first send started a CLI. */
+const builtWith = async (start: Record<string, unknown>): Promise<{
+  settings?: { env?: Record<string, string> };
+  env?: Record<string, string | undefined>;
+  hooks?: { PreToolUse?: PreToolUse };
+}> => {
   cli.options = [];
   createSession({
     uri: 'ahp-session:/shellenv',
@@ -301,36 +320,40 @@ const bashHook = (start: Record<string, unknown>): ((input: HookInput) => Promis
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-shellenv-')),
     emit: () => {},
     ...start,
-  });
-  const built = cli.options.at(0) as { hooks?: { PreToolUse?: { hooks?: unknown[] }[] } } | undefined;
-  const hook = built?.hooks?.PreToolUse?.at(0)?.hooks?.at(0);
-  if (typeof hook !== 'function') throw new Error('no Bash hook was registered');
-  return hook as (input: HookInput) => Promise<unknown>;
+  }).sendMessage('t1', 'hello');
+  await settle();
+  const one = cli.options.at(0);
+  if (one === undefined) throw new Error('no query was built');
+  return one;
 };
 
-/** The command the hook puts in place of `command`, or nothing when it puts none. */
+/** What the `PreToolUse` hooks a Bash call reaches put in place of `command`, or nothing when none puts anything. */
 const commandedWith = async (start: Record<string, unknown>, command: string): Promise<unknown> => {
-  const answer = await bashHook(start)({ hook_event_name: 'PreToolUse', tool_input: { command } }) as
-    { hookSpecificOutput?: { updatedInput?: { command?: unknown } } } | undefined;
-  return answer?.hookSpecificOutput?.updatedInput?.command;
+  const rewritten: unknown[] = [];
+  for (const entry of (await builtWith(start)).hooks?.PreToolUse ?? []) {
+    if (entry.matcher !== undefined && entry.matcher !== 'Bash') continue;
+    for (const hook of entry.hooks) {
+      const answer = await hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'toolu_shell' }) as
+        { hookSpecificOutput?: { updatedInput?: { command?: unknown } } } | undefined;
+      if (answer?.hookSpecificOutput?.updatedInput?.command !== undefined) rewritten.push(answer.hookSpecificOutput.updatedInput.command);
+    }
+  }
+  return rewritten.at(-1);
 };
 
-/** The query options a session built with `start` handed the SDK. */
-const builtWith = (start: Record<string, unknown>): { settings?: { env?: Record<string, string> }; env?: Record<string, string | undefined> } => {
-  bashHook(start);
-  return cli.options.at(0) as { settings?: { env?: Record<string, string> }; env?: Record<string, string | undefined> };
-};
+/** A client's bash script, as the window sends it. */
+const SCRIPT = { shellInitScripts: [{ shell: 'bash', script: 'echo init' }] };
 
 it('hands a variable the operator set to the CLI as settings.env, and leaves the command as written', async () => {
   const start = { shellEnv: { XDG_CONFIG_HOME: '/home/me/.config' } };
-  expect(builtWith(start).settings?.env).toEqual({ XDG_CONFIG_HOME: '/home/me/.config' });
+  expect((await builtWith(start)).settings?.env).toEqual({ XDG_CONFIG_HOME: '/home/me/.config' });
   expect(await commandedWith(start, 'echo $XDG_CONFIG_HOME')).toBeUndefined();
 });
 
 it('spawns the CLI without a variable the operator removed', async () => {
   process.env.AHPD_OPERATOR_REMOVED = 'from the daemon';
   try {
-    const env = builtWith({ shellEnv: { AHPD_OPERATOR_REMOVED: null } }).env;
+    const env = (await builtWith({ shellEnv: { AHPD_OPERATOR_REMOVED: null } })).env;
     expect(env?.AHPD_OPERATOR_REMOVED).toBeUndefined();
     // Over the daemon's own environment, the one name taken out.
     expect(env?.PATH).toBe(process.env.PATH);
@@ -339,20 +362,29 @@ it('spawns the CLI without a variable the operator removed', async () => {
 });
 
 it('hands a value with a quote in it as it is', async () => {
-  expect(builtWith({ shellEnv: { SAY: "it's" } }).settings?.env).toEqual({ SAY: "it's" });
+  expect((await builtWith({ shellEnv: { SAY: "it's" } })).settings?.env).toEqual({ SAY: "it's" });
 });
 
-it('leaves a command alone when no script is in force', async () => {
+it('leaves every command as the model wrote it, a client\'s script in force or not', async () => {
   expect(await commandedWith({}, 'echo hi')).toBeUndefined();
-  expect(await commandedWith({ shellEnv: {} }, 'echo hi')).toBeUndefined();
   expect(await commandedWith({ shellEnv: { SAY: 'b' } }, 'echo hi')).toBeUndefined();
+  expect(await commandedWith({ settings: SCRIPT }, 'echo hi')).toBeUndefined();
 });
 
-it('puts the session\'s own init script in front of a command, the operator\'s environment in the CLI\'s', async () => {
-  const start = { shellEnv: { SAY: 'b' }, settings: { shellInitScripts: [{ shell: 'bash', script: 'echo init' }] } };
-  const lines = String(await commandedWith(start, 'echo hi')).split('\n');
-  expect(lines).toHaveLength(2);
-  expect(lines[0]).toMatch(/ahpd-shell-init-[^']*\.sh/u);
-  expect(lines[1]).toBe('echo hi');
-  expect(builtWith(start).settings?.env).toEqual({ SAY: 'b' });
+it('hands the CLI the session\'s own init script as its session environment file, beside the operator\'s environment', async () => {
+  const env = (await builtWith({ shellEnv: { SAY: 'b' }, settings: SCRIPT })).settings?.env;
+  expect(env).toEqual({ SAY: 'b', CLAUDE_ENV_FILE: expect.stringMatching(/ahpd-shell-init-[^/]*\.sh$/u) });
+  expect(readFileSync(String(env?.CLAUDE_ENV_FILE), 'utf8')).toBe('echo init');
+});
+
+it('takes no script longer than the record\'s maxShellInitScript', async () => {
+  const env = (await builtWith({ shellEnv: { SAY: 'b' }, settings: SCRIPT, preset: { maxShellInitScript: 4 } })).settings?.env;
+  expect(env).toEqual({ SAY: 'b' });
+});
+
+it('hands a CLI in a machine no session environment file, the script being this host\'s', async () => {
+  const inMachine = { settings: SCRIPT, spawn: () => { throw new Error('nothing is spawned here'); } };
+  expect((await builtWith(inMachine)).settings?.env?.CLAUDE_ENV_FILE).toBeUndefined();
+  // And its commands run as the model wrote them.
+  expect(await commandedWith(inMachine, 'echo hi')).toBeUndefined();
 });

@@ -1,12 +1,15 @@
 import { probe } from './probe.js';
-import { offeredServers, serversFor } from './mcp.js';
+import { serversFor, toClaudeMcpServers } from './mcp.js';
 import { createSession } from './session.js';
-import { restoreSavedOutputs } from './session/savedoutput.js';
-import { configDirOf } from './session/disk.js';
-import { watchFolders } from './session/watch.js';
-import { turnsOf, subagentsOf } from './transcript.js';
-import { catalogue, findSession, forgetSession, transcriptOf, written } from './catalog.js';
+import { restore } from './session/savedoutput.js';
+import { configDirOf, diskBoundsOf } from './session/disk.js';
+import type { ParseYaml } from './session/disk.js';
+import { createClaudeCustomizationWatcher } from './session/watch.js';
+import { turnsOf, subagentsBySdk, subagentsOf } from './transcript.js';
+import { catalogue, findSession, forgetSession, transcriptOf } from './catalog.js';
+import { BEFORE_TOKEN, loginsOf } from './logins.js';
 import type { AgentLogins } from './logins.js';
+import { ownEnvOf } from './options.js';
 import { offeredModels, ownModels, type ModelEntry, type ModelSource, type OfferedModel } from './models.js';
 import { limitOf, onLimitLearned } from './session/parts.js';
 import { realpathSync } from 'node:fs';
@@ -14,7 +17,7 @@ import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { fromEnvRef, machineAsked, refuseComputer } from '@ahpd/sdk';
 import { spawnInside } from './spawn.js';
-import type { Asked, Spawned } from './spawn.js';
+import type { Asked, SpawnedProcess } from './spawn.js';
 import type { Agent, Bag, Listed, MachineNeed, Offered, Session, Start } from '@ahpd/sdk';
 
 /**
@@ -66,13 +69,14 @@ const baseUrlOf = (preset: Bag | undefined): string | undefined => {
 /** How to build the Claude backend. */
 export interface ClaudeOptions {
   /**
-   * The directories it lists, and where a session goes by default.
+   * The directories it works in, and where a session goes by default.
    *
-   * The catalogue's scope: past sessions in these directories are listed and
-   * openable, and ones elsewhere are not. The first is also where a new
-   * session goes when the client names no directory. A client that names one
-   * gets it, wherever on the machine it is - the connection token decided who
-   * may be here, the way it does on the reference host.
+   * The first is where a new session goes when the client names no
+   * directory, and where the CLI that reads what the agent offers runs. A
+   * client that names one gets it, wherever on the machine it is - the
+   * connection token decided who may be here, the way it does on the reference
+   * host. The sessions it lists are every one the CLI's store holds, wherever
+   * each ran.
    */
   paths: string[];
   /** The id clients name. The variant's own key, `claude` for the built-in. */
@@ -122,13 +126,21 @@ export interface ClaudeOptions {
    */
   computerConfigDir?: string | false;
   /**
-   * How long the CLI has to answer its handshake before it is a CLI that died.
+   * How long the CLI has to answer its handshake: the bound the SDK's
+   * `startup` is handed, past which the CLI did not start.
    *
    * A cold start with several MCP servers is slow, and this is the option that
    * lets a deployment with a slower machine say so. Without it, the bound the
-   * backend ships with applies to every session of every variant.
+   * backend ships with, 120 seconds, applies to every session of every variant.
    */
   handshakeTimeoutMs?: number;
+  /**
+   * The plugin context's YAML reader, which a customization file's frontmatter
+   * is read with, the probe's and every session's disk scan and an agent's name
+   * among them. The plugin hands its context's; absent, a frontmatter is read
+   * as none.
+   */
+  parseYaml?: ParseYaml;
   /**
    * The declared options this variant runs its sessions on.
    *
@@ -178,14 +190,28 @@ export interface ClaudeOptions {
    * The listing this harness shares with the other variants of one load.
    *
    * Written by `apply`, which registers one agent per preset and builds this
-   * once for all of them: every variant of one load reads the same `paths` out
-   * of the same `CLAUDE_CONFIG_DIR`, so one pass over the projects directory
+   * once for all of them: every variant of one load lists the same store, the
+   * projects directory of the same `CLAUDE_CONFIG_DIR`, so one pass over it
    * answers for all of them. Left out - an embedder calling `claude()` itself -
-   * and the harness lists those paths itself, which is what a single variant
-   * wants and what a preset with its own paths must have.
+   * and the harness lists the store itself, which is what a single variant
+   * wants.
    */
   sharedCatalogue?: () => Promise<Listed[]>;
 }
+
+/*
+ * How many probes have their CLI up, of every agent this process built: they
+ * all read the one personal folder, `configDirOf`'s.
+ *
+ * What a probe's own CLI writes as it starts and stops calls for no probe,
+ * whatever it writes: a call starts a probe, whose CLI would write again, and
+ * every agent's watch reads the folder each probe's CLI writes in. VS Code's
+ * Claude watcher triggers on customization sources alone so that the SDK's
+ * own writes never force a re-scan, and a re-scan here is a CLI of its own,
+ * so every probe's watch is quiet while one runs.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L433-L442
+ */
+let probing = 0;
 
 /** Claude Code on one or more directories, ready to be handed to `createHost`. */
 export function claude(options: ClaudeOptions): Agent<Session> {
@@ -200,16 +226,31 @@ export function claude(options: ClaudeOptions): Agent<Session> {
   let named: Promise<OfferedModel[]> | undefined;
 
   /*
-   * Where each turn of a conversation ended, as the last read of its
-   * transcript named it, by the conversation's id.
+   * The fork anchor of each turn of a conversation, as the last read of its
+   * transcript resolved it, by the conversation's id.
    *
-   * A session names the end of a turn it watched from its CLI's frames, and
+   * A session names the anchor of a turn it watched from its CLI's frames, and
    * the turns a resumed session opens with were watched by a CLI that is gone.
    * The host reads the transcript before it resumes a conversation, so the
    * read names them, and the session that resumes it starts from them. Each
    * read of a conversation replaces what an earlier one named.
    */
-  const readEnds = new Map<string, ReadonlyMap<string, string>>();
+  const readForkAnchorUuids = new Map<string, ReadonlyMap<string, string>>();
+  /** The CLIs of this agent's closed sessions still exiting, by the conversation each could write. */
+  const exits = new Map<string, Promise<unknown>>();
+  /**
+   * Whether a session of this harness has a credential beside the CLI's own
+   * account: a login the record names that is open and its owner's or the
+   * host's, or a key or a cloud provider's switch the variant's own
+   * environment holds, each of which a session signs in with.
+   */
+  const credentialed = (): boolean => {
+    const values = options.presetOf?.() ?? options.preset ?? {};
+    const own = ownEnvOf(values);
+    return loginsOf(values, options.logins).length > 0
+      || BEFORE_TOKEN.some((name) => typeof own[name] === 'string' && own[name] !== '');
+  };
+
   /** A list the CLI reported, as this harness offers it. */
   const offer = async <T extends OfferedModel>(cli: T[]): Promise<(T | OfferedModel)[]> => {
     if (options.models === undefined && options.modelSources === undefined) return cli;
@@ -265,13 +306,22 @@ export function claude(options: ClaudeOptions): Agent<Session> {
    * effort the model's own `configSchema`.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
    */
+  /** How many of the modes below are offered: six, or VS Code's five where the record's `dontAsk` is off. */
+  const offered = (): number => ((options.presetOf?.() ?? options.preset ?? {})['dontAsk'] === false ? 5 : 6);
+
   const schema = (): Bag => ({
     // A JSON Schema object, and it has to say so: `type` is required, and a
     // schema without it matches nothing a client validates.
     type: 'object',
     properties: {
       /*
-       * One axis, and the five values VS Code's Claude offers of the SDK's.
+       * One axis: the five values VS Code's Claude offers of the SDK's, and the
+       * SDK's `dontAsk`, which denies what is not already allowed without
+       * asking, so a session nobody watches can refuse rather than wait on a
+       * person (decision claude-approvals-keeps-dont-ask, Softov 2026-09-29:
+       * "Move, but keep dontAsk"). A record whose `dontAsk` is off offers VS
+       * Code's five alone.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
        *
        * The protocol's config schema is generic and a backend advertises what
        * it has - VS Code's own hosts advertise different properties for
@@ -289,21 +339,23 @@ export function claude(options: ClaudeOptions): Agent<Session> {
         type: 'string',
         title: 'Approvals',
         description: 'How Claude handles tool approvals.',
-        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'],
+        enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'].slice(0, offered()),
         enumLabels: [
           'Ask Before Edits',
           'Edit Automatically',
           'Plan Mode',
           'Auto Mode',
           'Bypass Permissions',
-        ],
+          "Don't Ask",
+        ].slice(0, offered()),
         enumDescriptions: [
           'Claude asks before editing files.',
           'Claude edits files without asking, and asks before using other tools.',
           'Claude creates a plan before making changes.',
           'Claude decides whether to ask for each tool operation.',
           'Claude runs all tools without asking.',
-        ],
+          'Claude denies anything not already approved, without asking.',
+        ].slice(0, offered()),
         default: 'default',
         sessionMutable: true,
       },
@@ -338,9 +390,9 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * The platform's key as VS Code declares it: what the reference client's
        * permission picker writes when somebody approves a tool "in this
        * session", and what its Claude host advertises unchanged because the
-       * SDK takes `allowedTools` / `disallowedTools` natively. Live: the SDK
-       * takes the lists when the query is built, and `canUseTool` is where
-       * this host sits between the agent and the person.
+       * SDK takes `allowedTools` / `disallowedTools` natively. The SDK takes
+       * the allow list when the query is built, and every question the CLI
+       * raises is the host's, whose chain reads the lists as they stand.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L277-L310
        */
       permissions: {
@@ -398,7 +450,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
    * cannot reach it, and running on the host would be the silent failure the
    * gate exists to stop.
    */
-  const insideOf = (start: Start): ((asked: Asked) => Spawned) | undefined => {
+  const insideOf = (start: Start): ((asked: Asked) => SpawnedProcess) | undefined => {
     const said = machineAsked(start);
     if (said === undefined) return undefined;
     const named = /^computer:\/\/([^/\s]+)$/.exec(said);
@@ -417,7 +469,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // This host's path; the port reads it through the machine's mounts and
       // falls back to the machine's own working directory.
       ...(start.workingDirectory === undefined ? {} : { cwd: start.workingDirectory }),
-    }), said);
+    }), said, (options.presetOf?.() ?? options.preset ?? {})['portFailures'] === 'message' ? 'message' : 'spawn');
   };
 
   return {
@@ -436,6 +488,10 @@ export function claude(options: ClaudeOptions): Agent<Session> {
     description: `The Claude Agent SDK, on ${dirs.join(', ')}`,
     schema,
     defaults,
+    // The client-pushed tier first, then what the SDK loaded, as VS Code's
+    // Claude agent projects a session's list.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1541-L1556
+    sessionCustomizations: (reported, clients) => [...clients, ...reported],
 
     /*
      * What a machine needs for this CLI to run in it.
@@ -507,41 +563,69 @@ export function claude(options: ClaudeOptions): Agent<Session> {
 
     directories: () => [...dirs],
 
-    // What the CLI offers, its models with this variant's own.
+    // What the CLI offers, its models with this variant's own, none where no
+    // credential is set up: neither the CLI's own account nor one of this
+    // variant's. The probe is counted from before its CLI starts to the turn
+    // after its CLI's exit, by when every change that CLI made has been told.
     probe: async () => {
-      const probed = await probe(dir);
-      return { ...probed, models: (await offer(probed.models)).map(withLearned) };
+      probing += 1;
+      let probed: Awaited<ReturnType<typeof probe>>;
+      try { probed = await probe(dir, options.parseYaml, diskBoundsOf(options.presetOf?.() ?? options.preset ?? {})); }
+      finally { setImmediate(() => { probing -= 1; }); }
+      const { setUp, ...offered } = probed;
+      return { ...offered, models: setUp || credentialed() ? (await offer(offered.models)).map(withLearned) : [] };
     },
 
-    // The personal folder only, which is the one the probe reads, and a limit
-    // a result taught, which changes the rows without a file changing.
+    /*
+     * The personal folder only, which is the one the probe reads, quiet while
+     * a probe's own CLI is up; and a login the record names opening or
+     * stopping, which moves whether its models are offered, as VS Code's
+     * Claude agent lists its models again when its sign-in changes; and a
+     * limit a result taught, which changes the rows without a file changing.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L878-L884
+     */
     probeChanged: (onChange) => {
-      const stopWatching = watchFolders({ configDir: configDirOf() }, onChange);
+      const waitMs = (options.presetOf?.() ?? options.preset ?? {})['watchWaitMs'];
+      const stop = createClaudeCustomizationWatcher({
+        configDir: configDirOf(),
+        ...(typeof waitMs === 'number' ? { waitMs } : {}),
+      }, onChange, () => probing > 0);
       const stopLearning = onLimitLearned(onChange);
+      const logins = options.logins;
+      if (logins === undefined) {
+        return () => {
+          stop();
+          stopLearning();
+        };
+      }
+      const told = (id: string): void => {
+        const named = (options.presetOf?.() ?? options.preset ?? {})['logins'];
+        if (Array.isArray(named) && named.includes(id)) onChange();
+      };
+      logins.open.changed.add(told);
       return () => {
-        stopWatching();
+        stop();
         stopLearning();
+        logins.open.changed.delete(told);
       };
     },
 
-    // Every directory it serves, as one list. A session is listed by the
-    // catalogue of the directory it ran in, and a host serving several has
-    // one catalogue. The shared listing is copied rather than handed over:
-    // the host's fold does not touch a row, and one variant handing another
-    // its array is a row that changes under a caller that owns it.
-    list: async () => (options.sharedCatalogue === undefined
-      ? (await Promise.all(dirs.map((served) => catalogue(served)))).flat()
-      : [...await options.sharedCatalogue()]),
+    // Every session the store holds, wherever it ran. The shared listing is
+    // copied rather than handed over: the host's fold does not touch a row,
+    // and one variant handing another its array is a row that changes under a
+    // caller that owns it.
+    list: async () => (options.sharedCatalogue === undefined ? catalogue() : [...await options.sharedCatalogue()]),
 
     /*
      * One session, without a listing.
      *
      * What a client opening a row the host does not hold costs: a link from
      * another machine, a session written to disk after the last listing. The
-     * store is asked about that id and nothing else, which is one file read
-     * where a listing is every transcript on the machine.
+     * store is asked about that id and nothing else, wherever the session ran,
+     * which is one file read where a listing is every transcript on the
+     * machine.
      */
-    find: async (id, at) => (await findSession(dirs, id, at?.workingDirectory))?.row,
+    find: (id) => findSession(id),
 
     /*
      * The transcript on disk, which is the CLI's own record of a session, and
@@ -563,16 +647,14 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       expectedStatus: 401,
     }],
 
-    // Whichever directory holds it, the session's own folder first. The
-    // transcript reader wants the one the session ran in, and asking the store
-    // about this one id is what says so, rather than listing every directory
-    // to find out.
-    transcript: async (id, at, outputs) => {
-      const found = await findSession(dirs, id, at?.workingDirectory);
-      if (found === undefined) return undefined;
-      const ends = new Map<string, string>();
-      const turns = await turnsOf(id, found.dir, ends);
-      readEnds.set(id, ends);
+    // The session's turns, read by its id wherever it ran, as VS Code's
+    // Claude agent reads them; nothing for an id the store does not hold.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSavedChatReader.ts#L67-L68
+    transcript: async (id, _at, outputs) => {
+      if (await findSession(id) === undefined) return undefined;
+      const forkAnchorUuids = new Map<string, string>();
+      const turns = await turnsOf(id, forkAnchorUuids);
+      readForkAnchorUuids.set(id, forkAnchorUuids);
       /*
        * The transcript holds what the model was sent, so a `Bash` call whose
        * output was too large to send comes back with Claude's notice alone.
@@ -580,7 +662,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        * as the reference restores a call after building the turns.
        * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2008-L2009
        */
-      if (outputs !== undefined) restoreSavedOutputs(turns, outputs);
+      if (outputs !== undefined) restore(turns, outputs);
       return turns;
     },
 
@@ -591,12 +673,16 @@ export function claude(options: ClaudeOptions): Agent<Session> {
      * tool call that spawned it - which is the link, read exactly rather than
      * inferred. The spawning call's own result is the fallback for a harness
      * that writes no meta file, and a worker neither names is left out rather
-     * than linked to the wrong call.
+     * than linked to the wrong call. A record whose `subagentsFrom` is `sdk`
+     * reads them through the SDK's readers instead, linked as VS Code links them.
      */
-    subagents: async (id, turns, at) => {
-      const found = await findSession(dirs, id, at?.workingDirectory);
-      if (found === undefined) return undefined;
-      return subagentsOf(id, found.dir, turns ?? await turnsOf(id, found.dir));
+    subagents: async (id, turns) => {
+      if (await findSession(id) === undefined) return undefined;
+      const main = turns ?? await turnsOf(id);
+      const record = options.presetOf?.() ?? options.preset ?? {};
+      return record['subagentsFrom'] === 'sdk'
+        ? subagentsBySdk(id, main, record['subagentTitleMax'])
+        : subagentsOf(id, main, record['subagentTitleMax']);
     },
 
     /*
@@ -629,39 +715,22 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        */
       const inside = insideOf(start);
       const cwd = workingDirectory(start.workingDirectory);
-      /*
-       * The conversation the host asked to resume, where the CLI wrote one.
-       *
-       * Anything else is an id with no conversation behind it, a chat nobody
-       * spoke to, one whose CLI could not sign in, or one whose CLI was closed
-       * after its prompt arrived and before it wrote the prompt's entry, and
-       * the CLI ends at startup rather than resume it. So the id names a new
-       * conversation instead, on a clean transcript (`namedUnder`): the
-       * reference resumes only what the SDK holds and starts the rest under
-       * their own ids. A session in a machine keeps its files there, so what it
-       * asks for is resumed as it is.
-       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1728-L1744
-       */
-      const resumed = start.resume !== undefined && (inside !== undefined || written(start.resume, cwd))
-        ? start.resume
-        : undefined;
-      // The new conversation's name: the chat's own, or else the id it was asked to resume.
-      const chatId = start.chatId ?? (resumed === undefined ? start.resume : undefined);
-      // Where the turns read back ended, for a session that carries the same
-      // conversation on. A fork is a conversation of its own, whose entries
-      // its CLI writes.
-      const readBack = resumed === undefined || start.forkAt !== undefined ? undefined : readEnds.get(resumed);
+      // The fork anchors of the turns read back, for a session that carries the
+      // same conversation on. A fork is a conversation of its own, whose
+      // entries its CLI writes.
+      const readBack = start.resume === undefined || start.forkAt !== undefined ? undefined : readForkAnchorUuids.get(start.resume);
       return createSession({
       ...(inside === undefined ? {} : { spawn: inside, spawnExecutable: executable, spawnConfigDir: configDir }),
+      exits,
       uri: start.uri,
       chatUri: start.chatUri,
-      ...(chatId === undefined ? {} : { chatId }),
+      ...(start.chatId === undefined ? {} : { chatId: start.chatId }),
       cwd,
       /*
        * The MCP servers, declared by this host rather than found by the CLI.
        *
        * The same files the CLI reads - `.mcp.json` beside the project and
-       * `mcpServers` in `~/.claude.json` - and the servers the host offers
+       * `~/.claude.json`, every scope of it - and the servers the host offers
        * every session, its own and its client plugins', all handed to the SDK
        * so they are *its* servers. That is what makes a token a client signed
        * in with applicable: `setMcpServers` re-declares only what the SDK was
@@ -677,7 +746,7 @@ export function claude(options: ClaudeOptions): Agent<Session> {
        */
       mcpServers: {
         ...serversFor([cwd, ...(start.additional ?? [])], start.trusted),
-        ...offeredServers(start.mcpServers, cwd, options.log),
+        ...toClaudeMcpServers(start.mcpServers, cwd, options.log),
       },
       /*
        * The client plugins, as the directories the host copied them into.
@@ -702,8 +771,8 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // And whether the query may load the person's own settings, which is the
       // other half of the same switch: absent is yes.
       ...(start.userSettings === undefined ? {} : { userSettings: start.userSettings }),
-      // The owner's command rules, read where a Bash call would otherwise ask.
-      ...(start.getAutoApproval === undefined ? {} : { getAutoApproval: start.getAutoApproval }),
+      // The operator's managed settings, which the CLI holds as its own policy tier.
+      ...(start.managedSettings === undefined ? {} : { managedSettings: start.managedSettings }),
       // Each one checked the way the first is: a directory this host does not
       // serve is not one an agent may be pointed at, however it arrived.
       ...(start.additional && start.additional.length > 0
@@ -725,16 +794,27 @@ export function claude(options: ClaudeOptions): Agent<Session> {
       // How long the CLI has to answer its handshake, which this variant's own
       // option decides and which the backend's default answers without one.
       ...(options.handshakeTimeoutMs === undefined ? {} : { handshakeTimeoutMs: options.handshakeTimeoutMs }),
+      ...(options.parseYaml === undefined ? {} : { parseYaml: options.parseYaml }),
       ...(start.seedCustomizations ? { seedCustomizations: start.seedCustomizations } : {}),
       ...(start.seedModels ? { seedModels: start.seedModels } : {}),
-      // A fork point and a rewind point each name an entry of a written
-      // conversation, so they go with a resume and with nothing else.
-      ...(resumed === undefined ? {} : {
-        resume: resumed,
+      /*
+       * The conversation the host asked to resume, with the fork point and the
+       * rewind point that each name an entry of it.
+       *
+       * Whether the SDK holds one under the id is the first CLI's start to ask,
+       * as VS Code's Claude asks `getSessionInfo` as it materializes a session
+       * at its first send: what the SDK holds is resumed, and any other id
+       * names a new conversation, on a clean transcript (`namedUnder`). A
+       * session in a machine keeps its files there, so what it asks for is
+       * resumed as it is.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1720-L1736
+       */
+      ...(start.resume === undefined ? {} : {
+        resume: start.resume,
         ...(start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
         ...(start.rewindAt !== undefined ? { rewindAt: start.rewindAt } : {}),
       }),
-      ...(readBack === undefined ? {} : { seedEnds: readBack }),
+      ...(readBack === undefined ? {} : { seedForkAnchorUuids: readBack }),
       ...(start.context !== undefined ? { context: start.context } : {}),
       ...(start.seed ? { seed: start.seed } : {}),
       ...(start.onFileEdit ? { onFileEdit: start.onFileEdit } : {}),

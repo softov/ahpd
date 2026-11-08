@@ -8,7 +8,7 @@ covers:
   - packages/sdk/src/connectors/actions.ts
   - packages/sdk/src/connectors/bindings.ts
 decisions:
-  - decisions/each-backend-offers-its-options-unless-a-rule-asks.md
+  - decisions/the-host-puts-each-tool-question-and-keeps-the-sessions-answer.md
 refs:
   - "[code://packages/sdk/src/types/host.ts#L676-L728](../../packages/sdk/src/types/host.ts#L676-L728) - `HostTool`, with `effects`, `advancedPermission`, `instruction`, `forSession` and `deferLoading`"
   - "[code://packages/sdk/src/types/host.ts#L420-L427](../../packages/sdk/src/types/host.ts#L420-L427) - `HostOptions.advancedTools`"

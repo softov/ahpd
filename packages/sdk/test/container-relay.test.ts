@@ -42,11 +42,16 @@ afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
 type Bag = Record<string, any>;
 
+/**
+ * A window that keeps what it was told, and vouches for the folder a Dev
+ * Container is started in, as VS Code's host asks it to first.
+ */
 const watching = (): Peer & { seen: { method: string; params: Bag }[] } => {
   const seen: { method: string; params: Bag }[] = [];
   return {
     seen,
-    send: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
+    send: () => {}, answered: () => {}, close: () => {},
+    request: async (method: string) => (method === 'vscode/requestWorkspaceTrust' ? { trusted: true } : {}),
     notify: (method: string, params: unknown) => { seen.push({ method, params: params as Bag }); },
   };
 };

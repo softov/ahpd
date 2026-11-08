@@ -7,18 +7,19 @@ import { bag, str } from './common.js';
 import type { SessionContext } from './context.js';
 
 /**
- * One property of a tool's input schema, as the zod the SDK asks for.
+ * One property of a tool's input schema, as the zod the SDK asks for: VS
+ * Code's Claude's `jsonPropertyToZod`.
  *
  * `createSdkMcpServer` takes a zod raw shape and turns it back into JSON
  * Schema for the model, so a definition written as JSON Schema - which is
- * what the protocol declares - has to make the round trip. `fromJSONSchema`
- * reads that whole schema, so a nested object, an array of objects and an
- * enum reach the model as the client wrote them rather than as a string. A
- * property the reader refuses becomes a string, which is what every argument
- * used to be. A description the reader drops is put back, because the model
- * reads it.
+ * what the protocol declares - makes the round trip. `fromJSONSchema` reads
+ * that whole schema, so a nested object, an array of objects and an enum
+ * reach the model as the client wrote them. A property the reader refuses
+ * becomes a string. A description the reader drops is put back, because the
+ * model reads it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeJsonSchemaToZod.ts#L55
  */
-const shaped = (property: object): z.ZodTypeAny => {
+const jsonPropertyToZod = (property: object): z.ZodTypeAny => {
   let read: z.ZodTypeAny;
   try { read = z.fromJSONSchema(property as never); }
   catch { return z.string(); }
@@ -36,18 +37,19 @@ const shaped = (property: object): z.ZodTypeAny => {
  * without promising anything about what is in it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L12-L20
  */
-const TOOL_USE_ID = 'claudecode/toolUseId';
+const TOOL_USE_ID_META_KEY = 'claudecode/toolUseId';
 
 /** The call the CLI said this handler was running, when it said one. */
 const namedBy = (extra: unknown): string | undefined => {
   const meta = (extra as { _meta?: Record<string, unknown> } | undefined)?._meta;
-  const id = meta?.[TOOL_USE_ID];
+  const id = meta?.[TOOL_USE_ID_META_KEY];
   return typeof id === 'string' && id !== '' ? id : undefined;
 };
 
 /**
  * The in-process server a client's tools ride, by VS Code's Claude's name for
- * it: the CLI calls one of them `mcp__client__<name>`.
+ * it: the CLI calls one of them `mcp__client__<clientId>__<name>`, by the name
+ * the host binds a client's tool under.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L80-L85
  */
 export const CLAUDE_CLIENT_MCP_SERVER_NAME = 'client';
@@ -98,7 +100,7 @@ export const contributed = (
     const schema = one.definition.inputSchema;
     const shape: Record<string, z.ZodTypeAny> = {};
     for (const [key, property] of Object.entries(schema?.properties ?? {})) {
-      const value = shaped(property);
+      const value = jsonPropertyToZod(property);
       shape[key] = (schema?.required ?? []).includes(key) ? value : value.optional();
     }
     return {
@@ -134,7 +136,7 @@ export const contributed = (
             return {
               content: [{
                 type: 'text' as const,
-                text: `Client tool "${one.definition.name}" could not run: SDK omitted tool_use_id (expected at extra._meta["${TOOL_USE_ID}"]).`,
+                text: `Client tool "${one.definition.name}" could not run: SDK omitted tool_use_id (expected at extra._meta["${TOOL_USE_ID_META_KEY}"]).`,
               }],
               isError: true,
             };
@@ -284,7 +286,6 @@ export interface ClientTools {
     setTools: (tools: BoundTool[]) => Promise<boolean>;
     toolCallOwner: (toolCallId: string) => string | undefined;
     completeToolCall: (toolCallId: string, clientId: string, result: ClientCallAnswer) => boolean;
-    clientGone: (clientId: string) => void;
   };
 }
 
@@ -356,8 +357,8 @@ export function createClientTools(ctx: SessionContext): ClientTools {
    * and either can be read first, so there is something to wait for: a handler
    * that arrives before the frame waits in `asked`, and one that arrives after
    * is answered from `framed`. Only ids no handler has come for yet are kept
-   * there, and past the cap the oldest goes, so an aborted call of a long
-   * session does not pile up for ever.
+   * there, and past the cap, the record's `keepFramed`, the oldest goes, so an
+   * aborted call of a long session does not pile up for ever.
    */
   const framed = new Set<string>();
   const asked = new Map<string, { tool: string; go: (joined: Joined) => void }[]>();
@@ -385,7 +386,8 @@ export function createClientTools(ctx: SessionContext): ClientTools {
       return;
     }
     framed.add(id);
-    if (framed.size > KEEP_FRAMED) framed.delete(framed.values().next().value as string);
+    const kept = ctx.values['keepFramed'];
+    if (framed.size > (typeof kept === 'number' ? kept : KEEP_FRAMED)) framed.delete(framed.values().next().value as string);
   };
 
   /**
@@ -576,6 +578,12 @@ export function createClientTools(ctx: SessionContext): ClientTools {
   };
 
   const rebindForClientTools = async (): Promise<void> => {
+    const to = ctx.query;
+    // A session with no CLI yet declares the set its first CLI starts with.
+    if (to === undefined) {
+      buildClientMcpServers();
+      return;
+    }
     const handed = ctx.toolDiff;
     if (handed === undefined) return;
     ctx.toolDiff = undefined;
@@ -586,13 +594,13 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     const declared = declaring(next);
     try {
       if (ctx.offering.length > 0) {
-        await ctx.query.setMcpServers(removed as never);
+        await to.setMcpServers(removed as never);
         // Gone from the CLI now, so what this session holds is the set
         // without them, whatever the second declaration answers.
         ctx.offering = [];
         ctx.mcpServers = removed;
       }
-      if (next.length > 0) await ctx.query.setMcpServers(declared as never);
+      if (next.length > 0) await to.setMcpServers(declared as never);
     }
     catch (error: unknown) {
       // The CLI holds what it held, so the set waits for the next send, as
@@ -630,44 +638,19 @@ export function createClientTools(ctx: SessionContext): ClientTools {
     },
 
     /*
-     * The three the holder answers, spread on unchanged.
+     * The two the holder answers, as it answers them.
      *
-     * Who owns a call, which client may settle it, and what happens to the
-     * calls of a client that goes: all of it is the holder's, and none of it
+     * Who owns a call and which client may settle it, the host's failure of a
+     * gone client's call among the settlements, as VS Code's host fails the
+     * calls a departed client owes: all of it is the holder's, and none of it
      * is about this harness. Nothing is emitted from `completeToolCall`: the
      * answer goes back to the CLI, the CLI writes the tool result, and the
      * session reports the completion to everybody from that - which is the
      * same path every other tool call takes.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
      */
-    ...calls.methods,
-
-    /**
-     * A client left the session, with the tools it was offering.
-     *
-     * The holder's own `clientGone` ends the calls already open, which is what
-     * a call the model made and the client was running gets. What it does not
-     * reach is the half a handler is stuck on: a call the CLI has not reported
-     * yet, so a handler is still waiting on its id for a client that is no
-     * longer there to answer. Those are ended here, with the sentence the
-     * holder uses for the same news, so both halves of one call read the same.
-     *
-     * Every tool whose name is this client's, by the prefix the model is
-     * offered under. The tools may already be gone from `offering` - the host
-     * takes them out in the same breath - so the waits are asked, not the list:
-     * each carries the tool it is for.
-     */
-    clientGone: (clientId) => {
-      const why = `The client ${clientId} that was running the tool is no longer here`;
-      for (const [id, waiting] of asked) {
-        const here = waiting.filter((one) => one.tool.startsWith(`mcp__${CLAUDE_CLIENT_MCP_SERVER_NAME}__${clientId}__`));
-        if (here.length === 0) continue;
-        for (const one of here) one.go({ refused: why });
-        const rest = waiting.filter((one) => !here.includes(one));
-        if (rest.length === 0) asked.delete(id);
-        else asked.set(id, rest);
-      }
-      calls.methods.clientGone(clientId);
-    },
+    toolCallOwner: calls.methods.toolCallOwner,
+    completeToolCall: calls.methods.completeToolCall,
   };
 
   return {

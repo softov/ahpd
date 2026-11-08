@@ -44,7 +44,7 @@ const scratch = (): string => {
 };
 
 /** A backend on the scripted server, with the flags a case needs. */
-const backend = (flags: string[]): Agent<Session> => acpAgent({
+const backend = (flags: string[]): Agent<Promise<Session>> => acpAgent({
   command: process.execPath,
   args: [FIXTURE, ...flags],
   provider: 'acp',
@@ -109,7 +109,7 @@ it('will not take two backends that call themselves the same thing', () => {
   })).toThrow(/acp/);
 });
 
-it('works in a scratch folder of its own when the client gave it none', () => {
+it('works in a scratch folder of its own when the client gave it none', async () => {
   // The home the folder is made under is this case's own, so nothing is made
   // in the person's.
   const home = scratch();
@@ -119,7 +119,7 @@ it('works in a scratch folder of its own when the client gave it none', () => {
   process.env.HOME = home;
   process.env.USERPROFILE = home;
   try {
-    const session = backend([]).create(opening('scratched'));
+    const session = await backend([]).create(opening('scratched'));
     started.push(session);
     const folder = join(home, '.copilot', 'chats', 'scratched');
     expect(session.workingDirectories()).toEqual([uriOf(folder)]);
@@ -133,20 +133,10 @@ it('works in a scratch folder of its own when the client gave it none', () => {
   }
 });
 
-/**
- * A session whose server has spoken: one turn run to its end, which is what
- * spawns the server and shakes hands with it.
- */
-const spoken = async (agent: Agent<Session>, id: string): Promise<Session> => {
-  let ended = (): void => {};
-  const done = new Promise<void>((resolve) => { ended = resolve; });
-  const session = agent.create({
-    ...opening(id),
-    emit: (_channel, action) => { if (action.type === 'chat/turnComplete') ended(); },
-  });
+/** A session as it is answered, which is once its server has opened it. */
+const spoken = async (agent: Agent<Promise<Session>>, id: string): Promise<Session> => {
+  const session = await agent.create(opening(id));
   started.push(session);
-  void session.sendMessage('t1', 'hi');
-  await done;
   return session;
 };
 
@@ -156,8 +146,8 @@ const spoken = async (agent: Agent<Session>, id: string): Promise<Session> => {
  * with the id the conversation was kept under, so a server that would open a
  * new one instead is a chat that must stay where it is.
  *
- * A turn is run to make the handshake happen, because that answer only exists
- * once the server has spoken.
+ * The answer is the handshake's, and the session is answered with it, before
+ * any turn has run.
  */
 it('says a conversation can be taken back when the server advertised loadSession', async () => {
   const session = await spoken(backend([]), 'movable');
@@ -195,7 +185,7 @@ it('is busy while an acp terminal runs', async () => {
       };
     },
   };
-  const session = backend([]).create({ ...opening('busy'), workingDirectory: scratch(), terminals });
+  const session = await backend([]).create({ ...opening('busy'), workingDirectory: scratch(), terminals });
   started.push(session);
   await session.setConfig?.('permissionMode', 'code');
   expect(session.busy?.()).toBe(false);

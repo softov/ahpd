@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -12,12 +12,12 @@ import type { Peer } from '../src/types/rpc.js';
  * A host-owned URI scheme, beside files.
  *
  * A resource command is routed by the scheme in the URI: `file:` to the store
- * the host was given, a registered scheme to its provider, and a URI a client
- * published to that client before any of this is consulted.
+ * the host was given, the client scheme to the client it names, and a
+ * registered scheme to its provider.
  *
  * What a provider leaves out is `-32601`, the same answer a read-only store's
- * missing write half gets, and a scheme nobody serves is explained as somebody
- * else's rather than read as a path.
+ * missing write half gets, and a scheme nobody serves is told as one nothing
+ * here serves.
  */
 
 let root: string;
@@ -71,52 +71,68 @@ it('reads a file while a provider is registered, and reaches the provider by sch
   })).toMatchObject({ uri: 'computer://local/status', type: 'file' });
 });
 
-it('answers -32601 for a method the provider left out, as a read-only store does', async () => {
+/*
+ * An operation a provider left out, and a scheme nobody serves, are NotFound,
+ * the code VS Code's host answers a resource it has no provider operation
+ * for with, and never a permission code.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L88-L95
+ */
+it('answers NotFound in VS Code\'s words for an operation the provider left out, as a read-only store does', async () => {
   const client = await open(host());
   await expect(client.handle({
     method: 'resourceList', params: { channel: 'ahp-root://', uri: 'computer://local' },
-  })).rejects.toMatchObject({ code: -32601 });
+  })).rejects.toMatchObject({ code: -32008, message: 'Resource operation \'list\' is not supported for: computer://local' });
   await expect(client.handle({
     method: 'resourceWrite',
     params: { channel: 'ahp-root://', uri: 'computer://local/status', data: 'x', encoding: 'utf-8' },
-  })).rejects.toMatchObject({ code: -32601 });
+  })).rejects.toMatchObject({ code: -32008, message: 'Resource operation \'write\' is not supported for: computer://local/status' });
 });
 
-it('answers a scheme nobody serves with a code that says so, not a permission code', async () => {
+it('answers a scheme nobody serves NotFound, not a permission code', async () => {
   const client = await open(host({}));
   const refused = await client.handle({
     method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'notes://local/x' },
   }).then(() => 'read', (error: { code: number; message: string }) => error);
-  // The host has nothing that serves `notes:`, which is `-32601`; `-32009` is
-  // for a person whose role does not cover a command it does serve.
-  expect(refused).toMatchObject({ code: -32601 });
+  expect(refused).toMatchObject({ code: -32008 });
   expect((refused as { message: string }).message).toContain('nothing here serves notes:');
 });
 
-it('refuses a move whose two ends are different schemes', async () => {
+/*
+ * A move is the source's store's to carry out, whatever the destination, as
+ * VS Code's host hands it to the source's provider: the file store refuses a
+ * destination it cannot write, in its own words, and the file stays.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostResourceProviders.ts#L68-L78
+ */
+it('hands a move whose two ends are different schemes to the source\'s store', async () => {
   writeFileSync(join(root, 'from.txt'), 'carried');
   const client = await open(host());
   await expect(client.handle({
     method: 'resourceMove',
     params: { channel: 'ahp-root://', source: `file://${root}/from.txt`, destination: 'computer://local/from.txt' },
-  })).rejects.toMatchObject({ code: -32602 });
+  })).rejects.toMatchObject({ code: -32009, message: expect.stringContaining('computer://local/from.txt') });
+  expect(existsSync(join(root, 'from.txt'))).toBe(true);
 });
 
-it('relays a URI a client published before a provider of the same scheme', async () => {
+it('reads a provider\'s scheme from the provider, and a client\'s resource from the client under the client scheme', async () => {
   const answer = { data: 'from the client', encoding: 'utf-8' };
+  const asked: string[] = [];
   const publisher: Peer = {
     send: () => {}, notify: () => {}, answered: () => {}, close: () => {},
-    request: async () => answer,
+    request: async (_method, params) => { asked.push(String((params as { uri?: unknown }).uri)); return answer; },
   };
   const served = host({ virtual: computer() });
   const publishing = served.accept(publisher);
   await publishing.handle({ method: 'initialize', params: { clientId: 'editor', protocolVersions: ['0.9.0'] } });
   const client = await open(served);
 
-  // The provider would have answered `status of virtual://editor/notes.md`.
-  // The client that published the URI answered instead, because the relay runs
-  // before any handler - which is what stops a plugin shadowing a client.
+  // The provider's scheme is the provider's, whatever client its authority names.
   expect(await client.handle({
     method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'virtual://editor/notes.md' },
+  })).toEqual({ data: 'status of virtual://editor/notes.md', encoding: 'utf-8' });
+  expect(asked).toEqual([]);
+  // And the client's own, under the client scheme.
+  expect(await client.handle({
+    method: 'resourceRead', params: { channel: 'ahp-root://', uri: 'vscode-agent-client://editor/virtual/editor/notes.md' },
   })).toEqual(answer);
+  expect(asked).toEqual(['virtual://editor/notes.md']);
 });

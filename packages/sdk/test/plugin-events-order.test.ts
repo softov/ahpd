@@ -135,8 +135,8 @@ it('does not reject the action that raised the event', async () => {
   // even though a listener threw while it was being announced.
   await expect(create(client)).resolves.toBeDefined();
   await settle();
-  const listed = await client.handle({ method: 'listSessions', params: { channel: ROOT } }) as { items: unknown[] };
-  expect(listed.items).toHaveLength(1);
+  const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as { snapshot: { resource: string } };
+  expect(opened.snapshot.resource).toBe('ahp-session:/one');
 });
 
 it('tells a log handler that logs once, and does not recurse', async () => {

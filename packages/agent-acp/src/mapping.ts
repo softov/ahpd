@@ -20,15 +20,25 @@ import type { Bag, HarnessPlanEntry, PlanUpdate } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
 
 /**
+ * The name of the MCP server that carries the host's tools to the agent.
+ *
+ * `host`, the name VS Code gives the MCP server carrying its host's tools, and
+ * the one the Claude agent's in-process server carries in this host, so an
+ * agent told of both is told of the same tools under one name.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeServerToolMcpServer.ts#L21
+ */
+export const HOST_TOOLS = 'host';
+
+/**
  * The prefix every tool of the host's own MCP server is seen under.
  *
  * A client's tool rides that server with the host's own, because a server this
  * plugin points the agent at is the one way an ACP agent can be handed a host
  * tool at all. So an agent that names the tool it called spells it
- * `mcp__ahp__<clientId>__<name>`, and one that has its own idea of the name
- * says it in the title instead.
+ * `mcp__host__<clientId>__<name>`, after the server's name, and one that has
+ * its own idea of the name says it in the title instead.
  */
-export const HOST_SERVER = 'mcp__ahp__';
+export const HOST_SERVER = `mcp__${HOST_TOOLS}__`;
 
 /** The text of a content block, or nothing for a kind this bridge does not carry. */
 const textOf = (content: ContentBlock): string | undefined =>
@@ -52,13 +62,17 @@ export const callPartOf = (turn: { parts: Bag[] }, callId: string): Bag | undefi
  * when this chunk opens it.
  *
  * ACP chunks carry no block index, so a run is what the order says: the part
- * last opened in the turn takes the chunk when it is of the same kind, and a
- * chunk of the other kind or one after a tool call opens a new part. Its id is
- * the turn's and its position in the turn, which no later part changes.
+ * last opened in the turn takes the chunk when it is of the same kind and of
+ * the same message, and a chunk of the other kind, one after a tool call or
+ * one whose `messageId` says a new message has started opens a new part. Its
+ * id is the turn's and its position in the turn, which no later part changes.
+ * https://agentclientprotocol.com/protocol/schema#contentchunk
  */
-const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning'): { part: Bag; opened?: Bag } => {
+const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning', messageId: string | undefined): { part: Bag; opened?: Bag } => {
   const last = turn.parts.at(-1);
-  if (last !== undefined && last.kind === kind) return { part: last };
+  const sameMessage = messageId === undefined || turn.messageId === undefined || messageId === turn.messageId;
+  if (messageId !== undefined) turn.messageId = messageId;
+  if (last !== undefined && last.kind === kind && sameMessage) return { part: last };
   const part: Bag = { id: `${turn.turnId}:${turn.parts.length}`, kind, content: '' };
   turn.parts.push(part);
   return { part, opened: { type: 'chat/responsePart', turnId: turn.turnId, part: { ...part } } };
@@ -70,10 +84,32 @@ const runOf = (turn: AcpTurn, kind: 'markdown' | 'reasoning'): { part: Bag; open
  * Any text opens its part, whitespace included, as VS Code's agents open a
  * part for whatever text their runtime sends.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L593-L605
+ *
+ * A chunk that names content by its URI, a link to a resource (which a chunk
+ * whose bytes the host kept is made into, naming the host's reference), a
+ * resource the agent embedded or an image that names its source, is a part of
+ * its own: the spec's part for content held outside the state tree, carrying
+ * the URI with the size and the type it was given.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
  */
-const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', text: string): Bag[] => {
-  if (text === '') return [];
-  const { part, opened } = runOf(turn, kind);
+const chunk = (turn: AcpTurn, kind: 'markdown' | 'reasoning', content: ContentBlock, messageId: string | undefined): Bag[] => {
+  const named = content.type === 'resource_link' ? content
+    : content.type === 'resource' ? content.resource
+      : content.type === 'image' && typeof content.uri === 'string' && content.uri !== '' ? { uri: content.uri, mimeType: content.mimeType }
+        : undefined;
+  if (named !== undefined) {
+    const part: Bag = {
+      kind: 'contentRef',
+      uri: named.uri,
+      ...(content.type === 'resource_link' && typeof content.size === 'number' ? { sizeHint: content.size } : {}),
+      ...(typeof named.mimeType === 'string' ? { contentType: named.mimeType } : {}),
+    };
+    turn.parts.push(part);
+    return [{ type: 'chat/responsePart', turnId: turn.turnId, part: { ...part } }];
+  }
+  const text = textOf(content);
+  if (text === undefined || text === '') return [];
+  const { part, opened } = runOf(turn, kind, messageId);
   part.content = `${String(part.content ?? '')}${text}`;
   const type = kind === 'markdown' ? 'chat/delta' : 'chat/reasoning';
   const streamed: Bag = { type, turnId: turn.turnId, partId: part.id, content: text };
@@ -99,24 +135,20 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
    * Which client's tool this is, read off what the agent reported. The name it
    * gave is what it called, so it is read before the title: a title that spells
    * some other client's tool is not what the agent said it reached for.
+   *
+   * A client's call is named by the tool the client announced, as VS Code's
+   * host names one, stripping its client-tool server's prefix where the call
+   * comes in, so the client knows the call for its own.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L626-L638
    */
-  const owner = turn.ownerOf?.(named, title);
-  /*
-   * A client's tool by the name the client announced it with: the host MCP
-   * server's prefix and the client's own are taken off, as VS Code's agents
-   * strip their client tool server's prefix, so the row names a tool the
-   * client has.
-   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L637-L638
-   */
-  const bare = name.startsWith(HOST_SERVER) ? name.slice(HOST_SERVER.length) : name;
-  const toolName = owner !== undefined && bare.startsWith(`${owner}__`) ? bare.slice(owner.length + 2) : name;
+  const tool = turn.clientToolOf?.(named, title);
   const call: AcpCall = {
     toolCallId: update.toolCallId,
-    toolName,
+    toolName: tool?.name ?? name,
     displayName: title,
     readied: false,
     asked: false,
-    ...(owner === undefined ? {} : { owner }),
+    ...(tool === undefined ? {} : { contributor: tool.owner }),
   };
   turn.calls.set(update.toolCallId, call);
   const toolKind = 'kind' in update && update.kind !== undefined && update.kind !== null ? KINDS[update.kind] : undefined;
@@ -124,7 +156,7 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
     kind: 'toolCall',
     toolCall: {
       toolCallId: update.toolCallId,
-      toolName,
+      toolName: call.toolName,
       displayName: title,
       status: 'streaming',
       ...contributorOf(call),
@@ -153,7 +185,7 @@ const KINDS: Partial<Record<ToolKind, string>> = { execute: 'terminal', search: 
  * `contributor` key at all.
  */
 const contributorOf = (call: AcpCall): Bag =>
-  (call.owner === undefined ? {} : { contributor: { kind: 'client', clientId: call.owner } });
+  (call.contributor === undefined ? {} : { contributor: { kind: 'client', clientId: call.contributor } });
 
 /**
  * Whether the agent has moved the call off `pending`.
@@ -204,9 +236,11 @@ const ready = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag => 
     ...contributorOf(call),
   };
   // Onto the held call and into the action, from one object, so the snapshot
-  // a late client reads is the running call a client watching was sent.
+  // a late client reads is the running call a client watching was sent; a call
+  // held cancelled stays as it is, as the reducer leaves one for a ready.
+  // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L559-L567
   const held = callPartOf(turn, call.toolCallId);
-  if (held !== undefined) Object.assign(bag(held.toolCall), said, { status: 'running' });
+  if (held !== undefined && bag(held.toolCall).status !== 'cancelled') Object.assign(bag(held.toolCall), said, { status: 'running' });
   return {
     type: 'chat/toolCallReady',
     turnId: turn.turnId,
@@ -227,7 +261,7 @@ const ready = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag => 
  */
 const running = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag[] => {
   const finished = call.status === 'completed' || call.status === 'failed';
-  if (call.owner !== undefined && !finished) turn.opening.push(call);
+  if (call.contributor !== undefined && !finished) turn.opening.push(call);
   return [ready(turn, call, input)];
 };
 
@@ -295,6 +329,13 @@ const opened = (turn: AcpTurn, call: AcpCall): Bag[] => [{
  * A server may announce a call and finish it in one update, so a `tool_call`
  * lands here as well as a `tool_call_update`: a row closed without ever being
  * opened is a completion for a call nobody drew.
+ *
+ * A call that failed says so in its past tense, in the sentence VS Code's
+ * agents give a failed call drawn by its name, and one a person refused fails
+ * as a denial, `denied` its error's code, as VS Code's Codex agent completes a
+ * call its host declined.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotToolDisplay.ts#L895-L898
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L1225-L1229
  */
 const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at?: number): Bag[] => {
   stampEnd(turn, call, at);
@@ -302,22 +343,30 @@ const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at
   const text = contentText(content);
   const result: Bag = {
     success,
-    pastTenseMessage: call.displayName,
+    pastTenseMessage: success ? call.displayName : `"${call.displayName}" failed`,
     ...(content.length === 0 ? {} : { content }),
-    ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
+    ...(success ? {} : {
+      error: { message: text === '' ? 'The tool failed' : text, ...(call.declined === true ? { code: 'denied' } : {}) },
+    }),
   };
   /*
    * Onto the held call and into the action, from one object, as the ready is.
    *
    * The protocol's reducer builds a completed call from the running one and
    * the result, and what the call showed while it ran is not carried over:
-   * a client that watched holds the result's content and no other.
+   * a client that watched holds the result's content and no other. A call the
+   * person refused is held cancelled, the completion after it left unapplied,
+   * as the reducer leaves one for a call that is not running; the completion
+   * still goes out.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L631-L635
    */
   const part = callPartOf(turn, call.toolCallId);
   if (part !== undefined) {
     const held = bag(part.toolCall);
-    delete held.content;
-    Object.assign(held, result, { status: 'completed' });
+    if (held.status !== 'cancelled') {
+      delete held.content;
+      Object.assign(held, result, { status: 'completed' });
+    }
   }
   return [...actions, {
     type: 'chat/toolCallComplete',
@@ -382,19 +431,35 @@ const fileEdit = (turn: AcpTurn, toolCallId: string, diff: Diff): Bag => {
  *
  * A terminal id is already a host terminal URI, because the bridge opened the
  * shell through the host, so the block is the one a `!` command's call carries.
- * It says `isPty` as the session's handle does, and nothing on a turn the
- * transcript replays, which holds no handle.
+ * It is titled by the call's display name, as VS Code's agents title a call's
+ * terminal, and carries how the command ended once its terminal has exited,
+ * the spec's `result`. It says `isPty` as the session's handle does, and none
+ * of these on a turn the transcript replays, which holds no handle.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L9906-L9912
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1701-L1735
  */
-const contentBlocks = (turn: AcpTurn, toolCallId: string, content: ToolCallUpdate['content']): Bag[] => {
+const contentBlocks = (turn: AcpTurn, call: AcpCall, content: ToolCallUpdate['content']): Bag[] => {
   const blocks: Bag[] = [];
   for (const entry of content ?? []) {
     if (entry.type === 'content' && entry.content.type === 'text') {
       blocks.push({ type: 'text', text: entry.content.text });
     } else if (entry.type === 'terminal') {
       const isPty = turn.reach?.isPty(entry.terminalId);
-      blocks.push({ type: 'terminal', resource: entry.terminalId, title: 'Terminal', ...(isPty === undefined ? {} : { isPty }) });
+      const ended = turn.reach?.exited(entry.terminalId);
+      blocks.push({
+        type: 'terminal',
+        resource: entry.terminalId,
+        title: call.displayName,
+        ...(isPty === undefined ? {} : { isPty }),
+        ...(ended === undefined ? {} : {
+          result: {
+            ...(ended.exitCode === undefined ? {} : { exitCode: ended.exitCode }),
+            ...(ended.output === '' ? {} : { preview: ended.output }),
+          },
+        }),
+      });
     } else if (entry.type === 'diff') {
-      blocks.push(fileEdit(turn, toolCallId, entry));
+      blocks.push(fileEdit(turn, call.toolCallId, entry));
     }
   }
   return blocks;
@@ -447,15 +512,11 @@ export function mapUpdate(
      * would draw the whole block again in a client that appends on
      * `chat/responsePart`.
      */
-    case 'agent_message_chunk': {
-      const text = textOf(update.content);
-      return text === undefined ? [] : chunk(turn, 'markdown', text);
-    }
+    case 'agent_message_chunk':
+      return chunk(turn, 'markdown', update.content, update.messageId ?? undefined);
 
-    case 'agent_thought_chunk': {
-      const text = textOf(update.content);
-      return text === undefined ? [] : chunk(turn, 'reasoning', text);
-    }
+    case 'agent_thought_chunk':
+      return chunk(turn, 'reasoning', update.content, update.messageId ?? undefined);
 
     /*
      * A new tool call. The start action creates the row, and the ready action
@@ -471,7 +532,7 @@ export function mapUpdate(
       const actions = opened(turn, call);
       inputOf(call, update);
       if (mayReady(call)) actions.push(...running(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, call.toolCallId, update.content), actions, at);
+      return drawn(turn, call, contentBlocks(turn, call, update.content), actions, at);
     }
 
     /*
@@ -491,7 +552,7 @@ export function mapUpdate(
       // A second ready goes out for arguments that arrived after the first, so
       // what a client shows is the arguments the agent last wrote down.
       if (mayReady(call) && (!call.readied || input !== undefined)) actions.push(...running(turn, call, call.input));
-      return drawn(turn, call, contentBlocks(turn, call.toolCallId, update.content), actions, at);
+      return drawn(turn, call, contentBlocks(turn, call, update.content), actions, at);
     }
 
     /*
@@ -574,13 +635,15 @@ const listed = (value: unknown): unknown[] => (Array.isArray(value) ? value : []
  *
  * A field written as an array carries its choices on its `items` rather than on
  * itself, so both are read here and one function serves a select and a
- * multi-select alike.
+ * multi-select alike; a titled multi-select's are its items' `anyOf`, as
+ * VS Code's mappers read them.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L221-L222
  */
 const choicesOf = (schema: Bag): Bag[] | undefined => {
   const carried = schema.type === 'array' ? bag(schema.items) : schema;
   const values = strings(carried.enum);
   if (values.length > 0) return values.map((value) => ({ id: value, label: value }));
-  const titled = listed(carried.oneOf).map(bag).filter((one) => typeof one.const === 'string');
+  const titled = [...listed(carried.oneOf), ...listed(carried.anyOf)].map(bag).filter((one) => typeof one.const === 'string');
   if (titled.length === 0) return undefined;
   return titled.map((one) => {
     const description = str(one.description);
@@ -786,7 +849,10 @@ const wordsOf = (answer: unknown): string[] => {
  * Keyed by the field its question was drawn for, so an answer to a key nothing
  * asked about is left out rather than sent under a name the schema does not
  * have, and a question nobody answered is absent rather than empty: a form with
- * a field left blank is a form with that field left blank.
+ * a field left blank is a form with that field left blank. A question the
+ * person skipped is one nobody answered, whatever its answer still holds, as
+ * VS Code's agents leave a skipped answer out.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L270
  *
  * A question the server marked open to an answer of its own is the exception,
  * and only when words were typed into it, which is what `typed` says about it.
@@ -804,7 +870,7 @@ export function contentOf(
 ): Record<string, string | number | boolean | string[]> {
   const content: Record<string, string | number | boolean | string[]> = {};
   for (const [key, answer] of Object.entries(answers)) {
-    if (!fields.has(key)) continue;
+    if (!fields.has(key) || bag(answer).state === 'skipped') continue;
     const value = answerOf(answer);
     const folded = typed.get(key);
     if (folded === undefined) {

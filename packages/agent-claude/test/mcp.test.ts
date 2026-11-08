@@ -1,8 +1,51 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { serversFor, urlOf } from '../src/mcp.js';
+import { protectedResource, serversFor, urlOf } from '../src/mcp.js';
+
+/*
+ * A server's sign-in metadata, found as VS Code finds it: the path-appended
+ * well-known URL, then the origin's, each taken only where its `resource` is
+ * the one asked for.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/oauth.ts#L1201-L1290
+ */
+describe('the metadata a server publishes about signing in', () => {
+  /** A server answering the well-known paths it is given, and nothing else. */
+  const serving = async (answers: (origin: string) => Record<string, unknown>): Promise<{ origin: string; close: () => Promise<void> }> => {
+    let held: Record<string, unknown> = {};
+    const server = createServer((request, response) => {
+      const body = held[request.url ?? ''];
+      response.writeHead(body === undefined ? 404 : 200, { 'content-type': 'application/json' });
+      response.end(body === undefined ? '' : JSON.stringify(body));
+    });
+    await new Promise<void>((done) => { server.listen(0, '127.0.0.1', done); });
+    const origin = `http://127.0.0.1:${String((server.address() as AddressInfo).port)}`;
+    held = answers(origin);
+    return { origin, close: () => new Promise((done) => { server.close(() => { done(); }); }) };
+  };
+
+  it('falls back to the origin\'s metadata, and takes it only where its resource is the origin', async () => {
+    const good = await serving((origin) => ({
+      '/.well-known/oauth-protected-resource': { resource: `${origin}/`, authorization_servers: ['https://auth.example'] },
+    }));
+    const bad = await serving(() => ({
+      '/.well-known/oauth-protected-resource': { resource: 'https://elsewhere.example/', authorization_servers: [] },
+    }));
+    try {
+      // The origin's own, since nothing answers at the path-appended URL.
+      expect(await protectedResource(`${good.origin}/mcp`, 'docs')).toMatchObject({ authorization_servers: ['https://auth.example'] });
+      // A resource that is not the one asked for is taken as no answer.
+      expect(await protectedResource(`${bad.origin}/mcp`, 'docs')).toEqual({ resource: `${bad.origin}/mcp`, resource_name: 'docs' });
+    }
+    finally {
+      await good.close();
+      await bad.close();
+    }
+  });
+});
 
 /*
  * The MCP servers a session declares.
@@ -79,5 +122,34 @@ describe('the servers a session declares', () => {
     const dir = project({ shared: { type: 'http', url: 'https://project/one' } });
     const found = serversFor([dir], vouched);
     expect(urlOf(found.shared)).toBe('https://project/one');
+  });
+
+  /*
+   * The CLI's scopes for one folder: local over project over user, the local
+   * servers kept in the home file under the folder's path.
+   * https://code.claude.com/docs/en/mcp#scope-hierarchy-and-precedence
+   */
+  it('reads a folder\'s local-scope servers from the home file, above the project\'s and the user\'s', () => {
+    const dir = project({ shared: { type: 'http', url: 'https://project/one' } });
+    const home = mkdtempSync(join(tmpdir(), 'ahpd-home-'));
+    made.push(home);
+    writeFileSync(join(home, '.claude.json'), JSON.stringify({
+      mcpServers: { shared: { type: 'http', url: 'https://user/one' }, mine: { type: 'http', url: 'https://user/mine' } },
+      projects: { [dir]: { mcpServers: { shared: { type: 'http', url: 'https://local/one' }, notes: { type: 'http', url: 'https://local/notes' } } } },
+    }));
+    const before = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const found = serversFor([dir], vouched);
+      expect(urlOf(found.shared)).toBe('https://local/one');
+      expect(urlOf(found.notes)).toBe('https://local/notes');
+      expect(urlOf(found.mine)).toBe('https://user/mine');
+      // The person's own, read for a folder nobody vouched for as well.
+      expect(urlOf(serversFor([dir], () => false).notes)).toBe('https://local/notes');
+    }
+    finally {
+      if (before === undefined) delete process.env.HOME;
+      else process.env.HOME = before;
+    }
   });
 });

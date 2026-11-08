@@ -29,6 +29,7 @@ import type { Bag, Chosen, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
 import { createClientCalls } from './session/clientcalls.js';
 import { createConfig } from './session/config.js';
+import type { Choice } from './session/config.js';
 import type { SessionContext } from './session/context.js';
 import { createHandlers } from './session/handlers.js';
 import { createOpening } from './session/opening.js';
@@ -37,7 +38,7 @@ import type { AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, Watched
 
 /**
  * How long a server is given to answer `session/close` before the connection
- * goes anyway.
+ * goes anyway, unless the record's `closeGraceMs` says otherwise.
  *
  * The answer is what says the server let go of the session, so a close that did
  * not wait would kill a process half way through releasing it.
@@ -48,13 +49,20 @@ const CLOSE_GRACE_MS = 1000;
  * One conversation over one ACP server.
  *
  * `options` is the backend's identity and wiring; `start` is what this
- * particular session was told. The server is spawned lazily, on the first
- * turn, so a session somebody opened and never used costs no subprocess.
+ * particular session was told. The session is answered once its server has
+ * opened, so what the server offers is in the first state a client is served.
+ *
+ * `heardModes` is how this session tells its agent the modes its server named,
+ * which the agent's schema lists until a later session hears others, and
+ * `levels` is the agent's record of the thinking levels each model offers,
+ * which this session adds to and lists its models with.
  */
 export function acpSession(
   options: AcpOptions,
   start: Start,
-): Session {
+  heardModes?: (modes: { id: string; name: string }[]) => void,
+  levels: Map<string, Choice[]> = new Map(),
+): Promise<Session> {
   const provider = options.provider ?? 'acp';
   const emit = start.emit;
   /*
@@ -106,6 +114,8 @@ export function acpSession(
   const ctx = {
     options,
     start,
+    heardModes,
+    levels,
     provider,
     emit,
     cwd,
@@ -131,6 +141,9 @@ export function acpSession(
     pendingTurns: [],
     replaced: new Set<string>(),
     mapping: undefined,
+    keeping: Promise.resolve(),
+    waiting: 0,
+    keptCount: 0,
     cumulative: undefined,
     live: undefined,
     acpSessionId: undefined,
@@ -167,7 +180,7 @@ export function acpSession(
   /** The model a client picked, taken by the next send: the server keeps a model it took. */
   let chosen: Chosen | undefined;
 
-  return {
+  const session: Session = {
     uri: start.uri,
     chatUri: start.chatUri,
 
@@ -242,34 +255,40 @@ export function acpSession(
     modifiedAt: () => modified,
     workingDirectories: () => [uriOf(cwd)],
 
-    sessionState: () => ({
-      // No `resource`: it is declared on `SessionSummary` and not on
-      // `SessionState`, and a client subscribed to this channel named it.
-      provider,
-      title: ctx.title,
-      status: ctx.status(),
-      lifecycle: 'ready',
-      defaultChat: start.chatUri,
-      chats: [{ resource: start.chatUri, title: ctx.title }],
-      workingDirectories: [uriOf(cwd)],
-      customizations: [...seeds, ...ctx.commands],
+    sessionState: () => {
       /*
-       * The calls this session has out with its clients, which is what a client
-       * connecting now draws the request from: the entries were raised as
-       * actions while nobody was watching, and a session whose state did not
-       * carry them would be one whose request only a client that was there
-       * already could answer.
+       * What this session waits on: the permissions and questions the server
+       * is blocked on and the calls it has out with its clients, which is what
+       * a client connecting now draws each request from. The entries were
+       * raised as actions while nobody was watching, and a session whose state
+       * did not carry them would be one whose request only a client that was
+       * there already could answer, as the pi and cofold sessions list theirs.
        *
        * Set only while there are any, so a key that is always present and
        * sometimes empty is not a thing a client has to guess about.
        */
-      ...(ctx.calls.entries().length > 0 ? { inputNeeded: ctx.calls.entries() } : {}),
-      // The schema *and* what is in force: a client reads
-      // `config.schema.properties` for the controls and `config.values` for
-      // where each one sits. The schema carries the server's modes once they
-      // are known, so `permissionMode` has an enum exactly when it can have one.
-      config: { schema: ctx.schemaOf(), values: { ...values } },
-    }),
+      const needed = [...ctx.permissions.values(), ...ctx.elicitations.values()]
+        .flatMap((one) => (one.entry === undefined ? [] : [one.entry]))
+        .concat(ctx.calls.entries());
+      return {
+        // No `resource`: it is declared on `SessionSummary` and not on
+        // `SessionState`, and a client subscribed to this channel named it.
+        provider,
+        title: ctx.title,
+        status: ctx.status(),
+        lifecycle: 'ready',
+        defaultChat: start.chatUri,
+        chats: [{ resource: start.chatUri, title: ctx.title }],
+        workingDirectories: [uriOf(cwd)],
+        customizations: [...seeds, ...ctx.commands],
+        ...(needed.length > 0 ? { inputNeeded: needed } : {}),
+        // The schema *and* what is in force: a client reads
+        // `config.schema.properties` for the controls and `config.values` for
+        // where each one sits. The schema carries the server's modes once they
+        // are known, so `permissionMode` has an enum exactly when it can have one.
+        config: { schema: ctx.schemaOf(), values: { ...values } },
+      };
+    },
 
     chatState: () => ({
       resource: start.chatUri,
@@ -411,7 +430,7 @@ export function acpSession(
       const saying = connection !== undefined && ctx.closes && ctx.acpSessionId !== undefined
         ? Promise.race([
             connection.closeSession(ctx.acpSessionId).catch(() => {}),
-            new Promise((resolve) => { setTimeout(resolve, CLOSE_GRACE_MS).unref(); }),
+            new Promise((resolve) => { setTimeout(resolve, ctx.options.closeGraceMs ?? CLOSE_GRACE_MS).unref(); }),
           ])
         : undefined;
       // The catalogue's record is deliberately kept: the server still holds the
@@ -425,4 +444,16 @@ export function acpSession(
       await connection?.close();
     },
   };
+  /*
+   * The server is opened before the session is answered, so the state a
+   * client is first served carries what the server offers, its modes, its
+   * options and its models, as VS Code seeds a session's config and schema
+   * before its first snapshot. It is built from what the record says now. An
+   * open that fails, or a record that can no longer be used, is the first
+   * turn's to say: that turn opens the server again, and ends with the
+   * failure it meets.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
+   */
+  if (ctx.refreshOptions() !== undefined) return Promise.resolve(session);
+  return ctx.open().then(() => session, () => session);
 }

@@ -1,17 +1,19 @@
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import { getSessionInfo, startup } from '@anthropic-ai/claude-agent-sdk';
+import type { Query as SdkQuery } from '@anthropic-ai/claude-agent-sdk';
 import { idOf, mergeLogicalTurnUsage, reason, steerPart } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
-import type { HookCallback, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
+import type { HookCallback, Options, query, SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { clearFor } from '../catalog.js';
 import { bag, list, str, UUID } from './common.js';
-import type { SessionContext } from './context.js';
+import type { PendingSdkMessage, SessionContext } from './context.js';
 import { contextOf } from './contextusage.js';
 import type { ContextFigure } from './contextusage.js';
 import { accountOf, limitsOf, noteAccount, noteLimit, refreshLimits } from './limits.js';
 import { learnLimits, limitOf } from './parts.js';
 import { BEFORE_TOKEN } from '../logins.js';
+import { claudeManagedSettingsOf } from '../managed.js';
 import { HOST_SHELL_TOOL, hostHoldsTasks, hostRunsShell, ownEnvOf, OWN_TASK_TOOLS, queryOptionsOf } from '../options.js';
-import { agentNameOf } from './customizations.js';
+import { resolveClaudeAgentName } from './customizations.js';
 
 /**
  * The settings files one session loads, from the two answers it was started
@@ -33,7 +35,9 @@ const settingSourcesOf = (trusted: boolean, userSettings: boolean): SettingSourc
 };
 
 /**
- * How long the CLI has to answer its handshake before it is a CLI that died.
+ * How long the CLI has to answer its handshake before it is a CLI that died:
+ * the bound the SDK's `startup` is handed as its own, the 120 seconds decided
+ * in `.project/plans/claude/22-a-claude-session-fails-cleanly/plan.md`.
  *
  * A cold start with several MCP servers is slow, which is the whole reason the
  * bound is this generous; a deployment whose machines are slower still raises
@@ -44,35 +48,48 @@ const HANDSHAKE_MS = 120000;
 /** What this area offers the rest of the session. */
 export interface Query {
   /**
-   * Messages waiting to go out on the CLI's input stream.
-   *
-   * The SDK's own shape, because a message with attachments goes as content
-   * blocks rather than as the string one without carries.
+   * The prompts to go out on the CLI's input stream, in the order they were
+   * pushed: VS Code's queue's to-yield list, the first of the two a pending
+   * message goes through. A prompt whose blocks are still being built holds
+   * the ones behind it back.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L57
    */
-  waiting: SDKUserMessage[];
+  toYield: PendingSdkMessage[];
   /**
-   * A query for this session, on the agent named.
+   * Start a CLI for this session on the agent named, and read it: the query
+   * this session reads from then on, asked what it has until one answers. A
+   * start that fails rejects with the SDK's words.
    *
    * `cut` is the chain entry a query that is not the first resumes at, which
    * drops what came after it, as a rewind drops it.
    */
-  startQuery: (agent: string | undefined, first: boolean, cut?: string) => ReturnType<typeof query>;
-  /** The backend's id for the *last* thing in each turn, by this host's turn id. */
-  ends: Map<string, string>;
+  startQuery: (agent: string | undefined, first: boolean, cut?: string) => Promise<void>;
+  /** Take the session off a CLI still starting, which a stop that aborts the query leaves nobody to answer. */
+  abandonStart: () => void;
+  /** Each turn's fork anchor, the backend's id for the last thing in it, by this host's turn id. */
+  forkAnchorUuids: Map<string, string>;
   /** Ask the CLI for a model, and say why it would not take it if it will not. */
   take: (id: string) => Promise<string | undefined>;
-  /** Move this session's CLI onto the agent a message picked, if it is not already there. */
-  switchAgent: (uri: string | undefined) => string | undefined;
   /**
-   * Read a record's values again, find the turn's login, and move the CLI onto
-   * them when either changed.
+   * Start this session's CLI again on the agent a message picked, when it is
+   * running another: VS Code's pipeline's `rebindForRestart`, which its
+   * session's send runs for state that moved. Before the first send the pick
+   * is the agent the first CLI starts on.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L321-L323
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1141-L1145
+   */
+  rebindForRestart: (uri: string | undefined) => Promise<string | undefined>;
+  /**
+   * Read a record's values again, find the turn's login, and start the CLI
+   * again on them when either changed: VS Code's session's rebind for synced
+   * state, at the send. Before the first send they are what the first CLI
+   * starts from.
    *
    * A preset's values stay as they were read, and only its login can change. A
    * refusal is a sentence for the turn that asked.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1072-L1080
    */
-  refreshPreset: () => string | undefined;
-  /** Read one CLI's frames until it ends. */
-  consume: () => Promise<void>;
+  rebindForSyncedState: () => Promise<string | undefined>;
   /** End the turn now running as one that failed, and leave the session as it is. */
   failTurn: (why: string) => void;
   /**
@@ -95,17 +112,18 @@ export interface Query {
 }
 
 /**
- * Where each turn a resumed session opens with ended, from where each turn of
- * its transcript's read ended, in the read's order.
+ * The fork anchor of each turn a resumed session opens with, from the anchors
+ * its transcript's read resolved, in the read's order: VS Code's
+ * `resolveForkAnchorUuid` for every turn at once.
  *
- * The host reads a turn back with the ones the chat never began inside it, as
- * a steering message the CLI ran after the turn's last answer, so such a turn
- * ends where the last of those ends: they follow it in the read, before the
- * next turn the session opens with. Nothing is taken past a rewind's point,
- * which is the last entry the conversation keeps. A session that opens with no
- * turns named takes the read as it is.
+ * The host reads one turn run twice back as one turn, under its first run's
+ * id, so such a turn's anchor is its later run's: that run follows it in the
+ * read, before the next turn the session opens with. Nothing is taken past a
+ * rewind's point, which is the last entry the conversation keeps. A session
+ * that opens with no turns named takes the read as it is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L72-L112
  */
-function endsOf(seed: readonly Bag[] | undefined, read: ReadonlyMap<string, string> | undefined, rewindAt: string | undefined): Map<string, string> {
+function resolveForkAnchorUuids(seed: readonly Bag[] | undefined, read: ReadonlyMap<string, string> | undefined, rewindAt: string | undefined): Map<string, string> {
   if (seed === undefined) return new Map(read ?? []);
   const opens = new Set(seed.flatMap((turn) => str(turn.id) ?? []));
   const out = new Map<string, string>();
@@ -129,19 +147,17 @@ export function createQuery(ctx: SessionContext): Query {
   const fromPreset = (): Bag => queryOptionsOf(ctx.values);
 
   /**
-   * Whatever the host holds the list, the query is built the same way.
-   *
-   * A person's own deny list, and `TodoWrite`, `TaskCreate`, `TaskUpdate`,
-   * `TaskList` and `TaskGet` too when the host holds the list. `Bash` too when
-   * the host runs the shell, with its name aliased to the host's tool, so a
-   * call a skill wrote for `Bash` reaches the shell the person can see. A host
-   * that does neither leaves the harness's own tools where they are.
+   * The tools taken from the model: `TodoWrite`, `TaskCreate`, `TaskUpdate`,
+   * `TaskList` and `TaskGet` when the host holds the task list, and `Bash`
+   * when the host runs the shell, with its name aliased to the host's tool, so
+   * a call a skill wrote for `Bash` reaches the shell the person can see. A
+   * person's denials are the permission check's, which refuses a denied call
+   * when the CLI asks about it, as VS Code's Claude leaves them.
    */
   const denyOption = (): Bag => {
-    const deny = [...ctx.allowed.deny];
-    if (hostHoldsTasks(ctx.values, ctx.offering)) for (const name of OWN_TASK_TOOLS) if (!deny.includes(name)) deny.push(name);
+    const deny: string[] = hostHoldsTasks(ctx.values, ctx.offering) ? [...OWN_TASK_TOOLS] : [];
     const shell = hostRunsShell(ctx.offering);
-    if (shell && !deny.includes('Bash')) deny.push('Bash');
+    if (shell) deny.push('Bash');
     return {
       ...(deny.length > 0 ? { disallowedTools: deny } : {}),
       ...(shell ? { toolAliases: { Bash: HOST_SHELL_TOOL } } : {}),
@@ -194,6 +210,38 @@ export function createQuery(ctx: SessionContext): Query {
   const denied = ctx.options.deniedMcpServers ?? [];
 
   /**
+   * The operator's managed settings in Claude Code's grammar, which every CLI
+   * of this session holds as its policy tier, the calls it answers without
+   * asking included. Read once: the host hands them at the start.
+   */
+  const managed = claudeManagedSettingsOf(ctx.options.managedSettings, ctx.options.cwd);
+
+  /**
+   * The CLI's own settings a query starts with, where this session adds to
+   * the preset's.
+   *
+   * The servers of a plugin that a client switched off, which the CLI is told
+   * not to run: a plugin is loaded from a directory the CLI reads itself, so a
+   * server the host left out of `mcpServers` can still be found there, and the
+   * CLI's settings are the only place it takes such a list from. And the
+   * plugins this session switched, as `enabledPlugins`, which the CLI reads
+   * when it loads its plugins, so a CLI starts with each switch a client made,
+   * the first CLI with those made before it. Merged with whatever a preset
+   * already put there, so a declared value is added to rather than replaced.
+   */
+  const settingsOption = (): Bag => {
+    const plugins = ctx.enabledPlugins();
+    if (denied.length === 0 && Object.keys(plugins).length === 0) return {};
+    return {
+      settings: {
+        ...bag(fromPreset().settings),
+        ...(denied.length === 0 ? {} : { deniedMcpServers: denied.map((serverName) => ({ serverName })) }),
+        ...(Object.keys(plugins).length === 0 ? {} : { enabledPlugins: plugins }),
+      },
+    };
+  };
+
+  /**
    * An environment the CLI starts with, with what it signs in with laid over:
    * the login the turn runs on, or a credential a client pushed.
    *
@@ -239,21 +287,23 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   /**
-   * The environment that turns Claude's own task tools on, where Claude keeps them.
+   * The environment that turns Claude's own task tools off, where Claude keeps them.
    *
-   * `CLAUDE_CODE_ENABLE_TASKS` is the CLI's switch. It is set only when the
-   * host has not taken the tools' place and `enableTasks` is on, and a value a
-   * preset's own `env` gives is kept rather than written over. A machine gets
-   * the variable on the one command that starts its CLI, like every other
-   * variable a variant names.
+   * `CLAUDE_CODE_ENABLE_TASKS` is the CLI's switch: the Task tools are its
+   * default, and `0` selects the legacy `TodoWrite` instead. So it is set, to
+   * `0`, only when the host has not taken the tools' place and `enableTasks`
+   * is off, and a value a preset's own `env` gives is kept rather than
+   * written over. A machine gets the variable on the one command that starts
+   * its CLI, like every other variable a variant names.
+   * https://code.claude.com/docs/en/env-vars
    */
   const taskToolsEnv = (): Bag => {
-    if (ctx.values['enableTasks'] === false || hostHoldsTasks(ctx.values, ctx.offering)) return {};
+    if (ctx.values['enableTasks'] !== false || hostHoldsTasks(ctx.values, ctx.offering)) return {};
     const env = ctx.options.spawn === undefined
       ? signedIn(fromPreset().env as Bag | undefined ?? process.env)
       : inMachine();
     if (env.CLAUDE_CODE_ENABLE_TASKS !== undefined) return {};
-    return { env: { ...env, CLAUDE_CODE_ENABLE_TASKS: '1' } };
+    return { env: { ...env, CLAUDE_CODE_ENABLE_TASKS: '0' } };
   };
 
   /**
@@ -263,22 +313,17 @@ export function createQuery(ctx: SessionContext): Query {
    * client made up goes to the CLI instead, which invents one the host records
    * once the CLI says what it is.
    *
-   * The CLI takes the name only on a clean transcript, so a transcript of it
-   * that holds no conversation is cleared first. A session in a machine keeps
-   * its files there, out of this host's reach.
+   * The CLI takes the name only on a clean transcript, so `startQuery` clears
+   * a transcript of it that the SDK holds no session in before the CLI starts.
    */
-  const namedUnder = (id: string): { sessionId: string } | Record<string, never> => {
-    if (!UUID.test(id)) return {};
-    if (ctx.options.spawn === undefined) clearFor(id, ctx.options.cwd);
-    return { sessionId: id };
-  };
+  const namedUnder = (id: string): { sessionId: string } | Record<string, never> => (UUID.test(id) ? { sessionId: id } : {});
 
-  // The input stream. A query with a live stream stays open between turns,
-  // which is what makes a session a session rather than a series of them.
-  const waiting: SDKUserMessage[] = [];
+  // The input stream's queue. A query with a live stream stays open between
+  // turns, which is what makes a session one conversation.
+  const toYield: PendingSdkMessage[] = [];
 
   /**
-   * Which query reads `waiting` now: the count of queries this session built.
+   * Which query reads `toYield` now: the count of queries this session built.
    *
    * The list outlives a query, so a prompt pushed while a new CLI starts waits
    * there for that CLI. The SDK reads a new query's input only once its
@@ -293,19 +338,27 @@ export function createQuery(ctx: SessionContext): Query {
    */
   let bound = 0;
 
-  async function* input(mine: number): AsyncGenerator<(typeof waiting)[number]> {
+  /**
+   * The input stream one query reads: VS Code's prompt queue's `iterable`,
+   * handed to the query as its prompt. Each prompt it hands the SDK moves
+   * from the to-yield list to the yielded one, as the reference's does, and a
+   * steering message the session held as waiting is said taken out as it goes.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L43-L44
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudePromptQueue.ts#L64-L91
+   */
+  async function* iterable(mine: number): AsyncGenerator<SDKUserMessage> {
     for (;;) {
-      while (mine === bound && waiting.length > 0) {
-        const next = waiting.shift() as (typeof waiting)[number];
-        yield next;
-        if (ctx.steering !== undefined) {
-          const said = ctx.steering;
+      while (mine === bound && toYield[0]?.sdkMessage !== undefined) {
+        const next = toYield.shift() as PendingSdkMessage;
+        ctx.yielded.set(next.sdkUuid, next);
+        if (next.steeringPendingId !== undefined && str(bag(ctx.steering).id) === next.steeringPendingId) {
           ctx.steering = undefined;
-          ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: String(said.id ?? '') });
+          ctx.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: next.steeringPendingId });
         }
+        yield next.sdkMessage as SDKUserMessage;
       }
-      if (ctx.closed || mine !== bound) return;
-      await new Promise<void>((resolve) => { ctx.wake = resolve; });
+      if (ctx.disposed || mine !== bound) return;
+      await new Promise<void>((resolve) => { ctx.pendingPromptDeferred = resolve; });
     }
   }
 
@@ -325,7 +378,7 @@ export function createQuery(ctx: SessionContext): Query {
       const attempt = Date.now() - ctx.startedAt;
       turn.duration = (ctx.resumedFrom?.duration ?? 0) + attempt;
       ctx.resumedFrom = undefined;
-      ctx.settleOpen(turn);
+      ctx.clearPendingToolCalls(turn);
       const part = ctx.addFailure(turn, 'sendFailed', why);
       ctx.turns.push(turn);
       ctx.active = undefined;
@@ -335,8 +388,7 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   /**
-   * Put away a CLI that died, never answered its handshake or ended its stream
-   * without a result.
+   * Put away a CLI that died or ended its stream without a result.
    *
    * The turn it was answering fails for the reason given, what it was handed
    * goes with it, and the next send starts a CLI that resumes the
@@ -347,67 +399,20 @@ export function createQuery(ctx: SessionContext): Query {
   const putAway = (handle: unknown, why: string): void => {
     ctx.rebind = handle;
     ctx.gone = why;
-    ctx.waiting.length = 0;
-    ctx.owed.clear();
-    ctx.answering = undefined;
+    ctx.toYield.length = 0;
+    ctx.yielded.clear();
+    ctx.parentSdkUuid = undefined;
     ctx.steering = undefined;
     failTurn(why);
     ctx.sendNext();
   };
 
   /**
-   * A CLI that has not answered its handshake is a CLI that died.
-   *
-   * `initializationResult` is the one call that says the process is up and
-   * talking: it is answered when the CLI takes the control request the SDK
-   * sends at startup, and rejected when there is nothing there to take it. A
-   * CLI that is there and silent - a machine whose `docker exec` never returns,
-   * a wrapper waiting on something that will not come - leaves the query alive
-   * and every turn after it unanswered, which is a session drawn as thinking
-   * for as long as anyone watches. The bound is what turns that into the
-   * ending a dead CLI gets.
-   *
-   * The timer is cleared by whichever answer comes, and a query this host has
-   * since put away fails nothing: it is not the CLI this session is reading.
-   *
-   * The query comes back out, so the builder reads as what it always was: the
-   * bound is put on the way through and not built into anything.
+   * The client's shell init script a CLI of this session takes: the bash
+   * script in force, for a CLI that runs on this host, where its file is.
    */
-  const bounded = (handle: ReturnType<typeof query>): ReturnType<typeof query> => {
-    const within = ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS;
-    const timer = setTimeout(() => {
-      if (ctx.query !== handle || ctx.rebind === handle) return;
-      putAway(handle, `Claude Code did not answer within ${within / 1000} seconds`);
-      /*
-       * Closed rather than left running: a CLI that answers ten minutes later
-       * would be a process nobody is reading, for a session that has already
-       * failed, and the turn it was going to answer is over.
-       */
-      try { handle.close(); }
-      catch { /* Closing something already closing is the same ending. */ }
-    }, within);
-    const answered = (): void => { clearTimeout(timer); };
-    void handle.initializationResult().then(answered, answered);
-    return handle;
-  };
+  const initScriptFor = (): string | undefined => (ctx.options.spawn === undefined ? ctx.scriptInForce() : undefined);
 
-  /**
-   * A query for this session, on the agent named, carrying the conversation
-   * this session already has.
-   *
-   * A function rather than a single call because the agent a message picks is
-   * read after the CLI has already been started, and the SDK takes `agent` at
-   * startup: a send that picks a different one has to ask for a new CLI and
-   * resume the conversation into it. Only the agent and the conversation move;
-   * every other option is read from the same places in every call.
-   *
-   * `first` is how this conversation is picked up, which is a fact about the
-   * query that opened it. A rebuild asks again for nothing: it resumes the id
-   * the CLI gave this session, which is the whole of what carries it over.
-   *
-   * Every query built here goes out with the bound on its handshake, which is
-   * this one place rather than the two a session starts one from.
-   */
   /**
    * The operator's environment for the session's shells, handed to the CLI as
    * VS Code's Claude hands its own: a name set goes in the CLI's
@@ -416,10 +421,16 @@ export function createQuery(ctx: SessionContext): Query {
    * commands inherit. Each command runs as the model wrote it.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L129-L150
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkOptions.ts#L178
+   *
+   * A client's shell init script in force goes in the same `settings.env`, as
+   * `CLAUDE_ENV_FILE`, the CLI's session environment file: a script whose
+   * contents the CLI runs before each Bash command in the same shell process.
+   * https://code.claude.com/docs/en/hooks#persist-environment-variables
    */
   const withShellEnv = (options: Bag): Bag => {
     const entries = Object.entries(ctx.options.shellEnv ?? {});
-    const set = Object.fromEntries(entries.filter((entry): entry is [string, string] => entry[1] !== null));
+    const set: Record<string, string> = Object.fromEntries(entries.filter((entry): entry is [string, string] => entry[1] !== null));
+    if (initScriptFor() !== undefined) set.CLAUDE_ENV_FILE = ctx.initScript;
     const removed = entries.filter(([, value]) => value === null).map(([name]) => name);
     const out: Bag = { ...options };
     if (Object.keys(set).length > 0) {
@@ -434,9 +445,22 @@ export function createQuery(ctx: SessionContext): Query {
     return out;
   };
 
-  const buildQuery = (agent: string | undefined, first: boolean, cut?: string): ReturnType<typeof query> => bounded(query({
-    prompt: input(bound),
-    options: withShellEnv({
+  /**
+   * The options of a CLI for this session, on the agent named, carrying the
+   * conversation this session already has.
+   *
+   * A function rather than a single value because the agent a message picks is
+   * read after the CLI has already been started, and the SDK takes `agent` at
+   * startup: a send that picks a different one has to ask for a new CLI and
+   * resume the conversation into it. Only the agent and the conversation move;
+   * every other option is read from the same places in every call.
+   *
+   * `first` is how this conversation is picked up, which is a fact about the
+   * query that opened it. A rebuild asks again for nothing: it resumes the id
+   * the CLI gave this session, which is the whole of what carries it over.
+   */
+  const optionsFor = (agent: string | undefined, first: boolean, cut?: string): Options => withShellEnv(
+    {
       cwd: ctx.options.cwd,
       /*
        * Where the CLI runs, when it is not here.
@@ -452,9 +476,9 @@ export function createQuery(ctx: SessionContext): Query {
         pathToClaudeCodeExecutable: ctx.options.spawnExecutable ?? 'claude',
         spawnClaudeCodeProcess: ctx.options.spawn as never,
       }),
-      // The peers of `cwd`, which the SDK takes at startup. The first entry is
-      // the process root and is not one of these.
-      ...(ctx.peers.length > 0 ? { additionalDirectories: [...ctx.peers] } : {}),
+      // The directories beside `cwd`, which the SDK takes at startup. The first
+      // entry of the session's working directories is the process root, `cwd`.
+      ...(ctx.additionalDirectories.length > 0 ? { additionalDirectories: [...ctx.additionalDirectories] } : {}),
       /*
        * The MCP servers, declared here rather than found by the CLI.
        *
@@ -523,23 +547,8 @@ export function createQuery(ctx: SessionContext): Query {
        * inherits the daemon's environment, as an automation's does.
        */
       ...fromPreset(),
-      /*
-       * The servers of a plugin that a client switched off, which the CLI is
-       * told not to run.
-       *
-       * A plugin is loaded from a directory the CLI reads itself, so a server
-       * the host left out of `mcpServers` can still be found there. Named in
-       * the CLI's own settings rather than left to the host's word alone,
-       * which is the only place the CLI takes such a list from. Merged with
-       * whatever a preset already put there, so a declared value is added to
-       * rather than replaced.
-       */
-      ...(denied.length === 0 ? {} : {
-        settings: {
-          ...bag(fromPreset().settings),
-          deniedMcpServers: denied.map((serverName) => ({ serverName })),
-        },
-      }),
+      ...settingsOption(),
+      ...(managed === undefined ? {} : { managedSettings: managed }),
       ...(ctx.login !== undefined || ctx.options.env ? { env: signedIn(fromPreset().env as Bag | undefined ?? process.env) } : {}),
       // In a machine, the env above is replaced by the variant's own alone.
       ...(ctx.options.spawn === undefined ? {} : { env: inMachine() }),
@@ -547,7 +556,7 @@ export function createQuery(ctx: SessionContext): Query {
       ...taskToolsEnv(),
       // From the settings, which is where it lives: it is a config key like
       // the others, and a second way in was a second thing to keep in step.
-      ...(typeof ctx.settings.permissionMode === 'string' ? { permissionMode: ctx.settings.permissionMode } : {}),
+      ...(typeof ctx.config.permissionMode === 'string' ? { permissionMode: ctx.config.permissionMode } : {}),
       /*
        * The model this session is on, which the CLI only reads at startup.
        *
@@ -558,21 +567,9 @@ export function createQuery(ctx: SessionContext): Query {
        * exactly as `take` leaves it off.
        */
       ...(ctx.chosen && ctx.chosen !== 'default' ? { model: ctx.chosen } : {}),
-      // Before every shell command, any client script in force; before every
-      // call, the question for a tool the operator's rule names; on every
-      // prompt, what the host asked said on that turn; and at the end of each
-      // turn, what the CLI still has in hand.
+      // On every prompt, what the host asked said on that turn; and at the end
+      // of each turn, what the CLI still has in hand.
       hooks: {
-        PreToolUse: [
-          { matcher: 'Bash', hooks: [ctx.sourceFirst] },
-          /*
-           * No matcher, so every tool reaches it and the hook itself reads the
-           * rule. A day, because a person may take one: the CLI's default
-           * timeout is far shorter than an answer can be, and a hook that gave
-           * up would leave the question on the chat and the call refused.
-           */
-          { hooks: [ctx.ruleFirst], timeout: 24 * 60 * 60 },
-        ],
         UserPromptSubmit: [{ hooks: [giveHostInstructions] }],
         Stop: [{ hooks: [keepStopped] }],
       },
@@ -614,8 +611,8 @@ export function createQuery(ctx: SessionContext): Query {
        * one written by two CLIs, which is what a peer chat is for.
        */
       ...(first
-        ? (ctx.options.resume === undefined
-          ? namedUnder(ctx.options.chatId ?? idOf(ctx.options.uri))
+        ? (ctx.options.resume === undefined || ctx.unwritten
+          ? namedUnder(ctx.options.chatId ?? (ctx.unwritten ? ctx.options.resume : undefined) ?? idOf(ctx.options.uri))
           : {
             // Resumed, not replayed: the agent picks up the context it built -
             // the files it read, the decisions it made - rather than being
@@ -640,8 +637,8 @@ export function createQuery(ctx: SessionContext): Query {
              */
             ...(!ctx.options.forkAt && ctx.options.rewindAt ? { resumeSessionAt: ctx.options.rewindAt } : {}),
           })
-        : (ctx.agentId !== undefined
-          ? { resume: ctx.agentId, ...(cut === undefined ? {} : { resumeSessionAt: cut }) }
+        : (ctx.sdkSessionId !== undefined
+          ? { resume: ctx.sdkSessionId, ...(cut === undefined ? {} : { resumeSessionAt: cut }) }
           : namedUnder(ctx.options.chatId ?? idOf(ctx.options.uri)))),
       /*
        * The agent the main thread runs as, which the CLI reads at startup.
@@ -651,63 +648,136 @@ export function createQuery(ctx: SessionContext): Query {
        */
       ...(agent === undefined ? {} : { agent }),
       canUseTool: ctx.canUseTool,
-    }),
-  } as Parameters<typeof query>[0]));
+    },
+  ) as Options;
 
   /**
-   * What a CLI is started from, as the string `startedWith` holds: the record's
+   * What a CLI is started from, as the string `appliedValues` holds: the record's
    * values and the login, with its token, since a put that replaces a login's
-   * token leaves the values as they were.
+   * token leaves the values as they were; and the client's shell init script,
+   * which the CLI reads from its session environment file once and keeps, so a
+   * changed script reaches a CLI started again, at the send after it, as
+   * VS Code's Copilot applies a changed script as a turn starts.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L6570-L6577
    */
   const startedFrom = (values: Bag, login: SessionContext['login']): string =>
-    JSON.stringify({ values, login: login?.id ?? null, token: login?.token ?? null });
+    JSON.stringify({ values, login: login?.id ?? null, token: login?.token ?? null, script: initScriptFor() ?? null });
 
   /**
-   * A query for this session, and what it was built from.
+   * A CLI for this session, what it was built from, and its reader.
    *
    * The values and the login are recorded here rather than at each call site,
    * because every query a session builds is one of these: `begin` is where the
    * record is read again and the login chosen again, and it compares both
    * against what the CLI answering now was started with.
    *
-   * The new query is the one that reads `waiting` from here on. The reader of
-   * the one it replaces is woken so that it ends, and the wake is cleared, so a
-   * prompt pushed before the new reader starts waits for it rather than waking
-   * the old one, as the reference wakes a reader whose query is aborted and
-   * gives the next binding a wait of its own.
+   * The new query is the one that reads `toYield` from here on. The pending
+   * prompt the reader of the one it replaces waits on is completed so that it
+   * ends, and cleared, so a prompt pushed before the new reader starts waits
+   * for that reader, as the reference completes the deferred of a reader whose
+   * query is aborted and gives the next binding a deferred of its own.
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L518-L522
    * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L626-L629
+   *
+   * It is started as VS Code's Claude session starts one, through the SDK's
+   * `startup`, which spawns the CLI and waits for its handshake under the
+   * SDK's own bound: a CLI that does not answer within it rejects the start in
+   * the SDK's words, which fail the turn that asked, and the next send starts
+   * one again. A start the session's close, or a stop that aborts the query,
+   * overtook while it ran is disposed of once it is up, as VS Code disposes of
+   * a startup its abort overtook.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L676-L681
+   *
+   * It is bound as the query this session talks to, as the reference binds
+   * the stream it builds, and read until it ends; and until a CLI has answered
+   * what it has, this one is asked.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L175-L185
    */
-  const startQuery = (agent: string | undefined, first: boolean, cut?: string): ReturnType<typeof query> => {
-    ctx.startedWith = startedFrom(ctx.values, ctx.login);
+  const startQuery = async (agent: string | undefined, first: boolean, cut?: string): Promise<void> => {
+    ctx.appliedValues = startedFrom(ctx.values, ctx.login);
     bound += 1;
-    const replaced = ctx.wake;
-    ctx.wake = undefined;
+    const mine = bound;
+    const replaced = ctx.pendingPromptDeferred;
+    ctx.pendingPromptDeferred = undefined;
     replaced?.();
-    // A new CLI owes nothing: what the last one was handed went with it, and
-    // it runs at its model's own effort until a turn names one.
-    ctx.owed.clear();
-    ctx.answering = undefined;
+    // A new CLI has no yielded entries: what the last one was handed went with
+    // it, and it runs at its model's own effort until a turn names one.
+    ctx.yielded.clear();
+    ctx.parentSdkUuid = undefined;
     ctx.appliedEffort = undefined;
-    const built = buildQuery(agent, first, cut);
-    void built.initializationResult().then(() => introduce(built), () => {});
-    return built;
+    ctx.gone = undefined;
+    /*
+     * Whether the conversation asked for is written, asked of the SDK as the
+     * first CLI starts, as VS Code's Claude asks `getSessionInfo` as it
+     * materializes a session; nothing written starts a conversation under
+     * that id.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1720-L1736
+     */
+    if (first && ctx.options.resume !== undefined && ctx.options.spawn === undefined) {
+      ctx.unwritten = (await getSessionInfo(ctx.options.resume)) === undefined;
+      // Nothing is written under any name until the CLI says its own.
+      if (ctx.unwritten) ctx.sdkSessionId = undefined;
+    }
+    const options = optionsFor(agent, first, cut);
+    /*
+     * A CLI named under an id starts on a clean transcript, cleared once the
+     * CLIs that could write it have exited: this session's last, which the
+     * caller has closed, and a closed session's of the same conversation, as
+     * VS Code's Claude shuts the live query down before it deletes. A start
+     * the session's close or a later start overtook while it waited clears
+     * nothing, so only the start that runs the conversation clears it, as VS
+     * Code runs a start-over in its session's sequence. A session in a machine
+     * keeps its files there, out of this host's reach.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1133-L1160
+     */
+    const { sessionId } = options as { sessionId?: string };
+    if (sessionId !== undefined && ctx.options.spawn === undefined) {
+      await (ctx.query as unknown as { [Symbol.asyncDispose]?: () => Promise<void> } | undefined)?.[Symbol.asyncDispose]?.().catch(() => {});
+      await ctx.options.exits?.get(sessionId);
+      if (ctx.disposed || mine !== bound) throw new Error('The CLI was stopped while it started');
+      await clearFor(sessionId, ctx.options.cwd);
+    }
+    const warm = await startup({ options, initializeTimeoutMs: ctx.options.handshakeTimeoutMs ?? HANDSHAKE_MS });
+    if (ctx.disposed || mine !== bound) {
+      try { await warm[Symbol.asyncDispose](); }
+      catch { /* A CLI already gone is disposed of all the same. */ }
+      throw new Error('The CLI was stopped while it started');
+    }
+    const handle = warm.query(iterable(mine));
+    ctx.query = handle;
+    void consume(handle);
+    void ctx.describe().catch(() => {});
+    void handle.initializationResult().then(() => introduce(handle), () => {});
   };
 
   /**
-   * The backend's id for the *last* thing in each turn, by this host's turn id.
+   * Take the session off a CLI still starting, which a stop that aborts the
+   * query leaves nobody to answer: the start is disposed of once it is up, and
+   * the reader of the CLI before it ends.
+   */
+  const abandonStart = (): void => {
+    bound += 1;
+    const replaced = ctx.pendingPromptDeferred;
+    ctx.pendingPromptDeferred = undefined;
+    replaced?.();
+  };
+
+  /**
+   * Each turn's fork anchor, the backend's id for the last thing in it, by
+   * this host's turn id: the uuid VS Code's Claude resolves for a fork and
+   * stages for a rewind as its `resumeAnchorUuid`.
    *
    * What both cuts take. A rewind keeps the turn and drops what came after it,
    * a fork copies the conversation through it, and the SDK's rule for
    * `resumeSessionAt` is the same either way: the kept turn's last chain entry,
-   * whatever it is. Cutting at the prompt instead keeps the question and drops
-   * the answer to it, which is a turn a client can still see and the agent no
-   * longer remembers giving.
+   * whatever it is. The turn's answer is kept with it, which the agent then
+   * remembers giving as a client sees it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L545-L558
    *
-   * A resumed session starts with the ends its transcript's read named for
-   * the turns it opens with, and every turn it watches adds its own.
+   * A resumed session starts with the anchors its transcript's read resolved
+   * for the turns it opens with, and every turn it watches adds its own.
    */
-  const ends = new Map<string, string>(endsOf(ctx.options.seed, ctx.options.seedEnds, ctx.options.rewindAt));
+  const forkAnchorUuids = new Map<string, string>(resolveForkAnchorUuids(ctx.options.seed, ctx.options.seedForkAnchorUuids, ctx.options.rewindAt));
 
   /**
    * Ask the CLI for a model, and say why it would not take it if it will not.
@@ -720,7 +790,7 @@ export function createQuery(ctx: SessionContext): Query {
    */
   const take = async (id: string): Promise<string | undefined> => {
     try {
-      await ctx.query.setModel(id === 'default' ? undefined : id);
+      await ctx.query?.setModel(id === 'default' ? undefined : id);
       return undefined;
     }
     catch (error: unknown) {
@@ -730,31 +800,42 @@ export function createQuery(ctx: SessionContext): Query {
   };
 
   /**
-   * Move this session's CLI onto the agent a message picked, if it is not
-   * already there.
+   * Start this session's CLI again on the agent a message picked, when it is
+   * running another.
    *
    * The SDK reads `agent` when the query is built and has nowhere to put a
-   * later one, so a pick that differs cannot be answered by the CLI already
-   * running: it has to be answered by a new CLI, resumed into the same
-   * conversation, before the turn's prompt goes out. A pick equal to what is
-   * running costs nothing, which is the ordinary case - the picker sends the
-   * same agent on every message.
+   * later one, so a pick that differs is answered by a new CLI, resumed into
+   * the same conversation, before the turn's prompt goes out. A pick equal to
+   * the applied agent costs nothing, which is the ordinary case: the picker
+   * sends the same agent on every message.
    *
    * No agent named means the CLI's own default, which is also what a query
-   * built without one runs on.
+   * built without one runs on. A session with no CLI yet starts its first on
+   * the agent picked, as VS Code's provisional session keeps the agent its
+   * first send materializes with.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L645
+   *
+   * A CLI that will not stop is a sentence the turn runs on beside the agent
+   * it has; one that does not start rejects, the CLI it replaced held for the
+   * next send to start again.
    */
-  const switchAgent = (uri: string | undefined): string | undefined => {
-    const name = uri === undefined ? undefined : agentNameOf(uri);
-    if (name === ctx.running) return undefined;
+  const rebindForRestart = async (uri: string | undefined): Promise<string | undefined> => {
+    const name = uri === undefined ? undefined : resolveClaudeAgentName(uri, ctx.options.parseYaml, ctx.values['fileMostBytes']);
+    if (name === ctx.appliedAgent) return undefined;
     const was = ctx.query;
-    try { was.close(); }
-    catch (error: unknown) {
-      return `The harness would not stop for agent ${name ?? 'default'}: ${error instanceof Error ? error.message : String(error)}`;
+    if (was !== undefined) {
+      // A CLI that will not close fails the send in the error's own words, as
+      // VS Code shows a failed send.
+      try { was.close(); }
+      catch (error: unknown) { return reason(error); }
     }
-    ctx.running = name;
-    ctx.gone = undefined;
-    ctx.query = startQuery(name, false);
-    void consume();
+    ctx.appliedAgent = name;
+    if (was === undefined) return undefined;
+    try { await startQuery(name, false); }
+    catch (error: unknown) {
+      ctx.rebind = was;
+      throw error;
+    }
     return undefined;
   };
 
@@ -764,8 +845,8 @@ export function createQuery(ctx: SessionContext): Query {
    * One call per query rather than one for the session, because a message that
    * picks another agent replaces the query and this has to be reading whichever
    * one is current. A loop that ended because it was replaced says nothing:
-   * `handle` is not the query it was reading, so its ending is this host's own
-   * doing and the session is exactly where it was.
+   * `mine` is not the query this session reads, so its ending is this host's
+   * own doing and the session is exactly where it was.
    */
 
   /**
@@ -834,7 +915,7 @@ export function createQuery(ctx: SessionContext): Query {
    * provider and nothing else. A missing method, a late answer and a failed
    * one are no answer.
    */
-  const askAccount = async (handle: ReturnType<typeof query>): Promise<unknown> => {
+  const askAccount = async (handle: SdkQuery): Promise<unknown> => {
     const ask = (handle as unknown as { accountInfo?: () => Promise<unknown> }).accountInfo;
     if (typeof ask !== 'function') return undefined;
     try {
@@ -854,8 +935,8 @@ export function createQuery(ctx: SessionContext): Query {
    * usage request then run together. A CLI this session has since put away
    * says nothing.
    */
-  const introduce = async (handle: ReturnType<typeof query>): Promise<void> => {
-    const current = (): boolean => ctx.query === handle && !ctx.closed;
+  const introduce = async (handle: SdkQuery): Promise<void> => {
+    const current = (): boolean => ctx.query === handle && !ctx.disposed;
     if (!current()) return;
     const account = await askAccount(handle);
     if (!current()) return;
@@ -895,22 +976,40 @@ export function createQuery(ctx: SessionContext): Query {
     ctx.emit('session', { type: 'session/metaChanged', ...(meta === undefined ? {} : { _meta: meta }) });
   };
 
-  const consume = async (): Promise<void> => {
-    const mine = ctx.query;
+  const consume = async (mine: ReturnType<typeof query>): Promise<void> => {
     try {
       for await (const raw of mine) {
-        // A CLI a stop closed is read no further, as the reference's reader ends once its query is aborted.
+        // A CLI put away for the next send to start again is read no further,
+        // as the reference's reader ends once its query is aborted.
         if (ctx.rebind === mine) break;
         const message = bag(raw as unknown);
         const type = str(message.type);
         // Every message carries it, so this needs no particular one to arrive.
         const said = str(message.session_id);
-        if (said) ctx.agentId = said;
+        if (said) ctx.sdkSessionId = said;
+        /*
+         * A stop waiting to interrupt the CLI until it has recorded the
+         * answers the stop gave. Each result reported for one of them is one
+         * fewer to wait for; the CLI starting on anything else has moved past
+         * them, and a result ends the turn with no interrupt owed.
+         */
+        if (ctx.stopAnswers !== undefined) {
+          if (type === 'user') {
+            for (const block of list(bag(message.message).content) as Bag[]) {
+              if (block.type === 'tool_result') ctx.stopAnswers.delete(str(block.tool_use_id) ?? '');
+            }
+          }
+          if (type === 'result') ctx.stopAnswers = undefined;
+          else if (ctx.stopAnswers.size === 0 || type === 'assistant' || type === 'stream_event') {
+            ctx.stopAnswers = undefined;
+            void mine.interrupt().catch(() => {});
+          }
+        }
 
         // The message stream's own init. Capabilities come from the control
         // protocol instead (see `describe`), because those are needed before
         // a turn; what this adds is the model the turn actually ran on.
-        if (type === 'system' && str(message.subtype) === 'init') { ctx.handshake = message; continue; }
+        if (type === 'system' && str(message.subtype) === 'init') { ctx.init = message; continue; }
 
         /*
          * The harness compacted its context.
@@ -923,22 +1022,14 @@ export function createQuery(ctx: SessionContext): Query {
          *
          * Said as a notice in the running turn instead, because somebody
          * watching an answer change character halfway through deserves to
-         * know why.
+         * know why, in the CLI's own words for the boundary, the text its
+         * transcript keeps for it, which VS Code's Claude draws as a notice.
+         * The frame carries no text of its own, and a turn read back shows
+         * none, since the SDK reads the boundary's entry with no message.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L305-L314
          */
         if (type === 'system' && str(message.subtype) === 'compact_boundary') {
-          const turn = ctx.active;
-          if (turn) {
-            const about = bag(message.compact_metadata);
-            const was = typeof about.pre_tokens === 'number' ? about.pre_tokens : undefined;
-            const now = typeof about.post_tokens === 'number' ? about.post_tokens : undefined;
-            const how = str(about.trigger) === 'manual' ? 'Context compacted' : 'Context compacted automatically';
-            ctx.addPart(ctx.mainScope, {
-              kind: 'systemNotification',
-              content: was !== undefined && now !== undefined
-                ? `${how}: ${String(was)} tokens to ${String(now)}.`
-                : `${how}.`,
-            });
-          }
+          if (ctx.active) ctx.addPart(ctx.mainScope, { kind: 'systemNotification', content: 'Conversation compacted' });
           continue;
         }
 
@@ -951,7 +1042,7 @@ export function createQuery(ctx: SessionContext): Query {
          */
         if (type === 'command_lifecycle') {
           const uuid = str(message.command_uuid) ?? '';
-          const owed = ctx.owed.get(uuid);
+          const pending = ctx.yielded.get(uuid);
           const state = str(message.state);
           /*
            * A steering message the CLI took in shows in the turn it steers, as
@@ -959,10 +1050,10 @@ export function createQuery(ctx: SessionContext): Query {
            * transcript records it at, under the same uuid, so the turn read
            * back holds the part the live turn held.
            */
-          if (owed?.steering === true && state === 'started' && owed.cli !== 'started') {
-            ctx.addPart(ctx.mainScope, steerPart(uuid, str(owed.message.text) ?? ''));
+          if (pending?.steering === true && state === 'started' && pending.lifecycle !== 'started') {
+            ctx.addPart(ctx.mainScope, steerPart(uuid, str(pending.message.text) ?? ''));
           }
-          if (owed !== undefined && (state === 'queued' || state === 'started')) owed.cli = state;
+          if (pending !== undefined && (state === 'queued' || state === 'started')) pending.lifecycle = state;
           continue;
         }
 
@@ -979,10 +1070,10 @@ export function createQuery(ctx: SessionContext): Query {
         if (str(message.parent_tool_use_id) === undefined
           && (type === 'stream_event' || type === 'assistant' || type === 'user')) {
           const named = str(message.user_message_uuid);
-          if (named !== undefined) ctx.answering = named;
-          const owed = ctx.answering === undefined ? undefined : ctx.owed.get(ctx.answering);
+          if (named !== undefined) ctx.parentSdkUuid = named;
+          const pending = ctx.parentSdkUuid === undefined ? undefined : ctx.yielded.get(ctx.parentSdkUuid);
           const running = ctx.active === undefined ? undefined : String(ctx.active.id);
-          if (owed !== undefined && owed.turn !== running) continue;
+          if (pending !== undefined && pending.turnId !== running) continue;
         }
 
         /*
@@ -994,7 +1085,7 @@ export function createQuery(ctx: SessionContext): Query {
          */
         if (ctx.active !== undefined && type === 'assistant' && str(message.parent_tool_use_id) === undefined) {
           const entry = str(message.uuid);
-          if (entry !== undefined) ends.set(String(ctx.active.id), entry);
+          if (entry !== undefined) forkAnchorUuids.set(String(ctx.active.id), entry);
         }
 
         /*
@@ -1031,7 +1122,7 @@ export function createQuery(ctx: SessionContext): Query {
             && scope !== undefined
             && str(bag(call._meta).progressMessage) !== line) {
             call._meta = { ...bag(call._meta), progressMessage: line };
-            const worker = id === undefined ? undefined : ctx.workerBlock(id);
+            const worker = id === undefined ? undefined : ctx.subagentBlock(id);
             ctx.emitOn(scope, {
               type: 'chat/toolCallContentChanged',
               turnId: scope.turn?.id,
@@ -1056,7 +1147,7 @@ export function createQuery(ctx: SessionContext): Query {
           const id = str(message.tool_use_id);
           const task = str(message.task_id);
           if (id !== undefined) ctx.background.add(id);
-          if (id !== undefined && task !== undefined && !ctx.ended.has(id)) ctx.tasks.set(id, task);
+          if (id !== undefined && task !== undefined && !ctx.completed.has(id)) ctx.tasks.set(id, task);
           /*
            * Whether the worker runs in the background is the SDK's own report
            * of its task, as VS Code marks a spawn from `task_started`; a later
@@ -1083,7 +1174,7 @@ export function createQuery(ctx: SessionContext): Query {
          * lists as its background work.
          */
         if (type === 'system' && str(message.subtype) === 'background_tasks_changed') {
-          ctx.noteLive(message);
+          ctx.noteBackgroundTasks(message);
           continue;
         }
         if (type === 'system' && str(message.subtype) === 'task_notification') {
@@ -1095,7 +1186,7 @@ export function createQuery(ctx: SessionContext): Query {
             // Complete however the task ended, as VS Code completes a
             // subagent's chat on its terminal notification.
             // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentSignals.ts#L114-L130
-            if (id !== undefined && ctx.background.has(id)) ctx.endWorker(id, 'complete');
+            if (id !== undefined && ctx.background.has(id)) ctx.endSubagent(id, 'complete');
           }
           /*
            * A notification that arrives while no turn is open is the one the
@@ -1154,12 +1245,12 @@ export function createQuery(ctx: SessionContext): Query {
           // a prompt of the lead turn, which `turns.ts` names as it sends it.
           const parent = str(message.parent_tool_use_id) ?? '';
           /*
-           * The output Claude saved for a `Bash` result too large to send, read
+           * The output Claude persisted for a `Bash` result too large to send, read
            * before the result is mapped so its completion names the terminal,
            * as the reference waits for it. Only such a message waits here.
            * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeSdkMessageRouter.ts#L77-L87
            */
-          const reading = ctx.readSavedOutput(raw as SDKUserMessage);
+          const reading = ctx.capture(raw as SDKUserMessage);
           if (reading !== undefined) await reading;
           ctx.results(bag(message.message), parent, message.tool_use_result);
           continue;
@@ -1206,39 +1297,40 @@ export function createQuery(ctx: SessionContext): Query {
           const wrong = ofLogin ?? (errorText === undefined ? undefined : errorText || 'The turn failed');
           if (wrong === undefined) ctx.answered();
           /*
-           * The prompts this result answered, which the CLI no longer owes,
+           * The prompts this result answered, which leave the yielded entries,
            * and the turns they belong to.
            *
            * Named in `user_message_uuids`, or in `user_message_uuid` alone. A
            * result that names none comes from a CLI that names nothing, and
-           * answers whatever was owed.
+           * answers every yielded entry.
            */
           const named = list(message.user_message_uuids).map(String);
           if (str(message.user_message_uuid) !== undefined) named.push(String(message.user_message_uuid));
-          const owners = named.map((uuid) => ctx.owed.get(uuid)?.turn);
-          if (named.length === 0) ctx.owed.clear();
-          for (const uuid of named) ctx.owed.delete(uuid);
-          ctx.answering = undefined;
+          const owners = named.map((uuid) => ctx.yielded.get(uuid)?.turnId);
+          if (named.length === 0) ctx.yielded.clear();
+          for (const uuid of named) ctx.yielded.delete(uuid);
+          ctx.parentSdkUuid = undefined;
           /*
            * A result about turns that have ended, which ends none, and a turn
-           * handed behind them is begun once the CLI owes nothing in front of it.
+           * handed behind them is begun once no yielded entry is in front of it.
            */
           if (named.length > 0 && owners.every((owner) => owner !== undefined && owner !== running)) {
+            ctx.interrupted = false;
             ctx.sendNext();
             continue;
           }
           /*
-           * A turn the CLI still owes an answer in.
+           * A turn with a prompt still in the queue, handed or not yet.
            *
            * A steering message the CLI read after the turn's last tool call is
            * run once this result is out, as a turn of the CLI's own, and its
            * answer is this turn's: the turn stays open until a result has named
-           * every prompt handed over in it, as the reference completes a turn
-           * only when its prompts are settled. A result that failed ends it;
-           * one that stopped at a limit does not.
+           * every prompt pushed in it, as the reference completes a turn only
+           * when its prompts are settled. A result that failed ends it; one that
+           * stopped at a limit does not.
            * https://github.com/microsoft/vscode/blob/d1a91b3af8869c37d4757aa959f0859b59c33265/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L723-L739
            */
-          if (turn && wrong === undefined && [...ctx.owed.values()].some((owed) => owed.turn === running)) continue;
+          if (turn && wrong === undefined && [...ctx.toYield, ...ctx.yielded.values()].some((pending) => pending.turnId === running)) continue;
           if (turn) {
             /*
              * Every turn that ends says how it ended.
@@ -1297,7 +1389,7 @@ export function createQuery(ctx: SessionContext): Query {
               turn.usage = mergeLogicalTurnUsage(resumedFrom?.usage, total);
               ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
             }
-            ctx.settleOpen(turn);
+            ctx.clearPendingToolCalls(turn);
             /*
              * A failure a client may resume: one this result reported, on a
              * conversation with somewhere to cut back to. A login's failure is
@@ -1312,7 +1404,7 @@ export function createQuery(ctx: SessionContext): Query {
             ctx.endedAt(turn);
             ctx.ran = undefined;
             ctx.parts.clear();
-            ctx.calling.clear();
+            ctx.activeToolBlocks.clear();
             ctx.streaming = undefined;
             /*
              * And every preview the turn was still holding. A question left
@@ -1341,9 +1433,13 @@ export function createQuery(ctx: SessionContext): Query {
               ctx.emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: attempt });
             }
           }
+          // The result an interrupt ends with, for a turn the stop already
+          // ended: it says the turn was stopped, which is no failure.
+          const stopped = turn === undefined && ctx.interrupted;
+          ctx.interrupted = false;
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
-          if (wrong !== undefined) ctx.failed = wrong;
+          if (message.is_error === true && !stopped) ctx.failed = wrong ?? 'The turn failed';
           /*
            * The account's own answer for every window, asked once the turn has
            * ended and at most once a minute for each login. It is not awaited:
@@ -1351,7 +1447,7 @@ export function createQuery(ctx: SessionContext): Query {
            * The session's `_meta` says the turn's breakdown and the answer once
            * it is in.
            */
-          void refreshLimits(ctx).catch(() => {}).then(() => { if (!ctx.closed) sayMeta(); });
+          void refreshLimits(ctx).catch(() => {}).then(() => { if (!ctx.disposed) sayMeta(); });
           /*
            * The turn handed behind it, however this one ended, as the
            * reference agent runs each send after the one before it: a failed
@@ -1364,26 +1460,27 @@ export function createQuery(ctx: SessionContext): Query {
     } catch (error) {
       // A query this host put away is not a CLI that died: the one that
       // replaced it is already running the same conversation, a turn moving
-      // to another login is about to start it, or a stop, a death or the
-      // bound above closed it for the next send to start again, a close
+      // to another login is about to start it, or a death or a stop that
+      // aborts the query closed it for the next send to start again, a close
       // keeping the reason it was put away for.
-      if (ctx.closed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
+      if (ctx.disposed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
       /*
-       * The failure in its own words, a CLI that never started included, as
-       * VS Code's host ends a send that failed with the error's own message.
+       * The failure in its own words, as VS Code's host ends a send that
+       * failed with the error's own message.
        * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2565
        */
       putAway(mine, reason(error));
       return;
     }
     // A stream that ended without a result.
-    if (ctx.closed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
+    if (ctx.disposed || ctx.query !== mine || ctx.replacing(mine) || ctx.rebind === mine) return;
     putAway(mine, 'Claude SDK stream ended without a result message');
   };
 
   /**
    * Read a record's values again, find the login the turn runs on, and put a
-   * new CLI on the conversation when either changed.
+   * new CLI on the conversation when either changed, or the client's shell
+   * init script did.
    *
    * An edit applies at the next turn, which is the whole of the promise: the
    * turn already running finishes on the CLI it started on, and the turn that
@@ -1391,34 +1488,45 @@ export function createQuery(ctx: SessionContext): Query {
    * now. A preset, which no running daemon can edit, keeps the values it was
    * read with, and only its login can change: a login that closes or rests,
    * or whose token a put replaced, hands the next turn to a CLI on the first
-   * ready one.
+   * ready one. A script a client set or cleared is read by the CLI that
+   * answers the next turn.
    *
-   * The conversation moves as a `switchAgent` restart moves it: the new query
+   * The conversation moves as `rebindForRestart` moves it: the new query
    * resumes the id the CLI gave this session, so the transcript, the model and
    * everything the SDK said are still there. A CLI that will not stop, and a
-   * record whose logins are none of them ready, are the turn's own refusal
-   * rather than a session that died, which is why each comes back as a
-   * sentence.
+   * record whose logins are none of them ready, are the turn's own refusal,
+   * which is why each comes back as a sentence; the session goes on. A session
+   * with no CLI yet takes the values and the login for its first, and one whose
+   * logins are none of them ready stays without one, as VS Code's provisional
+   * session stays for the next send when its sign-in fails.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L1266-L1273
    */
-  const refreshPreset = (): string | undefined => {
+  const rebindForSyncedState = async (): Promise<string | undefined> => {
     const live = ctx.options.presetOf;
     const now = live === undefined ? ctx.values : ctx.valuesOf(live());
     const unready = ctx.unready(now);
     if (unready !== undefined) return unready;
     const login = ctx.loginFor(now);
-    if (startedFrom(now, login) === ctx.startedWith) return undefined;
     const was = ctx.query;
-    try { was.close(); }
-    catch (error: unknown) {
-      return `The harness would not stop for the record or its login: ${error instanceof Error ? error.message : String(error)}`;
+    if (was !== undefined && startedFrom(now, login) === ctx.appliedValues) return undefined;
+    if (was !== undefined) {
+      // A CLI that will not close fails the send in the error's own words, as
+      // VS Code shows a failed send.
+      try { was.close(); }
+      catch (error: unknown) { return reason(error); }
     }
     ctx.values = now;
     ctx.login = login;
-    ctx.gone = undefined;
-    ctx.query = startQuery(ctx.running, false);
-    void consume();
+    if (was === undefined) return undefined;
+    // A CLI that does not start is the turn's refusal, in the SDK's words; the
+    // CLI it replaced is held for the next send to start again.
+    try { await startQuery(ctx.appliedAgent, false); }
+    catch (error: unknown) {
+      ctx.rebind = was;
+      return reason(error);
+    }
     return undefined;
   };
 
-  return { waiting, startQuery, ends, take, switchAgent, consume, failTurn, refreshPreset, stopped, keepStopped, giveHostInstructions, usageMeta, sayMeta };
+  return { toYield, startQuery, abandonStart, forkAnchorUuids, take, rebindForRestart, failTurn, rebindForSyncedState, stopped, keepStopped, giveHostInstructions, usageMeta, sayMeta };
 }

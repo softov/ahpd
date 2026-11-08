@@ -477,9 +477,10 @@ export interface Users {
   /**
    * The RFC 9728 record this directory is reached through.
    *
-   * The host advertises it on every agent and a client signs in against it. It
-   * belongs to the port rather than to the host because `ahp-server` will front
-   * many hosts and two of them must not share one id.
+   * The host names it in the `-32007` refusing a command before somebody signs
+   * in, and a client signs in against it. It belongs to the port rather than to
+   * the host because `ahp-server` will front many hosts and two of them must
+   * not share one id.
    */
   readonly resource: Record<string, unknown>;
   /**

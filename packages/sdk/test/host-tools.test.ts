@@ -17,15 +17,15 @@ import type { ClientCalls } from '../src/tools/clientcalls.js';
 import type { Bag } from '../src/types/common.js';
 import type { HostEvent } from '../src/types/events.js';
 import type { HostOptions, HostTool, ToolCall } from '../src/types/host.js';
-import type { LoaderContext } from '../src/types/plugin.js';
+import type { LoaderContext, ServedPlan } from '../src/types/plugin.js';
 import type { PlanUpdate, Session } from '../src/types/session.js';
 import type { SessionAction, SessionInputRequest, SessionState } from '@microsoft/agent-host-protocol';
 import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import {
-  resetSdk, actions, claude, createHost, echo, emit, hello, hostTools,
-  machine, peer, sdk, serving, sessionQueries, settle, running,
+  resetSdk, actions, builtServer, claude, createHost, echo, emit, firstMessage, hello, hostTools,
+  machine, peer, sdk, sendAnswered, serving, sessionQueries, settle, running,
 } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -41,6 +41,15 @@ beforeEach(resetSdk);
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 describe('tools the host contributes', () => {
+  /**
+   * A session's first turn, answered, so the session is announced and at rest:
+   * a tool reaches a session a turn has run in, and one made fresh is
+   * provisional until its first message.
+   */
+  const atRest = async (client: ReturnType<ReturnType<typeof createHost>['accept']>, uri: string): Promise<void> => {
+    await firstMessage(client, chatUriFor(uri));
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  };
   const withTools = async (tools = hostTools()) => {
     const host = createHost({
       path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), tools,
@@ -50,6 +59,7 @@ describe('tools the host contributes', () => {
     await client.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/served';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    await atRest(client, uri);
     // The name the session is held and listed by, which is the one a tool
     // answers with and is asked by.
     const held = 'ahp-session:/served';
@@ -112,12 +122,12 @@ describe('tools the host contributes', () => {
 
   it('hands them to the backend as a server it can call', async () => {
     const { held } = await withTools();
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+    // On the host's in-process server, which the session hands the CLI it starts.
+    const host = builtServer('host') as { tools: {
       name: string; description: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
-    }[] }>;
-    // On the host's in-process server, beside whatever the settings files declared.
-    expect(Object.keys(servers)).toContain('host');
-    const listing = servers.host?.tools.find((one) => one.name === 'list_sessions');
+    }[] } | undefined;
+    expect(host).toBeDefined();
+    const listing = host?.tools.find((one) => one.name === 'list_sessions');
     expect(listing?.description).toContain('List sessions');
 
     // And calling one answers about this host, which is the whole reason a
@@ -141,8 +151,8 @@ describe('tools the host contributes', () => {
   describe('the session tools', () => {
     type Tool = { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> };
     const toolsOf = (index = -1): Record<string, Tool> => {
-      const servers = sessionQueries().at(index)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-      return Object.fromEntries((servers?.host?.tools ?? []).map((one) => [one.name, one]));
+      const host = builtServer('host', index) as { tools: Tool[] } | undefined;
+      return Object.fromEntries((host?.tools ?? []).map((one) => [one.name, one]));
     };
     // A refusal is a tool result too: the backend hands the model the message
     // as text, marked as an error, which is how a model learns what it got wrong.
@@ -168,11 +178,12 @@ describe('tools the host contributes', () => {
         snapshot: { state: { defaultChat: string } };
       }).snapshot.state.defaultChat;
       await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      await atRest(client, 'ahp-session:/other');
       // From the first session's tools, at the second, by its link.
       const said = await call('send_message', { session: 'agent-host-session://claude/other', message: 'check the makefile' }, 0);
       expect(said).toBe('Message sent (agent-host-session://claude/other).');
       await settle();
-      const started = actions(p, chatUri).find((one) => one.action.type === 'chat/turnStarted');
+      const started = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
       expect(started?.action.message).toMatchObject({
         text: 'check the makefile',
         origin: { kind: 'agent' },
@@ -294,6 +305,8 @@ describe('tools the host contributes', () => {
       const made = await call('create_chat', { prompt: 'look at the tests' }, 0);
       const link = /\((agent-host-session:[^)]+)\)/.exec(made)?.[1] as string;
       expect(link).toContain('?chat=');
+      // The chat's first turn under way, its CLI started.
+      await settle(8);
       p.notes.length = 0;
       expect(await call('rename_chat', { chat: link, title: 'Tests' }, 0)).toBe('Renamed chat to "Tests".');
       const updated = actions(p, uri).find((one) => one.action.type === 'session/chatUpdated');
@@ -313,8 +326,8 @@ describe('tools the host contributes', () => {
       // Deferred is the strategy a session runs under whatever was pushed, and
       // the hint that says so is the host's own: the backend turns it into the
       // eager flag a harness reads, and the published definition never carries it.
-      const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>;
-      expect(servers.host?.tools.find((one) => one.name === 'rename_chat')?._meta).toEqual({ 'anthropic/alwaysLoad': false });
+      const host = builtServer('host') as { tools: { name: string; _meta?: Record<string, unknown> }[] } | undefined;
+      expect(host?.tools.find((one) => one.name === 'rename_chat')?._meta).toEqual({ 'anthropic/alwaysLoad': false });
       // Every other tool is offered, the artifact one included: the strategy
       // shapes rename_chat alone.
       expect(state.serverTools?.map((one) => one.name)).toContain('add_artifact_or_reference');
@@ -326,6 +339,7 @@ describe('tools the host contributes', () => {
       const { client, peer: p, held } = await withTools();
       await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/doomed', provider: 'claude' } });
+      await firstMessage(client, chatUriFor('ahp-session:/doomed'));
       expect(await call('delete_session', { session: held }, 0)).toContain('refusing to delete the current session');
       expect(await call('delete_session', { session: 'ahp-session:/doomed' }, 0))
         .toBe('Deleted session ahp-session:/doomed. Reply with one short sentence confirming the session was deleted.');
@@ -364,11 +378,14 @@ describe('tools the host contributes', () => {
         openLink: string; transcript: { turn: number; state: string; user?: string; assistant?: string }[];
       };
       expect(said.openLink).toBe('agent-host-session://claude/served');
-      expect(said.transcript).toEqual([{ turn: 1, state: 'complete', user: 'what is in this directory', assistant: 'Four files.' }]);
+      expect(said.transcript).toEqual([
+        { turn: 1, state: 'complete', user: 'hi' },
+        { turn: 2, state: 'complete', user: 'what is in this directory', assistant: 'Four files.' },
+      ]);
       expect(await call('get_session_context', { session: 'ahp-session:/served', detail: 'everything' })).toContain('detail must be');
     });
 
-    it('moves the session once the turn that asked is over, and tells the agent where it is', async () => {
+    it('moves the session once the turn that asked is over, and continues the task there in VS Code\'s words', async () => {
       const { client, peer: p, uri, chatUri } = await (async () => {
         const host = createHost({
           path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
@@ -417,7 +434,90 @@ describe('tools the host contributes', () => {
           'vscode.chat.workspaceContinuation': true,
         },
       });
-      expect(String((notice?.action.message as { text: string }).text)).toContain(resolve('/tmp'));
+      // In VS Code's words.
+      // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1081-L1092
+      expect((notice?.action.message as { text: string }).text).toBe('Continue in the requested workspace.');
+    });
+
+    /*
+     * A move whose turn was cancelled is dropped, as VS Code's host carries out
+     * a workspace change only for a turn that succeeded.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionContribution.ts#L28-L37
+     */
+    it('drops a move whose turn was cancelled, as VS Code\'s host', async () => {
+      const host = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+      });
+      const p = peer();
+      p.request = async () => ({ trusted: true });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0']));
+      const uri = 'ahp-session:/stopped';
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work in /tmp' } } },
+      });
+      await settle();
+      expect(await call('set_workspace', { workspaceFolder: 'file:///tmp', isolation: false }))
+        .toContain(`Workspace will be set to ${uriOf('/tmp')} after this turn ends`);
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+      });
+      await settle(8);
+      expect(actions(p, uri).some((one) => one.action.type === 'session/workingDirectoryReplaced')).toBe(false);
+      expect(sessionQueries().at(-1)?.options.cwd).not.toBe(resolve('/tmp'));
+    });
+
+    /*
+     * The turn that continues it says the move failed and why, and the session
+     * stays where it was, as VS Code's host continues a failed conversion's
+     * turn with the failure under its label.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionWorkspaceConversion/sessionWorkspaceConversionService.ts#L1105-L1123
+     */
+    it('tells the agent a move did not complete, in the turn that continues it, as VS Code\'s host', async () => {
+      const host = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+      });
+      const p = peer();
+      // The window does not vouch for the folder, which fails the move.
+      p.request = async () => ({ trusted: false });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0']));
+      const uri = 'ahp-session:/stays';
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'work in /tmp' } } },
+      });
+      await settle();
+      expect(await call('set_workspace', { workspaceFolder: 'file:///tmp', isolation: false }))
+        .toContain(`Workspace will be set to ${uriOf('/tmp')} after this turn ends`);
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      await settle(8);
+
+      expect(actions(p, uri).some((one) => one.action.type === 'session/workingDirectoryReplaced')).toBe(false);
+      expect(actions(p, uri).some((one) => one.action.type === 'session/creationFailed')).toBe(false);
+      const notice = actions(p, chatUri).filter((one) => one.action.type === 'chat/turnStarted').at(-1);
+      expect(notice?.action.message).toMatchObject({
+        origin: { kind: 'systemNotification' },
+        _meta: {
+          'vscode.chat.requestHiddenFromTranscript': true,
+          'vscode.chat.systemInitiatedLabel': 'Workspace Setup Failed',
+          'vscode.chat.workspaceContinuation': true,
+        },
+      });
+      expect(String((notice?.action.message as { text: string }).text))
+        .toMatch(/^The requested workspace setup did not complete successfully: .+\. Do not run the user's task\. Tell the user that workspace setup failed and include this error\.$/);
     });
 
     it('names a folder with a # in the worktree message as a valid URI', async () => {
@@ -466,33 +566,54 @@ describe('tools the host contributes', () => {
     expect(said[0]?.action?.tools).toEqual([]);
   });
 
-  it('reads what a client published, which is the only thing that can', async () => {
+  /*
+   * A set that leaves a session's list as it was says nothing to it, as VS
+   * Code's host compares a session's tools with the ones its state holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L232-L247
+   */
+  it('says nothing to a session whose tools a replacement leaves as they were, as VS Code\'s host', async () => {
+    const { host, client, peer: p, uri } = await withTools();
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    host.setTools([]);
+    host.setTools([]);
+    const said = p.notes
+      .map((one) => one.params as { channel?: string; action?: { type?: string } })
+      .filter((one) => one.action?.type === 'session/serverToolsChanged');
+    expect(said).toHaveLength(1);
+  });
+
+  it('reads a client\'s resource from that client, about the URI as it knows it', async () => {
     const served = createHost({
       path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
     });
     /*
-     * A second client, publishing something this machine has no copy of.
+     * A second client, serving something this machine has no copy of.
      *
-     * `<scheme>://<clientId>/…` is how a client-served resource is addressed,
+     * `vscode-agent-client://<clientId>/<scheme>/<authority>/<path>` is how a
+     * client's resource is addressed here, as VS Code's host addresses one,
      * and answering one is what the reverse `resource*` direction exists for:
      * a plugin's virtual files, an editor's unsaved buffers. The agent inside
-     * a session cannot open any of it, so the host's own tool asks the client.
+     * a session cannot open any of it, so the host's own tool asks the client
+     * about the URI as it knows it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentClientUri.ts#L8-L23
      */
     const publisher = peer();
-    publisher.request = async () => ({ data: 'ZG9uZQ==', encoding: 'base64' });
+    const asked: unknown[] = [];
+    publisher.request = async (_method, params) => { asked.push((params as { uri?: unknown }).uri); return { data: 'ZG9uZQ==', encoding: 'base64' }; };
     const other = served.accept(publisher);
     await other.handle({ method: 'initialize', params: { clientId: 'plugin', protocolVersions: ['0.9.0'] } });
 
     const client = served.accept(peer());
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/reads', provider: 'claude' } });
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+    const host = builtServer('host') as { tools: {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
-    }[] }>;
-    const said = await servers.host?.tools.find((one) => one.name === 'ahp_resource')
-      ?.handler({ uri: 'virtual://plugin/notes.md' });
+    }[] } | undefined;
+    const said = await host?.tools.find((one) => one.name === 'ahp_resource')
+      ?.handler({ uri: 'vscode-agent-client://plugin/virtual/plugin/notes.md' });
     // Decoded, because a tool result is text and the model reads it.
     expect(said?.content[0]?.text).toBe('done');
+    expect(asked).toEqual(['virtual://plugin/notes.md']);
   });
 
   it('lists the terminals this host has open', async () => {
@@ -504,10 +625,10 @@ describe('tools the host contributes', () => {
       params: { channel: 'ahp-terminal:/t1', cwd: 'file:///home/softov', command: 'echo' },
     });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/asks', provider: 'claude' } });
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
+    const host = builtServer('host') as { tools: {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
-    }[] }>;
-    const said = await servers.host?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
+    }[] } | undefined;
+    const said = await host?.tools.find((one) => one.name === 'ahp_terminals')?.handler({});
     expect(said?.content[0]?.text).toContain('ahp-terminal:/t1');
   });
 
@@ -533,10 +654,10 @@ describe('tools the host contributes', () => {
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/who', provider: 'claude' } });
       await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/who') } });
       const person = async (): Promise<string | undefined> => {
-        const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
+        const host = builtServer('host') as {
           tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
-        }> | undefined;
-        const tool = servers?.host?.tools.find((one) => one.name === 'who');
+        } | undefined;
+        const tool = host?.tools.find((one) => one.name === 'who');
         return (await tool?.handler({}))?.content[0]?.text;
       };
       return { client, person };
@@ -557,6 +678,51 @@ describe('tools the host contributes', () => {
     // A host with no users directory has nobody to name but itself.
     const bare = await opened(false);
     expect(await bare.person()).toBe('host');
+  });
+
+  it('names the teams of the person behind a call, in a session and with none, and none where nobody is behind it', async () => {
+    const teams: HostTool = {
+      definition: { name: 'teams', description: 'teams', inputSchema: { type: 'object' as const, properties: {} } },
+      sessionless: true,
+      run: (_input, at) => at.teams().join(','),
+    };
+    // On two teams: one by any of its projects and again by one of them, the other by its team work.
+    const ana: Principal = { id: 'ana', roles: [], memberships: ['crew:*', 'ops', 'crew:web'], can: () => true };
+    const users = {
+      resource: { resource: 'ahpd://users', resource_name: 'ahpd users', authorization_servers: [], required: false },
+      verify: async () => ana,
+    } as unknown as Users;
+    const host = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: [teams], users,
+    });
+    const client = host.accept(peer(), ana);
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/teams', provider: 'claude' } });
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/teams') } });
+    const inSession = async (): Promise<string | undefined> => {
+      const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
+        tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
+      }> | undefined;
+      const tool = servers?.ahp?.tools.find((one) => one.name === 'teams');
+      return (await tool?.handler({}))?.content[0]?.text;
+    };
+
+    // No turn runs yet, so nobody is behind the call.
+    expect(await inSession()).toBe('');
+
+    // A turn she sent puts her teams on the call, each once.
+    await client.handle({ method: 'dispatchAction', params: {
+      channel: chatUriFor('ahp-session:/teams'),
+      action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'which teams' } },
+    } });
+    await settle();
+    expect(await inSession()).toBe('crew,ops');
+
+    // With no session, the caller's own, and none for this host's own connection.
+    const sessionless = async (caller: { principal: Principal } | { root: true }): Promise<string | undefined> =>
+      await host.sessionlessTools(caller).find((one) => one.definition.name === 'teams')?.run?.({});
+    expect(await sessionless({ principal: ana })).toBe('crew,ops');
+    expect(await sessionless({ root: true })).toBe('');
   });
 });
 
@@ -681,43 +847,49 @@ describe('the session tools, which an install may switch off', () => {
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
     expect(await offered(client, uri)).toContain('list_sessions');
 
-    /** One push, and the sessions told of it, kept apart from the last. */
-    const push = async (config: Record<string, unknown>): Promise<{ name: string }[]> => {
+    /**
+     * One push, and what the session was told of it, kept apart from the last:
+     * the set where it moved, and nothing where it did not, as VS Code's host
+     * says a session's tools only where they changed.
+     */
+    const push = async (config: Record<string, unknown>): Promise<string[] | undefined> => {
       p.notes.length = 0;
       await client.handle({ method: 'dispatchAction', params: { channel: ROOT, action: { type: 'root/configChanged', config } } });
       await settle();
       const told = actions(p, uri).filter((one) => one.action.type === 'session/serverToolsChanged');
-      expect(told).toHaveLength(1);
-      return (told[0]?.action.tools ?? []) as { name: string }[];
+      expect(told.length).toBeLessThanOrEqual(1);
+      return (told[0]?.action.tools as { name: string }[] | undefined)?.map((one) => one.name);
     };
 
     // Off, told whole - the action carries the new set rather than the
     // difference - and the session's own state follows it.
-    expect((await push({ sessionTools: false })).map((one) => one.name)).toEqual(HOST_OWN);
+    expect(await push({ sessionTools: false })).toEqual(HOST_OWN);
     expect(await offered(client, uri)).toEqual(HOST_OWN);
 
     // On again, by taking the key away: a null is how a client says so, and
     // the daemon then holds no value at all, which is the `true` default.
-    expect((await push({ sessionTools: null })).map((one) => one.name)).toContain('list_sessions');
+    expect(await push({ sessionTools: null })).toContain('list_sessions');
     expect(await offered(client, uri)).toContain('list_sessions');
 
     // The second key narrows rather than switches, and this session runs the
-    // provider it names, so it keeps them.
-    expect((await push({ sessionToolsProviders: ['claude'] })).map((one) => one.name)).toContain('list_sessions');
+    // provider it names, so it keeps them and is told nothing.
+    expect(await push({ sessionToolsProviders: ['claude'] })).toBeUndefined();
+    expect(await offered(client, uri)).toContain('list_sessions');
     // One it does not name loses them, on the wire and on the session's state.
-    expect((await push({ sessionToolsProviders: ['echo'] })).map((one) => one.name)).toEqual(HOST_OWN);
+    expect(await push({ sessionToolsProviders: ['echo'] })).toEqual(HOST_OWN);
     expect(await offered(client, uri)).toEqual(HOST_OWN);
 
-    // The switch beats the list: the list names this session's provider and
-    // the session is offered none all the same.
-    expect((await push({ sessionTools: false })).map((one) => one.name)).toEqual(HOST_OWN);
+    // The switch beats the list: with it off the session is offered none
+    // whatever the list names, which it already was.
+    expect(await push({ sessionTools: false })).toBeUndefined();
     expect(await offered(client, uri)).toEqual(HOST_OWN);
 
     // Back to every provider takes both keys cleared, and neither on its own
     // is the default: the list alone leaves the switch off, and the switch
     // alone leaves a list that does not name this session's provider.
-    expect((await push({ sessionToolsProviders: null })).map((one) => one.name)).toEqual(HOST_OWN);
-    expect((await push({ sessionTools: null })).map((one) => one.name)).toContain('list_sessions');
+    expect(await push({ sessionToolsProviders: null })).toBeUndefined();
+    expect(await offered(client, uri)).toEqual(HOST_OWN);
+    expect(await push({ sessionTools: null })).toContain('list_sessions');
     expect(await offered(client, uri)).toContain('list_sessions');
   });
 
@@ -955,11 +1127,16 @@ describe('the MCP servers a session is offered', () => {
     await holder.handle(hello(['0.9.0'], { clientId: 'holder' }));
     await holder.handle({ method: 'subscribe', params: { channel: uri } });
 
-    /** Whether the plugin has been reported on the session, and settled. */
+    /**
+     * Whether the plugin has been reported on the session settled: in the
+     * session's whole list, or as its own update once its copy settles, as
+     * VS Code's host reports a client's plugin.
+     */
     const loaded = (): boolean => actions(watching, uri)
-      .filter((one) => one.action.type === 'session/customizationsChanged')
-      .some((one) => ((one.action.customizations as Record<string, unknown>[]) ?? [])
-        .some((one) => one.uri === PLUGIN && (one.load as { kind: string }).kind === 'loaded'));
+      .flatMap((one) => (one.action.type === 'session/customizationsChanged'
+        ? (one.action.customizations as Record<string, unknown>[] | undefined) ?? []
+        : one.action.type === 'session/customizationUpdated' ? [one.action.customization as Record<string, unknown>] : []))
+      .some((one) => one.uri === PLUGIN && (one.load as { kind: string } | undefined)?.kind === 'loaded');
     /** How many turns have been watched to their end. */
     const finished = (): number => actions(watching, chat)
       .filter((one) => one.action.type === 'chat/turnComplete').length;
@@ -1248,16 +1425,15 @@ describe('tools a client contributes', () => {
 
   it('offers what a client announced to the model, under a name of its own', async () => {
     const { client, chatUri } = await providing();
-    // Given to the running CLI at the next send: a client announces what it
-    // provides when it opens the session, which is after the agent has
-    // started.
-    expect(sdk.mcpDeclared).toHaveLength(0);
+    // In the options of the CLI the first send starts: a client announces what
+    // it provides when it opens the session, before anything is sent, and the
+    // session declares nothing to a CLI it has not started.
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'open it' } } },
     });
     await settle();
-    expect(sdk.mcpDeclared).toHaveLength(1);
+    expect(sdk.mcpDeclared).toHaveLength(0);
     // Named for the client as well as the tool. Two clients in one session may
     // both provide `openFile`, and the model is offered one list.
     const one = offered().find((tool) => tool.name === 'probe__openFile');
@@ -1507,12 +1683,15 @@ describe('tools a client contributes', () => {
     await settle();
 
     // Unsubscribing is one of the three ways the protocol says a client stops
-    // being active in a session.
+    // being active in a session, from the session and every chat of it it
+    // watches, as VS Code's host keeps a client watching any of them.
+    client.handle({ method: 'unsubscribe', params: { channel: chatUri } });
     client.handle({ method: 'unsubscribe', params: { channel: uri } });
     await settle();
+    // Failed by the host in VS Code's words for a client that left.
     const answer = await answering;
     expect(answer?.isError).toBe(true);
-    expect(answer?.content[0]?.text).toContain('no longer here');
+    expect(answer?.content[0]?.text).toContain('disconnected before completing');
 
     // And the tool goes with the client from the next send on: one whose
     // provider has left is one every call to would fail.
@@ -1561,7 +1740,7 @@ describe('tools a client contributes', () => {
     sdk.toolUseIds.push('call-1');
   };
 
-  /** The client saying what its tool did, as `chat/toolCallComplete`. */
+  /** The client saying what its tool did, as `chat/toolCallComplete` of the turn the call is in. */
   const answers = (
     client: { handle(message: unknown): Promise<unknown> },
     chatUri: string,
@@ -1570,7 +1749,7 @@ describe('tools a client contributes', () => {
   ): void => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/toolCallComplete', toolCallId, result } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId, result } },
     });
   };
 
@@ -1666,7 +1845,76 @@ describe('tools a client contributes', () => {
     expect(answered.map((e) => e.action)).toEqual([action]);
   });
 
-  it('answers the first of two results for one call with its completion, and refuses the second', async () => {
+  /*
+   * A completion of a client's own call is said whatever became of the call,
+   * as VS Code's host says every completion: one after a stop ended the turn
+   * included. The contributor the call names is the one check.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
+   */
+  it('says a client\'s result and its content for its own call after a stop ended the turn', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    await settle();
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } } });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 11, action: { type: 'chat/toolCallContentChanged', turnId: 't1', toolCallId: 'call-1', content: [] } },
+    });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 12, action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true } } },
+    });
+    await settle();
+    const answered = actions(p, chatUri).filter((e) => e.origin?.clientId === 'probe' && (e.origin.clientSeq === 11 || e.origin.clientSeq === 12));
+    expect(answered.map((e) => [e.action.type, e.rejectionReason])).toEqual([
+      ['chat/toolCallContentChanged', undefined],
+      ['chat/toolCallComplete', undefined],
+    ]);
+  });
+
+  /*
+   * A result its client asks to have confirmed is said and held for that
+   * confirmation, and the backend is handed it once a client approves it,
+   * as VS Code's host forwards a client's result.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L1631-L1671
+   */
+  it('hands a client\'s result to the backend once a client approves it, not before', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    let answered: string | undefined;
+    void offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' })
+      .then((answer) => { answered = answer.content[0]?.text; });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        clientSeq: 13,
+        action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', requiresResultConfirmation: true, result: { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] } },
+      },
+    });
+    await settle();
+    expect(answered).toBeUndefined();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 14, action: { type: 'chat/toolCallResultConfirmed', turnId: 't1', toolCallId: 'call-1', approved: true } },
+    });
+    await settle();
+    expect(answered).toBe('opened /a.txt');
+    const said = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 13 || e.origin?.clientSeq === 14);
+    expect(said.map((e) => [e.action.type, e.rejectionReason])).toEqual([
+      ['chat/toolCallComplete', undefined],
+      ['chat/toolCallResultConfirmed', undefined],
+    ]);
+  });
+
+  /*
+   * A second result for one call is said as the first is, as VS Code's host
+   * says every completion; the backend, handed the first, logs the second.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
+   */
+  it('says both of two results for one call, and hands the backend the first', async () => {
     const { client, peer: p, chatUri } = await providing();
     await calling(client, chatUri);
     const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
@@ -1681,9 +1929,9 @@ describe('tools a client contributes', () => {
     });
     complete(9, 'opened /a.txt');
     // The client sends its result again before the session says the call is
-    // complete. The harness took the first, so the second is refused.
+    // complete. The harness took the first.
     complete(10, 'opened /a.txt again');
-    await answering;
+    const answer = await answering;
     await emit({
       type: 'user',
       uuid: 'u1',
@@ -1696,7 +1944,8 @@ describe('tools a client contributes', () => {
       .filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === clientSeq)
       .map((e) => [e.action.type, e.rejectionReason === undefined ? 'said' : 'refused']);
     expect(answers(9)).toEqual([['chat/toolCallComplete', 'said']]);
-    expect(answers(10)).toEqual([['chat/toolCallComplete', 'refused']]);
+    expect(answers(10)).toEqual([['chat/toolCallComplete', 'said']]);
+    expect(answer?.content[0]?.text).toBe('opened /a.txt');
   });
 
   it('keeps an answer that arrives before the CLI runs the tool', async () => {
@@ -1848,7 +2097,13 @@ describe('tools a client contributes', () => {
     await settle();
   };
 
-  /** The person's answer, dispatched to the session the way a client dispatches it, naming the call's turn. */
+  /**
+   * The person's answer, dispatched to the session the way a client dispatches
+   * it: naming its turn, which the protocol's tool call actions carry and its
+   * reducer finds the call by.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L43-L47
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L629
+   */
   const decided = (
     client: { handle(message: unknown): Promise<unknown> },
     chatUri: string,
@@ -2211,23 +2466,22 @@ describe('a client\'s call, held by the backend', () => {
 
   it('raises the entry against the client that will answer it', async () => {
     const { held, clients, uri, chatUri } = await open(['a', 'b']);
-    const { calls, tools, start } = held();
+    const { tools } = held();
     // Two clients in one session both provide `openFile`, and the model is
     // offered both under a name of each client's own.
     expect(tools().map((one) => one.definition.name)).toEqual(['a__openFile', 'b__openFile']);
 
-    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     await settle();
-    // The entry id is the protocol's own spelling, built from the chat the
-    // backend named - its own name for it, not the URI a client watches.
-    expect(id).toBe(`toolClientExecution:${start.chatUri}:t1:call-1`);
 
+    // The host's entry for the call its chat holds running under the client,
+    // under the reference host's id, the chat on it the one a client
+    // dispatches its answer to.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L157
     const held_ = await state(clients[0] as Client, uri);
     expect(held_.inputNeeded).toEqual([{
-      id,
+      id: `toolClientExecution:${chatUri}:t1:call-1`,
       kind: 'toolClientExecution',
-      // Respelled for whoever reads it, because the chat on the entry is the
-      // one a client dispatches its answer to.
       chat: chatUri,
       turnId: 't1',
       clientId: 'a',
@@ -2245,16 +2499,15 @@ describe('a client\'s call, held by the backend', () => {
 
   it('leaves the session not waiting on a person while the call is out', async () => {
     const { held, clients, uri, chatUri } = await open(['a']);
-    const { calls } = held();
-    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     await settle();
 
     const held_ = await state(clients[0] as Client, uri);
-    const entry = (held_.inputNeeded ?? []).find((one) => one.id === id);
+    const entry = (held_.inputNeeded ?? []).find((one) => one.id === `toolClientExecution:${chatUri}:t1:call-1`);
     expect(entry).toBeDefined();
     // The session's own status is its reducer's, which the entry does not
-    // move: idle and read, as it opened.
-    expect(held_.status).toBe(1 | 32);
+    // move: in progress, as the turn the call is in runs.
+    expect(held_.status).toBe(IN_PROGRESS);
 
     /*
      * The protocol's own reducer, on the state the host serves.
@@ -2271,7 +2524,7 @@ describe('a client\'s call, held by the backend', () => {
     expect(again.status & NEEDS_PERSON).toBe(0);
 
     const asked = raised(again, { id: 'q-1', kind: 'chatInput', chat: chatUri } as SessionInputRequest);
-    expect(asked.status).toBe(INPUT_NEEDED | 32);
+    expect(asked.status).toBe(INPUT_NEEDED);
   });
 
   it('settles the call for its own client, and refuses the other one', async () => {
@@ -2334,24 +2587,81 @@ describe('a client\'s call, held by the backend', () => {
     ]);
   });
 
-  it('fails the call of a client that leaves, naming the other client\'s tool', async () => {
-    const { held, clients, uri } = await open(['a', 'b']);
+  /*
+   * A client that leaves owes its calls nothing more: this host fails each in
+   * VS Code's words, telling the model another client in the session provides
+   * the same tool, and hands the backend the same failure.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
+   */
+  it('fails the call of a client that leaves in VS Code\'s words, naming the other client\'s tool', async () => {
+    const { held, clients, uri, chatUri } = await open(['a', 'b']);
     const { calls } = held();
-    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     const waiting = calls.wait('call-1');
     await settle();
 
     // Unsubscribing is one of the three ways the protocol says a client stops
-    // being active in a session.
+    // being active in a session, from the session and every chat of it it
+    // watches, as VS Code's host keeps a client watching any of them.
+    clients[0]?.handle({ method: 'unsubscribe', params: { channel: chatUri } });
     clients[0]?.handle({ method: 'unsubscribe', params: { channel: uri } });
     await settle();
 
+    const retry = 'The client that was running openFile disconnected, but another active client now provides openFile. You may try calling the tool again.';
     const lost = await waiting;
-    expect(lost.ok).toBe(false);
-    expect(lost.text).toBe('The client a that was running openFile is no longer here. b__openFile provides the same tool');
+    expect(lost).toEqual({ ok: false, text: 'Client a disconnected before completing openFile', content: [{ type: 'text', text: retry }] });
+    const chat = await state(clients[1] as Client, chatUri) as unknown as { activeTurn?: { responseParts: Bag[] } };
+    expect(chat.activeTurn?.responseParts.at(-1)).toMatchObject({
+      kind: 'toolCall',
+      toolCall: {
+        toolCallId: 'call-1',
+        status: 'completed',
+        success: false,
+        pastTenseMessage: 'openFile failed',
+        content: [{ type: 'text', text: retry }],
+        error: { message: 'Client a disconnected before completing openFile' },
+      },
+    });
 
     const held_ = await state(clients[1] as Client, uri);
-    expect((held_.inputNeeded ?? []).some((one) => one.id === id)).toBe(false);
+    expect((held_.inputNeeded ?? []).length).toBe(0);
+  });
+
+  /*
+   * A client whose connection closes keeps its calls for the daemon's window,
+   * VS Code's thirty seconds, set short here; when it runs out, a call still
+   * streaming is readied first and then failed, as VS Code's host fails one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1637-L1660
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2085-L2115
+   */
+  it('fails a dropped client\'s streaming call once the daemon\'s window runs out, readied first', async () => {
+    const { held, clients, chatUri, peers } = await open(['a', 'b'], { clientToolCallDisconnectTimeoutMs: 50 });
+    const { start, calls } = held();
+    start.emit('chat', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'open it', origin: { kind: 'user' } } });
+    start.emit('chat', {
+      type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'call-2', toolName: 'readFile', displayName: 'readFile',
+      contributor: { kind: 'client', clientId: 'a' },
+    });
+    calls.open({ turnId: 't1', toolCall: running('call-2', 'readFile'), owner: 'a' });
+    const waiting = calls.wait('call-2');
+    await settle();
+
+    clients[0]?.close();
+    await settle();
+    expect(calls.owner('call-2')).toBe('a');
+
+    const lost = await waiting;
+    expect(lost).toEqual({ ok: false, text: 'Client a disconnected before completing readFile', content: [] });
+    const said = (peers[1]?.notes ?? [])
+      .filter((note) => note.method === 'action')
+      .map((note) => (note.params as { channel: string; action: Bag }))
+      .filter((one) => one.channel === chatUri && String(one.action.toolCallId ?? '') === 'call-2')
+      .map((one) => one.action);
+    expect(said.map((one) => one.type)).toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+    expect(said[1]).toMatchObject({ invocationMessage: 'readFile', confirmed: 'not-needed' });
+    expect(said[2]).toMatchObject({
+      result: { success: false, pastTenseMessage: 'readFile failed', error: { message: 'Client a disconnected before completing readFile' } },
+    });
   });
 
   it('fails a call nobody answers in the time the host allows', async () => {
@@ -2374,8 +2684,8 @@ describe('a client\'s call, held by the backend', () => {
   });
 
   it('fires input_needed_set with the kind a plugin has to read', async () => {
-    const { held, heard } = await open(['a']);
-    held().calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    const { held, heard, chatUri } = await open(['a']);
+    called(held(), 'call-1', 'a');
     await settle();
 
     // Delegated work reads as an entry like any other, so the kind on the event
@@ -2384,7 +2694,7 @@ describe('a client\'s call, held by the backend', () => {
     expect(said).toHaveLength(1);
     expect(said[0]).toMatchObject({
       session: 'ahp-session:/held',
-      id: `toolClientExecution:${held().start.chatUri}:t1:call-1`,
+      id: `toolClientExecution:${chatUri}:t1:call-1`,
       kind: 'toolClientExecution',
     });
   });
@@ -2902,16 +3212,21 @@ describe('a customization switched for one session', () => {
     const base = echo({ path: dir, pace: 0 });
     const told: [string, boolean][] = [];
     const said: string[] = [];
+    /** Each session's start, so a case can have its backend report its list again. */
+    const starts: Start[] = [];
     const agent: Agent = {
       ...base,
       probe: async () => ({ models: [], commands: [], customizations: [PLUGIN] }),
-      create: (start: Start) => ({
-        ...base.create(start),
-        setCustomizationEnabled: async (id: string, on: boolean) => {
-          told.push([id, on]);
-          return id === PLUGIN.id;
-        },
-      }),
+      create: (start: Start) => {
+        starts.push(start);
+        return {
+          ...base.create(start),
+          setCustomizationEnabled: async (id: string, on: boolean) => {
+            told.push([id, on]);
+            return id === PLUGIN.id;
+          },
+        };
+      },
     };
     const host = createHost({
       path: dir, agents: [agent], ...machine(), enablement: memoryEnablement(),
@@ -2920,7 +3235,8 @@ describe('a customization switched for one session', () => {
 
     const open = async (name: string, made = true) => {
       const uri = `ahp-session:/${name}`;
-      const client = host.accept(peer());
+      const p = peer();
+      const client = host.accept(p);
       await client.handle(hello(['0.9.0']));
       if (made) await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
       /** What this session reports now, which is what a client's snapshot carries. */
@@ -2932,6 +3248,7 @@ describe('a customization switched for one session', () => {
       };
       return {
         uri,
+        peer: p,
         /** The one plugin, as this session reports it right now. */
         plugin: async (): Promise<Record<string, unknown> | undefined> =>
           (await reported()).find((one) => one.id === PLUGIN.id),
@@ -2939,10 +3256,54 @@ describe('a customization switched for one session', () => {
           channel: uri,
           action: { type: 'session/customizationToggled', id, enablement: [{ kind: 'session', enabled }] },
         } }),
+        /** A switch carrying the client's whole answer, every scope it decided. */
+        switched: (id: string, enablement: Record<string, unknown>[]) => client.handle({ method: 'dispatchAction', params: {
+          channel: uri,
+          action: { type: 'session/customizationToggled', id, enablement },
+        } }),
+        /** The session's backend reporting its list again, as it found it. */
+        report: () => { starts.at(-1)?.emit('session', { type: 'session/customizationsChanged', customizations: [PLUGIN] }); },
       };
     };
     return { host, told, said, open };
   }
+
+  /*
+   * A switch that carries no decision of the session's own leaves it none, as
+   * VS Code's host records a client's enablement whole: a session switched off
+   * for every session and then on again follows the decision for every
+   * session, and its list read again holds no decision at all, which is on
+   * (the store keeps no decision that says what every session already does).
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2120-L2125
+   */
+  it('keeps no decision of the session\'s own for a switch that carried none', async () => {
+    const { open } = await switchable();
+    const one = await open('one');
+    await one.switched(PLUGIN.id as string, [{ kind: 'global', enabled: false }]);
+    await settle();
+    await one.switched(PLUGIN.id as string, [{ kind: 'global', enabled: true }]);
+    await settle();
+    one.report();
+    await settle();
+    expect((await one.plugin())?.enablement).toBeUndefined();
+  });
+
+  /*
+   * A backend reporting the list the session already holds says nothing, as
+   * VS Code's host says a session's customizations only where they moved.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L639-L646
+   */
+  it('says nothing for a list the session already holds, as VS Code\'s host', async () => {
+    const { open } = await switchable();
+    const one = await open('one');
+    await one.plugin();
+    one.report();
+    await settle();
+    one.report();
+    await settle();
+    const lists = actions(one.peer, one.uri).filter((e) => e.action.type === 'session/customizationsChanged');
+    expect(lists.length).toBeLessThanOrEqual(1);
+  });
 
   it('keeps the decision on the session that made it, and reports it off', async () => {
     const { told, open } = await switchable();
@@ -3013,6 +3374,40 @@ describe('a customization switched for one session', () => {
  * the event is the seam: a plugin hears the list once, with the session it
  * belongs to, without either side learning the other's format.
  */
+/*
+ * The task list a plugin serves is drawn in each open turn as VS Code shows an
+ * agent's task list: its todo call, `TodoWrite`, "Update todo list".
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L160
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L393-L394
+ */
+describe('a task list a plugin serves', () => {
+  it('is drawn in an open turn as VS Code\'s todo call, and completed with the turn', async () => {
+    const plan: ServedPlan = { by: 'tasks', read: async () => ['one', 'two'] };
+    const host = createHost({ path: tmpdir(), agents: [echo({ path: tmpdir(), pace: 40 })], plan });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/todo';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    const chat = chatUriFor(uri);
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    void client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four five six' } } },
+    });
+    await settle();
+    await plan.changed?.(uri);
+    const said = (): Record<string, unknown>[] => actions(p, chat).map((e) => e.action);
+    const ofCall = (type: string) => said().find((one) => one.type === type && one.toolCallId === 't1:plan');
+    expect(ofCall('chat/toolCallStart')).toMatchObject({ toolName: 'TodoWrite', displayName: 'Update todo list' });
+    expect(ofCall('chat/toolCallReady')).toMatchObject({ invocationMessage: 'Update todo list' });
+    for (let tries = 0; tries < 200 && !said().some((one) => one.type === 'chat/turnComplete'); tries += 1) {
+      await new Promise((r) => { setTimeout(r, 10); });
+    }
+    expect(ofCall('chat/toolCallComplete')?.result).toMatchObject({ success: true, pastTenseMessage: 'Update todo list' });
+  });
+});
+
 describe('a harness list handed to the host', () => {
   const ana: Principal = { id: 'ana', roles: [], can: () => true };
 
@@ -3213,6 +3608,34 @@ describe('what a session brings to a tool', () => {
       work: 'connectors://webhook/b',
       personal: 'connectors://webhook/c',
     });
+  });
+
+  /*
+   * A tool a session does not support is neither offered to it nor bound for
+   * it, as VS Code's host asks each tool's isEnabledForSession beside its own
+   * switches.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/agentServerToolHost.ts#L213-L216
+   */
+  it('offers a tool only to the sessions it says it supports', async () => {
+    const tool: HostTool = {
+      definition: { name: 'only_bound', description: 'only', inputSchema: { type: 'object', properties: {} } },
+      isEnabledForSession: ({ bindings }) => bindings?.work !== undefined,
+      run: () => 'ran',
+    };
+    const host = createHost({ path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), tools: [tool] });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const offered = async (uri: string, config: Record<string, unknown>): Promise<string[]> => {
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', config } });
+      await settle();
+      const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { serverTools?: { name: string }[] } };
+      }).snapshot.state;
+      return (state.serverTools ?? []).map((one) => one.name);
+    };
+    expect(await offered('ahp-session:/bound', { connectors: { work: 'connectors://webhook/a' } })).toContain('only_bound');
+    expect(await offered('ahp-session:/unbound', {})).not.toContain('only_bound');
+    await host.close();
   });
 
   it('reads a plugin again, so a new map reaches the next tool list', async () => {

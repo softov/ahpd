@@ -1,4 +1,4 @@
-import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
+import { getSessionMessages, getSubagentMessages, listSubagents } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
 import { bag, steerPart, str, toolCallDurationMs, withToolCallDuration } from '@ahpd/sdk';
@@ -6,8 +6,8 @@ import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { lineOf, pastLineOf, questionAnswers, questionRequest, titleOf, toolInputOf } from './input.js';
-import { claudeToolDenialCode, getClaudeToolDisplayName, toolMetaOf } from './kinds.js';
+import { getClaudeInvocationMessage, getClaudePastTenseMessage, getClaudeToolInputString, questionAnswers, questionRequest, titleOf } from './input.js';
+import { claudeToolDenialCode, getClaudeToolDisplayName, resultContent, toolMetaOf } from './kinds.js';
 import { ranOn } from './models.js';
 
 /**
@@ -39,33 +39,31 @@ function resultText(content: unknown): string | undefined {
  * catalogue said the session exists and the catalogue is right. Refusing to
  * open a row because its file is odd would be the host arguing with itself.
  *
- * A read that threw is tried once more before it is, though. A transcript
- * being written as it is read and a transient filesystem error are both
- * failures this cannot tell from a session with nothing in it, and empty is
- * the answer a client draws nothing for - so it is worth one more attempt
- * rather than being shown as a session that has no turns.
+ * The SDK is asked once, by the session's id alone, which searches every
+ * project, and for the system entries as well, as VS Code's Claude agent
+ * reads a transcript back: a session is read wherever it ran, and its
+ * compaction boundaries and notifications are drawn on their turns.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSavedChatReader.ts#L67-L68
  *
- * `ends`, when given, is filled with where each turn ended, by turn id: the
- * entry a fork of that turn copies through and a rewind to it keeps.
+ * `forkAnchorUuids`, when given, is filled with each turn's fork anchor, by
+ * turn id: the entry a fork of that turn copies through and a rewind to it
+ * keeps.
  */
-export async function turnsOf(sessionId: string, dir: string, ends?: Map<string, string>): Promise<WireTurn<Turn>[]> {
+export async function turnsOf(sessionId: string, forkAnchorUuids?: Map<string, string>): Promise<WireTurn<Turn>[]> {
   let messages: unknown[];
   try {
-    messages = await getSessionMessages(sessionId, { dir });
+    messages = await getSessionMessages(sessionId, { includeSystemMessages: true });
   } catch {
-    try {
-      messages = await getSessionMessages(sessionId, { dir });
-    } catch {
-      return [];
-    }
+    return [];
   }
 
   const asked = askedIn(messages);
-  const answered = asked.size === 0 ? new Map<string, unknown>() : await answeredIn(sessionId, dir, asked);
+  const files = asked.size === 0 ? undefined : sessionFiles(sessionId);
+  const answered = files === undefined ? new Map<string, unknown>() : await answeredIn(join(files.project, `${files.session}.jsonl`), asked);
   return buildTurns(answered.size === 0 ? messages : messages.map((message) => {
     const result = answered.get(str(bag(message).uuid) ?? '');
     return result === undefined ? message : { ...bag(message), toolUseResult: result };
-  }), ends);
+  }), forkAnchorUuids);
 }
 
 /** The uuids of the entries that hold the result of an `AskUserQuestion` call. */
@@ -89,19 +87,19 @@ function askedIn(messages: unknown[]): Set<string> {
  * its result.
  *
  * The CLI writes a tool's result object on that entry as `toolUseResult`, and
- * the SDK's `getSessionMessages` leaves the field out, so the session's own
- * file is read for it, as far as the last of the entries asked for. Line by
+ * the SDK's readers leave the field out, so the transcript's own file, the
+ * session's or a worker's, is read for it, as far as the last of the entries
+ * asked for. Line by
  * line, because the file of a long session can be longer than one string can
  * be; and a line is parsed only when it names `answers`, because most lines
  * are tool output.
  *
  * https://nodejs.org/api/readline.html#example-read-file-stream-line-by-line
  */
-async function answeredIn(sessionId: string, dir: string, wanted: Set<string>): Promise<Map<string, unknown>> {
+async function answeredIn(file: string, wanted: Set<string>): Promise<Map<string, unknown>> {
   const answered = new Map<string, unknown>();
-  const files = sessionFiles(sessionId, dir);
-  if (files === undefined) return answered;
-  const input = createReadStream(join(files.project, `${files.session}.jsonl`));
+  if (!existsSync(file)) return answered;
+  const input = createReadStream(file);
   const lines = createInterface({ input, crlfDelay: Infinity });
   const seen = new Set<string>();
   try {
@@ -132,14 +130,12 @@ async function answeredIn(sessionId: string, dir: string, wanted: Set<string>): 
  * `<config>/projects/<directory>/<id>.jsonl` for the session, and
  * `<config>/projects/<directory>/<id>/subagents/agent-<id>.jsonl` for the
  * conversations that ran inside its calls - with a `.meta.json` beside each
- * naming the tool call that spawned it. The directory is spelled the way the
- * CLI spells it, and a session resumed elsewhere may have been written under
- * the directory it started in, so the other projects are looked through.
+ * naming the tool call that spawned it. They are in whichever project holds
+ * the session's transcript, found by its id alone wherever the session ran,
+ * as the SDK finds a session asked for by its id.
  */
-function sessionFiles(sessionId: string, dir: string): { project: string; session: string } | undefined {
+function sessionFiles(sessionId: string): { project: string; session: string } | undefined {
   const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects');
-  const own = join(projects, dir.replace(/[^A-Za-z0-9]/g, '-'));
-  if (existsSync(join(own, `${sessionId}.jsonl`))) return { project: own, session: sessionId };
   let names: string[];
   try { names = readdirSync(projects); }
   catch { return undefined; }
@@ -191,10 +187,11 @@ export function agentIdIn(turns: WireTurn<Turn>[], agentId: string): string | un
  * spawning call's result is the fallback for a harness that writes no meta or
  * leaves the id out of it. A worker with neither is skipped rather than
  * guessed at: a chat linked to the wrong call is worse than one that is not
- * there, and a session with an orphaned file on disk still opens.
+ * there, and a session with an orphaned file on disk still opens. `titleMax`
+ * is the record's `subagentTitleMax`, which a title is cut to as a live one is.
  */
-export function subagentsOf(sessionId: string, dir: string, mainTurns: WireTurn<Turn>[]): RestoredSubagent[] {
-  const files = sessionFiles(sessionId, dir);
+export function subagentsOf(sessionId: string, mainTurns: WireTurn<Turn>[], titleMax?: unknown): RestoredSubagent[] {
+  const files = sessionFiles(sessionId);
   if (files === undefined) return [];
   const folder = join(files.project, files.session, 'subagents');
   if (!existsSync(folder)) return [];
@@ -227,7 +224,7 @@ export function subagentsOf(sessionId: string, dir: string, mainTurns: WireTurn<
        * one turn are six tabs saying the same thing - and the task the call
        * described is in the meta file either way.
        */
-      title: titleOf(description, agentType),
+      title: titleOf(description, agentType, titleMax),
       ...(agentType !== undefined ? { agentName: agentType } : {}),
       ...(description !== undefined ? { description } : {}),
       turns: buildTurns(readJsonl(join(folder, name))) as unknown as Bag[],
@@ -242,6 +239,113 @@ export function subagentsOf(sessionId: string, dir: string, mainTurns: WireTurn<
     if (inMain.has(one.toolCallId)) continue;
     const parent = out.find((other) => other !== one && callsIn(other.turns).has(one.toolCallId));
     if (parent !== undefined) one.parentToolCallId = parent.toolCallId;
+  }
+  return out;
+}
+
+/** VS Code's Claude's `agentId:` line at the end of a spawning call's result. */
+const AGENT_ID_SUFFIX = /^\s*agentId:\s+([a-z0-9]+)\b/im;
+
+/** The texts of a frame's message: its own string, or each of its text blocks. */
+const textsOf = (frame: unknown): string[] => {
+  const content = bag(bag(frame).message).content;
+  if (typeof content === 'string') return [content];
+  return list(content).map(bag).filter((one) => one.type === 'text').map((one) => str(one.text))
+    .filter((one): one is string => one !== undefined);
+};
+
+/** VS Code's `extractFirstUserText`: the first user message's text, which a worker was run with. */
+function firstUserText(messages: unknown[]): string | undefined {
+  for (const frame of messages) {
+    if (bag(frame).type !== 'user') continue;
+    const texts = textsOf(frame);
+    if (texts.length > 0) return texts[0];
+  }
+  return undefined;
+}
+
+/** VS Code's `extractLastAssistantText`: the last assistant message that says anything, which a worker answered with. */
+function lastAssistantText(messages: unknown[]): string | undefined {
+  for (const frame of [...messages].reverse()) {
+    if (bag(frame).type !== 'assistant') continue;
+    const text = textsOf(frame).join('');
+    if (text !== '') return text;
+  }
+  return undefined;
+}
+
+/**
+ * The worker chats a session ran, read through the SDK's own readers and
+ * linked to the calls that spawned them as VS Code's Claude resolver links
+ * them: the `agentId:` line a spawning call's result ends with, else the
+ * worker whose first message is the call's prompt, else the one worker whose
+ * last answer is the call's result. A worker none of them names is left out,
+ * and a worker spawned inside another is looked for among that worker's calls.
+ * The SDK's readers leave out an entry's `toolUseResult`, so a worker's
+ * answered question is read from the worker's own file, as the session's is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentResolver.ts#L384-L396
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeSubagentRegistry.ts#L232-L271
+ * `titleMax` is the record's `subagentTitleMax`, as for `subagentsOf`.
+ */
+export async function subagentsBySdk(sessionId: string, mainTurns: WireTurn<Turn>[], titleMax?: unknown): Promise<RestoredSubagent[]> {
+  let agentIds: string[];
+  try { agentIds = await listSubagents(sessionId); }
+  catch { return []; }
+  const read = new Map<string, unknown[]>();
+  for (const agentId of agentIds) {
+    try { read.set(agentId, await getSubagentMessages(sessionId, agentId)); }
+    catch { /* A worker the SDK cannot read is no chat to restore. */ }
+  }
+  const files = sessionFiles(sessionId);
+  const out: RestoredSubagent[] = [];
+  const claimed = new Set<string>();
+  const pending: { turns: Bag[]; parent?: string }[] = [{ turns: mainTurns as unknown as Bag[] }];
+  for (let next = pending.shift(); next !== undefined; next = pending.shift()) {
+    for (const turn of next.turns) {
+      for (const part of list(turn.responseParts)) {
+        const call = bag(bag(part).toolCall);
+        const toolCallId = str(call.toolCallId);
+        if (toolCallId === undefined || (call.toolName !== 'Task' && call.toolName !== 'Agent')) continue;
+        let input: Bag = {};
+        try { input = bag(JSON.parse(str(call.toolInput) ?? '{}')); }
+        catch { input = {}; }
+        const result = call.status === 'completed'
+          ? list(call.content).map(bag).filter((one) => one.type === 'text').map((one) => str(one.text) ?? '').join('\n').trim()
+          : '';
+        // The workers no call has claimed, in the SDK's order.
+        const free = [...read.keys()].filter((one) => !claimed.has(one));
+        // The text suffix, the prompt, then the one result that matches.
+        const suffix = list(call.content).map(bag).reverse()
+          .map((one) => AGENT_ID_SUFFIX.exec(str(one.text) ?? '')?.[1]).find((one) => one !== undefined);
+        const prompt = str(input.prompt);
+        const byResult = result === '' ? [] : free.filter((one) => lastAssistantText(read.get(one) ?? [])?.trim() === result);
+        const agentId = (suffix !== undefined && free.includes(suffix) ? suffix : undefined)
+          ?? (prompt === undefined ? undefined : free.find((one) => firstUserText(read.get(one) ?? []) === prompt))
+          ?? (byResult.length === 1 ? byResult[0] : undefined);
+        if (agentId === undefined) continue;
+        claimed.add(agentId);
+        const messages = read.get(agentId) ?? [];
+        const asked = askedIn(messages);
+        const answered = asked.size === 0 || files === undefined
+          ? new Map<string, unknown>()
+          : await answeredIn(join(files.project, files.session, 'subagents', `agent-${agentId}.jsonl`), asked);
+        const turns = buildTurns(messages.map((message) => {
+          const held = answered.get(str(bag(message).uuid) ?? '');
+          return held === undefined ? message : { ...bag(message), toolUseResult: held };
+        })) as unknown as Bag[];
+        const agentType = str(input.subagent_type);
+        const description = str(input.description);
+        out.push({
+          toolCallId,
+          title: titleOf(description, agentType, titleMax),
+          ...(agentType !== undefined ? { agentName: agentType } : {}),
+          ...(description !== undefined ? { description } : {}),
+          turns,
+          ...(next.parent === undefined ? {} : { parentToolCallId: next.parent }),
+        });
+        pending.push({ turns, parent: toolCallId });
+      }
+    }
   }
   return out;
 }
@@ -282,8 +386,8 @@ function isCliEcho(content: unknown): boolean {
  */
 const INTERRUPTED = '[Request interrupted by user';
 
-/** One session's history, from the frames a reader already parsed, and where each turn ended when `ends` is given. */
-function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<Turn>[] {
+/** One session's history, from the frames a reader already parsed, and each turn's fork anchor when `forkAnchorUuids` is given. */
+function buildTurns(messages: unknown[], forkAnchorUuids?: Map<string, string>): WireTurn<Turn>[] {
   const built: WireTurn<Turn>[] = [];
   const calls = new Map<string, Bag>();
   /** When each call started, by id, as its own `tool_use` frame says: what its duration is measured from. */
@@ -316,7 +420,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
    */
   const ended = (turn: WireTurn<Turn> | undefined, frame: Bag): void => {
     const entry = str(frame.uuid);
-    if (ends !== undefined && turn !== undefined && entry !== undefined) ends.set(String(turn.id), entry);
+    if (forkAnchorUuids !== undefined && turn !== undefined && entry !== undefined) forkAnchorUuids.set(String(turn.id), entry);
   };
 
   for (const entry of messages) {
@@ -358,13 +462,13 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         call.success = ok;
         const text = resultText(block.content);
         // A failed call's line and its `error`, as the live call words them.
-        if (!ok) call.pastTenseMessage = pastLineOf(str(call.toolName) ?? '', {}, str(call.displayName) ?? str(call.toolName) ?? 'the tool', false);
+        if (!ok) call.pastTenseMessage = getClaudePastTenseMessage(str(call.toolName) ?? '', str(call.displayName) ?? str(call.toolName) ?? 'the tool', {}, false);
         const denial = ok || text === undefined ? undefined : claudeToolDenialCode(text);
         // `type` on every block: these are MCP's content blocks and it is what
         // tells them apart. Checked, because this is an assignment onto a
         // `Bag` and so outside the literal the call was built as.
-        if (text !== undefined)
-          call.content = [{ type: 'text', text }] satisfies OnWire<ToolResultContent>[];
+        const content = resultContent(block.content) satisfies OnWire<ToolResultContent>[];
+        if (content.length > 0) call.content = content;
         if (denial !== undefined && text !== undefined) call.error = { message: text, code: denial };
         /*
          * What an answered question ran with, for a result that says so.
@@ -462,6 +566,23 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       continue;
     }
 
+    /*
+     * A compaction boundary or a notification the CLI recorded, drawn on the
+     * turn it came in as its own notification part, with its text or its
+     * subtype in brackets; any other system entry, and one before any turn,
+     * is dropped, as VS Code's replay keeps them.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L186-L208
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L306-L319
+     */
+    if (role === 'system') {
+      const subtype = str(message.subtype);
+      const turn = built[built.length - 1];
+      if (turn === undefined || (subtype !== 'compact_boundary' && subtype !== 'notification')) continue;
+      const content = str(message.text) ?? str(message.message) ?? `[${subtype}]`;
+      turn.responseParts = [...(turn.responseParts as Bag[]), { kind: 'systemNotification', content }];
+      continue;
+    }
+
     if (role !== 'assistant') continue;
 
     /*
@@ -497,7 +618,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       } else if (kind === 'tool_use') {
         const name = str(block.name) ?? 'tool';
         const given = bag(block.input);
-        const input = toolInputOf(name, given);
+        const input = getClaudeToolInputString(name, block.input);
         const meta = toolMetaOf(name);
         // From Claude's display table, as VS Code's replay names a call.
         // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L393
@@ -533,10 +654,10 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
            * question waiting on somebody. `success` and `pastTenseMessage`
            * stand until the call's result says otherwise.
            */
-          invocationMessage: lineOf(name, given, displayName),
+          invocationMessage: getClaudeInvocationMessage(name, displayName, given),
           confirmed: 'not-needed',
           success: true,
-          pastTenseMessage: pastLineOf(name, given, displayName),
+          pastTenseMessage: getClaudePastTenseMessage(name, displayName, given, true),
         } satisfies OnWire<ToolCallCompletedState>;
         calls.set(id, call);
         inputs.set(id, given);

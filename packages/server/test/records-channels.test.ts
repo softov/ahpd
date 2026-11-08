@@ -103,14 +103,14 @@ it('shows a person without user:read only their own record on the users channel'
 });
 
 /*
- * Two people on one client id, as a relay that passes no id of its own gives
- * them: each is sent only what they may read, and each keeps their own state,
- * whichever subscribed first.
+ * Two people on the empty client id, as a relay that passes no id of its own
+ * gives them: each is sent only what they may read, and each keeps their own
+ * state, whichever subscribed first.
  */
 for (const order of [['ana', 'bo'], ['bo', 'ana']] as const) {
   it(`keeps the users channel apart for two people on one client id, ${order.join(' first, then ')}`, async () => {
     const { host, users, close } = served();
-    const people = { ana: await as(host, users, 'ana', 'anonymous'), bo: await as(host, users, 'bo', 'anonymous') };
+    const people = { ana: await as(host, users, 'ana', ''), bo: await as(host, users, 'bo', '') };
     const answers: Record<string, string[]> = {};
     for (const one of order) answers[one] = ids(await people[one].call('subscribe', { channel: 'x-ahpd-users://' }));
     expect(answers).toEqual({ ana: ['ana', 'bo', 'cy'], bo: ['bo'] });
@@ -135,7 +135,7 @@ for (const order of [['ana', 'bo'], ['bo', 'ana']] as const) {
       users: [{ id: 'ana', roles: ['clerk'] }, { id: 'bo', roles: ['clerk'] }],
     }));
     const { host, users, close } = served();
-    const people = { ana: await as(host, users, 'ana', 'anonymous'), bo: await as(host, users, 'bo', 'anonymous') };
+    const people = { ana: await as(host, users, 'ana', ''), bo: await as(host, users, 'bo', '') };
     for (const one of order) expect(ids(await people[one].call('subscribe', { channel: 'x-ahpd-teams://' }))).toEqual(['backend']);
     await wait(50);
 
@@ -159,8 +159,8 @@ for (const order of [['ana', 'bo'], ['bo', 'ana']] as const) {
 
 it('replays to a person on a shared client id nothing sent to another person on it', async () => {
   const { host, users, close } = served();
-  const ana = await as(host, users, 'ana', 'anonymous');
-  const bo = await as(host, users, 'bo', 'anonymous');
+  const ana = await as(host, users, 'ana', '');
+  const bo = await as(host, users, 'bo', '');
   await ana.call('subscribe', { channel: 'x-ahpd-users://' });
   const answer = await bo.call('subscribe', { channel: 'x-ahpd-users://' });
   const from = answer.result.snapshot.fromSeq as number;
@@ -175,7 +175,7 @@ it('replays to a person on a shared client id nothing sent to another person on 
   const back = host.accept({ send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {} }, person);
   const replay = await back.handle({
     method: 'reconnect',
-    params: { clientId: 'anonymous', lastSeenServerSeq: from, subscriptions: ['x-ahpd-users://'] },
+    params: { clientId: '', lastSeenServerSeq: from, subscriptions: ['x-ahpd-users://'] },
   }) as Bag;
   expect(replay.type).toBe('replay');
   expect((replay.actions as Bag[]).filter((one) => one.channel === 'x-ahpd-users://')).toEqual([]);
@@ -246,7 +246,14 @@ interface Answered {
   error?: { code: number; message: string };
 }
 
-/** A stdio daemon over a users file in `home`, sent `frames`, closed once `waiting` are answered. */
+/**
+ * A stdio daemon over a users file in `home`, sent `frames` one at a time,
+ * closed once `waiting` are answered.
+ *
+ * Each frame goes once the one before it is answered, as a client that reads
+ * what it wrote waits for the write's answer: the daemon handles the requests
+ * it is sent side by side, as JSON-RPC lets it.
+ */
 const daemon = (frames: string[], waiting: number[]): Promise<Answered[]> => {
   mkdirSync(join(home, 'ahpd'), { recursive: true });
   const config = join(home, 'config.json');
@@ -257,6 +264,14 @@ const daemon = (frames: string[], waiting: number[]): Promise<Answered[]> => {
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const frames_: Answered[] = [];
+  const ids = frames.map((one) => (JSON.parse(one) as { id: number }).id);
+  let sent = 0;
+  const send = (): void => {
+    const one = frames[sent];
+    if (one === undefined) return;
+    sent += 1;
+    child.stdin.write(`${one}\n`);
+  };
   let held = '';
   const close = (): void => { child.stdin.end(); };
   child.stdout.on('data', (chunk: Buffer) => {
@@ -265,12 +280,16 @@ const daemon = (frames: string[], waiting: number[]): Promise<Answered[]> => {
     while (at !== -1) {
       const line = held.slice(0, at).trim();
       held = held.slice(at + 1);
-      if (line.startsWith('{')) frames_.push(JSON.parse(line) as Answered);
+      if (line.startsWith('{')) {
+        const answered = JSON.parse(line) as Answered;
+        frames_.push(answered);
+        if (answered.method === undefined && answered.id === ids[sent - 1]) send();
+      }
       at = held.indexOf('\n');
     }
     if (waiting.every((one) => frames_.some((frame) => frame.id === one))) setTimeout(close, 200);
   });
-  for (const frame of frames) child.stdin.write(`${frame}\n`);
+  send();
   return new Promise((done) => {
     const give = setTimeout(close, 15000);
     child.on('exit', () => { clearTimeout(give); done(frames_); });

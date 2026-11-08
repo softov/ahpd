@@ -21,8 +21,8 @@
  */
 
 import { bag, endedParts } from '@ahpd/sdk';
-import type { Agent, Bag } from '@ahpd/sdk';
-import type { SessionUpdate } from '@agentclientprotocol/sdk';
+import type { Agent, Bag, MessageAttachment } from '@ahpd/sdk';
+import type { ContentBlock, SessionUpdate } from '@agentclientprotocol/sdk';
 import { mapUpdate } from './mapping.js';
 import type { AcpTurn, WatchedSession, WatchedTurn } from './types.js';
 
@@ -85,13 +85,14 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
       startedAt: watched.startedAt,
       /*
        * A turn this bridge began is the person's unless somebody said
-       * otherwise, and the transcript states that rather than leaving the
-       * origin off: the protocol requires one, and the live snapshot's
-       * omission is a `Bag` that a typed read cannot carry.
+       * otherwise, and the transcript says so: the protocol requires an
+       * origin, which a typed read of the live snapshot's `Bag` cannot carry.
+       * What was attached to the message comes back with it.
        */
       message: {
         text: watched.message.text,
         origin: watched.message.origin ?? { kind: 'user' },
+        ...(watched.message.attachments === undefined ? {} : { attachments: watched.message.attachments }),
       },
       responseParts: replay.parts,
       // What the turn last said it had spent, which is what the live turn holds
@@ -106,6 +107,42 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
 }
 
 /**
+ * One block of a person's replayed message as the attachment it was, or
+ * nothing for a block that is no attachment: an image's bytes, a resource the
+ * person embedded, or a link to one.
+ *
+ * A `Bag` in the protocol's shape: its kinds are an enum of the protocol
+ * package, which this package names through `@ahpd/sdk` alone, and these are
+ * the enum's values.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L686-L703
+ */
+const attachmentOf = (content: ContentBlock): Bag | undefined => {
+  const kind = (type: string | null | undefined): string => (type?.startsWith('image/') === true ? 'image' : 'document');
+  switch (content.type) {
+    case 'image':
+      return { type: 'embeddedResource', label: 'attachment', data: content.data, contentType: content.mimeType, displayKind: 'image' };
+    case 'resource_link':
+      return {
+        type: 'resource',
+        uri: content.uri,
+        label: content.title ?? content.name,
+        ...(typeof content.mimeType === 'string' ? { contentType: content.mimeType } : {}),
+        ...(typeof content.size === 'number' ? { sizeHint: content.size } : {}),
+        displayKind: kind(content.mimeType),
+      };
+    case 'resource': {
+      const { resource } = content;
+      const label = resource.uri.slice(resource.uri.lastIndexOf('/') + 1) || resource.uri;
+      return 'blob' in resource
+        ? { type: 'embeddedResource', label, data: resource.blob, contentType: resource.mimeType ?? 'application/octet-stream', displayKind: kind(resource.mimeType) }
+        : { type: 'resource', uri: resource.uri, label, ...(typeof resource.mimeType === 'string' ? { contentType: resource.mimeType } : {}), displayKind: 'document' };
+    }
+    default:
+      return undefined;
+  }
+};
+
+/**
  * The turns a `session/load` replayed, in the order the conversation had them.
  *
  * The spec replays a turn as the person's message followed by the updates the
@@ -115,9 +152,19 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
  * message and one turn, and a chunk starts a new turn only once the open one
  * holds something the agent said.
  *
- * What comes before the first message is kept as a turn of its own with no user
+ * What comes before the first message is kept as a turn of its own with no
  * text, because a server that replays without a question has still said
- * something and dropping it would lose the start of the conversation.
+ * something and dropping it would lose the start of the conversation. No
+ * person began it, so its message is the agent's, the protocol's origin for a
+ * message the agent produced itself.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L760-L767
+ *
+ * A person's image or resource in a chunk of their message is read into the
+ * message's attachments, as VS Code reads a replayed message's attachments:
+ * bytes sent with the message as an embedded resource, labelled `attachment`
+ * where nothing names them, and a file named by its URI as a resource,
+ * labelled by its name and drawn as an image or a document by its type.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1238-L1288
  *
  * The updates are kept raw and read back through `turnsOf` like any watched
  * turn, so a replayed turn and a live one are the same rendering. ACP carries
@@ -137,7 +184,7 @@ export function replayedTurns(updates: SessionUpdate[], at: string): WatchedTurn
       open = {
         turnId: crypto.randomUUID(),
         startedAt: at,
-        message: { text: '' },
+        message: { text: '', ...(asked ? {} : { origin: { kind: 'agent' } }) },
         state: 'complete',
         updates: [],
       };
@@ -153,6 +200,8 @@ export function replayedTurns(updates: SessionUpdate[], at: string): WatchedTurn
       open.turnId = messageId;
       anchored = true;
     }
+    const attached = asked ? attachmentOf(update.content) : undefined;
+    if (attached !== undefined) open.message.attachments = [...(open.message.attachments ?? []), attached as unknown as MessageAttachment];
     open.updates.push({ update });
     answered = answered || !asked;
   }

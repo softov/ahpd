@@ -1,17 +1,29 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
 import type { SessionState } from '@microsoft/agent-host-protocol';
+import { uriOf } from '../src/resources/fileuri.js';
 import {
-  resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk,
-  serving, settle, running,
+  SIGNED_IN, resetSdk, actions, claude, createHost, echo, emit, firstMessage, hello, machine, open, peer, sdk,
+  sendAnswered, serving, settle, running,
 } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
 beforeEach(resetSdk);
 
+/** A server's row id: no file here declares a server, so each is named by its internal uri. */
+const serverId = (name: string): string => `claude-internal:/mcp/${name}#mcp=${name}`;
+
 describe('what the harness offers', () => {
-  it('reads models, commands and servers with no turn having happened', async () => {
+  /*
+   * A composer offers the slash menu *before* the conversation starts, so
+   * what the agent offers is there with no turn having happened: the agent's
+   * own, which the boot probe read, as VS Code's Claude session lists its
+   * agent's own before its first send. The servers a CLI connects are that
+   * CLI's, listed once the first send starts it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1499-L1533
+   */
+  it("offers the agent's own commands and agents with no turn having happened, and its CLI's servers once a send starts it", async () => {
     sdk.init = {
       models: [
         { value: 'default', displayName: 'Default (recommended)' },
@@ -27,30 +39,32 @@ describe('what the harness offers', () => {
     );
 
     const { client, uri } = await running();
-    // Nothing has been said. A composer has to offer the models and the slash
-    // menu *before* the conversation starts, so waiting for the message
-    // stream's `init` would be exactly too late.
     expect(sdk.said).toEqual([]);
-
-    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    const listed = async () => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
-    }).snapshot.state;
+    }).snapshot.state.customizations;
 
     // A leaf lives in a container; an MCP server is the one kind that does
     // not, and is published bare.
-    const leaves = state.customizations
-      .flatMap((c) => (c.children as Record<string, unknown>[] | undefined) ?? [c]);
+    const before = await listed();
+    const leaves = before.flatMap((c) => (c.children as Record<string, unknown>[] | undefined) ?? [c]);
     const kinds = leaves.map((c) => c.type);
-    expect(kinds).toContain('prompt');
+    expect(kinds).toContain('skill');
     expect(kinds).toContain('agent');
-    expect(state.customizations.map((c) => c.type)).toContain('mcpServer');
+    expect(before.map((c) => c.type)).not.toContain('mcpServer');
 
-    const command = leaves.find((c) => c.id === 'command:advisor');
-    expect(command).toMatchObject({ name: 'advisor', description: 'Read support tickets', enabled: true });
+    // A command is a skill, as VS Code's Claude discovery lists one, named by its uri.
+    const command = leaves.find((c) => c.type === 'skill' && c.name === 'advisor');
+    expect(command).toMatchObject({ type: 'skill', name: 'advisor', description: 'Read support tickets', enabled: true });
+    expect(command?.id).toBe(command?.uri);
+
+    await sendAnswered(client, uri);
+    expect((await listed()).map((c) => c.type)).toContain('mcpServer');
   });
 
   it('advertises the models on the root channel, keyed by `value`', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [{ value: 'sonnet', displayName: 'Sonnet' }],
       commands: [], agents: [],
     };
@@ -72,8 +86,113 @@ describe('what the harness offers', () => {
     expect(p.notes.length).toBeGreaterThanOrEqual(0);
   });
 
+  /*
+   * VS Code publishes its agents when the whole list differs from the last one
+   * published, a model renamed under its id among the changes, and publishes
+   * an empty catalog a source answered.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L575-L606
+   */
+  it('says the agent list when a handshake moves it whole, a rename and an empty answer among the moves', async () => {
+    let models: { id: string; name: string }[] = [{ id: 'a', name: 'A' }];
+    let handshake: (() => void) | undefined;
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...base,
+        create: (start) => {
+          handshake = start.onHandshake;
+          return { ...base.create(start), models: () => models };
+        },
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/m', provider: 'echo' } });
+    const said = () => p.notes.filter((n) => n.method === 'action'
+      && (n.params as { action: { type: string } }).action.type === 'root/agentsChanged')
+      .map((n) => ((n.params as { action: { agents: { models: { id: string; name: string }[] }[] } }).action.agents[0]?.models ?? [])
+        .map((one) => `${one.id}:${one.name}`));
+
+    handshake?.();
+    expect(said().at(-1)).toEqual(['a:A']);
+    models = [{ id: 'a', name: 'A renamed' }];
+    handshake?.();
+    expect(said().at(-1)).toEqual(['a:A renamed']);
+    const before = said().length;
+    handshake?.();
+    expect(said()).toHaveLength(before);
+    models = [];
+    handshake?.();
+    expect(said().at(-1)).toEqual([]);
+    await host.close();
+  });
+
+  /*
+   * A backend whose handshake is reported inside `create`, before the host
+   * holds the session it answers, as one does that opens its server before it
+   * answers: the models it answered are learned once the session is held, as
+   * VS Code's host seeds a session's offers before its first state is served.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
+   */
+  it('learns the models a handshake reported before the host held its session', async () => {
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...base,
+        create: (start) => {
+          start.onHandshake?.();
+          return { ...base.create(start), models: () => [{ id: 'early', name: 'Early' }] };
+        },
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/e', provider: 'echo' } });
+    const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { models: { id: string; name: string }[] }[] } };
+    }).snapshot.state;
+    expect(root.agents[0]?.models.map((one) => `${one.id}:${one.name}`)).toEqual(['early:Early']);
+    await host.close();
+  });
+
+  /*
+   * A probe that finds what the root already lists says nothing, as VS Code
+   * publishes its agents only when the list differs from the last one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L602-L606
+   */
+  it('says nothing when a probe finds the agent list as it was', async () => {
+    let changed: (() => void) | undefined;
+    const base = echo({ path: '/home/softov', pace: 0 });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...base,
+        probe: async () => ({ models: [{ id: 'a', name: 'A' }], commands: [], customizations: [] }),
+        probeChanged: (onChange) => { changed = onChange; return () => {}; },
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await settle(8);
+    const said = () => p.notes.filter((n) => n.method === 'action'
+      && (n.params as { action: { type: string } }).action.type === 'root/agentsChanged').length;
+    const before = said();
+    changed?.();
+    await settle(8);
+    changed?.();
+    await settle(8);
+    expect(said()).toBe(before);
+    await host.close();
+  });
+
   it('gives each model its own thinking control, from what that model supports', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [
         { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'medium', 'high'] },
         { value: 'haiku', displayName: 'Haiku' },
@@ -113,6 +232,7 @@ describe('what the harness offers', () => {
    */
   it('leaves the SDK\'s default alias out, and titles each model\'s effort as VS Code\'s Claude does', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [
         { value: 'default', displayName: 'Default (recommended)', supportedEffortLevels: ['low', 'high'] },
         { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'high'] },
@@ -133,6 +253,7 @@ describe('what the harness offers', () => {
 
   it('offers one effort control, not the model\'s and the session\'s both', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [
         { value: 'sonnet', displayName: 'Sonnet', supportedEffortLevels: ['low', 'medium', 'high'] },
       ],
@@ -166,6 +287,7 @@ describe('what the harness offers', () => {
    */
   it('offers no session-wide effort where no model has one of its own', async () => {
     sdk.init = {
+      account: SIGNED_IN,
       models: [{ value: 'haiku', displayName: 'Haiku' }],
       commands: [], agents: [],
     };
@@ -237,7 +359,7 @@ describe('what the harness offers', () => {
     const { client } = await running();
 
     const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
-      snapshot: { state: { agents: { customizations?: { id: string; type: string; children?: { id: string }[] }[] }[] } };
+      snapshot: { state: { agents: { customizations?: { id: string; type: string; name: string; uri: string; children?: { id: string }[] }[] }[] } };
     }).snapshot.state;
     // The protocol's own place for them: `AgentInfo.customizations`, which it
     // says are propagated into a session's list when one is created with this
@@ -245,15 +367,14 @@ describe('what the harness offers', () => {
     // a session, which is the thing somebody is deciding about.
     const offered = root.agents[0]?.customizations ?? [];
     // The personal folders are there to write in, empty or not, and a skill
-    // no folder has is the CLI's own.
-    expect(offered.map((one) => one.id).sort()).toEqual([
-      'directory:builtin:skills', 'directory:user:agents', 'directory:user:commands',
-      'directory:user:rules', 'directory:user:skills', 'mcp:gmail',
-    ]);
-    expect(offered.find((one) => one.id === 'mcp:gmail')?.type).toBe('mcpServer');
+    // no folder has is the CLI's own. Each directory's id is its uri.
+    const directories = offered.filter((one) => one.type === 'directory');
+    expect(directories.map((one) => one.name).sort()).toEqual(['agents', 'builtin', 'rules', 'skills']);
+    expect(directories.every((one) => one.id === one.uri)).toBe(true);
+    expect(offered.filter((one) => one.type !== 'directory').map((one) => [one.type, one.id])).toEqual([['mcpServer', serverId('gmail')]]);
     // And the skill is inside the directory, which is where a leaf goes.
-    const held = offered.find((one) => one.id === 'directory:builtin:skills') as { children?: { id: string }[] } | undefined;
-    expect(held?.children?.map((one) => one.id)).toEqual(['skill:review']);
+    const held = offered.find((one) => one.id === 'agent-builtin:/skills');
+    expect(held?.children?.map((one) => one.id)).toEqual(['agent-builtin:/skill/review']);
   });
 
   it('says an MCP server\'s state in the protocol\'s words, not the SDK\'s', async () => {
@@ -265,6 +386,8 @@ describe('what the harness offers', () => {
       { name: 'off', status: 'disabled' },
     );
     const { client, uri } = await running();
+    // The servers the CLI its first send started reports.
+    await sendAnswered(client, uri);
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: {
         state: {
@@ -277,14 +400,14 @@ describe('what the harness offers', () => {
     }).snapshot.state;
 
     const byId = new Map(state.customizations.map((c) => [c.id, c]));
-    expect(byId.get('mcp:ok')?.state?.kind).toBe('ready');
-    expect(byId.get('mcp:broken')?.state?.kind).toBe('error');
+    expect(byId.get(serverId('ok'))?.state?.kind).toBe('ready');
+    expect(byId.get(serverId('broken'))?.state?.kind).toBe('error');
     // Why it is not ready, in the host's own words - the whole value of
     // showing the row rather than hiding it. An `ErrorInfo` and not a bare
     // `message`, which is what `McpServerErrorState` actually requires.
-    expect(byId.get('mcp:broken')?.state?.error?.message).toBe('spawn ENOENT');
-    expect(byId.get('mcp:broken')?.enablement?.[0]?.enabled).toBe(false);
-    expect(byId.get('mcp:off')?.state?.kind).toBe('stopped');
+    expect(byId.get(serverId('broken'))?.state?.error?.message).toBe('spawn ENOENT');
+    expect(byId.get(serverId('broken'))?.enablement?.[0]?.enabled).toBe(false);
+    expect(byId.get(serverId('off'))?.state?.kind).toBe('stopped');
 
     /*
      * A server needing a sign-in is an error, not `authRequired`.
@@ -295,11 +418,11 @@ describe('what the harness offers', () => {
      * `needs-auth` and nothing else, so emitting that state would be two
      * required fields short - a client told to sign in with nowhere to do it.
      */
-    expect(byId.get('mcp:gmail')?.state?.kind).toBe('error');
-    expect(byId.get('mcp:gmail')?.state?.error?.errorType).toBe('mcpAuthRequired');
+    expect(byId.get(serverId('gmail'))?.state?.kind).toBe('error');
+    expect(byId.get(serverId('gmail'))?.state?.error?.errorType).toBe('mcpAuthRequired');
     // Still switched on: it is enabled and unreachable, which is not the same
     // as somebody having turned it off.
-    expect(byId.get('mcp:gmail')?.enablement?.[0]?.enabled).toBe(true);
+    expect(byId.get(serverId('gmail'))?.enablement?.[0]?.enabled).toBe(true);
   });
 
   it('offers a live session\'s own commands, which live inside its containers', async () => {
@@ -323,7 +446,7 @@ describe('what the harness offers', () => {
       params: { channel: chatUri, kind: 'userMessage', text: '/', offset: 1 },
     }) as { items: { insertText: string; attachment: Record<string, unknown> }[] };
     /*
-     * A prompt and a skill are `children` of a directory, never top-level.
+     * A skill is a `child` of a directory, never top-level.
      *
      * A filter that looked only at the top level found nothing every time and
      * fell back to the backend-wide list - which answered correctly and by
@@ -332,12 +455,11 @@ describe('what the harness offers', () => {
      */
     expect(found.items.map((one) => one.insertText).sort()).toEqual(['/compact', '/writing']);
     expect(found.items.map((one) => one.insertText)).not.toContain('/internal');
-    // And said to be a skill, where it is one. The reference client keeps a
-    // runtime skill in an automation's text only when the flag is there,
-    // and drops it otherwise as a command it cannot find a file for. `true`
-    // or absent, which is how it is read.
+    // And said to be a skill, a command the CLI ships among them, as VS Code's
+    // Claude lists one. The reference client keeps a runtime skill in an
+    // automation's text only when the flag is there.
     const meta = Object.fromEntries(found.items.map((one) => [one.insertText, (one.attachment._meta as Record<string, unknown>).isSkill]));
-    expect(meta).toEqual({ '/compact': undefined, '/writing': true });
+    expect(meta).toEqual({ '/compact': true, '/writing': true });
   });
 
   it('gives a live session\'s skill its argument hint as ghost text', async () => {
@@ -350,15 +472,15 @@ describe('what the harness offers', () => {
     const { client, uri, chatUri } = await running();
     await settle(8);
 
-    // The skill keeps its hint under this host's own key, because
-    // `SkillCustomization` declares none.
+    // The skill keeps its hint under the key VS Code's host publishes one under,
+    // because `SkillCustomization` declares none.
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
     }).snapshot.state;
     const skill = state.customizations
       .flatMap((c) => (c.children as Record<string, unknown>[] | undefined) ?? [c])
-      .find((c) => c.id === 'skill:writing');
-    expect(skill?._meta).toEqual({ 'ahpd.argumentHint': '<topic>' });
+      .find((c) => c.type === 'skill' && c.name === 'writing');
+    expect(skill?._meta).toEqual({ 'vscode.skill.argumentHint': '<topic>' });
 
     // The completion item carries it under the reference client's own key.
     const found = await client.handle({
@@ -424,7 +546,9 @@ describe('what the harness offers', () => {
 
   it('opens the session even when the CLI will not answer yet', async () => {
     sdk.init = {};
-    const { client, uri } = await running();
+    const { client, uri, chatUri } = await running();
+    // Ready from its first message, as a session made fresh is.
+    await firstMessage(client, chatUri);
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: { type: string; children?: unknown[] }[]; lifecycle: string } };
     }).snapshot.state;
@@ -653,11 +777,12 @@ describe('what goes after a slash', () => {
 });
 
 describe('turning a customization on and off', () => {
-  /** A live session that has heard what its CLI offers. */
+  /** A live session that has heard what the CLI its first send started offers. */
   const withServers = async (status: string) => {
     sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }] };
     sdk.mcp = [{ name: 'desk', status }];
     const started = await running();
+    await sendAnswered(started.client, started.uri);
     // `describe` answers on its own clock; the customizations arrive with it.
     await settle(8);
     return started;
@@ -674,7 +799,7 @@ describe('turning a customization on and off', () => {
   const ask = (client: Awaited<ReturnType<typeof running>>['client'], type: string, clientSeq: number) => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', clientSeq, action: { type, id: 'mcp:desk' } },
+      params: { channel: 'ahp-session:/live', clientSeq, action: { type, id: serverId('desk') } },
     });
   };
 
@@ -682,7 +807,7 @@ describe('turning a customization on and off', () => {
   const desk = async (client: Awaited<ReturnType<typeof running>>['client'], uri: string) =>
     (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: Record<string, unknown>[] } };
-    }).snapshot.state.customizations.find((one) => one.id === 'mcp:desk');
+    }).snapshot.state.customizations.find((one) => one.id === serverId('desk'));
 
   /*
    * The two in-process servers a session declares itself are no
@@ -694,17 +819,18 @@ describe('turning a customization on and off', () => {
     sdk.init = { commands: [] };
     sdk.mcp = [{ name: 'desk', status: 'connected' }, { name: 'host', status: 'connected' }, { name: 'client', status: 'connected' }];
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     await settle(8);
     const listed = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { customizations: { id: string; type: string }[] } };
     }).snapshot.state.customizations.filter((one) => one.type === 'mcpServer').map((one) => one.id);
-    expect(listed).toEqual(['mcp:desk']);
+    expect(listed).toEqual([serverId('desk')]);
   });
 
   it('switches an MCP server off through the CLI, and reports what it became', async () => {
     const { client, peer: p, uri } = await withServers('connected');
     sdk.mcp = [{ name: 'desk', status: 'disabled' }];
-    toggle(client, 'mcp:desk', false);
+    toggle(client, serverId('desk'), false);
     await settle(8);
 
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
@@ -714,7 +840,7 @@ describe('turning a customization on and off', () => {
     expect(said?.action.customization).toMatchObject({
       // `enablement`, not a flat flag: an MCP server is the one customization
       // the protocol decides per scope.
-      id: 'mcp:desk', enablement: [{ kind: 'session', enabled: false }], state: { kind: 'stopped' },
+      id: serverId('desk'), enablement: [{ kind: 'session', enabled: false }], state: { kind: 'stopped' },
     });
   });
 
@@ -726,7 +852,7 @@ describe('turning a customization on and off', () => {
       params: {
         channel: 'ahp-session:/live',
         clientSeq: 4,
-        action: { type: 'session/customizationToggled', id: 'mcp:desk', enablement: [{ kind: 'session', enabled: false }] },
+        action: { type: 'session/customizationToggled', id: serverId('desk'), enablement: [{ kind: 'session', enabled: false }] },
       },
     });
     await settle(8);
@@ -739,7 +865,7 @@ describe('turning a customization on and off', () => {
   it('reconnects one that was not ready, because that is how signing in happens', async () => {
     const { client } = await withServers('needs-auth');
     sdk.mcp = [{ name: 'desk', status: 'connected' }];
-    toggle(client, 'mcp:desk', true);
+    toggle(client, serverId('desk'), true);
     await settle(8);
 
     // `toggleMcpServer` only lifts the disabled flag - a server that was off
@@ -762,7 +888,7 @@ describe('turning a customization on and off', () => {
 
   it('does not reconnect one that was already ready', async () => {
     const { client } = await withServers('connected');
-    toggle(client, 'mcp:desk', true);
+    toggle(client, serverId('desk'), true);
     await settle(8);
     expect(sdk.mcpReconnected).toEqual([]);
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: true }]);
@@ -799,10 +925,11 @@ describe('turning a customization on and off', () => {
 
   it('takes a plugin toggle, and keeps the row after the CLI stops reporting it', async () => {
     const said: string[] = [];
-    // A plugin the CLI is loading, named by the source a switch moves. The
-    // session's list is read from `reloadPlugins`, so a switch that took takes
-    // it out of the CLI's own answer as well.
-    sdk.plugins = [{ name: 'cc-plugin-agents-md', path: 'builtin', source: 'cc-plugin-agents-md@builtin' }];
+    // A plugin the CLI is loading from its root, its row named by the source a
+    // switch moves. The session's list is read from `reloadPlugins`, so a switch
+    // that took takes it out of the CLI's own answer as well.
+    sdk.plugins = [{ name: 'acme', path: '/plugins/acme', source: 'acme@market' }];
+    const root = uriOf('/plugins/acme');
     const host = createHost({
       path: '/home/softov',
       agents: [claude({ paths: ['/home/softov'] })],
@@ -813,19 +940,20 @@ describe('turning a customization on and off', () => {
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } });
+    await sendAnswered(client, 'ahp-session:/live');
     await settle(8);
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'session/customizationToggled', id: 'plugin:cc-plugin-agents-md', enablement: [{ kind: 'session', enabled: false }] } },
+      params: { channel: 'ahp-session:/live', action: { type: 'session/customizationToggled', id: root, enablement: [{ kind: 'session', enabled: false }] } },
     });
     await settle(8);
 
     expect(said.filter((line) => line.includes('has no runtime switch'))).toEqual([]);
     // The switch reached the CLI as the setting it reads when it loads its
-    // plugins, named by the plugin's source rather than by its id.
+    // plugins, named by the plugin's source, which the row is named by.
     expect(sdk.flags.at(-1)?.enabledPlugins as Record<string, boolean> | undefined)
-      .toEqual({ 'cc-plugin-agents-md@builtin': false });
+      .toEqual({ 'acme@market': false });
     /*
      * And the row is on the list all the same.
      *
@@ -834,9 +962,10 @@ describe('turning a customization on and off', () => {
      * draws the switch from has to carry it or the switch would be drawn back
      * on by the very report that says the switch worked.
      */
-    const lists = actions(p, 'ahp-session:/live').filter((e) => e.action.type === 'session/customizationsChanged');
-    const container = (lists.at(-1)?.action.customizations as Record<string, unknown>[] | undefined)
-      ?.find((one) => one.id === 'plugin:cc-plugin-agents-md');
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } }) as {
+      snapshot: { state: { customizations: Record<string, unknown>[] } };
+    }).snapshot.state;
+    const container = state.customizations.find((one) => one.id === root);
     expect(container?.enablement).toEqual([{ kind: 'session', enabled: false }]);
   });
 
@@ -844,14 +973,14 @@ describe('turning a customization on and off', () => {
     const { client } = await withServers('disabled');
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStartRequested', id: 'mcp:desk' } },
+      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStartRequested', id: serverId('desk') } },
     });
     await settle(8);
     expect(sdk.mcpReconnected).toEqual(['desk']);
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStopRequested', id: 'mcp:desk' } },
+      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerStopRequested', id: serverId('desk') } },
     });
     await settle(8);
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
@@ -869,7 +998,7 @@ describe('turning a customization on and off', () => {
     // Every client reduced the request to `starting`, so the state the CLI
     // reports has to follow it, the one it was in included.
     expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
-      .toEqual({ type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'ready' } });
+      .toEqual({ type: 'session/mcpServerStateChanged', id: serverId('desk'), state: { kind: 'ready' } });
   });
 
   it('answers a start whose sign-in fails once, and follows it with the state', async () => {
@@ -886,7 +1015,7 @@ describe('turning a customization on and off', () => {
       .toEqual([['session/mcpServerStartRequested', undefined]]);
     const asked = said.findIndex((e) => e.origin?.clientSeq === 6);
     expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
-      .toMatchObject({ id: 'mcp:desk', state: { kind: 'error', error: { errorType: 'mcpAuthRequired' } } });
+      .toMatchObject({ id: serverId('desk'), state: { kind: 'error', error: { errorType: 'mcpAuthRequired' } } });
   });
 
   it('stops a server without switching it off, and a switch off after it is the client\'s', async () => {
@@ -905,7 +1034,7 @@ describe('turning a customization on and off', () => {
     expect(said.slice(asked + 1).filter((e) => e.action.type === 'session/customizationUpdated')).toEqual([]);
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'stopped' } });
 
-    toggle(client, 'mcp:desk', false);
+    toggle(client, serverId('desk'), false);
     await settle(8);
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: false }], state: { kind: 'stopped' } });
   });
@@ -925,7 +1054,7 @@ describe('turning a customization on and off', () => {
     const said = actions(p, uri);
     const asked = said.findIndex((e) => e.origin?.clientSeq === 9);
     expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
-      .toEqual({ type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'ready' } });
+      .toEqual({ type: 'session/mcpServerStateChanged', id: serverId('desk'), state: { kind: 'ready' } });
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
   });
 
@@ -959,7 +1088,7 @@ describe('turning a customization on and off', () => {
     // Every client reduced the request to `stopped`, and the server is still up.
     const asked = said.findIndex((e) => e.origin?.clientSeq === 10);
     expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
-      .toEqual({ type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'ready' } });
+      .toEqual({ type: 'session/mcpServerStateChanged', id: serverId('desk'), state: { kind: 'ready' } });
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
   });
 
@@ -973,7 +1102,7 @@ describe('turning a customization on and off', () => {
     const seq = actions(p, uri).at(-1)?.serverSeq;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, clientSeq: 6, action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+      params: { channel: uri, clientSeq: 6, action: { type: 'session/mcpServerBackgroundRequested', id: serverId('desk') } },
     });
     await settle(8);
 
@@ -1015,13 +1144,13 @@ describe('turning a customization on and off', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerBackgroundRequested', id: serverId('desk') } },
     });
     await settle(8);
 
     // A backend that has the call is asked once the request is said. Once:
     // asking twice would run whatever the backend does twice.
-    expect(asked).toEqual(['mcp:desk']);
+    expect(asked).toEqual([serverId('desk')]);
   });
 
   it.each([
@@ -1104,11 +1233,11 @@ describe('turning a customization on and off', () => {
   });
 });
 
-describe('a skill is not a prompt', () => {
+describe('a command is a skill', () => {
   const offering = async () => {
     // The CLI hands out two lists that overlap. `review` is in both, `deploy`
-    // is a built-in prompt, and `keybindings-help` is a skill the CLI does
-    // not put behind a slash.
+    // is a command the CLI ships, and `keybindings-help` is a skill the CLI
+    // does not put behind a slash.
     sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }, { name: 'deploy' }] };
     sdk.skills = [{ name: 'review' }, { name: 'keybindings-help', description: 'Internal' }];
     const started = await running();
@@ -1146,16 +1275,17 @@ describe('a skill is not a prompt', () => {
   it('calls a command that was loaded as a skill a skill', async () => {
     const { items } = await offering();
     const review = items.find((entry) => entry.name === 'review');
-    expect(review).toMatchObject({ type: 'skill', id: 'skill:review' });
+    expect(review).toMatchObject({ type: 'skill' });
+    expect(review?.id).toBe(review?.uri);
     // And keeps the description, whichever of the two lists carried it.
     expect(review?.description).toBe('Read the diff');
     // Once, not twice: it is in both lists and it is one thing.
     expect(items.filter((entry) => entry.name === 'review')).toHaveLength(1);
   });
 
-  it('leaves a command that is not a skill a prompt', async () => {
+  it('lists a command the skills do not as a built-in skill', async () => {
     const { items } = await offering();
-    expect(items.find((entry) => entry.name === 'deploy')).toMatchObject({ type: 'prompt' });
+    expect(items.find((entry) => entry.name === 'deploy')).toMatchObject({ type: 'skill', id: 'agent-builtin:/skill/deploy', uri: 'agent-builtin:/skill/deploy' });
   });
 
   it('marks a skill the CLI will not put behind a slash as the agent\'s', async () => {
@@ -1165,7 +1295,7 @@ describe('a skill is not a prompt', () => {
       .toMatchObject({ type: 'skill', disableUserInvocation: true });
   });
 
-  it('completes a slash into skills as well as prompts, and not the agent\'s', async () => {
+  it('completes a slash into the skills, the commands among them, and not the agent\'s', async () => {
     const { client, chatUri } = await offering();
     const found = await client.handle({
       method: 'completions',

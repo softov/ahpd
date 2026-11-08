@@ -24,15 +24,12 @@ export interface SessionConfig {
   ): Promise<Bag>;
   contributedDefaults(): Record<string, unknown>;
   storedConfig(owner: Agent, id: string): Record<string, unknown>;
-  mineOf(config: Record<string, unknown>): Record<string, unknown>;
+  hostOwnedSessionConfig(config: Record<string, unknown>): Record<string, unknown>;
 }
 
 /**
- * How many branches ride along in the schema before a client has to ask.
- *
- * The list is ordered by most recent commit, so the first few are the ones
- * somebody means. The rest arrive through `sessionConfigCompletions` as they
- * are typed for.
+ * How many branches a completion of the branch answers with, the most
+ * recent first: the first few are the ones somebody means.
  */
 export const SEEDS = 20;
 
@@ -47,12 +44,40 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     const port = options.worktrees;
     if (!port || where === undefined) return { schema: {}, defaults: {} };
     const repository = await port.repository(where).catch(() => undefined);
-    if (repository === undefined) return { schema: {}, defaults: {} };
-    // Most useful first, which the port defines: the checked-out branch is
-    // what "work from here" means, and it is what somebody who does not open
-    // the picker gets.
-    const offered = await port.branches(repository).catch(() => [] as string[]);
-    const base = offered[0];
+    /*
+     * A folder outside a repository is offered folder isolation alone, and
+     * read-only, as VS Code's host offers it.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L979-L1003
+     */
+    if (repository === undefined) {
+      return {
+        defaults: { isolation: 'folder' },
+        schema: {
+          properties: {
+            isolation: {
+              type: 'string',
+              title: 'Isolation',
+              description: 'Where the agent should make changes',
+              enum: ['folder'],
+              enumLabels: ['Folder'],
+              enumDescriptions: ['Work directly in the folder'],
+              default: 'folder',
+              readOnly: true,
+              sessionMutable: false,
+            },
+          },
+        },
+      };
+    }
+    /*
+     * The branch a session starts from, one seed and the rest asked for as
+     * they are typed, as VS Code's host seeds it: a worktree from the
+     * repository's default branch, and a folder on the branch checked out,
+     * which the port lists first.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1035-L1063
+     */
+    const head = (await port.branches(repository).catch(() => [] as string[]))[0];
+    const base = chosen === 'worktree' ? await port.defaultBranch?.(repository).catch(() => undefined) ?? head : head;
     return {
       repository,
       defaults: {
@@ -63,9 +88,9 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
         // being asked.
         isolation: 'folder',
         ...(base !== undefined ? { branch: base } : {}),
+        worktreeBranchPrefix: '',
         worktreeIncludeFiles: [],
         worktreeSymlinkFolders: [],
-        worktreeBranchPrefix: '',
         worktreeCreateNewBranch: 'true',
         worktreeBranchTrack: 'false',
       },
@@ -87,34 +112,43 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
             sessionMutable: false,
           },
           /*
-           * The branches, as seeds rather than as the whole list.
+           * The branch, seeded with the one a session starts from.
            *
            * `enumDynamic` is the protocol's word for "there are more of these
-           * than a picker can hold": the `enum` becomes the rows shown before
+           * than a picker can hold": the `enum` is the row shown before
            * anybody types, and `sessionConfigCompletions` answers what they
-           * type. A repository with four hundred branches used to send four
-           * hundred, on every resolve, to fill a list nobody can read.
-           *
-           * Dynamic only while a worktree is being made, which is the one time
-           * the choice means anything - the reference host does the same, and
-           * marks the row read-only otherwise, because a folder session works
-           * on the branch that is checked out and choosing another would be a
-           * control that changes nothing.
+           * type.
            */
-          ...(offered.length > 0 ? {
+          ...(base !== undefined ? {
             branch: {
               type: 'string',
               title: 'Branch',
-              description: 'Base branch the worktree starts from',
-              enum: offered.slice(0, SEEDS),
-              enumLabels: offered.slice(0, SEEDS),
-              ...(base !== undefined ? { default: base } : {}),
-              ...(chosen === 'worktree'
-                ? { enumDynamic: true }
-                : { enumDynamic: false, readOnly: true }),
+              description: 'Base branch to work from',
+              enum: [base],
+              enumLabels: [base],
+              default: base,
+              enumDynamic: true,
+              readOnly: false,
               sessionMutable: false,
             },
           } : {}),
+          /*
+           * A preference a client seeds rather than a person picks.
+           *
+           * `readOnly` in the reference too: it carries somebody's
+           * `git.branchPrefix`, which the client already holds, rather than a
+           * question to put in front of them. Declared so the value rides in
+           * the config bag at all; a key a host does not advertise is one a
+           * client has no reason to send.
+           */
+          worktreeBranchPrefix: {
+            type: 'string',
+            title: 'Branch prefix',
+            description: 'Prepended to the branch created for the worktree.',
+            default: '',
+            readOnly: true,
+            sessionMutable: false,
+          },
           /*
            * The files a checkout does not carry, and the session needs.
            *
@@ -147,8 +181,8 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
            * with the checkout's; a link is one directory the agent can build
            * against immediately. What it costs is that a write into it is a
            * write into the checkout too, which is why only git-ignored folders
-           * are eligible - and why the control is `readOnly`, like the three
-           * below it: it carries a preference the client already holds rather
+           * are eligible, and why the control is `readOnly`, as the branch
+           * prefix is: it carries a preference the client already holds rather
            * than a question to put in front of somebody.
            *
            * Two passes rather than one, as the reference runs two: a folder
@@ -164,22 +198,10 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
             sessionMutable: false,
           },
           /*
-           * Three a client seeds rather than a person picks.
-           *
-           * `readOnly` in the reference too: they carry a preference the
-           * client already holds - somebody's `git.branchPrefix`, and how they
-           * want a branch made - rather than a question to put in front of
-           * them. Declared so the value rides in the config bag at all; a key
-           * a host does not advertise is one a client has no reason to send.
+           * Two more a client seeds rather than a person picks: how somebody
+           * wants a branch made, which the client already holds. `readOnly`
+           * and declared for the reason the branch prefix is.
            */
-          worktreeBranchPrefix: {
-            type: 'string',
-            title: 'Branch prefix',
-            description: 'Prepended to the branch created for the worktree.',
-            default: '',
-            readOnly: true,
-            sessionMutable: false,
-          },
           worktreeCreateNewBranch: {
             type: 'string',
             title: 'Create a branch',
@@ -206,23 +228,27 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   };
 
   /**
-   * A form's properties, in the order a person fills them in.
-   *
-   * `computer` comes first: it is the machine the session runs on, and every
-   * other answer is about a session on it. This host's own keys come next, in
-   * the order `hosts` gives them, and everything else keeps the order it
-   * arrived in - another plugin's keys, then the backend's own.
+   * A config schema's properties, in the order the reference host composes
+   * them: the isolation key first, then the agent's own and every plugin's in
+   * the order they arrived, then this host's other keys (the branch, its
+   * prefix, the files and folders a worktree takes) in the order `hosts`
+   * gives them, which is the order `isolating` declares them in. `computer`
+   * leads with the isolation key: it is the machine the session runs on, and
+   * every other answer is about a session on it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11018-L11034
    *
    * `hosts` is the caller's because only it knows which keys this host
    * declared: the isolation keys come from the worktree port and are absent on
    * a host without one.
    */
   const formOrdered = (properties: Bag, hosts: string[]): Bag => {
-    const head = [...new Set(['computer', ...hosts])].filter((key) => Object.hasOwn(properties, key));
-    const moved = new Set(head);
+    const head = ['computer', 'isolation'].filter((key) => Object.hasOwn(properties, key));
+    const tail = hosts.filter((key) => !head.includes(key) && Object.hasOwn(properties, key));
+    const placed = new Set([...head, ...tail]);
     return Object.fromEntries([
       ...head.map((key) => [key, properties[key]] as const),
-      ...Object.entries(properties).filter(([key]) => !moved.has(key)),
+      ...Object.entries(properties).filter(([key]) => !placed.has(key)),
+      ...tail.map((key) => [key, properties[key]] as const),
     ]);
   };
 
@@ -558,21 +584,27 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     typeof value === 'object' && value !== null && !Array.isArray(value)
     && Object.values(value).every((one) => typeof one === 'string');
 
-  /** What this host answered, in the shape it answered it, for saying back on the session. */
-  const mineOf = (config: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
+  /**
+   * The host-owned keys of a client's config, each in the shape this host
+   * accepts it, for saying back on the session: the keys VS Code's host owns
+   * and keeps from the provider's config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+   */
+  const hostOwnedSessionConfig = (config: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
     Object.entries(config)
-      // A string, a list of strings for the two pattern keys, or the alias map
-      // `connectors` holds - each said back in the shape it was given - and a
-      // key this host takes, as it was sent.
+      // A string, the strings of a list for the two pattern keys, or the alias
+      // map `connectors` holds, and a key this host takes, as it was sent: an
+      // entry of a pattern list that is no pattern is dropped, and the tree a
+      // first send makes from these brings along the rest.
       .filter(([key, value]) => Object.hasOwn(HOSTS_TAKEN, key) || (HOSTS_OWN.includes(key)
-        && (typeof value === 'string'
-          || (Array.isArray(value) && value.every((one) => typeof one === 'string'))
-          || (key === 'connectors' && isAliasMap(value)))))
-      .map(([key, value]) => [key, value]),
+        && (typeof value === 'string' || Array.isArray(value) || (key === 'connectors' && isAliasMap(value)))))
+      .map(([key, value]) => [key, !Object.hasOwn(HOSTS_TAKEN, key) && Array.isArray(value)
+        ? value.filter((one): one is string => typeof one === 'string')
+        : value]),
   );
 
   return {
     isolating, mergedConfig, formOrdered, propertyOf, sessionSchema, runningSchema, seeded,
-    contributedDefaults, storedConfig, mineOf,
+    contributedDefaults, storedConfig, hostOwnedSessionConfig,
   };
 }

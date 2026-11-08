@@ -381,13 +381,13 @@ export function createTerminal(
    * Two shapes arrive here and they are not the same thing. With `args` the
    * caller is naming a program, so the argv is quoted word by word and the
    * shell is asked to run exactly that. Without it the caller is handing over
-   * a line - the `!` prefix in the composer is one - and that line is already
-   * shell syntax: quoting it would ask the shell for a program named after the
-   * whole line, which is a command that never existed.
+   * a line, and that line is already shell syntax: quoting it would ask the
+   * shell for a program named after the whole line, which is a command that
+   * never existed.
    *
    * Which flag and which quoting is the shell's, not this host's: a line
-   * written for one shell is not a line the others read, and the composer's
-   * `!echo hi` reaches PowerShell as `echo hi` and `cmd.exe` as the same.
+   * written for one shell is not a line the others read, and `echo hi`
+   * reaches PowerShell as `echo hi` and `cmd.exe` as the same.
    */
   const { kind, file } = kindOf(shell);
   /**
@@ -733,6 +733,9 @@ export function createTerminal(
   child?.stderr.setEncoding('utf8');
   child?.stdout.on('data', (chunk: string) => said(chunk));
   child?.stderr.on('data', (chunk: string) => said(chunk));
+  // A line written as the shell exits reaches a pipe nobody reads, and the
+  // write fails there with `EPIPE`; the shell's exit is what says it has gone.
+  child?.stdin.on('error', () => {});
   /**
    * Said once, whichever of the three got here first.
    *
@@ -774,8 +777,8 @@ export function createTerminal(
    * `exit` fires when the process goes; `close` fires once its pipes are
    * drained. Between the two there is output already written and not yet
    * read, so a host that reported the exit on `exit` reported a command's
-   * result before the result had arrived - which is exactly what a `!`
-   * command in the composer reads back.
+   * result before the result had arrived - which is exactly what a terminal
+   * opened for one command reads back.
    */
   child?.on('close', () => {
     // A process that closed without an exit event was killed outright.

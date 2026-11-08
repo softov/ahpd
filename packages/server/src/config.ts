@@ -6,7 +6,7 @@ import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveConfig, type ResolvedConfig } from '@cofold/config';
-import { isShellName, issuerKind, reason, type Icon, type IssuerVerify, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type ShellEnv } from '@ahpd/sdk';
+import { isManagedDomainBoundaryRule, isShellName, issuerKind, managedRuleOf, reason, type Icon, type IssuerVerify, type ManagedSettingsPermissions, type McpServer, type PluginContracts, type PluginLink, type PluginSpec, type ShellEnv } from '@ahpd/sdk';
 import type { ProxySetting } from './proxy/providers.js';
 
 /**
@@ -301,6 +301,53 @@ export interface Config {
    */
   closedChats?: 'hidden' | 'delete';
   /**
+   * What a turn naming a model its chat's agent does not offer does.
+   *
+   * `fail`, the default, ends the turn saying its agent does not offer the
+   * model. `keep` is VS Code's: a chat whose agent is not its session's keeps
+   * the model it has, and any other chat's agent is handed the model as it is.
+   */
+  unofferedModel?: 'fail' | 'keep';
+  /**
+   * Where a session that names no folder works.
+   *
+   * `first`, the default, is the first folder this daemon serves. `scratch` is
+   * VS Code's: a folder of its own under `~/.copilot/chats`, made when the
+   * session is and removed with it.
+   */
+  workspacelessFolder?: 'first' | 'scratch';
+  /**
+   * Whose work a session a root connection starts is, under a users directory.
+   *
+   * `host`, the default, is the host itself, `root:<hostName>`. `none` is VS
+   * Code's: no owner, as its host records no principal for a session made
+   * without a validated identity.
+   */
+  rootOwner?: 'host' | 'none';
+  /**
+   * Whether a turn's sender is said on what clients read.
+   *
+   * `said`, the default, puts who sent each turn on its start and its message.
+   * `kept` is VS Code's: the host keeps each turn's sender and says it in no
+   * action and no turn a client reads.
+   */
+  turnSenders?: 'said' | 'kept';
+  /**
+   * What a backend's own background work actions come to.
+   *
+   * `drop`, the default, drops them, the host drawing every background row.
+   * `say` is VS Code's: the backend's action is said as the host's.
+   */
+  backendBackgroundWork?: 'drop' | 'say';
+  /**
+   * What the session tools' counts are kept per, over their sliding hour.
+   *
+   * `sessionTree`, the default, keeps one count for a session somebody started
+   * and every session the tools grew from it. `session` is VS Code's: each
+   * session's own count.
+   */
+  agentOrchestrationLimitsScope?: 'sessionTree' | 'session';
+  /**
    * What archiving a session does with a working tree that has changes nobody
    * committed.
    *
@@ -421,6 +468,14 @@ export interface Config {
    */
   clientToolTimeoutMs?: number;
   /**
+   * How long a client whose connections have all closed keeps its place in a
+   * session, and the tool calls it owes there, as VS Code's
+   * `CLIENT_TOOL_CALL_DISCONNECT_TIMEOUT`.
+   *
+   * Unset is thirty seconds; zero releases a client as soon as it goes.
+   */
+  clientToolCallDisconnectTimeoutMs?: number;
+  /**
    * The environment every shell this host starts is given, by variable name.
    *
    * A string is what the variable is set to; `null` removes it. A deployment
@@ -445,6 +500,36 @@ export interface Config {
    */
   terminalAutoApproveDefaults?: 'vscode' | 'none';
   /**
+   * The managed permissions every session on the host is held to, in VS
+   * Code's shape: `deny` and `ask` rules in the managed rule grammar (`Shell`,
+   * `Read`, `Write`, `Domain`), `disableBypassPermissionsMode: 'disable'` to
+   * take Allow All away, and `limitTo`, the `Domain` rules a fetch stays
+   * within.
+   *
+   * Under `managedRules: checked` the host checks each rule on the tool
+   * questions of its kind beside the session's permissions; the lock takes
+   * the host's Allow All away, and the whole is handed to every backend, as
+   * VS Code hands its runtime managed settings, under either value. Absent is
+   * no managed permissions at all.
+   */
+  managedSettingsPermissions?: ManagedSettingsPermissions;
+  /**
+   * The operator's per-tool approval eligibility, VS Code's
+   * `chat.tools.eligibleForAutoApproval` map of tool name to boolean: under
+   * `managedRules: checked` a tool set to `false` asks every time, with no
+   * "always" option, beside the managed permissions. Absent names no tool.
+   */
+  eligibleForAutoApproval?: Record<string, boolean>;
+  /**
+   * Who checks the managed rules on a tool question.
+   *
+   * `checked`, the default, is this host's own check of each rule on every
+   * question of its kind. `handed` is VS Code's: the host hands the rules to
+   * the backends and checks none, and a question a backend marked managed is
+   * put with Allow Once and Skip alone.
+   */
+  managedRules?: 'checked' | 'handed';
+  /**
    * How long a streamed delta waits for the next one before it is sent.
    *
    * Milliseconds, a whole number from 0 to 1000. Within the window the deltas
@@ -465,6 +550,20 @@ export interface Config {
    * with its state. Unset is 10; zero sets no limit.
    */
   sessionResidencyLimit?: number;
+  /**
+   * The largest file the daemon asks a client for, in bytes: an attachment
+   * the daemon has no copy of is read through the client that sent it, and
+   * one whose size hint is over this is left as it was sent. Unset is
+   * 33554432 (32 MiB); zero sets no limit.
+   */
+  attachmentFetchLimitBytes?: number;
+  /**
+   * The most bytes the daemon keeps of one content a tool result or an
+   * agent's message carries inline, read back by a `session-db-resource` URI;
+   * larger content is left out. Unset is 8388608 (8 MiB), VS Code's bound;
+   * zero sets no limit.
+   */
+  toolResultResourceLimitBytes?: number;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**
@@ -568,6 +667,58 @@ export const shellEnvProblems = (held: unknown): string[] => {
   }
   return problems;
 };
+
+/**
+ * What is wrong with an `eligibleForAutoApproval` value, one line each, or
+ * nothing: each tool's value is `true` or `false`, as VS Code's setting
+ * declares it.
+ */
+export const eligibilityProblems = (held: unknown): string[] => {
+  // Not a map at all is the schema's to refuse, with the key's own name.
+  if (typeof held !== 'object' || held === null || Array.isArray(held)) return [];
+  return Object.entries(held).flatMap(([tool, value]) => (typeof value === 'boolean' ? []
+    : [`eligibleForAutoApproval.${tool} holds ${JSON.stringify(value)}, which is not true or false`]));
+};
+
+/**
+ * What is wrong with a `managedSettingsPermissions` value, one line each, or
+ * nothing.
+ *
+ * Its `deny` and `ask` hold rules of the managed grammar alone. The runtime
+ * that takes a managed document parses every rule with that grammar, and a
+ * single rule it cannot read refuses the whole document; the host takes the
+ * document as that runtime does, so a rule the grammar refuses stops the
+ * start rather than leave an operator's restriction unread. VS Code's host
+ * checks the rules' types alone, because every rule it sends comes through
+ * the builder that drops what the runtime would refuse.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedRules.ts#L58-L63
+ *
+ * Its `limitTo` holds `Domain` boundary rules alone, `Domain` or
+ * `Domain(<host>)` with the host written as VS Code's network filter
+ * normalizes it, which is what VS Code's host holds a boundary to before it
+ * takes managed permissions. The schema checks the keys and their types.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L270-L283
+ */
+export const managedPermissionsProblems = (held: unknown): string[] => {
+  if (typeof held !== 'object' || held === null) return [];
+  const checks = [
+    ['deny', (rule: string) => managedRuleOf(rule) !== undefined, MANAGED_GRAMMAR],
+    ['ask', (rule: string) => managedRuleOf(rule) !== undefined, MANAGED_GRAMMAR],
+    ['limitTo', isManagedDomainBoundaryRule, 'is not a Domain boundary rule: Domain, or Domain(<host>) with the host written as VS Code\'s network filter normalizes it, such as Domain(example.com) or Domain(*.example.com)'],
+  ] as const;
+  return checks.flatMap(([key, takes, why]) => {
+    const rules = (held as Record<string, unknown>)[key];
+    // Not a list of strings is the schema's to refuse, with the key's own name.
+    return (Array.isArray(rules) ? rules : []).flatMap((rule) => (typeof rule !== 'string' || takes(rule) ? []
+      : [`managedSettingsPermissions.${key} holds ${JSON.stringify(rule)}, which ${why}`]));
+  });
+};
+
+/** The managed rule grammar, as a refused rule is told it. */
+const MANAGED_GRAMMAR = 'the managed rule grammar refuses: Shell, Read, Write (or Edit) or Domain, alone or with an argument holding no ")" or line break:'
+  + ' Shell(<command>) with a command before any trailing " *", Read(<glob>) and Write(<glob>) with no leading "!" and every brace closed,'
+  + ' and Domain(<host>) that reads as a URL with a host and holds no shell substitution (Domain alone is every domain),'
+  + ' such as Shell(git *), Read(src/**), Write(**/*.txt) or Domain(example.com)';
 
 /**
  * Where this tool's files live.
@@ -715,6 +866,17 @@ export const automationStatePath = (): string => join(configDir(), 'automations-
  * session's business.
  */
 export const customizationStatePath = (): string => join(configDir(), 'customizations-state.json');
+
+/**
+ * Where the root config a client pushed is kept between starts.
+ *
+ * Beside the customizations for the same reason as those: one small file
+ * beside a hand-edited `config.json`, written whenever a window pushes a
+ * setting or a person picks Always Allow, as VS Code's host keeps
+ * `agent-host-config.json` in its global storage.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostBootstrap.ts#L136
+ */
+export const rootConfigPath = (): string => join(configDir(), 'root-config.json');
 
 /**
  * The one file an earlier daemon kept every automation in.

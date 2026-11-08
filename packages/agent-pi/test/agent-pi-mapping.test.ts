@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
-import { activityOf, mapEvent, resultText } from '../src/mapping.js';
+import { mapEvent, resultText } from '../src/mapping.js';
 import { answer, callIn, driveCall, opened, settled, streamed, turn } from './fake-pi.js';
 
 // Mapping -----------------------------------------------------------------
@@ -186,6 +186,22 @@ it('closes a failed call with the error a client shows', () => {
   expect(((done?.result as Bag).error as Bag).message).toBe('no such file');
 });
 
+/*
+ * A call an update or an end names before any start is announced first, so
+ * every action that follows names a call each client holds, as the ACP
+ * mapping announces one.
+ */
+it('announces a call an update or an end names before any start, ahead of what names it', () => {
+  const updated = mapEvent(turn(), {
+    type: 'tool_execution_update', toolCallId: 'c8', toolName: 'read', args: {}, partialResult: 'so far',
+  } as never);
+  expect(updated.map((action) => action.type)).toEqual(['chat/toolCallStart', 'chat/toolCallContentChanged']);
+  const ended = mapEvent(turn(), {
+    type: 'tool_execution_end', toolCallId: 'c9', toolName: 'read', result: 'text', isError: false,
+  });
+  expect(ended.map((action) => action.type)).toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+});
+
 it('lands a shell delta on the call that opened the row, and drops an orphan', () => {
   const one = turn();
   mapEvent(one, { type: 'tool_execution_start', toolCallId: 'c1', toolName: 'bash', args: {} });
@@ -218,13 +234,6 @@ it('reads a tool result whatever shape it came in', () => {
   expect(resultText({ output: 'from output' })).toBe('from output');
   expect(resultText({ content: [{ text: 'a' }, { text: 'b' }] })).toBe('a\nb');
   expect(resultText(undefined)).toBe('');
-});
-
-it('tells "this event says nothing about activity" from "it is idle now"', () => {
-  expect(activityOf({ type: 'agent_settled', aborted: false })).toBeUndefined();
-  expect(activityOf({ type: 'summarization_retry_finished' })).toBe(false);
-  expect(activityOf({ type: 'tool_execution_start', toolCallId: 'c', toolName: 'bash', args: {} }))
-    .toBe('Running bash');
 });
 
 // When a call ran ----------------------------------------------------------

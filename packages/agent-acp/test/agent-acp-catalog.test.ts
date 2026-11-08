@@ -6,9 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { uriOf } from '@ahpd/sdk';
-import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
+import type { Agent, Bag, Emit, McpServer, MessageAttachment, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
-import { startedNow } from '../../sdk/test/support/started.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { acpAgent, watchedRows, watchSession } from '../src/index.js';
@@ -111,10 +110,10 @@ const opening = (id: string, over: Partial<Start> = {}): Start => ({
   ...over,
 });
 
-/** One session of a backend, watched and remembered for cleanup. */
-function start(agent: Agent, id: string, over: Partial<Start> = {}): { session: Session; watch: Watcher } {
+/** One session of a backend, answered once its server has opened, watched and remembered for cleanup. */
+async function start(agent: Agent, id: string, over: Partial<Start> = {}): Promise<{ session: Session; watch: Watcher }> {
   const watch = watcher();
-  const session = startedNow(agent.create(opening(id, { ...over, emit: watch.emit })));
+  const session = await agent.create(opening(id, { ...over, emit: watch.emit }));
   started.push(session);
   return { session, watch };
 }
@@ -167,6 +166,30 @@ const changed = (watch: Watcher): Record<string, unknown>[] =>
   watch.actions.filter((one) => one.action.type === 'session/configChanged')
     .map((one) => (one.action.config ?? {}) as Record<string, unknown>);
 
+/**
+ * A model's thinking levels as a client is offered them: VS Code's Codex
+ * property for a model's effort, its labels from VS Code's shared helpers and
+ * a description per level, and the default VS Code's resolver picks.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1924-L1951
+ */
+const levelsSchema = (enumLabels: string[], enumDescriptions: string[], efforts = ['off', 'deep']): Bag => ({
+  type: 'object',
+  properties: {
+    thinkingLevel: {
+      type: 'string',
+      title: 'Effort Level',
+      description: 'Controls how much reasoning effort ACP uses.',
+      default: 'off',
+      enum: efforts,
+      enumLabels,
+      enumDescriptions,
+    },
+  },
+});
+
+/** The fixture's two levels, which it describes only under `--described`. */
+const FAST_LEVELS = levelsSchema(['Off', 'Deep'], ['', '']);
+
 it('offers no models before a session, because ACP has no pre-session catalogue', async () => {
   const { agent } = backend();
   const offered = await agent.probe?.();
@@ -180,7 +203,8 @@ it('carries an approvals control on the session, with no enum before a server is
   const agent = acpAgent({ command: 'node', model: 'gpt-5' });
   const properties = agent.schema().properties as Record<string, Record<string, unknown>>;
   expect(Object.keys(properties)).toEqual(['permissionMode', 'availableApprovalModes']);
-  expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true });
+  // Each chat keeps its own mode, as VS Code's Claude marks its mode.
+  expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true, chatMutable: true });
   expect(properties.permissionMode?.enum).toBeUndefined();
   // A model is the turn's rather than a config property, but the configured id
   // is still the default a client is offered.
@@ -193,36 +217,42 @@ it('keeps no per-session state file of its own', () => {
   expect(acpAgent({ command: 'node' }).stateFile?.('acp-session-1', '/tmp')).toBeUndefined();
 });
 
-it('reports the server model options once a session has opened', async () => {
+/*
+ * What the server offers is in the session it answers, before any turn: the
+ * open runs before the session is answered, so the first state a client is
+ * served carries the server's models, modes and options, as VS Code seeds a
+ * session's config and schema before its first snapshot.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2476-L2493
+ */
+it('answers the session with the server\'s models, modes and options in its state', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'models');
-  // Nothing has asked the server yet, and ACP has no model list before it does.
-  expect(session.models()).toEqual([]);
-  await runTurn(session, watch, 't1', 'hi');
+  const { session } = await start(agent, 'models');
+
+  // The model the server runs on carries the levels it gave it.
   expect(session.models()).toEqual([
-    { id: 'fast', name: 'Fast' },
+    { id: 'fast', name: 'Fast', configSchema: FAST_LEVELS },
     { id: 'thorough', name: 'Thorough' },
   ]);
+  const properties = propertiesOf(session);
+  expect(Object.keys(properties).sort()).toEqual(['acp.telemetry', 'acp.thinking', 'permissionMode']);
+  expect(properties.permissionMode?.enum).toEqual(['ask', 'code']);
+  expect(configOf(session).values).toMatchObject({ permissionMode: 'ask', model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false });
 });
 
 it('tells the host once the server has named its models', async () => {
   const { agent } = backend();
-  const seen: { id: string; name: string }[][] = [];
-  const { session, watch } = start(agent, 'handshake', { onHandshake: () => seen.push(session.models()) });
-  expect(seen).toEqual([]);
+  let told = 0;
+  const { session, watch } = await start(agent, 'handshake', { onHandshake: () => { told++; } });
+  // Once, as the session was opened, which is before it was answered.
+  expect(told).toBe(1);
   await runTurn(session, watch, 't1', 'hi');
-  // Once, and only after the models are known, so the host reads a full list.
-  expect(seen).toEqual([[
-    { id: 'fast', name: 'Fast' },
-    { id: 'thorough', name: 'Thorough' },
-  ]]);
   await runTurn(session, watch, 't2', 'again');
-  expect(seen).toHaveLength(1);
+  expect(told).toBe(1);
 });
 
 it('sets the model a turn chose on the server before prompting', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'chosen');
+  const { session, watch } = await start(agent, 'chosen');
   const before = watch.endings().length;
   session.changeModel({ id: 'thorough' });
   session.sendMessage('t1', 'hi');
@@ -230,16 +260,17 @@ it('sets the model a turn chose on the server before prompting', async () => {
 
   expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
     .toMatchObject({ configId: 'model', value: 'thorough' });
+  // The answer to the set named the levels of the model it moved to.
   expect(session.models()).toEqual([
-    { id: 'fast', name: 'Fast' },
-    { id: 'thorough', name: 'Thorough' },
+    { id: 'fast', name: 'Fast', configSchema: FAST_LEVELS },
+    { id: 'thorough', name: 'Thorough', configSchema: FAST_LEVELS },
   ]);
 });
 
 it('runs a turn naming a model the server does not offer on the model in force', async () => {
   for (const flags of [[], ['--legacy']]) {
     const { agent, log } = backend(flags);
-    const { session, watch } = start(agent, `unoffered${flags.join('')}`);
+    const { session, watch } = await start(agent, `unoffered${flags.join('')}`);
     const before = watch.endings().length;
     session.changeModel({ id: 'no-such-model' });
     session.sendMessage('t1', 'hi');
@@ -254,10 +285,13 @@ it('runs a turn naming a model the server does not offer on the model in force',
 
 it('reads the legacy models list, and sets a chosen model the old way', async () => {
   const { agent, log } = backend(['--legacy']);
-  const { session, watch } = start(agent, 'legacy');
-  // The list comes with the answer that opens the session, so before that
-  // there is none to offer.
-  expect(session.models()).toEqual([]);
+  const { session, watch } = await start(agent, 'legacy');
+  // The list comes with the answer that opens the session, which is opened
+  // before the session is answered.
+  expect(session.models()).toEqual([
+    { id: 'fast', name: 'Fast' },
+    { id: 'thorough', name: 'Thorough' },
+  ]);
   const before = watch.endings().length;
   session.changeModel({ id: 'thorough' });
   session.sendMessage('t1', 'hi');
@@ -307,7 +341,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('carries a stdio server whatever the server says it can take', async () => {
     const { agent, log } = withLog();
-    const { session, watch } = start(agent, 'stdio', { mcpServers: servers });
+    const { session, watch } = await start(agent, 'stdio', { mcpServers: servers });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -330,7 +364,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('leaves an http server out of a server that takes none, and says which', async () => {
     const { agent, log, said } = withLog({}, ['--no-http-mcp']);
-    const { session, watch } = start(agent, 'nohttp', { mcpServers: servers });
+    const { session, watch } = await start(agent, 'nohttp', { mcpServers: servers });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -344,14 +378,14 @@ describe('the MCP servers a session is opened with', () => {
 
   it('offers the host\'s own tools as one server with its token, on by default', async () => {
     const { agent, log } = withLog();
-    const { session, watch } = start(agent, 'tools', { toolsServer: () => hostTools });
+    const { session, watch } = await start(agent, 'tools', { toolsServer: () => hostTools });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
 
     expect(opened(log)).toEqual([{
       type: 'http',
-      name: 'ahp',
+      name: 'host',
       url: 'http://127.0.0.1:4242/ahp-mcp/one',
       headers: [{ name: 'authorization', value: 'Bearer t-kn' }],
     }]);
@@ -359,7 +393,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('leaves the host\'s tools out where the deployment said hostTools: false', async () => {
     const { agent, log } = withLog({ hostTools: false });
-    const { session, watch } = start(agent, 'notools', { toolsServer: () => hostTools });
+    const { session, watch } = await start(agent, 'notools', { toolsServer: () => hostTools });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -369,7 +403,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('leaves the host\'s own tools out of a server that takes none over HTTP, and says which', async () => {
     const { agent, log, said } = withLog({}, ['--no-http-mcp']);
-    const { session, watch } = start(agent, 'notoolshttp', { toolsServer: () => hostTools });
+    const { session, watch } = await start(agent, 'notoolshttp', { toolsServer: () => hostTools });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -377,13 +411,13 @@ describe('the MCP servers a session is opened with', () => {
     // The host's tools are an HTTP server like any other, so the handshake that
     // refuses the others refuses this one, and says so the same way.
     expect(opened(log)).toEqual([]);
-    expect(said).toEqual(['ahp: this ACP server takes no MCP server over HTTP, so it was left out']);
+    expect(said).toEqual(['host: this ACP server takes no MCP server over HTTP, so it was left out']);
   });
 
   it('keeps one endpoint of the host\'s own across a server that died', async () => {
     const { agent, log } = withLog();
     let asked = 0;
-    const { session, watch } = start(agent, 'respawn', {
+    const { session, watch } = await start(agent, 'respawn', {
       toolsServer: () => {
         asked += 1;
         return hostTools;
@@ -404,7 +438,7 @@ describe('the MCP servers a session is opened with', () => {
 
   it('carries the same list on a load, which is the session that continues', async () => {
     const { agent, log } = withLog();
-    const { session, watch } = start(agent, 'loaded', { mcpServers: servers, resume: 'old-one' });
+    const { session, watch } = await start(agent, 'loaded', { mcpServers: servers, resume: 'old-one' });
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
@@ -441,7 +475,7 @@ describe('the MCP servers a session is opened with', () => {
   ] as const) {
     it(`leaves the host's tools out of a session in a machine when the daemon is at ${at}, and says why`, async () => {
       const { agent, log, said } = withLog();
-      const { session, watch } = start(agent, `boxed-${at}`, inBox(url));
+      const { session, watch } = await start(agent, `boxed-${at}`, inBox(url));
       const before = watch.endings().length;
       session.sendMessage('t1', 'hi');
       await until(() => watch.endings().length > before);
@@ -456,14 +490,14 @@ describe('the MCP servers a session is opened with', () => {
 
   it('offers the host\'s tools to a session in a machine where the daemon is on an address it can reach', async () => {
     const { agent, log, said } = withLog();
-    const { session, watch } = start(agent, 'boxed-reach', inBox('http://10.0.0.5:4242/ahp-mcp/one'));
+    const { session, watch } = await start(agent, 'boxed-reach', inBox('http://10.0.0.5:4242/ahp-mcp/one'));
     const before = watch.endings().length;
     session.sendMessage('t1', 'hi');
     await until(() => watch.endings().length > before);
 
     expect(opened(log)).toEqual([{
       type: 'http',
-      name: 'ahp',
+      name: 'host',
       url: 'http://10.0.0.5:4242/ahp-mcp/one',
       headers: [{ name: 'authorization', value: 'Bearer t-kn' }],
     }]);
@@ -490,7 +524,7 @@ describe('toolsReachable', () => {
 
 it('learns the server modes and reports where the session sits after a change', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'modes');
+  const { session, watch } = await start(agent, 'modes');
   await runTurn(session, watch, 't1', 'hi');
 
   expect(propertiesOf(session).permissionMode).toMatchObject({
@@ -508,7 +542,7 @@ it('learns the server modes and reports where the session sits after a change', 
 
 it('announces a mode the agent moved itself, once', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'announced');
+  const { session, watch } = await start(agent, 'announced');
   await runTurn(session, watch, 't1', 'hi');
   // What the server opened with is said once, in one action, because the
   // session held none of it; after that nothing is said until the server
@@ -530,7 +564,7 @@ it('announces a mode the agent moved itself, once', async () => {
 
 it('says nothing for a mode the client set itself', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'announced-by-us');
+  const { session, watch } = await start(agent, 'announced-by-us');
   await runTurn(session, watch, 't1', 'hi');
 
   expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
@@ -549,7 +583,7 @@ it('opens a session in the mode it was started with', async () => {
   const { agent, log } = backend();
   // The fixture starts in `ask` and offers `ask` and `code`, so a session asked
   // for `code` is one the server has to be moved into.
-  const { session, watch } = start(agent, 'asked', { settings: { permissionMode: 'code' } });
+  const { session, watch } = await start(agent, 'asked', { settings: { permissionMode: 'code' } });
   await runTurn(session, watch, 't1', 'hi');
 
   expect(requests(log).find((one) => one.method === 'session/set_mode')?.params)
@@ -563,7 +597,7 @@ it('opens a session in the mode it was started with', async () => {
 
 it('opens a session in its asked mode through the server mode option', async () => {
   const { agent, log } = backend(['--modes']);
-  const { session, watch } = start(agent, 'asked-option', { settings: { permissionMode: 'code' } });
+  const { session, watch } = await start(agent, 'asked-option', { settings: { permissionMode: 'code' } });
   await runTurn(session, watch, 't1', 'hi');
 
   // A server naming the mode as an option of its own is moved through that
@@ -577,7 +611,7 @@ it('opens a session in its asked mode through the server mode option', async () 
 
 it('sends nothing for a session that asks for the mode the server is already in', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'asked-same', { settings: { permissionMode: 'ask' } });
+  const { session, watch } = await start(agent, 'asked-same', { settings: { permissionMode: 'ask' } });
   await runTurn(session, watch, 't1', 'hi');
 
   expect(requests(log).some((one) => one.method === 'session/set_mode')).toBe(false);
@@ -587,7 +621,7 @@ it('sends nothing for a session that asks for the mode the server is already in'
 
 it('leaves a session in the server mode when the one it asked for is not offered', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'asked-unknown', { settings: { permissionMode: 'plan' } });
+  const { session, watch } = await start(agent, 'asked-unknown', { settings: { permissionMode: 'plan' } });
   await runTurn(session, watch, 't1', 'hi');
 
   // The server serves the modes, and one it did not name is a request it would
@@ -603,7 +637,7 @@ it('leaves a session in the server mode when the one it asked for is not offered
 
 it('says the mode the server stays in when it refuses the one the session asked for', async () => {
   const { agent, log } = backend(['--refuse-mode']);
-  const { session, watch } = start(agent, 'asked-refused', {
+  const { session, watch } = await start(agent, 'asked-refused', {
     settings: { permissionMode: 'code', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
   });
   await runTurn(session, watch, 't1', 'hi');
@@ -617,7 +651,7 @@ it('says the mode the server stays in when it refuses the one the session asked 
 
 it('says an option the server moved with a value a client set', async () => {
   const { agent } = backend(['--model-thinks']);
-  const { session, watch } = start(agent, 'moved-with', {
+  const { session, watch } = await start(agent, 'moved-with', {
     settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
   });
   await runTurn(session, watch, 't1', 'hi');
@@ -632,7 +666,7 @@ it('says an option the server moved with a value a client set', async () => {
 
 it('says the model a turn chose and an option the server moved with it', async () => {
   const { agent } = backend(['--model-thinks']);
-  const { session, watch } = start(agent, 'chosen-with', {
+  const { session, watch } = await start(agent, 'chosen-with', {
     settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false },
   });
   await runTurn(session, watch, 't1', 'hi');
@@ -642,9 +676,91 @@ it('says the model a turn chose and an option the server moved with it', async (
   expect(changed(watch)).toEqual([{ model: 'thorough' }, { 'acp.thinking': 'deep' }]);
 });
 
+/*
+ * A server's `thought_level` option holds the reasoning level of the model it
+ * runs on, so each model is listed with the levels its server gave it, as VS
+ * Code's Codex agent lists a model with its efforts, and the agent keeps them
+ * for every later session. The session's own control is the one it was served
+ * as it opened, whatever the server offers afterwards.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1924-L1951
+ */
+it('lists each model with the levels its server gives it, said again as they move and kept for the agent\'s later sessions', async () => {
+  const { agent } = backend(['--model-levels', '--described']);
+  let told = 0;
+  const { session } = await start(agent, 'levels', { onHandshake: () => { told++; } });
+  expect(session.models()).toEqual([
+    { id: 'fast', name: 'Fast', configSchema: levelsSchema(['Off', 'Deep'], ['Answers at once', 'Thinks before it answers']) },
+    { id: 'thorough', name: 'Thorough' },
+  ]);
+  expect(told).toBe(1);
+
+  expect(await session.setConfig?.('model', 'thorough')).toBe(true);
+  // A level the server named in its own words carries VS Code's label for it,
+  // and one it described not at all VS Code's description.
+  expect(session.models()[1]).toEqual({
+    id: 'thorough',
+    name: 'Thorough',
+    configSchema: levelsSchema(
+      ['Off', 'Deep', 'Max'],
+      ['Answers at once', 'Thinks before it answers', 'Absolute maximum capability with no constraints'],
+      ['off', 'deep', 'max'],
+    ),
+  });
+  expect(told).toBe(2);
+  // The control the session was served keeps the choices of its opening.
+  expect(propertiesOf(session)['acp.thinking']?.enum).toEqual(['off', 'deep']);
+
+  // A session that opens later lists both models' levels before its server
+  // has run on the second.
+  const { session: later } = await start(agent, 'levels-later');
+  expect(later.models().map((one) => [one.id, (one.configSchema?.properties as Bag | undefined)?.thinkingLevel !== undefined]))
+    .toEqual([['fast', true], ['thorough', true]]);
+});
+
+it('says the agent\'s models again when its server offers another mid-session', async () => {
+  const { agent } = backend();
+  let told = 0;
+  const { session, watch } = await start(agent, 'widened', { onHandshake: () => { told++; } });
+  await runTurn(session, watch, 't1', 'widen');
+
+  expect(session.models().map((one) => one.id)).toEqual(['fast', 'thorough', 'careful']);
+  expect(told).toBe(2);
+});
+
+/*
+ * The level a turn runs at is its model selection's where the server gives
+ * it, and the session's own value otherwise, as VS Code's Codex agent takes a
+ * turn's effort; the session's control keeps its value through both.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L1953-L1960
+ */
+it('runs a turn at the level its model selection names, and one that names none at the session\'s', async () => {
+  const log = join(scratch(), 'requests.jsonl');
+  const lines: string[] = [];
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: log }, log: (line) => { lines.push(line); } });
+  const { session, watch } = await start(agent, 'turn-level');
+
+  session.changeModel({ id: 'fast', config: { thinkingLevel: 'deep' } });
+  await runTurn(session, watch, 't1', 'hi');
+  session.changeModel({ id: 'fast' });
+  await runTurn(session, watch, 't2', 'hi');
+  session.changeModel({ id: 'fast', config: { thinkingLevel: 'max' } });
+  await runTurn(session, watch, 't3', 'hi');
+
+  expect(requests(log).filter((one) => one.method === 'session/set_config_option').map((one) => [one.params?.configId, one.params?.value]))
+    .toEqual([['thinking', 'deep'], ['thinking', 'off']]);
+  // A level the server does not give the model is a line in the log, and the
+  // turn runs at the session's.
+  expect(lines).toContain('acp: the turn runs at the session\'s thinking level: the server does not offer max');
+  // What was said is the open's, once: a turn's level is the turn's.
+  expect(changed(watch)).toEqual([{
+    permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.thinking': 'off', 'acp.telemetry': false,
+  }]);
+  expect(session.settings()['acp.thinking']).toBe('off');
+});
+
 it('sends the mode again when the server is opened after a death', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'died-mode');
+  const { session, watch } = await start(agent, 'died-mode');
   await runTurn(session, watch, 't1', 'hi');
   // A mode a person set after the open, which a server that starts fresh has
   // no memory of.
@@ -660,7 +776,7 @@ it('sends the mode again when the server is opened after a death', async () => {
 
 it('holds the chat\'s modified time where the reducer moves it, at a turn\'s end and nowhere else', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'stamped');
+  const { session, watch } = await start(agent, 'stamped');
   await runTurn(session, watch, 't1', 'hi');
   const ended = session.allTurns().at(-1) as Bag;
   const at = new Date(Date.parse(String(ended.startedAt)) + Number(ended.duration)).toISOString();
@@ -675,7 +791,7 @@ it('holds the chat\'s modified time where the reducer moves it, at a turn\'s end
 
 it('holds a turn a call outlived as the reducer ends it, the call cancelled', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'outlived');
+  const { session, watch } = await start(agent, 'outlived');
   await runTurn(session, watch, 't1', 'client cstatus=pending ctitle=Lookup');
 
   // The server ended the turn with its call never started: the chat a client
@@ -688,7 +804,7 @@ it('holds a turn a call outlived as the reducer ends it, the call cancelled', as
 
 it('reports a command the server advertises as a built-in skill', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'commands');
+  const { session, watch } = await start(agent, 'commands');
   await runTurn(session, watch, 't1', 'hi');
 
   // A skill in the one read-only built-in container, as VS Code's Claude
@@ -705,7 +821,7 @@ it('reports a command the server advertises as a built-in skill', async () => {
     uri: 'agent-builtin:/skill/plan',
     name: 'plan',
     description: 'Draft a plan',
-    _meta: { 'ahpd.argumentHint': 'What to plan' },
+    _meta: { 'vscode.skill.argumentHint': 'What to plan' },
   }]);
   expect(watch.actions.some((one) => one.channel === 'session'
     && one.action.type === 'session/customizationsChanged')).toBe(true);
@@ -713,7 +829,7 @@ it('reports a command the server advertises as a built-in skill', async () => {
 
 it("takes the agent's name for the session over the one the first prompt gave it", async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'title');
+  const { session, watch } = await start(agent, 'title');
   await runTurn(session, watch, 't1', 'name it please');
   expect(session.title()).toBe('Naming the work');
   // The prompt's own words first, which is all a client had until the agent
@@ -727,7 +843,7 @@ it("takes the agent's name for the session over the one the first prompt gave it
 
 it('keeps the name a person gave the session, whatever the agent calls it', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'renamed');
+  const { session, watch } = await start(agent, 'renamed');
   session.setTitle?.('The name I want');
   await runTurn(session, watch, 't1', 'name it anyway');
 
@@ -748,10 +864,33 @@ it('lists the sessions the server lists, mapping the fields the contract wants',
     workingDirectories: [uriOf('/tmp/one')],
   });
   // A row with no title is listed untitled, for a client to draw as one, and
-  // one with no timestamp falls back to now.
+  // one with no timestamp is dated at the epoch, as VS Code's Codex dates a
+  // thread with none, so it sorts as the oldest.
   expect(rows?.[1]?.title).toBe('');
   expect(rows?.[1]?.workingDirectories).toEqual([uriOf('/tmp/two'), uriOf('/tmp/two-b')]);
-  expect(Number.isNaN(Date.parse(String(rows?.[1]?.createdAt)))).toBe(false);
+  expect(rows?.[1]).toMatchObject({ createdAt: new Date(0).toISOString(), modifiedAt: new Date(0).toISOString() });
+});
+
+/*
+ * A watch moves no time of the record, as VS Code's Codex keeps a resume from
+ * moving its thread's time; a conversation the host held is dated by its
+ * turns, as the reducer dates a chat.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L8202-L8204
+ */
+it('dates a watched session by its turns, and moves no time when it is opened again', async () => {
+  const seed = [
+    { id: 't1', startedAt: '2026-01-02T00:00:00.000Z', duration: 1000, state: 'complete', message: { text: 'a' }, responseParts: [] },
+    { id: 't2', startedAt: '2026-01-03T00:00:00.000Z', duration: 2000, state: 'complete', message: { text: 'b' }, responseParts: [] },
+  ];
+  watchSession({ provider: 'acp-dated', id: 'held', cwd: '/tmp', additional: [], title: '', seed });
+  const dated = watchedRows('acp-dated').find((one) => one.id === 'held');
+  expect(dated).toMatchObject({ createdAt: '2026-01-02T00:00:00.000Z', modifiedAt: '2026-01-03T00:00:02.000Z' });
+
+  watchSession({ provider: 'acp-dated', id: 'fresh', cwd: '/tmp', additional: [], title: '' });
+  const before = watchedRows('acp-dated').find((one) => one.id === 'fresh');
+  await new Promise((done) => { setTimeout(done, 5); });
+  watchSession({ provider: 'acp-dated', id: 'fresh', cwd: '/tmp', additional: [], title: '' });
+  expect(watchedRows('acp-dated').find((one) => one.id === 'fresh')?.modifiedAt).toBe(before?.modifiedAt);
 });
 
 it('holds a session read back by a load untitled, as an untitled row is listed', async () => {
@@ -770,18 +909,65 @@ it('lists every page of a catalogue the server did not fit into one answer', asy
   expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
 });
 
-it('lists a second time on the connection the first one left open', async () => {
+/*
+ * Every session the server holds, asked for with no folder named, as VS Code's
+ * Codex agent lists every thread: a server asked about one folder answers that
+ * folder's sessions alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L34-L40
+ */
+it('lists every session the server holds, whatever folder the server runs in', async () => {
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE], cwd: scratch(), provider: 'acp-every' });
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+});
+
+/*
+ * A server whose cursors never run out, stopped where VS Code's Codex agent
+ * stops its own listing: at a cursor handed back before, and after fifty pages.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L42-L69
+ */
+it('stops listing at a cursor the server handed back before, with what it read', async () => {
+  const { agent, log } = backend(['--cursors=cycle']);
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  // The first page, and then each of the two cursors once.
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(3);
+});
+
+it('stops listing after fifty pages of a server that hands back a new cursor every time', async () => {
+  const { agent, log } = backend(['--cursors=endless']);
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(50);
+});
+
+it('stops listing after the pages the record\'s sessionListMaxPages names', async () => {
+  const log = join(scratch(), 'requests.jsonl');
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE, '--cursors=endless'], env: { ACP_LOG: log }, provider: 'acp', sessionListMaxPages: 3 });
+  expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(3);
+});
+
+/*
+ * A listing's server goes once the read is done, as VS Code's Codex disposes
+ * of the connection it opens for an action, and stays the record's
+ * `listingIdleMs` after its last read. The log names the process each request
+ * reached.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2521-L2550
+ */
+it('lists on a server closed once the read is done, and on one server for the record\'s listingIdleMs', async () => {
   const { agent, log } = backend();
   expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
   expect((await agent.list?.())?.map((one) => one.id)).toEqual(['listed-1', 'listed-2']);
+  const each = [...new Set(requests(log).map((one) => Number(one.pid)))];
+  expect(each).toHaveLength(2);
+  await until(() => each.every((pid) => !running(pid)), CLOSES_MS - 3_000);
 
-  // A subscribe is a list, and a client that reconnects is another: spawning a
-  // server for each is a subprocess per subscribe for a catalogue that has not
-  // changed. The log names the process each request reached.
-  const pids = new Set(requests(log).map((one) => one.pid));
-  expect(pids.size).toBe(1);
-  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
-});
+  const kept = join(scratch(), 'kept.jsonl');
+  const idle = acpAgent({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: kept }, provider: 'acp', listingIdleMs: 1_000 });
+  await idle.list?.();
+  await idle.list?.();
+  const one = [...new Set(requests(kept).map((request) => Number(request.pid)))];
+  expect(one).toHaveLength(1);
+  await until(() => one.every((pid) => !running(pid)), CLOSES_MS - 3_000);
+}, CLOSES_MS);
 
 it('finds a listed session by listing its own server, and loads nothing', async () => {
   const { agent, log } = backend();
@@ -850,6 +1036,19 @@ it('answers a find of a missing id from the listing it read a moment ago', async
   expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(1);
 });
 
+/*
+ * A record whose `findFreshMs` is 0 joins only the listing in flight, as VS
+ * Code's Codex shares its listing while it runs and serves no settled one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L7960-L7963
+ */
+it('lists again for each find after the last one settled, where the record\'s findFreshMs is 0', async () => {
+  const log = join(scratch(), 'requests.jsonl');
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE], env: { ACP_LOG: log }, provider: 'acp', findFreshMs: 0 });
+  expect(await agent.find?.('nobody-1')).toBeUndefined();
+  expect(await agent.find?.('nobody-2')).toBeUndefined();
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
+});
+
 it('answers nothing for a session the server dropped since the listing it read', async () => {
   const { agent } = backend();
   expect((await agent.find?.('listed-1'))?.id).toBe('listed-1');
@@ -895,7 +1094,7 @@ it('answers the watched record for a command that does not start, and nothing el
 
 it('reads back the turn this process watched and nothing for one it did not', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'transcript');
+  const { session, watch } = await start(agent, 'transcript');
   await runTurn(session, watch, 't1', 'hi');
 
   const id = session.agentId();
@@ -910,7 +1109,7 @@ it('reads back the turn this process watched and nothing for one it did not', as
 
 it('reads back each turn with the usage it last reported', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'usage');
+  const { session, watch } = await start(agent, 'usage');
   await runTurn(session, watch, 't1', 'spend some of it and count the tokens');
   await runTurn(session, watch, 't2', 'spend some more');
 
@@ -955,12 +1154,57 @@ it('reads back a session this process never watched by loading it from the serve
   expect(requests(log).some((one) => one.method === 'session/new')).toBe(false);
 });
 
+/*
+ * A refusal is a decline only where the client said decline, and a cancel
+ * otherwise; a skipped question is one nobody answered. VS Code's Claude agent
+ * answers its elicitations so.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeElicitation.ts#L164-L169
+ */
+it('answers a refusal that names no decline with a cancel, and leaves a skipped question out', async () => {
+  const { agent } = backend();
+  const { session, watch } = await start(agent, 'elicit-answers');
+  const said = (): string => watch.actions
+    .filter((one) => one.action.type === 'chat/delta')
+    .map((one) => String(one.action.content))
+    .join('');
+  const asked = (count: number): Promise<void> =>
+    until(() => watch.types().filter((type) => type === 'chat/inputRequested').length === count);
+
+  session.sendMessage('t1', 'elicitform please');
+  await asked(1);
+  expect(session.answer?.('call-elicit:elicitation', false, {})).toBe(true);
+  await until(() => watch.endings().length === 1);
+  expect(said()).toContain('elicit=cancel|branch=-|force=-|retries=-|mode=-|tags=-');
+
+  session.sendMessage('t2', 'elicitform please');
+  await asked(2);
+  session.answer?.('call-elicit:elicitation', true, {
+    branch: { state: 'skipped', value: { kind: 'text', value: 'never mind' } },
+    force: { state: 'submitted', value: { kind: 'boolean', value: true } },
+  }, 'accept');
+  await until(() => watch.endings().length === 2);
+  expect(said()).toContain('elicit=accept|branch=-|force=true|retries=-|mode=-|tags=-');
+});
+
 it('answers nothing for a session a server that cannot load does not have', async () => {
   const { agent, log } = backend(['--no-load']);
   // `undefined` rather than an empty session, which is what the host reads as
   // "no such session" and what a failed read must not look like.
   expect(await agent.transcript?.('a-session-nobody-watched')).toBeUndefined();
   expect(requests(log).some((one) => one.method === 'session/load')).toBe(false);
+});
+
+/*
+ * A session the server says it does not hold is no session; a server that does
+ * not start is a failure, raised to the read as VS Code's read of a session it
+ * knows lets one through.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7933-L7939
+ */
+it('answers nothing for a session the server does not hold, and raises a server that does not start', async () => {
+  const { agent } = backend(['--load-missing'], 'acp-load-missing');
+  expect(await agent.transcript?.('a-session-it-does-not-hold')).toBeUndefined();
+  const missing = acpAgent({ command: join(scratch(), 'no-such-command'), provider: 'acp-load-unstarted' });
+  await expect(missing.transcript?.('a-session')).rejects.toThrow('was not found');
 });
 
 it('loads a session at the folder the server listed it under', async () => {
@@ -1004,7 +1248,7 @@ it('answers a second read of the same session from the record, and spawns nothin
 
 it('reads back an interleaved turn with its parts in the order they streamed', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'interleaved');
+  const { session, watch } = await start(agent, 'interleaved');
   await runTurn(session, watch, 't1', 'ponder it');
 
   const turns = await agent.transcript?.(String(session.agentId()));
@@ -1018,7 +1262,7 @@ it('reads back an interleaved turn with its parts in the order they streamed', a
 
 it('reads back a part for a message that was only whitespace, with the ids the live turn held', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'blank');
+  const { session, watch } = await start(agent, 'blank');
   await runTurn(session, watch, 't1', 'blank it');
 
   const turns = await agent.transcript?.(String(session.agentId()));
@@ -1032,17 +1276,20 @@ it('reads back a part for a message that was only whitespace, with the ids the l
   expect(parts.map(idOf)).toEqual(['t1:0', 't1:1', 'call-2', 't1:3', 't1:4']);
 });
 
-it('reaches the server for permissionMode and model, and refuses another key naming it', async () => {
+/*
+ * A key the backend does not serve is refused in VS Code's sentence for a key
+ * it cannot write.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
+ */
+it('reaches the server for permissionMode and model, and refuses another key in VS Code\'s sentence', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'config');
+  const { session, watch } = await start(agent, 'config');
   await runTurn(session, watch, 't1', 'hi');
 
   expect(await session.setConfig?.('permissionMode', 'code')).toBe(true);
   expect(await session.setConfig?.('model', 'thorough')).toBe(true);
 
-  const refused = await session.setConfig?.('nonsense', 'x');
-  expect(typeof refused).toBe('string');
-  expect(String(refused)).toContain('nonsense');
+  expect(await session.setConfig?.('nonsense', 'x')).toBe('Session configuration \'nonsense\' is not writable.');
 
   const asked = requests(log);
   expect(asked.find((one) => one.method === 'session/set_mode')?.params).toMatchObject({ modeId: 'code' });
@@ -1052,7 +1299,7 @@ it('reaches the server for permissionMode and model, and refuses another key nam
 
 it('draws every option of its own as a control, and sets each through the server', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'controls');
+  const { session, watch } = await start(agent, 'controls');
   await runTurn(session, watch, 't1', 'hi');
 
   // The model's and the mode's own names, and every other option under the
@@ -1073,11 +1320,12 @@ it('draws every option of its own as a control, and sets each through the server
     sessionMutable: true,
     default: false,
   });
-  // The keys `SessionConfigPropertySchema` declares, and no others: the
-  // session's state is what a host seeds every client with.
+  // The keys `SessionConfigPropertySchema` declares and VS Code's `chatMutable`,
+  // each chat keeping its own: the session's state is what a host seeds every
+  // client with.
   expect(Object.keys(properties['acp.thinking'] as Bag).sort())
-    .toEqual(['default', 'enum', 'enumLabels', 'sessionMutable', 'title', 'type']);
-  expect(Object.keys(properties['acp.telemetry'] as Bag).sort()).toEqual(['default', 'sessionMutable', 'title', 'type']);
+    .toEqual(['chatMutable', 'default', 'enum', 'enumLabels', 'sessionMutable', 'title', 'type']);
+  expect(Object.keys(properties['acp.telemetry'] as Bag).sort()).toEqual(['chatMutable', 'default', 'sessionMutable', 'title', 'type']);
 
   expect(await session.setConfig?.('acp.thinking', 'deep')).toBe(true);
   expect(await session.setConfig?.('acp.telemetry', true)).toBe(true);
@@ -1087,15 +1335,57 @@ it('draws every option of its own as a control, and sets each through the server
   expect(asked.find((one) => one.params?.configId === 'telemetry')?.params).toMatchObject({ type: 'boolean', value: true });
   expect(configOf(session).values).toMatchObject({ 'acp.thinking': 'deep', 'acp.telemetry': true });
 
-  // A key the server named no option for is refused, and so is the wrong kind
-  // of value for one it did.
+  // A key the server named no option for is refused in VS Code's sentence, and
+  // the wrong kind of value for one it did in this backend's words.
   expect(String(await session.setConfig?.('acp.telemetry', 'yes'))).toContain('true or false');
-  expect(String(await session.setConfig?.('acp.nothing', true))).toContain('nothing');
+  expect(await session.setConfig?.('acp.nothing', true)).toBe('Session configuration \'acp.nothing\' is not writable.');
+});
+
+/*
+ * The server's own option ids under the agent's provider id, as VS Code keeps
+ * its Codex runtime's own settings under `codex.`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/codexSessionConfigKeys.ts#L15-L25
+ */
+it('keeps the server\'s own options under the agent\'s provider id', async () => {
+  const { agent, log } = backend([], 'prefixed');
+  const { session } = await start(agent, 'prefixed');
+
+  expect(Object.keys(propertiesOf(session)).sort()).toEqual(['permissionMode', 'prefixed.telemetry', 'prefixed.thinking']);
+  expect(configOf(session).values).toMatchObject({ 'prefixed.thinking': 'off', 'prefixed.telemetry': false });
+  expect(await session.setConfig?.('prefixed.thinking', 'deep')).toBe(true);
+  expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
+    .toMatchObject({ configId: 'thinking', value: 'deep' });
+  // Another agent's prefix is no key of this one's.
+  expect(await session.setConfig?.('acp.thinking', 'deep')).toBe('Session configuration \'acp.thinking\' is not writable.');
+});
+
+/*
+ * What the server says of each value, carried as the picker's descriptions:
+ * the spec's schema holds one per value beside the labels, and a value the
+ * server said nothing of has an empty one.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L143-L170
+ */
+it('carries the description the server gave each value as the picker\'s enumDescriptions', async () => {
+  const { agent } = backend(['--described']);
+  const { session, watch } = await start(agent, 'described');
+  await runTurn(session, watch, 't1', 'hi');
+
+  const properties = propertiesOf(session);
+  expect(properties['acp.thinking']?.enumDescriptions).toEqual(['Answers at once', 'Thinks before it answers']);
+  // The legacy modes, where the server described one of the two.
+  expect(properties.permissionMode?.enumDescriptions).toEqual(['Request permission before making any changes', '']);
+
+  // The mode option, the newer account of the same modes, with both described.
+  const { agent: optioned } = backend(['--described', '--modes']);
+  const { session: moded, watch: seen } = await start(optioned, 'described-option');
+  await runTurn(moded, seen, 't1', 'hi');
+  expect(propertiesOf(moded).permissionMode?.enumDescriptions)
+    .toEqual(['Request permission before making any changes', 'Write and modify code with full tool access']);
 });
 
 it('sets the mode through the option the server named, not the legacy call', async () => {
   const { agent, log } = backend(['--modes']);
-  const { session, watch } = start(agent, 'mode-option');
+  const { session, watch } = await start(agent, 'mode-option');
   await runTurn(session, watch, 't1', 'hi');
 
   // The option is the server's own account of the mode, so its values are the
@@ -1109,32 +1399,22 @@ it('sets the mode through the option the server named, not the legacy call', asy
     .toMatchObject({ configId: 'mode', value: 'code' });
 });
 
-it('keeps a value set on a session that has not run a turn, and sends it when the server opens', async () => {
+it('sends the server a value the session was created with, once the server has named the option', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'unopened');
+  const { session } = await start(agent, 'unopened', { settings: { 'acp.thinking': 'deep' } });
 
-  // A value is no reason to start a server: it is kept, and nothing has been
-  // asked of a server yet.
-  expect(await session.setConfig?.('acp.thinking', 'deep')).toBe(true);
-  expect(requests(log)).toEqual([]);
-  expect(session.settings()['acp.thinking']).toBe('deep');
-
-  // The turn opens the server, which is sent the kept value once it has named
-  // the option, and the session runs with it.
-  await runTurn(session, watch, 't1', 'hi');
+  // The open sends the session's own values once the server has said what it
+  // offers, and the session is answered running with them.
   expect(requests(log).find((one) => one.method === 'session/set_config_option')?.params)
     .toMatchObject({ configId: 'thinking', value: 'deep' });
   expect(configOf(session).values['acp.thinking']).toBe('deep');
 });
 
-it('runs with the server value when a kept one is not offered, and says so', async () => {
+it('runs with the server value when one the session was created with is not offered, and says so', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'unopened-unoffered', {
-    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.telemetry': false },
+  const { watch } = await start(agent, 'unopened-unoffered', {
+    settings: { permissionMode: 'ask', availableApprovalModes: ['ask', 'code'], model: 'fast', 'acp.telemetry': false, 'acp.thinking': 'shallow' },
   });
-
-  expect(await session.setConfig?.('acp.thinking', 'shallow')).toBe(true);
-  await runTurn(session, watch, 't1', 'hi');
 
   // The server serves the values, and one it does not name is a request it
   // would refuse: nothing is sent, and the value in force is said.
@@ -1142,9 +1422,14 @@ it('runs with the server value when a kept one is not offered, and says so', asy
   expect(changed(watch)).toEqual([{ 'acp.thinking': 'off' }]);
 });
 
-it('sets the model through the older call on a server with no options', async () => {
+/*
+ * A model the server's list does not name is refused in VS Code's sentence for
+ * a value not offered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L147
+ */
+it('sets the model through the older call on a server with no options, and refuses one it does not list in VS Code\'s sentence', async () => {
   const { agent, log } = backend(['--legacy']);
-  const { session, watch } = start(agent, 'legacy');
+  const { session, watch } = await start(agent, 'legacy');
   await runTurn(session, watch, 't1', 'hi');
 
   // A server from before config options named its models in a list, and takes
@@ -1154,6 +1439,7 @@ it('sets the model through the older call on a server with no options', async ()
   expect(asked.some((one) => one.method === 'session/set_config_option')).toBe(false);
   expect(asked.find((one) => one.method === 'session/set_model')?.params)
     .toMatchObject({ modelId: 'thorough' });
+  expect(await session.setConfig?.('model', 'slow')).toBe('Session configuration \'model\' does not offer \'slow\'.');
 });
 
 /**
@@ -1172,12 +1458,12 @@ const HELD: Bag[] = [{
 
 it('loads a resumed session when the host holds none of its turns', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'resume', { resume: 'acp-session-resumed' });
+  const { session, watch } = await start(agent, 'resume', { resume: 'acp-session-resumed' });
   await runTurn(session, watch, 't1', 'hi');
 
   expect(session.agentId()).toBe('acp-session-resumed');
   expect(session.models()).toEqual([
-    { id: 'fast', name: 'Fast' },
+    { id: 'fast', name: 'Fast', configSchema: FAST_LEVELS },
     { id: 'thorough', name: 'Thorough' },
   ]);
   // With no seed there is nothing on this side of the wire, so the replay is
@@ -1193,7 +1479,7 @@ it('takes a resumed session back without the server replaying it', async () => {
   // whole conversation back, which is exactly what a host that holds it wants
   // not to happen.
   const { agent, log } = backend(['--replay']);
-  const { session, watch } = start(agent, 'taken-back', { resume: 'acp-session-taken-back', seed: HELD });
+  const { session, watch } = await start(agent, 'taken-back', { resume: 'acp-session-taken-back', seed: HELD });
   await runTurn(session, watch, 't1', 'hi');
 
   expect(session.agentId()).toBe('acp-session-taken-back');
@@ -1213,7 +1499,7 @@ it('takes a resumed session back without the server replaying it', async () => {
 
 it('takes a session back on a server that cannot load one at all', async () => {
   const { agent, log } = backend(['--no-load']);
-  const { session, watch } = start(agent, 'no-load', { resume: 'acp-session-no-load', seed: HELD });
+  const { session, watch } = await start(agent, 'no-load', { resume: 'acp-session-no-load', seed: HELD });
   await runTurn(session, watch, 't1', 'hi');
 
   // A conversation continued on a server whose only way to continue one is a
@@ -1230,7 +1516,7 @@ it('is resumable on a server whose only way to continue a conversation is a resu
   // `--no-load` is a server that never advertised `loadSession`, so a resume is
   // the whole of what it can be handed a conversation by.
   const { agent, log } = backend(['--no-load']);
-  const { session, watch } = start(agent, 'resume-only');
+  const { session, watch } = await start(agent, 'resume-only');
   await runTurn(session, watch, 't1', 'hi');
 
   // Answered from the handshake, so it exists only once the server has spoken:
@@ -1257,7 +1543,7 @@ it('is resumable on a server whose only way to continue a conversation is a resu
 
 it('holds a load\'s replay out of the turn that asked for it', async () => {
   const { agent } = backend(['--replay']);
-  const { session, watch } = start(agent, 'replayed', { resume: 'acp-session-replayed' });
+  const { session, watch } = await start(agent, 'replayed', { resume: 'acp-session-replayed' });
   await runTurn(session, watch, 't1', 'hi');
 
   // The replay is what the server said before it answered the load, and it is
@@ -1269,7 +1555,7 @@ it('holds a load\'s replay out of the turn that asked for it', async () => {
 
 it('reads a loaded session back with its replayed turns ahead of the new one', async () => {
   const { agent } = backend(['--replay']);
-  const { session, watch } = start(agent, 'replayed-history', { resume: 'acp-session-replayed-history' });
+  const { session, watch } = await start(agent, 'replayed-history', { resume: 'acp-session-replayed-history' });
   await runTurn(session, watch, 't1', 'hi');
 
   const turns = await agent.transcript?.(String(session.agentId()));
@@ -1350,6 +1636,71 @@ it.each([
   });
 });
 
+/*
+ * A person's message reads back with what was attached to it, as VS Code reads
+ * a message back with its attachments: a turn this process watched keeps them
+ * on its record, and a replayed one has its image and resource chunks read
+ * into them, bytes as an embedded resource and a file by its URI.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1238-L1288
+ */
+it('reads a watched turn back with what was attached to its message', async () => {
+  const { agent } = backend();
+  const { session, watch } = await start(agent, 'attached');
+  const note = { type: 'simple', label: 'note', modelRepresentation: 'a note to keep' } as MessageAttachment;
+  session.sendMessage('t1', 'hi', undefined, [note]);
+  await until(() => watch.endings().length > 0);
+
+  const turns = await agent.transcript?.(String(session.agentId()));
+  expect(turns?.[0]?.message).toEqual({ text: 'hi', origin: { kind: 'user' }, attachments: [note] });
+});
+
+it('reads a replayed person\'s image and resources back as the message\'s attachments', () => {
+  const at = '2026-11-01T00:00:00.000Z';
+  const updates = [
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'look at these' } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png' } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'resource', resource: { uri: 'file:///w/notes.md', text: '# notes', mimeType: 'text/markdown' } } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'resource_link', uri: 'file:///w/plan.pdf', name: 'plan.pdf', mimeType: 'application/pdf', size: 2048 } },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Seen.' } },
+  ] as SessionUpdate[];
+  const turns = turnsOf({
+    provider: 'acp', id: 'replayed', cwd: '/tmp', additional: [], title: 'replayed',
+    createdAt: at, modifiedAt: at, held: [], turns: replayedTurns(updates, at),
+  } as unknown as WatchedSession);
+  expect(turns[0]?.message).toEqual({
+    text: 'look at these',
+    origin: { kind: 'user' },
+    attachments: [
+      { type: 'embeddedResource', label: 'attachment', data: 'aW1hZ2U=', contentType: 'image/png', displayKind: 'image' },
+      { type: 'resource', uri: 'file:///w/notes.md', label: 'notes.md', contentType: 'text/markdown', displayKind: 'document' },
+      { type: 'resource', uri: 'file:///w/plan.pdf', label: 'plan.pdf', contentType: 'application/pdf', sizeHint: 2048, displayKind: 'document' },
+    ],
+  });
+});
+
+/*
+ * What a replay says before any message of the person's is a turn no person
+ * began, so its message is the agent's, the protocol's origin for a message
+ * the agent produced itself.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L760-L767
+ */
+it('reads what a replay says before any message back as the agent\'s', () => {
+  const at = '2026-11-01T00:00:00.000Z';
+  const updates = [
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Welcome back.' } },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'hi' } },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Hello.' } },
+  ] as SessionUpdate[];
+  const turns = turnsOf({
+    provider: 'acp', id: 'replayed', cwd: '/tmp', additional: [], title: 'replayed',
+    createdAt: at, modifiedAt: at, held: [], turns: replayedTurns(updates, at),
+  } as unknown as WatchedSession);
+  expect(turns.map((one) => one.message)).toEqual([
+    { text: '', origin: { kind: 'agent' } },
+    { text: 'hi', origin: { kind: 'user' } },
+  ]);
+});
+
 it('reads a replay whose last turn the agent answered back as complete', () => {
   const at = '2026-11-01T00:00:00.000Z';
   const updates = [
@@ -1385,7 +1736,7 @@ it('does not replay a conversation twice when a read is followed by a turn', asy
   // so the conversation is replayed twice - and the second replay must not land
   // in the history, or a client reads one conversation as having happened twice.
   await agent.transcript?.('acp-session-once');
-  const { session, watch } = start(agent, 'once', { resume: 'acp-session-once' });
+  const { session, watch } = await start(agent, 'once', { resume: 'acp-session-once' });
   await runTurn(session, watch, 't1', 'hi again');
 
   expect(requests(log).filter((one) => one.method === 'session/load').length).toBeGreaterThan(1);
@@ -1400,7 +1751,7 @@ it('does not replay a conversation twice when a read is followed by a turn', asy
 
 it('continues the same session after the server dies, rather than starting a new one', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'died');
+  const { session, watch } = await start(agent, 'died');
   // The fixture exits mid-prompt, so the first turn fails and the death that
   // caused it is already heard before the second turn asks for a server.
   await runTurn(session, watch, 't1', 'die now');
@@ -1428,7 +1779,7 @@ it('continues the same session after the server dies, rather than starting a new
 
 it('loads the conversation again after a death on a server that cannot take one back', async () => {
   const { agent, log } = backend(['--no-resume']);
-  const { session, watch } = start(agent, 'died-no-resume');
+  const { session, watch } = await start(agent, 'died-no-resume');
   await runTurn(session, watch, 't1', 'die now');
   const named = session.agentId();
 
@@ -1445,7 +1796,7 @@ it('loads the conversation again after a death on a server that cannot take one 
 
 it('fails the turn after a death when the server can neither load nor resume a session', async () => {
   const { agent, log } = backend(['--no-load', '--no-resume']);
-  const { session, watch } = start(agent, 'died-no-load');
+  const { session, watch } = await start(agent, 'died-no-load');
   await runTurn(session, watch, 't1', 'die now');
 
   await runTurn(session, watch, 't2', 'hi again');
@@ -1465,21 +1816,21 @@ it('offers no fork for an agent whose server cannot make one, and a fork once it
   // they can fork their chats.
   const { agent } = backend();
   expect(agent.chats?.fork).toBeUndefined();
-  const { session, watch } = start(agent, 'no-fork');
+  const { session, watch } = await start(agent, 'no-fork');
   await runTurn(session, watch, 't1', 'hi');
   expect(agent.chats?.fork).toBeUndefined();
   expect(session.forkPoint?.('t1')).toBeUndefined();
 
   // A server that advertises it is an agent a client may fork in.
   const { agent: forking } = backend(['--fork']);
-  const { session: other, watch: seen } = start(forking, 'can-fork');
+  const { session: other, watch: seen } = await start(forking, 'can-fork');
   await runTurn(other, seen, 't1', 'hi');
   expect(forking.chats?.fork).toBe(true);
 });
 
 it('offers a fork of the last turn only, and copies the conversation into a new session', async () => {
   const { agent, log } = backend(['--fork']);
-  const { session, watch } = start(agent, 'forked-from');
+  const { session, watch } = await start(agent, 'forked-from');
   await runTurn(session, watch, 't1', 'first');
   await runTurn(session, watch, 't2', 'second');
   const from = String(session.agentId());
@@ -1493,7 +1844,7 @@ it('offers a fork of the last turn only, and copies the conversation into a new 
   // What the host sends for a fork, built the way `createSession` builds it.
   const seed = session.allTurns();
   const point = String(session.forkPoint?.('t2'));
-  const { session: forked, watch: forkedWatch } = start(agent, 'forked', { resume: from, forkAt: point, seed });
+  const { session: forked, watch: forkedWatch } = await start(agent, 'forked', { resume: from, forkAt: point, seed });
   await runTurn(forked, forkedWatch, 't3', 'third');
 
   const copies = requests(log).filter((one) => one.method === 'session/fork');
@@ -1513,11 +1864,11 @@ it('offers a fork of the last turn only, and copies the conversation into a new 
 
 it('takes a forked session back under its own id after its server died, and forks nothing again', async () => {
   const { agent, log } = backend(['--fork']);
-  const { session, watch } = start(agent, 'fork-dies-from');
+  const { session, watch } = await start(agent, 'fork-dies-from');
   await runTurn(session, watch, 't1', 'first');
   const from = String(session.agentId());
 
-  const { session: forked, watch: forkedWatch } = start(agent, 'fork-dies', {
+  const { session: forked, watch: forkedWatch } = await start(agent, 'fork-dies', {
     resume: from,
     forkAt: String(session.forkPoint?.('t1')),
     seed: session.allTurns(),
@@ -1538,14 +1889,14 @@ it('takes a forked session back under its own id after its server died, and fork
 
 it('refuses a fork at a turn the server was never offered one for', async () => {
   const { agent, log } = backend(['--fork']);
-  const { session, watch } = start(agent, 'forked-earlier-from');
+  const { session, watch } = await start(agent, 'forked-earlier-from');
   await runTurn(session, watch, 't1', 'first');
   await runTurn(session, watch, 't2', 'second');
 
   // `t1` is not where the conversation ends, so no control was offered for it
   // and this is a caller out of step - served rather than refused, it would be
   // a copy of a conversation that still holds `t2`.
-  const { session: forked, watch: forkedWatch } = start(agent, 'forked-earlier', {
+  const { session: forked, watch: forkedWatch } = await start(agent, 'forked-earlier', {
     resume: String(session.agentId()),
     forkAt: 't1',
     seed: session.allTurns(),
@@ -1560,7 +1911,7 @@ it('refuses a fork at a turn the server was never offered one for', async () => 
 
 it('tells a server that advertised session/close to close, and one that did not is not told', async () => {
   const { agent, log } = backend();
-  const { session, watch } = start(agent, 'close-capability');
+  const { session, watch } = await start(agent, 'close-capability');
   await runTurn(session, watch, 't1', 'hi');
   const named = String(session.agentId());
 
@@ -1568,16 +1919,28 @@ it('tells a server that advertised session/close to close, and one that did not 
   expect(requests(log).find((one) => one.method === 'session/close')?.params).toMatchObject({ sessionId: named });
 
   const silent = backend(['--no-close']);
-  const other = start(silent.agent, 'close-not-advertised');
+  const other = await start(silent.agent, 'close-not-advertised');
   await runTurn(other.session, other.watch, 't1', 'hi');
   await other.session.close?.();
   expect(requests(silent.log).some((one) => one.method === 'session/close')).toBe(false);
 });
 
+it('lets a session go once the record\'s closeGraceMs has passed with no answer to session/close', async () => {
+  const log = join(scratch(), 'requests.jsonl');
+  const agent = acpAgent({ command: process.execPath, args: [FIXTURE, '--close-silent'], env: { ACP_LOG: log }, provider: 'acp-close-silent', closeGraceMs: 50 });
+  const { session, watch } = await start(agent, 'close-silent');
+  await runTurn(session, watch, 't1', 'hi');
+  const began = Date.now();
+  await session.close?.();
+  // Well inside the 1000 ms a record that names none waits.
+  expect(Date.now() - began).toBeLessThan(800);
+  expect(requests(log).some((one) => one.method === 'session/close')).toBe(true);
+});
+
 it('leaves no process behind when a session closes', async () => {
   const pidFile = join(scratch(), 'grandchild.pid');
   const { agent } = backend([`--grandchild=${pidFile}`]);
-  const { session, watch } = start(agent, 'close');
+  const { session, watch } = await start(agent, 'close');
   await runTurn(session, watch, 't1', 'hi');
   await until(() => existsSync(pidFile));
   const pid = Number(readFileSync(pidFile, 'utf8'));
@@ -1601,6 +1964,22 @@ const running = (pid: number): boolean => {
     return false;
   }
 };
+
+/*
+ * An open the server refused, here for a sign-in nobody named, lets go of the
+ * server it spawned, as the session is answered and as the turn that opens it
+ * again ends with the refusal: no process of it is left running.
+ */
+it('lets go of every server an open that failed had spawned', async () => {
+  const { agent, log } = backend(['--signin']);
+  const { session, watch } = await start(agent, 'refused');
+  await runTurn(session, watch, 't1', 'hi');
+
+  expect(watch.endings()).toEqual(['chat/error']);
+  const spawned = [...new Set(requests(log).flatMap((one) => (one.pid === undefined ? [] : [one.pid])))];
+  expect(spawned.length).toBeGreaterThan(0);
+  await until(() => spawned.every((pid) => !running(pid)));
+});
 
 /*
  * When an ACP tool call ran.
@@ -1632,7 +2011,7 @@ const forCall = (watch: Watcher, toolCallId: string): Bag[] => watch.actions
 
 it('says how long a call ran at its completion, and reads back with the same number', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'times');
+  const { session, watch } = await start(agent, 'times');
   await runTurn(session, watch, 't1', 'fetch it later');
 
   const sent = forCall(watch, 'call-later');
@@ -1717,7 +2096,233 @@ it('stamps nothing for an update a session load replayed', () => {
   expect((turn.parts[0]?.toolCall as Bag)._meta).toBeUndefined();
 });
 
-it('reports the folder a session is in as a URI a host reads back as that folder', () => {
+/*
+ * A call that failed with nobody refusing it: its line is the sentence VS
+ * Code's agents give a failed call, and its error carries no code, which is a
+ * failure of the call's own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotToolDisplay.ts#L895-L898
+ */
+it('says a failed call failed in its past tense, and a success by its name', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  mapUpdate(turn, toolCall('c1', 'in_progress'));
+  mapUpdate(turn, toolCall('c2', 'in_progress'));
+  const failed = mapUpdate(turn, toolCallUpdate('c1', 'failed')).find((one) => one.type === 'chat/toolCallComplete');
+  const done = mapUpdate(turn, toolCallUpdate('c2', 'completed')).find((one) => one.type === 'chat/toolCallComplete');
+
+  expect(failed?.result).toEqual({ success: false, pastTenseMessage: '"Fetch" failed', error: { message: 'The tool failed' } });
+  expect(done?.result).toEqual({ success: true, pastTenseMessage: 'Fetch' });
+});
+
+/*
+ * What the agent names by URI in its answer, a link to a resource or a
+ * resource it embedded, as the spec's part for content held outside the state
+ * tree, between the prose before it and the prose after it.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L1045-L1053
+ */
+it('answers a resource the agent linked or embedded as a content reference part', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  const said = (content: unknown): Bag[] =>
+    mapUpdate(turn, { sessionUpdate: 'agent_message_chunk', content } as unknown as SessionUpdate);
+  said({ type: 'text', text: 'Here: ' });
+  const linked = said({ type: 'resource_link', uri: 'file:///tmp/report.md', name: 'report.md', mimeType: 'text/markdown', size: 120 });
+  const embedded = said({ type: 'resource', resource: { uri: 'file:///tmp/notes.txt', text: 'notes', mimeType: 'text/plain' } });
+  said({ type: 'text', text: 'and done.' });
+
+  expect(linked).toEqual([{
+    type: 'chat/responsePart',
+    turnId: 't1',
+    part: { kind: 'contentRef', uri: 'file:///tmp/report.md', sizeHint: 120, contentType: 'text/markdown' },
+  }]);
+  expect(embedded).toEqual([{
+    type: 'chat/responsePart',
+    turnId: 't1',
+    part: { kind: 'contentRef', uri: 'file:///tmp/notes.txt', contentType: 'text/plain' },
+  }]);
+  expect(turn.parts.map((one) => one.kind)).toEqual(['markdown', 'contentRef', 'contentRef', 'markdown']);
+});
+
+/*
+ * An answer's image, audio and embedded resource carry their bytes, which the
+ * host keeps through its port before the part is said, the part naming the
+ * reference the host answered, as VS Code's host keeps a result's embedded
+ * content before it publishes a reference to it; a link names its own URI;
+ * all in the order the server wrote them, before the turn ends.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L148-L183
+ */
+it('says an answer\'s image, audio and embedded resource by the reference the host kept their bytes under, and a link by its own', async () => {
+  const kept: { name: string; contentType: string; text: string }[] = [];
+  const { agent } = backend([], 'acp-media');
+  const { session, watch } = await start(agent, 'media', {
+    storeToolResultResource: async (resource) => {
+      kept.push({ name: resource.name, contentType: resource.contentType, text: Buffer.from(resource.bytes).toString('utf8') });
+      return { uri: `session-db-resource:/${resource.name}?${String(kept.length)}`, contentType: resource.contentType, sizeHint: resource.bytes.byteLength };
+    },
+  });
+  await runTurn(session, watch, 't1', 'media');
+
+  expect(kept).toEqual([
+    { name: 'image', contentType: 'image/png', text: 'png bytes' },
+    { name: 'audio', contentType: 'audio/wav', text: 'wav bytes' },
+    { name: 'notes.txt', contentType: 'text/plain', text: 'notes' },
+  ]);
+  const parts = (session.allTurns()[0]?.responseParts ?? []) as Bag[];
+  expect(parts.map((one) => (one.kind === 'contentRef' ? one.uri : one.kind))).toEqual([
+    'markdown',
+    'session-db-resource:/image?1',
+    'session-db-resource:/audio?2',
+    'session-db-resource:/notes.txt?3',
+    'file:///tmp/report.md',
+    'markdown',
+  ]);
+  expect(parts[1]).toEqual({ kind: 'contentRef', uri: 'session-db-resource:/image?1', contentType: 'image/png', sizeHint: 9 });
+});
+
+it('leaves out an image and audio the host keeps nothing of, and names an embedded resource by its own URI', async () => {
+  const { agent } = backend([], 'acp-media-unkept');
+  const { session, watch } = await start(agent, 'media-unkept');
+  await runTurn(session, watch, 't1', 'media');
+  const parts = (session.allTurns()[0]?.responseParts ?? []) as Bag[];
+  expect(parts.map((one) => (one.kind === 'contentRef' ? one.uri : one.kind))).toEqual([
+    'markdown', 'file:///tmp/notes.txt', 'file:///tmp/report.md', 'markdown',
+  ]);
+});
+
+it('answers an image that names its source as a content reference part', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  const drawn = mapUpdate(turn, {
+    sessionUpdate: 'agent_message_chunk',
+    content: { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png', uri: 'file:///tmp/chart.png' },
+  } as unknown as SessionUpdate);
+  expect(drawn).toEqual([{
+    type: 'chat/responsePart',
+    turnId: 't1',
+    part: { kind: 'contentRef', uri: 'file:///tmp/chart.png', contentType: 'image/png' },
+  }]);
+});
+
+/*
+ * A call's terminal is titled by the call, as VS Code's agents title one, and
+ * says how its command ended once the terminal has exited, the spec's result.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L9906-L9912
+ */
+it('titles a call\'s terminal by the call, with how its command ended once it has exited', () => {
+  const turn: AcpTurn = {
+    turnId: 't1',
+    parts: [],
+    calls: new Map(),
+    opening: [],
+    reach: {
+      within: () => false,
+      changed: () => {},
+      completed: () => undefined,
+      isPty: () => false,
+      exited: (uri) => (uri === 'ahp-terminal:/done' ? { output: 'painted\n', exitCode: 0 } : undefined),
+    },
+  };
+  const update = (status: string, terminalId: string): Bag[] => mapUpdate(turn, {
+    sessionUpdate: 'tool_call_update', toolCallId: 'call-paint', title: 'Paint and preview', status, content: [{ type: 'terminal', terminalId }],
+  } as unknown as SessionUpdate);
+  const running = update('in_progress', 'ahp-terminal:/running');
+  const done = update('completed', 'ahp-terminal:/done');
+
+  const changed = running.find((one) => one.type === 'chat/toolCallContentChanged');
+  expect((changed?.content as Bag[])[0]).toEqual({ type: 'terminal', resource: 'ahp-terminal:/running', title: 'Paint and preview', isPty: false });
+  const completed = done.find((one) => one.type === 'chat/toolCallComplete');
+  expect(((completed?.result as Bag).content as Bag[])[0]).toEqual({
+    type: 'terminal',
+    resource: 'ahp-terminal:/done',
+    title: 'Paint and preview',
+    isPty: false,
+    result: { exitCode: 0, preview: 'painted\n' },
+  });
+});
+
+/*
+ * A chunk whose `messageId` changes starts a new message, so it opens a part
+ * of its own rather than running on into the last one.
+ * https://agentclientprotocol.com/protocol/schema#contentchunk
+ */
+it('opens a new part for a chunk of a new message, and runs on within one', () => {
+  const turn: AcpTurn = { turnId: 't1', parts: [], calls: new Map(), opening: [] };
+  const said = (text: string, messageId: string): Bag[] =>
+    mapUpdate(turn, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text }, messageId } as unknown as SessionUpdate);
+  said('First ', 'm1');
+  said('message.', 'm1');
+  const next = said('Second.', 'm2');
+
+  expect(next[0]).toMatchObject({ type: 'chat/responsePart', part: { kind: 'markdown', id: 't1:1' } });
+  expect(turn.parts.map((one) => one.content)).toEqual(['First message.', 'Second.']);
+});
+
+/*
+ * A call the person refused, which the server reports as failing: its error
+ * is a denial, as VS Code's Codex agent completes a call its host declined.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L1225-L1229
+ */
+it('completes a call the person refused as a denial, in the words of a failure', async () => {
+  const { agent } = backend();
+  const { session, watch } = await start(agent, 'refused');
+  session.sendMessage('t1', 'ask me first');
+  await until(() => watch.types().includes('session/inputNeededSet'));
+  expect(session.confirm?.('call-perm', false)).toBe(true);
+  await until(() => watch.endings().length > 0);
+
+  const complete = forCall(watch, 'call-perm').find((one) => one.type === 'chat/toolCallComplete');
+  expect(complete?.result).toEqual({
+    success: false,
+    pastTenseMessage: '"Remove a file" failed',
+    content: [{ type: 'text', text: 'answer=no-once' }],
+    error: { message: 'answer=no-once', code: 'denied' },
+  });
+});
+
+/*
+ * A refused call is held as the reducer holds it once the refusal is said:
+ * cancelled as `denied`, the completion after it left unapplied.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L635
+ */
+it('holds a refused call cancelled as denied in the session\'s own snapshot', async () => {
+  const { agent } = backend();
+  const { session, watch } = await start(agent, 'refused-held');
+  session.sendMessage('t1', 'ask me first');
+  await until(() => watch.types().includes('session/inputNeededSet'));
+  expect(session.confirm?.('call-perm', false)).toBe(true);
+  await until(() => watch.endings().length > 0);
+
+  const turn = (session.chatState().turns as Bag[]).at(-1);
+  const held = (turn?.responseParts as Bag[]).find((one) => (one.toolCall as Bag | undefined)?.toolCallId === 'call-perm');
+  expect(held?.toolCall).toMatchObject({ status: 'cancelled', reason: 'denied' });
+});
+
+/*
+ * A permission or a question the server waits on is in the session's state, so
+ * a client that connects while it waits can answer it, as the pi and cofold
+ * sessions list theirs.
+ */
+it('lists the permission and the question the server waits on in the session\'s state', async () => {
+  const { agent } = backend();
+  const { session, watch } = await start(agent, 'waiting-listed');
+  const said = (kind: string): Bag | undefined => watch.actions
+    .filter((one) => one.action.type === 'session/inputNeededSet')
+    .map((one) => one.action.request as Bag)
+    .find((one) => one.kind === kind);
+
+  session.sendMessage('t1', 'ask me first');
+  await until(() => said('toolConfirmation') !== undefined);
+  expect(session.sessionState().inputNeeded).toEqual([said('toolConfirmation')]);
+  session.confirm?.('call-perm', true);
+  await until(() => watch.endings().length === 1);
+  expect(session.sessionState().inputNeeded).toBeUndefined();
+
+  session.sendMessage('t2', 'elicitform please');
+  await until(() => said('chatInput') !== undefined);
+  expect(session.sessionState().inputNeeded).toEqual([said('chatInput')]);
+  session.answer?.('call-elicit:elicitation', false, {}, 'decline');
+  await until(() => watch.endings().length === 2);
+  expect(session.sessionState().inputNeeded).toBeUndefined();
+});
+
+it('reports the folder a session is in as a URI a host reads back as that folder', async () => {
   const { agent } = backend();
   /*
    * The session's own directory, as the host reads it: a folder called `C# a b`
@@ -1728,7 +2333,7 @@ it('reports the folder a session is in as a URI a host reads back as that folder
    */
   const where = join(scratch(), 'C# a b');
   mkdirSync(where);
-  const { session } = start(agent, 'uris', { workingDirectory: where });
+  const { session } = await start(agent, 'uris', { workingDirectory: where });
   const asked = [uriOf(where)];
   expect(session.workingDirectories()).toEqual(asked);
   expect((session.sessionState() as { workingDirectories: string[] }).workingDirectories).toEqual(asked);
@@ -1736,7 +2341,7 @@ it('reports the folder a session is in as a URI a host reads back as that folder
 
 it('never writes a bare timing key on a call', async () => {
   const { agent } = backend();
-  const { session, watch } = start(agent, 'bare');
+  const { session, watch } = await start(agent, 'bare');
   await runTurn(session, watch, 't1', 'fetch it later');
   const bare = ['startedAt', 'endedAt', 'durationMs'];
   expect(watch.actions.every((one) => bare.every((key) => metaOf(one.action)[key] === undefined))).toBe(true);

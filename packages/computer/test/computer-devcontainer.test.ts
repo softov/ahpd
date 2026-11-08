@@ -182,16 +182,17 @@ const load = async (pluginOptions: Record<string, unknown>, agents: Agent[] = []
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
   write(uri: string, content: { data: string; encoding: string }): Promise<void>;
   list(uri: string): Promise<{ name: string }[]>;
-  remove(uri: string): Promise<void>;
+  delete(uri: string): Promise<void>;
 };
 
+/** A window's peer, which vouches for a folder it asks a dev container in. */
 const peer = (): Peer & { notes: { method: string; params: unknown }[] } => {
   const notes: { method: string; params: unknown }[] = [];
   return {
     notes,
     send: () => {},
     notify: (method, params) => notes.push({ method, params }),
-    request: async () => ({}),
+    request: async (method: string) => (method === 'vscode/requestWorkspaceTrust' ? { trusted: true } : {}),
     answered: () => {},
     close: () => {},
   };
@@ -1549,7 +1550,7 @@ it('answers the container its labels already name, and refuses a second name for
     'ahpd.name': 'box',
     'devcontainer.metadata': '[{"remoteUser":"dev"}]',
   });
-  await provider.remove('computer://box');
+  await provider.delete('computer://box');
   expect(dockerHeld(dockerState).machines).toEqual([]);
   await answered(dockerState, 8);
 });
@@ -2097,7 +2098,7 @@ it('stops the container a folder is, ending the window\'s relay first', async ()
     method: 'vscode/devContainers/relaySend',
     params: { connectionId: 'one', data: '{}' },
   }).then(() => undefined, (error: unknown) => error as Error);
-  expect(ended?.message).toContain('one is not a dev container this client opened');
+  expect(ended?.message).toBe('Dev Container connection is not owned by this client');
 
   // The machine is stopped and the folder and its definition stay: a dev
   // container is that folder made into a machine, and stopping the machine is

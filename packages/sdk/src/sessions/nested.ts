@@ -482,6 +482,20 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   let inside = start.workingDirectory === undefined ? undefined : fileUri(machinePathOf(start.workingDirectory));
   /** The resources the inner host asked this session's client to sign into. */
   const awaited = new Set<string>();
+  /**
+   * The resource each of the inner session's MCP servers waits on a sign-in
+   * for, by server id: a server's sign-in is its `authRequired` state, which the
+   * host inside says on the session's customizations and in no `auth/required`,
+   * as VS Code's host says one for an agent's own requirement alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L729-L736
+   */
+  const serversAwaiting = new Map<string, string>();
+  /** A server's state as its sign-in: the resource it waits for, or nothing. */
+  const signInOf = (state: unknown): string | undefined => {
+    const held = (typeof state === 'object' && state !== null ? state : {}) as Bag;
+    const resource = (held.resource as Bag | undefined)?.resource;
+    return held.kind === 'authRequired' && typeof resource === 'string' && resource !== '' ? resource : undefined;
+  };
   /** What was asked for before the inner session existed, in order. */
   const waiting: (() => void)[] = [];
   /**
@@ -1074,6 +1088,11 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
          * row the host out here keeps.
          */
         if (channel === 'chat' && reported(action as unknown as Bag)) continue;
+        if (channel === 'session' && action.type === 'session/mcpServerStateChanged') {
+          const waitsOn = signInOf(action.state);
+          if (waitsOn === undefined) serversAwaiting.delete(action.id);
+          else serversAwaiting.set(action.id, waitsOn);
+        }
         /*
          * The mirror is kept so a client that arrives late gets a snapshot.
          * A shape it cannot reduce is dropped rather than fatal: the action
@@ -1327,6 +1346,11 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     const toldTitle = session?.title ?? chat?.title ?? 'Nested session';
     const toldChangesets = session?.changesets ?? [];
     session = lead.result.snapshot?.state as SessionState | undefined;
+    serversAwaiting.clear();
+    for (const one of session?.customizations ?? []) {
+      const waitsOn = one.type === 'mcpServer' ? signInOf(one.state) : undefined;
+      if (waitsOn !== undefined) serversAwaiting.set(one.id, waitsOn);
+    }
     const named = (session as { defaultChat?: unknown } | undefined)?.defaultChat;
     if (typeof named === 'string' && named !== '') innerChat = named;
     outerOf.set(innerChat, start.chatUri);
@@ -1654,7 +1678,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     },
     /* Taken only for an input request the inner session has open. */
     answer: (requestId: string, accepted: boolean, answers: Bag): boolean => {
-      const open = (session?.inputNeeded ?? []).some((entry) => entry.id === requestId) || asking(requestId);
+      const open = (session?.inputNeeded ?? []).some((entry) => entry.kind === 'chatInput' && entry.request.id === requestId) || asking(requestId);
       if (!open) return false;
       carry('chat', { type: 'chat/inputCompleted', requestId, response: accepted ? 'accept' : 'decline', answers });
       return true;
@@ -1709,7 +1733,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       carry('session', { type: 'session/mcpServerBackgroundRequested', id: serverId });
       return true;
     },
-    awaiting: () => [...awaited],
+    awaiting: () => [...new Set([...awaited, ...serversAwaiting.values()])],
     /*
      * A token for a resource the inner session asked for, handed to the inner host.
      *
@@ -1719,7 +1743,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
      * server inside may still wait for it.
      */
     authenticated: async (resource: string, token: string, server?: string): Promise<boolean> => {
-      if (client === undefined || !ready || closed || ended !== undefined || !awaited.has(resource)) return false;
+      if (client === undefined || !ready || closed || ended !== undefined
+        || (!awaited.has(resource) && ![...serversAwaiting.values()].includes(resource))) return false;
       try {
         /*
          * Through a widened `request`, because the client is typed over the

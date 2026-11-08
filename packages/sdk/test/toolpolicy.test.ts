@@ -24,7 +24,7 @@ const sdk = vi.hoisted(() => {
 
 const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== undefined);
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   listSessions: async () => [],
   getSessionMessages: async () => [],
@@ -79,6 +79,14 @@ it('marks the tool the instruction names eager, defers remove and list, and leav
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/policy', provider: 'claude' } });
+  // The CLI the session's first send starts, which is handed the tools.
+  const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/policy' } }) as {
+    snapshot: { state: { defaultChat: string } };
+  }).snapshot.state.defaultChat;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'hello', origin: { kind: 'user' } } } },
+  });
   await settle();
 
   const tools = (sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>).host?.tools ?? [];

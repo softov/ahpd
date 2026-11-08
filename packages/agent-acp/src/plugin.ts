@@ -122,6 +122,61 @@ const RECORD_FIELDS: Record<string, Record<string, unknown>> = {
     enum: ['notify', 'list'],
     description: "How this agent hears that the tools it listed have moved: notify holds a stream open and sends notifications/tools/list_changed down it, list says nothing and leaves it to the agent's next tools/list. Both serve the current list; defaults to notify.",
   },
+  cutTurns: {
+    type: 'string',
+    enum: ['error', 'complete'],
+    description: "How a turn the server stopped at max_tokens, max_turn_requests or by a refusal ends: error ends it in chat/error typed by the reason, complete completes it as VS Code's agents do. Defaults to error.",
+  },
+  stderrTail: {
+    type: 'string',
+    enum: ['sentence', 'log'],
+    description: "Where the last of a failed server's stderr goes: sentence puts it under the failure in the error a client is shown, log leaves it to the daemon's log as VS Code's agents do. Each line is logged either way; defaults to sentence.",
+  },
+  modes: {
+    type: 'string',
+    enum: ['refreshed', 'preset'],
+    description: "Where this agent's modes come from: refreshed lists the row's until a session hears its server's, then the modes the last session's server named; preset keeps the row's as declared, as VS Code's agents do. Defaults to refreshed.",
+  },
+  unreportedClientCalls: {
+    type: 'string',
+    enum: ['row', 'error'],
+    description: "What a request for a client's tool that no reported call matched gets: row holds it in a row of its own and asks its owner, error answers it with an error result as VS Code's client tool server does. Defaults to row.",
+  },
+  findFreshMs: {
+    type: 'integer',
+    minimum: 0,
+    description: "How long, in milliseconds, the listing a find made answers the finds after it, a failed one included, so a server that did not start is not spawned again for each id; 0 joins only the listing in flight, as VS Code's agents share a listing. Defaults to 2000.",
+  },
+  listingIdleMs: {
+    type: 'integer',
+    minimum: 0,
+    description: "How long, in milliseconds, the server a listing spawned stays after its last read; 0 closes it once the read is done, as VS Code's Codex closes the connection it opens for an action. Defaults to 0.",
+  },
+  sessionListMaxPages: {
+    type: 'integer',
+    minimum: 1,
+    description: "How many pages of session/list one listing reads at most, as VS Code's Codex stops its own paged listing. Defaults to 50.",
+  },
+  exitGraceMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long, in milliseconds, a call that failed because the server closed its stream waits for the exit code that says why. Defaults to 1000.',
+  },
+  stderrBytes: {
+    type: 'integer',
+    minimum: 0,
+    description: "How much of the server's stderr, in bytes, a failure carries, as VS Code keeps the last 8192 of a helper's stderr. Defaults to 8192.",
+  },
+  killGraceMs: {
+    type: 'integer',
+    minimum: 0,
+    description: "How long, in milliseconds, the server's process group has between SIGTERM and SIGKILL, VS Code's grace for ending a process tree. Defaults to 5000.",
+  },
+  closeGraceMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long, in milliseconds, a session waits for the server to answer session/close before the connection goes. Defaults to 1000.',
+  },
   // Read by `machineOf` as well as described here, so a wrongly written block
   // is refused with a line naming the field and never a value. A variable's
   // value is read where the machine is made, so a `$secret` reaches this
@@ -353,6 +408,18 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
   const hostTools = typeof config['hostTools'] === 'boolean' ? config['hostTools'] : shared.hostTools;
   const toolsChanged = changedOf(config['toolsChanged']) ?? shared.toolsChanged;
   const honoursTrust = typeof config['honoursTrust'] === 'boolean' ? config['honoursTrust'] : row?.honoursTrust;
+  const cutTurns = config['cutTurns'] === 'error' || config['cutTurns'] === 'complete' ? config['cutTurns'] : undefined;
+  const stderrTail = config['stderrTail'] === 'sentence' || config['stderrTail'] === 'log' ? config['stderrTail'] : undefined;
+  const modesFrom = config['modes'] === 'refreshed' || config['modes'] === 'preset' ? config['modes'] : undefined;
+  const unreported = config['unreportedClientCalls'];
+  const unreportedClientCalls = unreported === 'row' || unreported === 'error' ? unreported : undefined;
+  // The record's bounds, each a whole number at or above its field's minimum.
+  const bounds: Partial<Record<'findFreshMs' | 'listingIdleMs' | 'sessionListMaxPages' | 'exitGraceMs' | 'stderrBytes' | 'killGraceMs' | 'closeGraceMs', number>> =
+    Object.fromEntries((['findFreshMs', 'listingIdleMs', 'sessionListMaxPages', 'exitGraceMs', 'stderrBytes', 'killGraceMs', 'closeGraceMs'] as const)
+      .flatMap((key) => {
+        const value = config[key];
+        return typeof value === 'number' && Number.isInteger(value) && value >= Number(RECORD_FIELDS[key]?.['minimum'] ?? 0) ? [[key, value]] : [];
+      }));
   const machine = machineUnder(row?.machine, config['machine'] === undefined ? undefined : machineOf(config['machine'], record.id));
   // A machine also has the block's variables, so a row's variable written
   // there signs a session in that machine in. Only the name is looked for.
@@ -374,6 +441,11 @@ const optionsOfRecord = (shared: Shared, record: AgentView): AcpOptions => {
     ...(hostTools === undefined ? {} : { hostTools }),
     ...(honoursTrust === undefined ? {} : { honoursTrust }),
     ...(toolsChanged === undefined ? {} : { toolsChanged }),
+    ...(cutTurns === undefined ? {} : { cutTurns }),
+    ...(stderrTail === undefined ? {} : { stderrTail }),
+    ...(modesFrom === undefined ? {} : { modesFrom }),
+    ...(unreportedClientCalls === undefined ? {} : { unreportedClientCalls }),
+    ...bounds,
     // The row's known modes, copied so each agent holds a list of its own.
     ...(row?.modes === undefined ? {} : { modes: row.modes.map((one) => ({ ...one })) }),
     ...(machine === undefined ? {} : { machine }),

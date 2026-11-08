@@ -21,9 +21,12 @@ it('answers provider cofold with the settings a session may carry', () => {
   // `authenticate` against the protected resource below, not session config.
   // No model either: a model belongs to the turn, so a client draws the picker
   // from the agent's `models` rather than from a schema field with no values.
-  // The mode and the effort are the two controls a window draws, and the cases
-  // for what each one means are `agent-cofold-modes.test.ts`.
-  expect(Object.keys(properties(agent))).toEqual(['baseUrl', 'instructions', 'permissionMode', 'effortLevel']);
+  // No endpoint: it is the agent's configuration, as VS Code keeps a
+  // provider's settings in the host's root configuration.
+  // No thinking level either: it is each model's own form. The mode is the
+  // control a window draws, and the cases for what it means are
+  // `agent-cofold-modes.test.ts`.
+  expect(Object.keys(properties(agent))).toEqual(['instructions', 'permissionMode']);
   expect(properties(agent)).not.toHaveProperty('model');
 });
 
@@ -34,20 +37,24 @@ it('advertises the resource a client may lend a token for', () => {
   ]);
 });
 
+/*
+ * A resource is the https URL of the API a token is for, as VS Code's agents
+ * advertise one, so an endpoint with no https origin names none and the
+ * backend advertises none.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agent.ts#L647-L648
+ */
 it('names the resource after the endpoint only when that is an https URL', () => {
   expect(resourceOf({ baseUrl: 'https://api.deepseek.com/v1' })).toBe('https://api.deepseek.com');
-  expect(resourceOf({ baseUrl: 'http://127.0.0.1:1234/v1' })).toBe('https://ahpd.dev/agent-cofold');
+  expect(resourceOf({ baseUrl: 'http://127.0.0.1:1234/v1' })).toBeUndefined();
   expect(resourceOf({ resource: 'https://models.example' })).toBe('https://models.example');
+  expect(cofoldAgent({ baseUrl: 'http://127.0.0.1:1234/v1' }).protectedResources).toEqual([]);
 });
 
-it('defaults name only keys the schema declares', () => {
+it('starts a session with no endpoint or model of its own', () => {
   const agent = cofoldAgent({ model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' });
-  // A model is a choice on the turn, not a session setting. The configured one
-  // still reaches a turn that names none through `modelOf` and `options.model`.
-  expect(agent.defaults()).toEqual({ baseUrl: 'https://api.deepseek.com/v1' });
-  for (const key of Object.keys(agent.defaults())) {
-    expect(properties(agent)).toHaveProperty(key);
-  }
+  // The endpoint is the agent's configuration and the model the turn's: the
+  // configured ones reach a turn through `modelOf` and the agent's options.
+  expect(agent.defaults()).toEqual({});
 });
 
 it('gives a second registration its own provider', () => {
@@ -67,8 +74,9 @@ it('offers the configured model and cofold\'s own commands', async () => {
 
 it('builds an OpenAI-compatible adapter for the chosen model', () => {
   expect(modelOf({ baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat' }).modelId).toBe('deepseek-chat');
-  // A session setting wins over the package's own default.
-  expect(modelOf({ model: 'falls-back' }, { model: 'chosen' }).modelId).toBe('chosen');
+  // A session setting wins over the package's own default, on the endpoint the
+  // package names: a turn nothing names an endpoint for is refused.
+  expect(modelOf({ baseUrl: 'https://api.deepseek.com/v1', model: 'falls-back' }, { model: 'chosen' }).modelId).toBe('chosen');
 });
 
 it('uses a caller-passed adapter instead of building one', () => {

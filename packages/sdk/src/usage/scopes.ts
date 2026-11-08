@@ -129,6 +129,15 @@ export const poolsFor = (principal: Principal): string[] => [
 ];
 
 /**
+ * The teams one person is on, each once, in the order they wrote them.
+ *
+ * A membership of any form, `team`, `team:*` or `team:project`, puts them on
+ * the team it names before its colon, which is the rule a team's record and a
+ * team's usage pool are read by.
+ */
+export const teamsOf = (principal: Principal): string[] => [...new Set(heldBy(principal).map((one) => one.team))];
+
+/**
  * Whether one person may read one usage pool without `usage:read`.
  *
  * Their own `user:<id>` pool, `team:<team>` for any membership in that team,

@@ -6,34 +6,45 @@ import { uriOf } from '@ahpd/sdk';
 import type { Listed } from '@ahpd/sdk';
 
 /*
- * One session, asked for by id.
+ * The CLI's store, asked by id and listed whole.
  *
- * Every read of a past session used to begin by listing: `transcript` and
- * `subagents` each walked every configured directory looking for the id, and
- * each of those is a pass over every transcript on the machine, for one
- * conversation. `getSessionInfo` reads one session file and says which
- * directory it was under, which is the one thing both of those wanted from the
- * listing in the first place.
+ * `getSessionInfo` reads one session file, and asked with no directory it
+ * searches every project; `listSessions` with no directory is every session
+ * the store holds, wherever it ran. VS Code's Claude agent asks both that way.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2239
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSdkService.ts#L171-L174
  */
 
 const sdk = vi.hoisted(() => ({
-  listed: 0,
-  asked: [] as { id: string; dir?: string }[],
+  listed: [] as { dir?: string }[],
+  asked: [] as { id?: string; dir?: string }[],
+  read: [] as { id?: string; dir?: string }[],
   /** Every session the store has, by the directory it sits under. */
   store: {} as Record<string, Record<string, unknown>>,
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  listSessions: async ({ dir }: { dir: string }) => {
-    sdk.listed += 1;
-    return Object.entries(sdk.store[dir] ?? {}).map(([sessionId, info]) => info);
+/** What a call named, with its directory where it named one. */
+const named = (id: string | undefined, options?: { dir?: string }) => ({
+  ...(id === undefined ? {} : { id }),
+  ...(options?.dir === undefined ? {} : { dir: options.dir }),
+});
+
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
+  // The SDK's own scoping: one project with a directory, every project without.
+  listSessions: async (options?: { dir?: string }) => {
+    sdk.listed.push(named(undefined, options));
+    const projects = options?.dir === undefined ? Object.values(sdk.store) : [sdk.store[options.dir] ?? {}];
+    return projects.flatMap((project) => Object.values(project));
   },
   getSessionInfo: async (id: string, options?: { dir?: string }) => {
-    sdk.asked.push({ id, ...(options?.dir === undefined ? {} : { dir: options.dir }) });
-    const found = sdk.store[options?.dir ?? '']?.[id];
-    return found;
+    sdk.asked.push(named(id, options));
+    const projects = options?.dir === undefined ? Object.values(sdk.store) : [sdk.store[options.dir] ?? {}];
+    return projects.map((project) => project[id]).find((one) => one !== undefined);
   },
-  getSessionMessages: async () => [],
+  getSessionMessages: async (id: string, options?: { dir?: string }) => {
+    sdk.read.push(named(id, options));
+    return [];
+  },
   createSdkMcpServer: () => ({}),
   query: () => ({
     async *[Symbol.asyncIterator]() { /* nothing streamed */ },
@@ -64,8 +75,9 @@ const session = (id: string, dir: string): Record<string, unknown> => ({
 });
 
 const stored = (): void => {
-  sdk.listed = 0;
+  sdk.listed.length = 0;
   sdk.asked.length = 0;
+  sdk.read.length = 0;
   sdk.store = { [ONE]: { one: session('one', ONE) }, [TWO]: { two: session('two', TWO) } };
 };
 
@@ -74,9 +86,9 @@ const agent = () => claude({ paths: [ONE, TWO] });
 it('answers a row for one id without listing anything', async () => {
   stored();
   const row = await agent().find?.('two') as Listed;
-  // The store was asked about that id, under the directory it sits in.
-  expect(sdk.asked).toEqual([{ id: 'two', dir: ONE }, { id: 'two', dir: TWO }]);
-  expect(sdk.listed).toBe(0);
+  // The store was asked about that id alone.
+  expect(sdk.asked).toEqual([{ id: 'two' }]);
+  expect(sdk.listed).toEqual([]);
   // The row a listing would have offered, in the shape a host records.
   expect(row).toMatchObject({
     id: 'two', title: `A session in ${TWO}`,
@@ -89,35 +101,29 @@ it('answers a row for one id without listing anything', async () => {
 it('answers nothing for an id the store does not have', async () => {
   stored();
   expect(await agent().find?.('nobody')).toBeUndefined();
-  expect(sdk.listed).toBe(0);
+  expect(sdk.listed).toEqual([]);
 });
 
 it('reads a transcript through the one file it needs, not through a listing', async () => {
   stored();
-  // No turns are on disk, so the reader answers an empty conversation - which is
-  // the point: the directory is settled by the call about that id, not by
-  // listing every configured path to find out which one the session was in.
+  // No turns are on disk, so the reader answers an empty conversation: the
+  // session is settled by the call about that id, and its turns are read by
+  // the id alone.
   expect(await agent().transcript?.('two')).toEqual([]);
-  expect(sdk.asked.map((one) => one.id)).toEqual(['two', 'two']);
-  expect(sdk.listed).toBe(0);
+  expect(sdk.asked).toEqual([{ id: 'two' }]);
+  expect(sdk.read).toEqual([{ id: 'two' }]);
+  expect(sdk.listed).toEqual([]);
 });
 
 it('reads a session\'s subagents the same way', async () => {
   stored();
   expect(await agent().subagents?.('two')).toEqual([]);
-  expect(sdk.listed).toBe(0);
-});
-
-it('still lists for a host that asks for the catalogue', async () => {
-  stored();
-  const rows = await agent().list?.();
-  expect(rows?.map((one) => one.id)).toEqual(['one', 'two']);
-  expect(sdk.listed).toBe(2);
+  expect(sdk.listed).toEqual([]);
 });
 
 /*
  * A session that ran outside the configured paths: a bot's folder, a subfolder,
- * a worktree. The host gives the folder it recorded, and it is asked first.
+ * a worktree. The store holds it under its own project.
  */
 
 const home = realpathSync(mkdtempSync(join(tmpdir(), 'ahpd-claude-find-')));
@@ -144,42 +150,42 @@ const withBot = (): void => {
   written('bot', BOT);
 };
 
-it('answers a session in the given folder outside the paths, asking there first', async () => {
+it('lists every session the store holds, wherever it ran, in one listing', async () => {
   withBot();
-  const row = await agent().find?.('bot', { workingDirectory: BOT });
+  const rows = await agent().list?.();
+  expect(rows?.map((one) => one.id)).toEqual(['one', 'two', 'bot']);
+  expect(rows?.find((one) => one.id === 'bot')?.workingDirectories).toEqual([uriOf(BOT)]);
+  expect(sdk.listed).toEqual([{}]);
+});
+
+it('lists a session the store names no folder for in none', async () => {
+  stored();
+  sdk.store[ONE] = { bare: { sessionId: 'bare', summary: 'No folder', lastModified: 1_800_000_000_000 } };
+  const rows = await agent().list?.();
+  expect(rows?.find((one) => one.id === 'bare')?.workingDirectories).toEqual([]);
+});
+
+it('answers a session that ran outside the paths by its id alone', async () => {
+  withBot();
+  const row = await agent().find?.('bot');
   expect(row).toMatchObject({ id: 'bot', workingDirectories: [uriOf(BOT)] });
-  expect(sdk.asked).toEqual([{ id: 'bot', dir: BOT }]);
+  expect(sdk.asked).toEqual([{ id: 'bot' }]);
 });
 
-it('answers nothing for the same session when no folder is given', async () => {
+it('hands the SDK no folder the host recorded', async () => {
   withBot();
-  expect(await agent().find?.('bot')).toBeUndefined();
-  expect(sdk.asked).toEqual([{ id: 'bot', dir: ONE }, { id: 'bot', dir: TWO }]);
-});
-
-it('falls back to the paths when the given folder does not exist', async () => {
-  stored();
-  const gone = join(home, 'gone');
-  const row = await agent().find?.('two', { workingDirectory: gone });
-  expect(row).toMatchObject({ id: 'two', workingDirectories: [uriOf(TWO)] });
-  expect(sdk.asked).toEqual([{ id: 'two', dir: ONE }, { id: 'two', dir: TWO }]);
-});
-
-it('does not ask the SDK about a folder whose project holds no transcript for the id', async () => {
-  withBot();
+  // A folder outside the paths, one that is gone, and one of the paths: the
+  // store is asked by the id each time.
   expect(await agent().find?.('other', { workingDirectory: BOT })).toBeUndefined();
-  expect(sdk.asked).toEqual([{ id: 'other', dir: ONE }, { id: 'other', dir: TWO }]);
+  expect(await agent().find?.('two', { workingDirectory: join(home, 'gone') })).toMatchObject({ id: 'two' });
+  expect(await agent().find?.('two', { workingDirectory: TWO })).toMatchObject({ id: 'two' });
+  expect(sdk.asked).toEqual([{ id: 'other' }, { id: 'two' }, { id: 'two' }]);
 });
 
-it('asks a given folder that is one of the paths once, first', async () => {
-  stored();
-  await agent().find?.('two', { workingDirectory: TWO });
-  expect(sdk.asked).toEqual([{ id: 'two', dir: TWO }]);
-});
-
-it('reads the transcript and the subagents of a session in the given folder', async () => {
+it('reads the transcript and the subagents of a session that ran outside the paths', async () => {
   withBot();
-  expect(await agent().transcript?.('bot', { workingDirectory: BOT })).toEqual([]);
-  expect(await agent().subagents?.('bot', undefined, { workingDirectory: BOT })).toEqual([]);
-  expect(sdk.asked).toEqual([{ id: 'bot', dir: BOT }, { id: 'bot', dir: BOT }]);
+  expect(await agent().transcript?.('bot')).toEqual([]);
+  expect(await agent().subagents?.('bot')).toEqual([]);
+  expect(sdk.asked).toEqual([{ id: 'bot' }, { id: 'bot' }]);
+  expect(sdk.read).toEqual([{ id: 'bot' }, { id: 'bot' }]);
 });

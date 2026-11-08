@@ -852,3 +852,47 @@ it('starts the echo example\'s head once a client takes a message back from a st
   expect(startedFrom()).toEqual([undefined, 'later']);
   await host.close();
 });
+
+/*
+ * What a backend says is dropped by VS Code's host's rule alone: an action of
+ * another turn while one runs, and with none running, a completion of a turn
+ * a stop ended. A late end of a stopped turn is said, and a second result for
+ * a call the running turn completed is said, the reducer leaving both as
+ * nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L900-L918
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L944-L963
+ */
+it('drops only what VS Code\'s host drops of what a backend says', async () => {
+  let said: ((action: Bag) => void) | undefined;
+  const base = echo({ path: dir, pace: 0 });
+  const agent: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      said = (action) => { start.emit('chat', action); };
+      return { ...(base.create(start) as Session), sendMessage: () => undefined };
+    },
+  };
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go' } });
+  await settle();
+  said?.({ type: 'chat/toolCallStart', turnId: 't1', toolCallId: 'call-1', toolName: 'look', displayName: 'Look' });
+  said?.({ type: 'chat/toolCallReady', turnId: 't1', toolCallId: 'call-1', invocationMessage: 'Look', toolInput: '{}', confirmed: 'not-needed' });
+  said?.({ type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true } });
+  said?.({ type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true } });
+  said?.({ type: 'chat/responsePart', turnId: 't0', part: { kind: 'markdown', id: 'p0', content: 'stale' } });
+  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 0 });
+  said?.({ type: 'chat/turnComplete', turnId: 't1', duration: 1 });
+  said?.({ type: 'chat/error', turnId: 't1', duration: 1, part: { kind: 'error', error: { errorType: 'late', message: 'late' } } });
+  await settle();
+
+  const fromBackend = p.heard.filter((one) => one.channel === CHAT && one.origin === undefined && one.action.turnId !== undefined)
+    .map((one) => [one.action.type, one.action.turnId]);
+  expect(fromBackend).toEqual([
+    ['chat/toolCallStart', 't1'],
+    ['chat/toolCallReady', 't1'],
+    ['chat/toolCallComplete', 't1'],
+    ['chat/toolCallComplete', 't1'],
+    ['chat/error', 't1'],
+  ]);
+  await host.close();
+});

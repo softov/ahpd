@@ -3,7 +3,7 @@ import { reason } from '@ahpd/sdk';
 import { parsed } from './record.js';
 import { answer } from './route.js';
 import { findThread, threadId } from './thread.js';
-import type { RecordCollection } from '@ahpd/sdk';
+import type { RecordCollection, TurnEndEvent } from '@ahpd/sdk';
 import type { Call } from './call.js';
 import type { Dispatched } from './plugin.js';
 import type { Endpoint } from './record.js';

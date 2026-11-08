@@ -2,10 +2,6 @@ import type { RunCommand } from '@cofold/agents';
 import { bag } from '@ahpd/sdk';
 import type { Bag, Session } from '@ahpd/sdk';
 import type { SessionContext } from './context.js';
-import { ruleName } from './tools.js';
-
-/** What a person is told the model was told when they turn a tool down. */
-const DECLINED = 'The person declined this action';
 
 /**
  * The answers a client sent, in the shape cofold's questions want.
@@ -15,6 +11,12 @@ const DECLINED = 'The person declined this action';
  * question allows many. The value sits two levels in, and a value that is
  * already a string or a list is taken as it is, so a caller that hands over
  * cofold's own shape is not unwrapped into nothing.
+ *
+ * The words a person typed beside the choices, or instead of them, go with
+ * the answer, as VS Code's Claude agent hands them on: after a single choice,
+ * joined with it, as the answer where nothing was chosen, and in a list beside
+ * the choices.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeInteractiveTools.ts#L133-L156
  */
 const answersOf = (given: Bag): Record<string, string | string[]> => {
   /** One value as cofold reads it, or nothing for a shape it would refuse. */
@@ -25,9 +27,10 @@ const answersOf = (given: Bag): Record<string, string | string[]> => {
     const answer = bag(value);
     const inner = bag(answer.value);
     const raw = inner.value ?? answer.value;
-    if (typeof raw === 'string') return raw;
-    if (Array.isArray(raw)) return strings(raw);
-    return undefined;
+    const typed = Array.isArray(inner.freeformValues) ? strings(inner.freeformValues) : [];
+    if (Array.isArray(raw)) return [...strings(raw), ...typed];
+    if (typeof raw === 'string') return typed.length === 0 ? raw : [raw, ...typed].filter((one) => one !== '').join(', ');
+    return typed.length === 0 ? undefined : typed.join(', ');
   };
   const answers: Record<string, string | string[]> = {};
   for (const [id, value] of Object.entries(given)) {
@@ -43,20 +46,12 @@ const answersOf = (given: Bag): Record<string, string | string[]> => {
 export interface Pauses {
   /** Stop the running turn's run, settling what it waits on, as VS Code's agent aborts a turn. */
   abort: (reason: string) => void;
-  /**
-   * Answer an approval the owner's rules already allow, and say whether it did.
-   *
-   * Reads the call cofold paused on, and answers the run itself when the
-   * command line is one the rules approve. False leaves the question to be
-   * opened as it would have been.
-   */
-  autoApprove: (requestId: string, name: string, input: unknown) => Promise<boolean>;
 }
 
 export const createPauses = (
   ctx: SessionContext,
 ): Pauses & { methods: Pick<Session, 'confirm' | 'answer'> } => {
-  const { start, pending } = ctx;
+  const { pending } = ctx;
 
   /**
    * Send a decision back into the run that is waiting on it.
@@ -132,110 +127,94 @@ export const createPauses = (
   };
 
   /**
-   * The shell cofold runs a command through.
+   * Answer a tool call the run is waiting on, with the host's answer, a
+   * person's or its own.
    *
-   * `shell_exec` runs one command through the platform's own shell, which is
-   * what cofold's `DEFAULT_SHELL` names: PowerShell on Windows and bash
-   * everywhere else. The check's two shells are those two, so a line is
-   * matched against the rules of the shell that will run it.
+   * Found by the call's own id rather than assumed to be the only request:
+   * with two open, comparing against whichever was held last is a person
+   * pressing Approve and nothing at all happening. The host has said the
+   * client's confirmation; the entry leaves by the same id it arrived with,
+   * and the answer goes into the run, for this call alone whatever the host
+   * keeps of it, as VS Code's agents answer their runtimes once.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts#L8640
    */
-  const shellOf = (): 'bash' | 'powershell' => (process.platform === 'win32' ? 'powershell' : 'bash');
+  const confirm = (toolCallId: string, approved: boolean): boolean => {
+    const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
+    /*
+     * An answer can arrive while the session is still finding the run a
+     * restart left paused: it waits for the same opening every turn waits
+     * for, and is answered then.
+     */
+    const opening = ctx.opening;
+    if (held === undefined && opening !== undefined) {
+      void opening.then(() => confirm(toolCallId, approved), () => {});
+      return true;
+    }
+    /*
+     * The question a paused run holds, answered before the resumed run asks it
+     * again. Before the resume the answer stays with the paused run, which the
+     * resume hands it to; after, it goes to the resumed run's handle now, which
+     * takes it once the run is read. Either way the replay's asking is passed
+     * by.
+     */
+    const paused = held === undefined && ctx.paused?.callId === toolCallId && ctx.paused.answer === undefined ? ctx.paused : undefined;
+    const reasked = held === undefined && ctx.reasked?.callId === toolCallId && !ctx.reasked.answered ? ctx.reasked : undefined;
+    const requestId = held?.requestId ?? paused?.requestId ?? reasked?.requestId;
+    if (requestId === undefined) return false;
+    if (paused !== undefined) paused.answer = approved;
+    if (reasked !== undefined) reasked.answered = true;
+    /*
+     * A decline ends the call without a result, so the file it announced as
+     * changing is settled here, where the call id is still known: the run's
+     * own `approval.resolved` arrives after this entry is gone, and a run
+     * paused on the next question never reaches the end-of-run sweep.
+     */
+    if (!approved) ctx.settleEdit(toolCallId);
+    pending.delete(requestId);
+    // The entry follows the chat's state: the host took it down when it said
+    // the confirmation that moved the call.
+    ctx.activeMapping?.settle(requestId);
 
-  /**
-   * Answer an approval the owner's rules already allow, and say whether it did.
-   *
-   * cofold raises `approval.requested` when its policy would put a call to a
-   * person, so this runs only where the run itself asked. A tool the operator's
-   * rule names is never answered here, whatever a terminal rule says of its
-   * command: it asks every time. A command line no rule matched, one a rule
-   * denied, one the input does not name and a host that says nothing all answer
-   * false, and the question is opened as it would have been.
-   *
-   * The approval goes back for this one command, without `alwaysApprove`:
-   * cofold keeps that for a person's session-wide choice, and the host keeps no
-   * approval of its own - the rules are read again on the next call. Nothing
-   * is said on the wire here. The run's own `tool.started` readies the row
-   * `not-needed`, as it does for a call nobody was asked about.
-   */
-  const autoApprove = async (requestId: string, name: string, input: unknown): Promise<boolean> => {
-    // Only a command line has a terminal rule that could answer it.
-    if (name !== 'shell_exec') return false;
-    if (start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask') return false;
-    const command = bag(input).command;
-    if (typeof command !== 'string') return false;
-    if ((await start.getAutoApproval?.('shell', command, shellOf())) !== 'not-needed') return false;
-    route({ type: 'approve', requestId });
+    /*
+     * The row in this session's own snapshot moves with the decision, as the
+     * protocol's reducer moves it: running when approved, and cancelled as
+     * `denied` when refused, the reason its cancelled state carries.
+     *
+     * Nothing applies what a client dispatched, so a call approved here would
+     * stay `pending-confirmation` for anybody who subscribes next.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L599-L629
+     */
+    const part = (ctx.active?.responseParts as Bag[] | undefined)
+      ?.find((one) => one.kind === 'toolCall' && bag(one.toolCall).toolCallId === toolCallId);
+    if (part !== undefined) {
+      const call = bag(part.toolCall);
+      call.status = approved ? 'running' : 'cancelled';
+      if (approved) call.confirmed = 'user-action';
+      else call.reason = 'denied';
+      part.toolCall = call;
+    }
+    /*
+     * A refusal goes to cofold with no reason, as cofold's own app denies one
+     * the person gave none for, and cofold tells the model its own words,
+     * "Denied by the user".
+     * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/papo/src/chat.ts#L544
+     * https://github.com/softov/cofold/blob/ee4819644696b88e83e63c56ed7bdf426d32cfb9/packages/agents/src/run/turn.ts#L405
+     */
+    if (paused === undefined) route(approved ? { type: 'approve', requestId } : { type: 'deny', requestId });
     return true;
   };
 
   return {
     abort,
-    autoApprove,
     methods: {
-      /**
-       * Answer a tool call the run is waiting on.
-       *
-       * Found by the call's own id rather than assumed to be the only request:
-       * with two open, comparing against whichever was held last is a person
-       * pressing Approve and nothing at all happening. The host has said the
-       * client's confirmation; the entry leaves by the same id it arrived with,
-       * and the answer goes into the run. An approval that picked
-       * `allow-session` is sent with `alwaysApprove`, which cofold keeps for
-       * this session and tool - unless the operator's rule names the tool,
-       * because a matched call asks every time.
-       */
-      confirm: (toolCallId, approved, optionId) => {
-        const held = [...pending.values()].find((one) => one.kind === 'approval' && one.callId === toolCallId);
-        if (held === undefined) return false;
-        const picked = held.options?.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
-        /*
-         * The tool's name as the request was built with it. A question rebuilt
-         * by a replay may still carry the session choice, so the rule is read
-         * here rather than assumed from the options.
-         */
-        const called = bag(held.request.toolCall).toolName;
-        const matched = typeof called === 'string' && start.getAutoApproval?.('tool', ruleName(ctx.offered, called)) === 'ask';
-        /*
-         * A decline ends the call without a result, so the file it announced as
-         * changing is settled here, where the call id is still known: the run's
-         * own `approval.resolved` arrives after this entry is gone, and a run
-         * paused on the next question never reaches the end-of-run sweep.
-         */
-        if (!approved && held.callId !== undefined) ctx.settleEdit(held.callId);
-        pending.delete(held.requestId);
-        // The entry follows the chat's state: the host took it down when it
-        // said the confirmation that moved the call.
-        ctx.activeMapping?.settle(held.requestId);
-
-        /*
-         * The row in this session's own snapshot moves with the decision.
-         *
-         * Nothing applies what a client dispatched, so a call approved here
-         * would stay `pending-confirmation` for anybody who subscribes next.
-         */
-        const part = (ctx.active?.responseParts as Bag[] | undefined)
-          ?.find((one) => one.kind === 'toolCall' && bag(one.toolCall).toolCallId === held.callId);
-        if (part !== undefined) {
-          const call = bag(part.toolCall);
-          call.status = approved ? 'running' : 'cancelled';
-          if (approved) call.confirmed = 'user-action';
-          delete call.options;
-          if (picked !== undefined) call.selectedOption = picked;
-          part.toolCall = call;
-        }
-        route(approved
-          ? { type: 'approve', requestId: held.requestId, ...(picked?.id === 'allow-session' && !matched ? { alwaysApprove: true } : {}) }
-          : { type: 'deny', requestId: held.requestId, reason: DECLINED });
-        return true;
-      },
+      confirm,
 
       /**
        * Answer a question the run is waiting on.
        *
-       * A declined question is a deny rather than an empty answer, because
-       * cofold's own validation refuses a form with nothing in it and the model
-       * is owed the reason either way. False when the run is not waiting on
-       * that request.
+       * A declined question is a deny, because cofold's own validation refuses
+       * a form with nothing in it, sent with no reason as a refused call is.
+       * False when the run is not waiting on that request.
        */
       answer: (requestId, accepted, answers) => {
         const held = pending.get(requestId);
@@ -246,7 +225,7 @@ export const createPauses = (
         ctx.activeMapping?.settle(requestId);
         route(accepted
           ? { type: 'answer', requestId, answers: answersOf(answers) }
-          : { type: 'deny', requestId, reason: DECLINED });
+          : { type: 'deny', requestId });
         return true;
       },
     },

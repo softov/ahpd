@@ -10,8 +10,10 @@ import {
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { uriOf } from '../src/resources/resources.js';
-import { chatUriFor, retainedTerminalOf, retainedTerminalUri } from '../src/host/channels.js';
+import { chatUriFor, nonPtyShellTerminalOf } from '../src/host/channels.js';
 import { createOutputs } from '../src/host/outputs.js';
+import { buildNonPtyShellTerminalUri, parseNonPtyShellTerminalUri } from '../src/vscode/nonptyshellterminaluri.js';
+import { URI } from '../src/vscode/uri.js';
 import type { HostContext } from '../src/host/context.js';
 import type { SessionStore } from '../src/types/sessions.js';
 import type { SpawnPty, TerminalOutputs } from '../src/types/terminals.js';
@@ -66,6 +68,9 @@ const stateOf = async (client: Client, channel: string): Promise<Bag> =>
   (await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: Bag } }).snapshot.state;
 
 /** A finished turn with one call, whose content names a terminal. */
+/** A turn a chat ran, which a chat has before a move is made of it. */
+const FIRST: Bag = { id: 't0', message: { text: 'first', origin: { kind: 'user' } }, state: 'complete', responseParts: [] };
+
 const naming = (turnId: string, toolCallId: string, resource: string, result?: Bag, status = 'completed'): Bag => ({
   id: turnId,
   message: { text: 'run it', origin: { kind: 'user' } },
@@ -83,27 +88,44 @@ const naming = (turnId: string, toolCallId: string, resource: string, result?: B
   }],
 });
 
+/**
+ * A retained terminal link of a call in a chat, as VS Code builds one, for a
+ * name no call of this host's minted: the host reads its chat and its call.
+ */
+const linkOf = (chat: string, toolCallId: string): string =>
+  buildNonPtyShellTerminalUri('file:///kept', 'ahp-session:/elsewhere', chat, toolCallId);
+
+/*
+ * VS Code's retained terminal link: `agenthost-terminal://shell/<session
+ * id>/<tool call id>`, the storage, the session, the chat and the call in a
+ * JSON query, read back by the chat it names.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/nonPtyShellTerminalUri.ts#L17-L29
+ */
 describe('the name a retained terminal has', () => {
-  it('carries its chat and its key there and back', () => {
+  it('carries its chat and its call there and back, in VS Code\'s link', () => {
     const chat = chatUriFor('claude:/one');
-    const uri = retainedTerminalUri(chat, 't1:command/2%');
-    expect(uri.startsWith('ahp-terminal://shell/')).toBe(true);
-    expect(retainedTerminalOf(uri)).toEqual({ chat, key: 't1:command/2%' });
-    // A peer chat names no session, and is carried the same way.
-    expect(retainedTerminalOf(retainedTerminalUri('ahp-chat:/peer', 'toolu_1'))).toEqual({ chat: 'ahp-chat:/peer', key: 'toolu_1' });
+    const uri = buildNonPtyShellTerminalUri('file:///kept', 'claude:/one', chat, 't1:command/2%');
+    const parsed = URI.parse(uri);
+    expect([parsed.scheme, parsed.authority, parsed.path]).toEqual(['agenthost-terminal', 'shell', '/one/t1:command/2%']);
+    expect(JSON.parse(parsed.query)).toEqual({ storage: 'file:///kept', session: 'claude:/one', chat, toolCallId: 't1:command/2%' });
+    expect(nonPtyShellTerminalOf(uri)).toEqual({ chat, toolCallId: 't1:command/2%' });
+    // A peer chat is carried the same way.
+    expect(nonPtyShellTerminalOf(linkOf('ahp-chat:/peer', 'toolu_1'))).toEqual({ chat: 'ahp-chat:/peer', toolCallId: 'toolu_1' });
   });
 
   it('reads any other name as nothing', () => {
-    const encoded = Buffer.from('ahp-chat:/peer', 'utf8').toString('base64url');
+    const query = (fields: Record<string, string>) => encodeURIComponent(JSON.stringify(fields));
+    const whole = { storage: 'file:///kept', session: 'ahp-session:/one', chat: 'ahp-chat:/peer', toolCallId: 'toolu_1' };
+    const { chat: _chat, ...chatless } = whole;
     for (const uri of [
       'ahp-terminal:/one',
-      'ahp-terminal://shell/',
-      `ahp-terminal://shell/${encoded}`,
-      `ahp-terminal://shell/${encoded}/`,
-      `ahp-terminal://shell/${Buffer.from('claude:/one', 'utf8').toString('base64url')}/key`,
-      `ahp-terminal://shell/${encoded}/%E0%A4%A`,
-      `ahp-terminal://other/${encoded}/key`,
-    ]) expect(retainedTerminalOf(uri), uri).toBeUndefined();
+      'agenthost-terminal:/one',
+      'agenthost-terminal://shell/one/toolu_1',
+      'agenthost-terminal://shell/one/toolu_1?not-json',
+      `agenthost-terminal://shell/one/toolu_1?${query(chatless)}`,
+      `agenthost-terminal://other/one/toolu_1?${query(whole)}`,
+      `ahp-terminal://shell/one/toolu_1?${query(whole)}`,
+    ]) expect(nonPtyShellTerminalOf(uri), uri).toBeUndefined();
   });
 });
 
@@ -145,9 +167,11 @@ describe('a command typed into the conversation', () => {
   it('names its terminal after the call, and keeps what it printed with its exit code', async () => {
     const { client, peer: p, store, chatUri } = await shelled();
     const { toolCallId, terminal } = await ran(client, p, chatUri, 't1', 'echo kept-output; exit 3');
-    // The chat the call is in and the call itself: what a subscribe after the
-    // terminal is gone reads to find the output.
-    expect(terminal).toBe(retainedTerminalUri(chatUri, toolCallId));
+    // VS Code's link, naming the session, the chat the call is in and the call
+    // itself: the chat and the call are what a subscribe after the terminal is
+    // gone reads to find the output.
+    expect(nonPtyShellTerminalOf(terminal)).toEqual({ chat: chatUri, toolCallId });
+    expect(parseNonPtyShellTerminalUri(URI.parse(terminal))?.session.toString()).toBe('claude:/banged');
     const kept = keptIn(store, 'banged');
     expect(kept).toHaveLength(1);
     expect(String(kept[0]?.output)).toContain('kept-output');
@@ -166,7 +190,7 @@ describe('a command typed into the conversation', () => {
     expect(rebuilt.cwd).toBeUndefined();
     expect(rebuilt.content).toEqual([{ type: 'unclassified', value: expect.stringContaining('rebuilt-output') }]);
     expect(rebuilt.lifecycle).toEqual({ status: 'exited', exitCode: 3 });
-    expect(rebuilt.exitCode).toBe(3);
+    expect(rebuilt.exitCode).toBeUndefined();
     expect(rebuilt.isPty).toBe(false);
     // Held by the chat and the call, as the live one was; the turn is not part
     // of a rebuilt claim, as it is not of the reference's.
@@ -177,15 +201,16 @@ describe('a command typed into the conversation', () => {
 
   it('says a terminal ran under a pseudoterminal when it did', async () => {
     // A shell under a pty prints VT sequences, and a client reads `isPty` to
-    // know to parse them.
+    // know to parse them. This one prints them as its prompt and exits on
+    // the first line it is given.
     const printing: SpawnPty = () => {
       let data: ((text: string) => void) | undefined;
       let exit: ((ended: { exitCode: number }) => void) | undefined;
-      setTimeout(() => { data?.('\u001b[1mbold\u001b[0m'); exit?.({ exitCode: 0 }); }, 20);
+      setTimeout(() => { data?.('\u001b[1mbold\u001b[0m'); }, 20);
       return {
         onData: (listen) => { data = listen; },
         onExit: (listen) => { exit = listen; },
-        write: () => {},
+        write: () => { exit?.({ exitCode: 0 }); },
         resize: () => {},
         kill: () => {},
       };
@@ -203,15 +228,15 @@ describe('a command typed into the conversation', () => {
   it('answers an address no call names as an unknown terminal', async () => {
     const { client, peer: p, chatUri } = await shelled();
     await ran(client, p, chatUri, 't1', 'echo one');
-    await expect(stateOf(client, retainedTerminalUri(chatUri, 'no-such-call'))).rejects.toThrow(/No agent for session/);
-    await expect(stateOf(client, retainedTerminalUri('ahp-chat:/gone', 'x'))).rejects.toThrow(/No agent for session/);
+    await expect(stateOf(client, linkOf(chatUri, 'no-such-call'))).rejects.toThrow(/No agent for session/);
+    await expect(stateOf(client, linkOf('ahp-chat:/gone', 'x'))).rejects.toThrow(/No agent for session/);
   });
 
   it('refuses a client\'s shell under a name it keeps for a call\'s terminal', async () => {
     const { client, chatUri } = await shelled();
     await expect(client.handle({
       method: 'createTerminal',
-      params: { channel: retainedTerminalUri(chatUri, 'mine'), cwd: uriOf(DIR) },
+      params: { channel: linkOf(chatUri, 'mine'), cwd: uriOf(DIR) },
     })).rejects.toThrow(/keeps for the terminals a tool result names/);
   });
 
@@ -229,12 +254,15 @@ describe('a command typed into the conversation', () => {
     await emit({ type: 'assistant', uuid: 'reply-1', message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } });
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
     await ran(client, p, chatUri, 't2', 'echo dropped-one');
-    expect(keptIn(store, 'banged').map((one) => String(one.output).trim()).sort()).toEqual(['dropped-one', 'kept-one']);
+    // The first line of each: a shell on pipes marks no command's end, so the
+    // line it echoes after the command is in what it printed too.
+    const printed = (): string[] => keptIn(store, 'banged').map((one) => String(one.output).split('\n')[0] ?? '');
+    expect(printed().sort()).toEqual(['dropped-one', 'kept-one']);
 
     void client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/truncated', turnId: 't1' } } });
     await settle();
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/truncated')).toBe(true);
-    expect(keptIn(store, 'banged').map((one) => String(one.output).trim())).toEqual(['kept-one']);
+    expect(printed()).toEqual(['kept-one']);
   });
 });
 
@@ -263,7 +291,7 @@ const backend = (k: Knobs): Agent => {
     ...base,
     list: async () => (k.listed === undefined ? await base.list?.() ?? [] : [...k.listed]),
     transcript: async (id, at, outputs) => {
-      k.reads.push({ id, chat: outputs === undefined ? undefined : retainedTerminalOf(outputs.uri('probe'))?.chat });
+      k.reads.push({ id, chat: outputs === undefined ? undefined : nonPtyShellTerminalOf(outputs.uri('probe'))?.chat });
       const own = k.transcript?.(id, outputs);
       return own === undefined ? await base.transcript?.(id, at) : own as WireTurn<Turn>[];
     },
@@ -305,6 +333,14 @@ const hostAt = async (k: Knobs, store: SessionStore) => {
   return { host, client, p };
 };
 
+/** Moving chats on, as a VS Code window with its move setting on turns it on. */
+const movesOn = async (client: Awaited<ReturnType<typeof hostAt>>['client']): Promise<void> => {
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { 'chatMoves.enabled': true } } },
+  });
+};
+
 /** The start the host made for one chat, the latest of them. */
 const startOf = (k: Knobs, chat: string): Start => {
   const start = k.starts.filter((one) => one.chatUri === chat).at(-1);
@@ -323,7 +359,7 @@ describe('a terminal a backend opens', () => {
 
     const opened = start.terminals?.open({ cwd: DIR, command: 'echo from-the-backend; exit 4' });
     if (opened === undefined) throw new Error('no terminals on the start');
-    expect(retainedTerminalOf(opened.uri)?.chat).toBe(chat);
+    expect(nonPtyShellTerminalOf(opened.uri)?.chat).toBe(chat);
     await opened.waitForExit();
     expect(keptIn(store, 'live')).toEqual([expect.objectContaining({ exitCode: 4, isPty: false })]);
 
@@ -341,11 +377,13 @@ describe('a terminal a backend opens', () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
+    await movesOn(client);
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
     }
     await settle();
+    k.turns.set(PEER, [FIRST]);
     // Waiting on its input, so it ends after the move rather than before it.
     // The shell is PowerShell on Windows, which has no `read`.
     const command = process.platform === 'win32' ? '$line = [Console]::In.ReadLine(); echo "late $line"' : 'read line; echo "late $line"';
@@ -378,7 +416,7 @@ describe('an output a backend keeps', () => {
     expect(outputs.has('toolu_big')).toBe(false);
     expect(outputs.keep('toolu_big', 'all of it', 0)).toBe(true);
     expect(outputs.has('toolu_big')).toBe(true);
-    expect(retainedTerminalOf(outputs.uri('toolu_big'))).toEqual({ chat, key: 'toolu_big' });
+    expect(nonPtyShellTerminalOf(outputs.uri('toolu_big'))).toEqual({ chat, toolCallId: 'toolu_big' });
 
     // A call that sent a preview and said there was more.
     k.turns.set(chat, [naming('t1', 'toolu_big', outputs.uri('toolu_big'), { truncated: true, preview: 'all', exitCode: 0 })]);
@@ -394,6 +432,18 @@ describe('an output a backend keeps', () => {
     outputs.keep('toolu_code', 'out', 1);
     k.turns.set(chat, [naming('t1', 'toolu_code', outputs.uri('toolu_code'), { exitCode: 2 })]);
     expect((await stateOf(client, outputs.uri('toolu_code'))).lifecycle).toEqual({ status: 'exited', exitCode: 2 });
+  });
+
+  /*
+   * A rebuilt terminal is VS Code's five fields, the exit code in its
+   * lifecycle alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L273-L284
+   */
+  it('rebuilds a terminal with VS Code\'s five fields', async () => {
+    const { k, client, chat, outputs } = await kept();
+    outputs.keep('toolu_five', 'out', 0);
+    k.turns.set(chat, [naming('t1', 'toolu_five', outputs.uri('toolu_five'), { exitCode: 0 })]);
+    expect(Object.keys(await stateOf(client, outputs.uri('toolu_five'))).sort()).toEqual(['claim', 'content', 'isPty', 'lifecycle', 'title']);
   });
 
   it('is not kept over 10 MB, counted in bytes', async () => {
@@ -474,6 +524,7 @@ describe('an output a backend keeps', () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
+    await movesOn(client);
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
@@ -492,25 +543,31 @@ describe('an output a backend keeps', () => {
     expect((rebuilt.claim as Bag).session).toBe('echo:/two');
   });
 
-  it('stays with its chat when the move is refused', async () => {
+  /*
+   * A move starts nothing: the chat's runtime goes on until its next turn
+   * boundary relaunches it under the destination, as VS Code moves only
+   * ownership, so a destination whose backend would not start the chat does
+   * not refuse the move, and the outputs go with the chat.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/AGENTS.md#L374
+   */
+  it('goes with its chat on a move to a session whose backend would not start it yet', async () => {
     const k = knobs();
     const store = fileSessions({ dir: join(temp(), 'sessions') });
     const { client } = await hostAt(k, store);
+    await movesOn(client);
     for (const [session, chat] of [[LIVE, PEER], [TWO, TAIL]] as const) {
       await client.handle({ method: 'createSession', params: { channel: session, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
       await client.handle({ method: 'createChat', params: { channel: session, chat } });
     }
     await settle();
-    startOf(k, PEER).terminalOutputs?.keep('toolu_1', 'stays', 0);
+    k.turns.set(PEER, [FIRST]);
+    startOf(k, PEER).terminalOutputs?.keep('toolu_1', 'goes', 0);
     k.refuses = (start) => start.chatUri === PEER && start.uri === TWO;
 
-    await expect(client.handle({
-      method: 'moveChat',
-      params: { channel: PEER, destination: { kind: 'session', session: TWO } },
-    })).rejects.toThrow(/will not work there/);
+    await client.handle({ method: 'moveChat', params: { channel: PEER, destination: { kind: 'session', session: TWO } } });
     await settle(20);
-    expect(keptIn(store, 'live').map((one) => one.output)).toEqual(['stays']);
-    expect(keptIn(store, 'two')).toEqual([]);
+    expect(keptIn(store, 'live')).toEqual([]);
+    expect(keptIn(store, 'two').map((one) => one.output)).toEqual(['goes']);
   });
 
   it('is not offered where the store keeps no folder', async () => {
@@ -576,24 +633,23 @@ describe('a host started again on the same store', () => {
     await after.host.close();
   });
 
-  it('answers nothing for a first chat a client closed, though the session\'s transcript still names it', async () => {
+  it('answers nothing for a peer chat a client closed, though its transcript still names the call', async () => {
     const dir = join(temp(), 'sessions');
     const first = knobs();
     const before = await hostAt(first, fileSessions({ dir }));
     await before.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo', workingDirectories: [uriOf(DIR)] } });
-    const own = String((await stateOf(before.client, LIVE)).defaultChat);
     await before.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
     await settle();
-    const address = String(startOf(first, own).terminalOutputs?.uri('toolu_first'));
-    await before.client.handle({ method: 'disposeChat', params: { channel: own } });
+    const address = String(startOf(first, PEER).terminalOutputs?.uri('toolu_peer'));
+    await before.client.handle({ method: 'disposeChat', params: { channel: PEER } });
     await before.host.close();
 
-    // Closed and not deleted, so the backend still holds the conversation the
-    // session is, and that conversation still holds the call and its preview.
+    // Closed and not deleted, so the backend still holds the peer's
+    // conversation, and that conversation still holds the call and its preview.
     const second = knobs();
     second.listed = [row('live')];
-    second.transcript = (id, given) => (id === 'live'
-      ? [naming('t1', 'toolu_first', String(given?.uri('toolu_first')), { preview: 'the first\'s' })]
+    second.transcript = (id, given) => (id === PEER.slice('ahp-chat:/'.length)
+      ? [naming('t1', 'toolu_peer', String(given?.uri('toolu_peer')), { preview: 'the peer\'s' })]
       : []);
     const after = await hostAt(second, fileSessions({ dir }));
     await expect(stateOf(after.client, address)).rejects.toThrow(/No agent for session/);
@@ -608,8 +664,6 @@ describe('a host started again on the same store', () => {
     const own = String((await stateOf(before.client, LIVE)).defaultChat);
     for (const chat of [PEER, TAIL]) await before.client.handle({ method: 'createChat', params: { channel: LIVE, chat } });
     await settle();
-    // The first chat closed, so the session comes back as a peer of it.
-    await before.client.handle({ method: 'disposeChat', params: { channel: own } });
     await before.host.close();
 
     const second = knobs();
@@ -624,9 +678,9 @@ describe('a host started again on the same store', () => {
       method: 'dispatchAction',
       params: { channel: TAIL, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'wake up' } } },
     });
-    for (let i = 0; i < 200 && second.starts.length < 2; i += 1) await settle(1);
-    // Woken as the peer that took the default, with the other peer beside it.
-    expect(second.starts.map((one) => one.chatUri)).toEqual([PEER, TAIL]);
+    for (let i = 0; i < 200 && second.starts.length < 3; i += 1) await settle(1);
+    // Woken as its first chat, with the peers beside it.
+    expect(second.starts.map((one) => one.chatUri)).toEqual([own, PEER, TAIL]);
 
     // The session's own conversation is its first chat's; each peer's is its own.
     const byId = new Map([['live', own], [PEER.slice('ahp-chat:/'.length), PEER], ['tail', TAIL]]);

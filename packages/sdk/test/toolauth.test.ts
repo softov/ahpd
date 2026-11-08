@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest';
+import { uriOf } from '../src/resources/fileuri.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /*
@@ -36,7 +37,7 @@ const sessionQueries = () => sdk.queries.filter((q) => q.options.canUseTool !== 
 
 vi.mock('../../agent-claude/src/mcp.js', () => ({
   // The host offers none of its own here.
-  offeredServers: () => ({}),
+  toClaudeMcpServers: () => ({}),
   // One remote server, so there is a URL to discover a resource at.
   serversFor: () => ({ desk: { type: 'http', url: 'https://desk.example/mcp' } }),
   urlOf: (config: { url?: string }) => config.url,
@@ -47,7 +48,7 @@ vi.mock('../../agent-claude/src/mcp.js', () => ({
   }),
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   listSessions: async () => [],
   getSessionMessages: async () => [],
@@ -112,6 +113,8 @@ async function said(...frames: Record<string, unknown>[]): Promise<void> {
 
 const uri = 'ahp-session:/auth';
 const chatUri = chatUriFor(uri);
+/** The server's row, named by its internal uri: no file here declares it. */
+const DESK = 'claude-internal:/mcp/desk#mcp=desk';
 
 async function running(plugins: Record<string, unknown>[] = []) {
   sdk.queries.length = 0;
@@ -140,7 +143,7 @@ const becomes = async (
   // nothing here polls, because a status nobody asked about moves nothing.
   void client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/mcpServerStartRequested', id: 'mcp:desk' } },
+    params: { channel: uri, action: { type: 'session/mcpServerStartRequested', id: DESK } },
   });
   await settle(12);
 };
@@ -163,7 +166,7 @@ it('says which running call a sign-in is blocking, and says when it is not', asy
   // Whose tool it is. Without this the reducer drops the auth action, and a
   // client draws a call that is running and never finishes.
   const started = actions(p).find((one) => one.action.type === 'chat/toolCallStart');
-  expect(started?.action.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:desk' });
+  expect(started?.action.contributor).toEqual({ kind: 'mcp', customizationId: DESK });
 
   await becomes(client, 'needs-auth');
   const asked = actions(p).find((one) => one.action.type === 'chat/toolCallAuthRequired');
@@ -180,14 +183,44 @@ it('says which running call a sign-in is blocking, and says when it is not', asy
   const blocked = actions(p).find((one) => one.action.type === 'session/inputNeededSet');
   // The chat under this host's own name, which is what a client dispatches
   // to whether or not it has subscribed under a spelling of its own.
-  expect(blocked?.action.request).toMatchObject({ kind: 'toolAuthentication', turnId: 't1' });
+  // Its id is the one VS Code's host gives a tool's sign-in.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L220
+  const entry = `toolAuthentication:${chatUri}:t1:tc1`;
+  expect(blocked?.action.request).toMatchObject({ id: entry, kind: 'toolAuthentication', turnId: 't1' });
   expect(String((blocked?.action.request as { chat?: string }).chat)).toContain('ahp-chat:');
 
   await becomes(client, 'connected');
   const freed = actions(p).find((one) => one.action.type === 'chat/toolCallAuthResolved');
   expect(freed?.action.toolCallId).toBe('tc1');
   const lifted = actions(p).filter((one) => one.action.type === 'session/inputNeededRemoved');
-  expect(lifted.some((one) => one.action.id === 'auth:tc1')).toBe(true);
+  expect(lifted.map((one) => one.action.id)).toEqual([(blocked?.action.request as { id?: string }).id]);
+});
+
+/*
+ * The host's own entry for the call, raised from the call's state under VS
+ * Code's id, and taken down once the call no longer waits, as VS Code's
+ * input-needed contribution does.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L105-L156
+ */
+it('raises the session\'s entry for a call waiting on a sign-in under VS Code\'s id, and takes it down after', async () => {
+  const { client, peer: p } = await running();
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'find the ticket' } } },
+  });
+  await settle();
+  await said({
+    type: 'assistant',
+    message: { id: 'm1', content: [{ type: 'tool_use', id: 'tc1', name: 'mcp__desk__search', input: { query: 'ticket' } }] },
+  });
+  await becomes(client, 'needs-auth');
+  const set = actions(p).filter((one) => one.action.type === 'session/inputNeededSet')
+    .map((one) => one.action.request as { id?: string; kind?: string; turnId?: string; toolCall?: { toolCallId?: string; status?: string } });
+  const id = `toolAuthentication:${chatUri}:t1:tc1`;
+  expect(set.find((one) => one.id === id)).toMatchObject({ kind: 'toolAuthentication', turnId: 't1', toolCall: { toolCallId: 'tc1', status: 'auth-required' } });
+
+  await becomes(client, 'connected');
+  expect(actions(p).some((one) => one.action.type === 'session/inputNeededRemoved' && one.action.id === id)).toBe(true);
 });
 
 it('says nothing about a call that had already finished', async () => {
@@ -234,12 +267,18 @@ it('reads the plugins the control protocol reports, and projects one as a contai
   // `initializationResult()` carries no plugins, so the session has to ask
   // `reloadPlugins()` for them; a session that did not would list a plugin's
   // children as if the person had written them under `~/.claude`.
-  const { peer: p } = await running([{ name: 'acme', path: '/plugins/acme', version: '1.0.0' }]);
+  const { client, peer: p } = await running([{ name: 'acme', path: '/plugins/acme', version: '1.0.0' }]);
+  // The CLI its first send starts, which is the one asked.
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
+  });
   await settle(10);
   const changed = actions(p).filter((one) => one.action.type === 'session/customizationsChanged').at(-1);
   const customizations = changed?.action.customizations as { type: string; uri: string; name: string; version?: string }[] | undefined;
+  // Its root's URI, and named by its `enabledPlugins` id, the name where the CLI reports no source.
   expect(customizations?.find((one) => one.type === 'plugin')).toMatchObject({
-    uri: '/plugins/acme',
+    uri: uriOf('/plugins/acme'),
     name: 'acme',
     version: '1.0.0',
   });

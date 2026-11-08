@@ -52,7 +52,7 @@ export const sessionIdOf = (uri: string): string => idOf(uri);
  * under a running session would lose the conversation it is writing, and a
  * policy is what the session's controls were drawn from. These are the rest.
  */
-const LIVE_KEYS = ['model', 'baseUrl', 'apiKey', 'instructions', 'resource', 'autoCompactTokens', 'tools'] as const;
+const LIVE_KEYS = ['model', 'baseUrl', 'models', 'apiKey', 'instructions', 'resource', 'autoCompactTokens', 'autoCompactAt', 'tools'] as const;
 
 /**
  * One conversation over a cofold agent.
@@ -220,6 +220,7 @@ export function cofoldSession(
     editing,
     pending,
     points,
+    kept: new Map(),
     values,
     setModifiedAt,
     refreshOptions,
@@ -238,6 +239,7 @@ export function cofoldSession(
     disposed: false,
     opening: undefined,
     paused: undefined,
+    reasked: undefined,
     resumedFrom: undefined,
     steering: undefined,
   } as SessionContext;
@@ -281,10 +283,10 @@ export function cofoldSession(
      * answer a turn, and an empty list is the form of that.
      */
     models: () => {
-      const listed = catalogue(values, start.credentials ?? {}).map(rowOf);
+      const listed = catalogue(values, start.credentials ?? {}).map((info) => rowOf(options, info));
       if (listed.length > 0) return listed;
       const id = str(values.model) ?? options.model ?? options.adapter?.modelId;
-      return id === undefined ? [] : [{ id, name: id }];
+      return id === undefined ? [] : [rowOf(options, { id, name: id })];
     },
     agentId: () => sessionId,
     /*
@@ -360,7 +362,7 @@ export function cofoldSession(
     sendMessage: (turnId, text, from, attachments, turnOptions) => {
       const model = chosen;
       chosen = undefined;
-      ctx.beginTurn(turnId, text, model, from, attachments, turnOptions);
+      ctx.sendMessage(turnId, text, model, from, attachments, turnOptions);
     },
 
     changeModel: (model) => { chosen = model; },
@@ -422,16 +424,11 @@ export function cofoldSession(
      * text and then the parts, and the first part is always that text, so only
      * what follows it is handed over.
      */
-    sendSteeringMessage: ({ id, text, attachments, from }) => {
+    sendSteeringMessage: ({ id, text, attachments }) => {
       const live = ctx.handle;
       const status = live?.status();
       if (live === undefined || (status !== 'running' && status !== 'awaiting')) return false;
-      const message: Bag = {
-        text,
-        origin: from?.origin ?? { kind: 'user' },
-        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
-      };
-      ctx.steering = { id, message };
+      ctx.steering = { id };
       const submitted = attachments === undefined || attachments.length === 0
         ? live.submit({ type: 'steer', text })
         : partsFor(text, attachments, ctx.supportsVision())
@@ -492,13 +489,15 @@ export function cofoldSession(
 
     /*
      * Take a config value. A key in the schema is kept and applied to the
-     * next turn's agent; anything else is refused in this backend's words,
-     * because the host reads the schema for how a key behaves and knows
-     * nothing about what one means.
+     * next turn's agent. Any other key is refused in VS Code's sentence for a
+     * key it cannot write, and a value of another kind in this backend's
+     * words, as VS Code passes a provider's own message through.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13593
      */
     setConfig: (key, value) => {
       const declared = bag(bag(start.schema()).properties);
-      if (declared[key] === undefined) return `${provider}: ${key} is not a config key this backend takes`;
+      if (declared[key] === undefined) return `Session configuration '${key}' is not writable.`;
       if (typeof value !== 'string') return `${provider}: ${key} takes a string`;
       values[key] = value;
       return true;
@@ -513,8 +512,20 @@ export function cofoldSession(
 
     settings: () => ({ ...values }),
 
-    close: () => {
+    /*
+     * A host that only lets the session go leaves a run paused on a person
+     * where it is: detached, its request open in the store for a later resume,
+     * which is what cofold's `detach` is for, a host that stops caring about a
+     * pause. A session being deleted, and a run still working, are cancelled.
+     * `RunHandle.detach` in npm://@cofold/agents@0.4.0: "What a host that stops
+     * caring about a pause calls, so the run is not held here."
+     */
+    close: (reason = 'dispose') => {
       ctx.disposed = true;
+      if (reason === 'stopping' && ctx.handle?.status() === 'awaiting') {
+        ctx.handle.detach();
+        return;
+      }
       ctx.abort('the session closed');
     },
   };

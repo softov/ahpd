@@ -10,8 +10,8 @@ import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import type { Request } from '../src/types/rpc.js';
 import type { HostOptions } from '../src/types/host.js';
 import {
-  claude, createHost, echo, machine, resetSdk, actions, emit, hello, open, peer,
-  sdk, serving, sessionQueries, settle, running, wrote,
+  claude, createHost, echo, firstMessage, flushed, machine, resetSdk, actions, emit, hello, open, peer,
+  sdk, serving, sessionQueries, settle, showExternal, running, wrote,
 } from './support/host.js';
 import type { Agent, Listed } from '../src/types/agent.js';
 
@@ -19,14 +19,21 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 beforeEach(resetSdk);
 
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+/** A moment this long before now, as a transcript's `lastModified` is stamped. */
+const ago = (ms: number): number => Date.now() - ms;
+
 describe('the catalogue', () => {
   it('orders it most-recently-modified first, as the protocol asks', async () => {
     sdk.sessions.push(
-      { sessionId: 'old', summary: 'Older', lastModified: 1_700_000_000_000, cwd: '/home/softov' },
-      { sessionId: 'new', summary: 'Newer', lastModified: 1_800_000_000_000, cwd: '/home/softov' },
+      { sessionId: 'old', summary: 'Older', lastModified: ago(2 * DAY), cwd: '/home/softov' },
+      { sessionId: 'new', summary: 'Newer', lastModified: ago(HOUR), cwd: '/home/softov' },
     );
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { title: string; status: number; resource: string }[];
     };
@@ -45,37 +52,81 @@ describe('the catalogue', () => {
   });
 
   /*
-   * The protocol's count: "Number of active (non-disposed) sessions on the
-   * server", the sessions a client's list holds from `root/sessionAdded` to
-   * `root/sessionRemoved`. A transcript the catalogue lists counts, and so does
-   * a session whatever its turn is doing, until it is disposed.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/state.ts#L39
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/commands.ts#L20-L33
+   * A session made fresh is provisional until its first message: its state is
+   * there for the client that made it, creating, and nobody is told of it or
+   * handed it in a listing; its first turn announces it and then says it
+   * ready, as VS Code's host keeps a provisional session unannounced until it
+   * materializes, and one never announced goes without a word.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6347-L6362
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10835-L10841
    */
-  it('counts every session it lists, the transcripts beside it included, until one is disposed', async () => {
-    sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
-    sdk.sessions.push({ sessionId: 'b', lastModified: 2, cwd: '/home/softov' });
+  it('keeps a session it made unannounced and unlisted until its first message, which announces it and then says it ready', async () => {
     const { client, peer: p, uri, chatUri } = await running();
+    const listed = async (): Promise<string[]> => ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+      items: { resource: string }[];
+    }).items.map((one) => one.resource);
+    const added = () => p.notes.filter((n) => n.method === 'root/sessionAdded'
+      && (n.params as { summary: { resource: string } }).summary.resource === uri);
+    expect(added()).toEqual([]);
+    expect(await listed()).not.toContain(uri);
+    const before = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { lifecycle: string } } };
+    expect(before.snapshot.state.lifecycle).toBe('creating');
+
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } } });
+    await settle();
+    expect(added()).toHaveLength(1);
+    const order = p.notes.flatMap((n): string[] => {
+      if (n.method === 'root/sessionAdded') return ['added'];
+      const sent = n.params as { channel?: string; action?: { type?: string } };
+      if (n.method === 'action' && sent.channel === uri && sent.action?.type === 'session/ready') return ['ready'];
+      if (n.method === 'action' && sent.channel === chatUri && sent.action?.type === 'chat/turnStarted') return ['started'];
+      return [];
+    });
+    expect(order).toEqual(['started', 'added', 'ready']);
+    expect(await listed()).toContain(uri);
+  });
+
+  it('removes a session it never announced without a word', async () => {
+    const { client, peer: p, uri } = await running();
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+    await settle();
+    expect(p.notes.filter((n) => n.method === 'root/sessionRemoved')).toEqual([]);
+  });
+
+  /*
+   * The sessions running a turn, as VS Code's host counts its active sessions:
+   * a session counts while one of its chats has an active turn. A transcript
+   * the catalogue lists, and a session at rest, count nothing. VS Code's
+   * Sessions window reads the number as a host's running sessions, and starts
+   * a new session on the host with the fewest.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3250-L3263
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionService.ts#L252
+   */
+  it('counts the sessions running a turn, as VS Code\'s host, the transcripts it lists and a session at rest counting none', async () => {
+    sdk.sessions.push({ sessionId: 'a', lastModified: ago(2 * MINUTE), cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'b', lastModified: ago(MINUTE), cwd: '/home/softov' });
+    const { client, peer: p, uri, chatUri } = await running();
+    await showExternal(client);
     const count = async (): Promise<number> => (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
       snapshot: { state: { activeSessions: number } };
     }).snapshot.state.activeSessions;
+    // The two transcripts; the session is listed from its first message.
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: unknown[] };
     await settle();
-    expect(listed.items).toHaveLength(3);
-    expect(await count()).toBe(3);
+    expect(listed.items).toHaveLength(2);
+    expect(await count()).toBe(0);
 
-    // A turn moves nothing.
     client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } } });
     await settle();
-    expect(await count()).toBe(3);
+    expect(await count()).toBe(1);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
-    expect(await count()).toBe(3);
+    expect(await count()).toBe(0);
 
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
-    expect(await count()).toBe(2);
-    // Said as it moved, and never while the number stood still.
-    expect(actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/activeSessionsChanged').map((e) => e.action.activeSessions).at(-1))
-      .toBe(2);
+    expect(await count()).toBe(0);
+    // Said as it moved, once each way, and never while the number stood still.
+    expect(actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/activeSessionsChanged').map((e) => e.action.activeSessions))
+      .toEqual([1, 0]);
   });
 
   it('refuses a session channel it has no agent for', async () => {
@@ -87,9 +138,10 @@ describe('the catalogue', () => {
 
   it('hands over the whole catalogue to a client that asked for no page size', async () => {
     for (let i = 0; i < 120; i++)
-      sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((120 - i) * 1000), cwd: '/home/softov' });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     // `limit` omitted is the protocol's "let the server choose", and neither
     // client that connects to this host reads `nextCursor` - so a default
     // page would be a catalogue silently cut down to it.
@@ -102,9 +154,10 @@ describe('the catalogue', () => {
 
   it('stops at a bound no real catalogue reaches, and offers the rest', async () => {
     for (let i = 0; i < 1_002; i++)
-      sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((1_002 - i) * 1000), cwd: '/home/softov' });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: unknown[]; nextCursor?: string;
     };
@@ -123,9 +176,10 @@ describe('the catalogue', () => {
 
   it('walks it in pages when one is asked for, with no gaps and no repeats', async () => {
     for (let i = 0; i < 120; i++)
-      sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
+      sdk.sessions.push({ sessionId: `s${i}`, lastModified: ago((120 - i) * 1000), cwd: '/home/softov' });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const seen: string[] = [];
     let cursor: string | undefined;
     let pages = 0;
@@ -160,7 +214,7 @@ describe('the catalogue', () => {
 });
 
 describe('a session that already happened', () => {
-  const older = { sessionId: 'older', summary: 'A real title', lastModified: 1_700_000_000_000, cwd: '/home/softov' };
+  const older = { sessionId: 'older', summary: 'A real title', lastModified: ago(DAY), cwd: '/home/softov' };
 
   it('opens from its transcript without spawning anything', async () => {
     sdk.sessions.push(older);
@@ -221,6 +275,7 @@ describe('a session that already happened', () => {
     });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const listed = await client.handle({ method: 'listSessions', params: {} }) as { items: { title: string }[] };
     const opened = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/older' } }) as {
       snapshot: { state: { title: string } };
@@ -236,6 +291,7 @@ describe('a session that already happened', () => {
     sdk.sessions.push({ ...older, cwd: here });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     const listed = await client.handle({ method: 'listSessions', params: {} }) as {
       items: { resource: string; workingDirectories: string[] }[];
     };
@@ -459,6 +515,19 @@ describe('paging a long history', () => {
     expect(pages()).toHaveLength(0);
   });
 
+  /*
+   * A channel with no chat behind it is refused as VS Code's host refuses one
+   * it holds no chat state for, in its words.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2455-L2459
+   */
+  it('refuses a page of a channel that is no chat, as VS Code\'s host', async () => {
+    const { client } = await opened();
+    for (const channel of ['ahp-terminal:/t', 'ahp-chat:/nowhere']) {
+      await expect(client.handle({ method: 'fetchTurns', params: { channel } }))
+        .rejects.toMatchObject({ code: -32001, message: `Session not found: ${channel}` });
+    }
+  });
+
   it('refuses a cursor it did not issue', async () => {
     const { client } = await opened();
     // Guessing would answer a question about old turns with new ones, and the
@@ -496,15 +565,73 @@ describe('a session row\'s status', () => {
     expect((row?.chats?.find((one) => one.resource === second)?.status ?? 0) & 31).toBe(Status.Error);
     expect((row?.status ?? 0) & 31).toBe(Status.Idle);
   });
+
+  /*
+   * The session's state holds the chats' aggregate as its row does, as VS
+   * Code's state manager keeps a session's derived status in its state.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3301-L3325
+   */
+  it('says in the session\'s state that a chat of it runs, and that it no longer does', async () => {
+    const { client, uri, chatUri } = await running();
+    const status = async (): Promise<number> => ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
+      snapshot: { state: { status: number } };
+    }).snapshot.state.status & 31;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+    });
+    await settle();
+    expect(await status()).toBe(Status.InProgress);
+
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    await settle(8);
+    expect(await status()).toBe(Status.Idle);
+  });
+});
+
+/*
+ * A session's `_meta` said as the whole map whatever runs it: the action
+ * replaces the map, so a session nothing runs keeps its backend's keys beside
+ * its artifacts, as VS Code's host merges every producer's keys into the one
+ * it publishes.
+ */
+describe('a session\'s _meta', () => {
+  it('says the whole map when an artifact of a session nothing runs goes', async () => {
+    const stamp = new Date(0).toISOString();
+    const store = memorySessions();
+    // A session this host ran, which is what kept its artifacts.
+    store.setProvider('kept', 'echo');
+    store.setArtifacts?.('kept', [{ id: 'a1', type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com' }]);
+    const host = createHost({
+      path: '/tmp',
+      agents: [{
+        ...echo({ path: '/tmp', pace: 0 }),
+        list: async () => [{ id: 'kept', title: 'Kept', createdAt: stamp, modifiedAt: stamp, workingDirectories: ['file:///tmp'], _meta: { 'probe.key': 'kept' } }],
+        transcript: async () => [],
+      }],
+      sessions: store,
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: { resource: string }[] };
+    const uri = listed.items[0]?.resource ?? '';
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    await client.handle({ method: 'vscode/removeSessionArtifact', params: { session: uri, artifactId: 'a1' } });
+    await settle();
+    const said = actions(p, uri).filter((one) => one.action.type === 'session/metaChanged');
+    expect(said.map((one) => (one.action._meta as Record<string, unknown> | undefined)?.['probe.key'])).toEqual(['kept']);
+  });
 });
 
 describe('the flags a client sets', () => {
   it('keeps read and archived, and tells everyone watching', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/home/softov' });
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await showExternal(client);
     const uri = 'ahp-session:/old';
     await client.handle({ method: 'subscribe', params: { channel: uri } });
 
@@ -521,9 +648,10 @@ describe('the flags a client sets', () => {
   });
 
   it('needs no agent to record one', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/home/softov' });
     const client = open();
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
     // Marking a row read is what somebody does from a catalogue. Starting an
     // agent to record a bit would start one per row scrolled past.
     client.handle({
@@ -568,22 +696,36 @@ describe('a chat\'s read bit and its session\'s', () => {
     return (opened.snapshot.state.status & Status.IsRead) !== 0;
   };
 
-  /** A live session with a second chat, both subscribed. */
-  const twoChats = async () => {
+  const chatRead = (on: boolean) => ({ type: 'chat/isReadChanged', isRead: on });
+  const sessionRead = (on: boolean) => ({ type: 'session/isReadChanged', isRead: on });
+
+  /** A live session somebody has read, its one chat with it, and nothing said since. */
+  const read = async () => {
     const started = await running();
+    await send(started.client, started.uri, sessionRead(true));
+    started.peer.notes.length = 0;
+    return started;
+  };
+
+  /** A live session somebody has read, with a second chat, both subscribed. */
+  const twoChats = async () => {
+    const started = await read();
     await started.client.handle({ method: 'createChat', params: { channel: started.uri, chat: second } });
     await started.client.handle({ method: 'subscribe', params: { channel: second } });
     return started;
   };
 
-  const chatRead = (on: boolean) => ({ type: 'chat/isReadChanged', isRead: on });
-  const sessionRead = (on: boolean) => ({ type: 'session/isReadChanged', isRead: on });
-
-  it('starts a new session and a new chat read', async () => {
-    const { client, peer: p, uri } = await running();
-    // Nothing has been said in either yet, so there is nothing in them to read.
-    const added = p.notes.find((n) => n.method === 'root/sessionAdded')?.params as { summary: { status: number } };
-    expect(added.summary.status & Status.IsRead).toBe(Status.IsRead);
+  /*
+   * A new session's summary is `Idle`, and its default chat's is made from
+   * it, as VS Code's host makes them; a chat added later opens `Idle |
+   * IsRead`, as VS Code's host adds one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10705-L10711
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1744-L1746
+   */
+  it('starts a new session and its default chat unread, and a chat added to it read', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, chatUri)).toBe(false);
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
     const chat = actions(p, uri).find((e) => e.action.type === 'session/chatAdded')?.action.summary as { status: number };
     expect(chat.status & Status.IsRead).toBe(Status.IsRead);
@@ -632,7 +774,7 @@ describe('a chat\'s read bit and its session\'s', () => {
   });
 
   it('marks the one chat unread after the session when a session with one chat is marked unread', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, uri, chatUri } = await read();
     p.notes.length = 0;
     await send(client, uri, sessionRead(false));
     expect(await isRead(client, uri)).toBe(false);
@@ -644,7 +786,7 @@ describe('a chat\'s read bit and its session\'s', () => {
   });
 
   it('marks the one chat read when its session is marked read, though the session was read already', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, uri, chatUri } = await read();
     // A turn's start makes the chat unread and leaves the session read.
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     expect(await isRead(client, chatUri)).toBe(false);
@@ -687,15 +829,18 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(actions(p, uri).at(-1)?.action).toEqual({ type: 'session/isReadChanged', isRead: false });
   });
 
-  it('marks a chat unread when a turn starts, as a client reduces it, and leaves its session read', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+  /*
+   * A client's reducer clears the bit from the turn's start itself, and the
+   * reference host says nothing more there.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L358-L372
+   */
+  it('marks a chat unread when a turn starts, as a client reduces it, saying nothing of its own, and leaves its session read', async () => {
+    const { client, peer: p, uri, chatUri } = await read();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
 
     expect(await isRead(client, chatUri)).toBe(false);
     expect(await isRead(client, uri)).toBe(true);
-    // After the turn's start, which is where a client's reducer clears it.
-    const types = actions(p, chatUri).map((e) => e.action.type);
-    expect(types.indexOf('chat/turnStarted')).toBeLessThan(types.indexOf('chat/isReadChanged'));
+    expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/isReadChanged')).toEqual([]);
     expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
   });
 
@@ -706,7 +851,7 @@ describe('a chat\'s read bit and its session\'s', () => {
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48
    */
   it('keeps a chat marked read while its turn runs, and marks the chat and its session unread when the turn completes', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, uri, chatUri } = await read();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
     await send(client, chatUri, chatRead(true));
     expect(await isRead(client, chatUri)).toBe(true);
@@ -720,6 +865,18 @@ describe('a chat\'s read bit and its session\'s', () => {
     const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
     expect(said.indexOf(`chat/turnComplete ${chatUri}`)).toBeLessThan(said.lastIndexOf(`chat/isReadChanged ${chatUri}`));
     expect(said.lastIndexOf(`chat/isReadChanged ${chatUri}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
+  });
+
+  it('says a chat unread at a turn\'s end though nobody read it while the turn ran', async () => {
+    const { client, peer: p, chatUri } = await running();
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } });
+    expect(await isRead(client, chatUri)).toBe(false);
+
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    const said = actions(p, chatUri).map((e) => e.action);
+    const ended = said.findIndex((one) => one.type === 'chat/turnComplete');
+    expect(ended).toBeGreaterThanOrEqual(0);
+    expect(said.slice(ended).filter((one) => one.type === 'chat/isReadChanged')).toEqual([chatRead(false)]);
   });
 
   it('marks a chat and its session unread when a turn fails', async () => {
@@ -856,6 +1013,41 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(said.indexOf(`chat/isReadChanged ${second}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
   });
 
+  /*
+   * The reference host marks an unread chat read at every archive, whether or
+   * not its archived bit moved.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L46-L52
+   */
+  it('marks an unread chat read when it is archived again', async () => {
+    const { client, peer: p } = await twoChats();
+    await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
+    await send(client, second, chatRead(false));
+    p.notes.length = 0;
+
+    await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
+    expect(actions(p, second).map((e) => e.action.type)).toEqual(['chat/isArchivedChanged', 'chat/isReadChanged']);
+    expect(await isRead(client, second)).toBe(true);
+  });
+
+  /*
+   * An archived chat on its session's row says so in its status and in the
+   * `archived` an AHP 0.9 client reads, as VS Code's host projects a session's
+   * chats into its summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L682-L700
+   */
+  it('lists an archived chat on its session\'s row with the archived flag an AHP 0.9 client reads', async () => {
+    const { client, uri, chatUri } = await twoChats();
+    await firstMessage(client, chatUri);
+    await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; chats?: { resource: string; status?: number; archived?: boolean }[] }[];
+    };
+    const chats = listed.items.find((one) => one.resource === uri)?.chats ?? [];
+    expect(chats.find((one) => one.resource === second)).toMatchObject({ archived: true });
+    expect((chats.find((one) => one.resource === second)?.status ?? 0) & Status.IsArchived).toBe(Status.IsArchived);
+    expect(chats.find((one) => one.resource === chatUri)).not.toHaveProperty('archived');
+  });
+
   it('changes no read bit when a chat is taken out of the archive', async () => {
     const { client, peer: p } = await twoChats();
     await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
@@ -917,6 +1109,38 @@ describe('a session read from its transcript', () => {
     expect(call?.content).toEqual([{ type: 'text', text: 'boom' }]);
     // And what it cost, off the transcript rather than left out.
     expect(turn?.usage).toEqual({ inputTokens: 12, outputTokens: 3, cacheReadTokens: 900, model: 'claude-opus-5' });
+  });
+
+  /*
+   * A chat opened while its record read nothing takes the conversation its
+   * backend holds once the session starts, as the reference host refreshes a
+   * chat's persisted history: chat/truncated, then chat/turnsLoaded.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
+   */
+  it('takes the history its backend holds as chat/truncated then chat/turnsLoaded, when the chat opened with none', async () => {
+    sdk.sessions.push({ sessionId: 'late', summary: 'Late', lastModified: 1, cwd: '/home/softov' });
+    wrote('late', '/home/softov');
+    const p = peer();
+    const client = serving('/home/softov').accept(p);
+    await client.handle(hello(['0.9.0']));
+    const chat = chatUriFor('ahp-session:/late');
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
+      snapshot: { state: { turns: unknown[] } };
+    };
+    expect(opened.snapshot.state.turns).toEqual([]);
+
+    sdk.transcript.push(
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'said late' } },
+      { type: 'assistant', uuid: 'a1', message: { content: [{ type: 'text', text: 'replied late' }] } },
+    );
+    // An action that wakes the session and starts no turn.
+    client.handle({ method: 'dispatchAction', params: { channel: chat, action: { type: 'chat/pendingMessageRemoved', kind: 'queued', id: 'none' } } });
+    await settle(20);
+    const said = actions(p, chat).map((e) => e.action);
+    const at = said.findIndex((one) => one.type === 'chat/turnsLoaded');
+    expect(at).toBeGreaterThan(0);
+    expect(said[at - 1]?.type).toBe('chat/truncated');
+    expect((said[at]?.turns as { message: { text: string } }[]).map((turn) => turn.message.text)).toEqual(['said late']);
   });
 
   it('is configurable before it is resumed', async () => {
@@ -1043,7 +1267,8 @@ describe("a row lists the session's chats", () => {
   const resourcesOf = (p: ReturnType<typeof peer>, session: string) => chatsOf(p, session).map((one) => one.resource);
 
   it("lists a session's chats and the one a client gets when it names none", async () => {
-    const { client, uri } = await running();
+    const { client, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
 
@@ -1077,24 +1302,51 @@ describe("a row lists the session's chats", () => {
     expect(status).toBe(Status.InProgress);
     // And the row agrees with the chat, which is what a client listing
     // sessions with no subscription to either reads.
+    await flushed();
     expect(chatsOf(p, 'ahp-session:/live').find((one) => one.resource === second)?.status).toBe(status);
+    // The default chat at rest, unread as a new session's starts.
     expect(chatsOf(p, 'ahp-session:/live').find((one) => one.resource === rowOf(p, 'ahp-session:/live')?.defaultChat)?.status)
-      .toBe(Status.Idle | Status.IsRead);
+      .toBe(Status.Idle);
+  });
+
+  /*
+   * VS Code marks a running session's summary dirty and flushes on a 100 ms
+   * debounce, so a burst of moves is one notification.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L212-L330
+   */
+  it('says a burst of a running session\'s moves as one notification, once they are quiet', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
+    await flushed();
+    const said = () => p.notes.filter((n) => n.method === 'root/sessionSummaryChanged'
+      && (n.params as { session?: string }).session === uri);
+    const before = said().length;
+    for (const title of ['One', 'Two', 'Three']) {
+      await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/titleChanged', title } } });
+    }
+    expect(said()).toHaveLength(before);
+    await flushed();
+    expect(said()).toHaveLength(before + 1);
+    expect((said().at(-1)?.params as { changes: { title?: string } }).changes.title).toBe('Three');
   });
 
   it('says the row again when a chat opens and when one closes', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    await firstMessage(client, chatUri);
     const second = 'ahp-chat:/second';
     const said = () => p.notes.filter((n) => n.method === 'root/sessionSummaryChanged'
       && (n.params as { session?: string }).session === 'ahp-session:/live').length;
 
+    await flushed();
     const before = said();
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await flushed();
     expect(said()).toBeGreaterThan(before);
     expect(resourcesOf(p, 'ahp-session:/live')).toContain(second);
 
     const opened = said();
     await client.handle({ method: 'disposeChat', params: { channel: second } });
+    await flushed();
     expect(said()).toBeGreaterThan(opened);
     // The list replaces the catalog, so the chat being gone from it is what
     // takes it out of a client's list.
@@ -1102,7 +1354,14 @@ describe("a row lists the session's chats", () => {
     expect(resourcesOf(p, 'ahp-session:/live')).toEqual([rowOf(p, 'ahp-session:/live')?.defaultChat]);
   });
 
-  it('lists a worker chat read back from a backend, and read-only', async () => {
+  /*
+   * A worker read back is a chat of its session, read-only, and no row lists
+   * it, as VS Code's host registers a restored worker in its session's chats
+   * and leaves a worker off a summary.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L16562-L16572
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L682-L700
+   */
+  it('lists a worker chat read back from a backend among its session\'s chats, read-only, and on no row', async () => {
     sdk.sessions.push({ sessionId: 'restored', summary: 'Restored', lastModified: 2, cwd: '/home/softov' });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     /*
@@ -1125,28 +1384,32 @@ describe("a row lists the session's chats", () => {
     });
     await settle(8);
     // Subscribing again is what reads the backend's record of the workers it
-    // ran, which is where the row's copy of them comes from.
+    // ran, which is where the session's list of them comes from.
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } });
     await settle();
-
-    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
-      items: { resource: string; chats?: { resource: string; title: string; interactivity?: string }[] }[];
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } }) as {
+      snapshot: { state: { chats: { resource: string; title: string; interactivity?: string }[] } };
     };
-    const row = listed.items.find((one) => one.resource === 'ahp-session:/restored');
-    const worker = row?.chats?.find((one) => one.interactivity === 'read-only');
+
+    const worker = opened.snapshot.state.chats.find((one) => one.interactivity === 'read-only');
     // A worker is a chat of its session even though no `Session` holds it, and
     // a client that never subscribes to it still has to see that it is there.
     expect(worker?.title).toBe('Explore');
     expect(worker?.resource).toContain('toolu_task');
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; chats?: { resource: string }[] }[];
+    };
+    const row = listed.items.find((one) => one.resource === 'ahp-session:/restored');
+    expect(row?.chats?.map((one) => one.resource)).toEqual([chatUriFor('ahp-session:/restored')]);
   });
 });
 
 describe('one conversation, one row', () => {
   it('hides the transcript a running session is writing', async () => {
-    const { client } = await running();
+    const { client, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-session:/live', action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hi' } } },
     });
     await settle();
     // The client named the channel `live`; the agent names its own transcript
@@ -1230,16 +1493,20 @@ describe('a summary that did not change', () => {
     .filter((n) => n.session === session)
     .map((n) => n.changes);
 
-  /** The same title again, which is a move of nothing. */
+  /**
+   * A title, and the row it moves once the moves are quiet: a session a turn
+   * has run in is said on VS Code's 100 ms debounce.
+   */
   const retitle = async (client: { handle(request: Request): Promise<unknown> }, channel: string, title: string) => {
     await client.handle({ method: 'dispatchAction', params: { channel, action: { type: 'session/titleChanged', title } } });
-    await settle();
+    await flushed();
   };
 
   it('sends one summary for however many calls moved nothing', async () => {
-    const { client, peer: p } = await running();
-    // The row a session sends once its customizations arrive comes first.
-    await settle();
+    const { client, peer: p, chatUri } = await running();
+    // The row a session sends once its customizations arrive comes first, and
+    // a session is said at all from its first message.
+    await firstMessage(client, chatUri);
     const opened = rowsMoved(p, 'ahp-session:/live').length;
     await retitle(client, 'ahp-session:/live', 'Paging');
     expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(opened + 1);
@@ -1254,7 +1521,9 @@ describe('a summary that did not change', () => {
 
   it('sends again for a title that moved, and for a turn that started', async () => {
     const { client, peer: p, chatUri } = await running();
-    await settle();
+    // Said from its first message, which ends before the turn below starts.
+    await firstMessage(client, chatUri);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
     const opened = rowsMoved(p, 'ahp-session:/live').length;
     await retitle(client, 'ahp-session:/live', 'Paging');
     expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(opened + 1);
@@ -1271,19 +1540,18 @@ describe('a summary that did not change', () => {
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'read it' } } },
     });
-    await settle();
+    await flushed();
     const busy = rowsMoved(p, 'ahp-session:/live');
     expect(busy.length).toBeGreaterThan(said);
     expect(Number(busy.at(-1)?.status ?? 0) & Status.InProgress).toBe(Status.InProgress);
   });
 
   /**
-   * A host whose directories say one file, and remember how to say it again.
+   * A host whose directories say four files, and remember how to say it again.
    *
-   * A row nobody is running takes its `changes` from the directory it is in,
-   * and the directory is read at boot and again for every watcher a client
-   * opened on it - so the same `{ status, changes }` comes back more than once
-   * for a row that did not move. Which is the case this is here for.
+   * A directory is read at boot and again for every watcher a client opened on
+   * it, so the same answer comes back more than once about a row that did not
+   * move. Which is the case this is here for.
    */
   const counted = () => {
     const watching: (() => void)[] = [];
@@ -1299,38 +1567,50 @@ describe('a summary that did not change', () => {
     };
   };
 
+  /*
+   * A row carries the session's own counts, kept where the next daemon reads
+   * them, and none of its folder's, so the startup read of a stored session's
+   * folder says nothing of its row; a re-read a client showing its diff makes
+   * says the row once, with its own counts, and not again for the same read,
+   * and a flag on it is said once.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L480-L493
+   */
   it('sends a listed row once, and not again for the same read of it', async () => {
     // The host's own path, and every directory its backend claims, is browsed
     // before the stored rows are read - so the row has to live somewhere else
-    // for there to be a second read of it to be suppressed.
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/github/elsewhere' });
+    // for the startup read of its folder to be one of its own.
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: ago(HOUR), cwd: '/github/elsewhere' });
+    // A session this host ran, under the name it was made with, and the two
+    // files its own work came to.
+    const store = memorySessions();
+    store.setProvider('old', 'claude');
+    store.setUri?.('old', 'ahp-session:/old');
+    store.setChanges('old', { files: 2 });
     const counted_ = counted();
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), changes: counted_.source,
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), changes: counted_.source, sessions: store,
     });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
-    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    // Reading the directory at boot is one read of it, and the summary that
-    // comes out is the row's `status` and its counts and nothing else. Waited
-    // for by the clock: a read on Windows outlasts a count of ticks.
-    await vi.waitFor(() => { expect(rowsMoved(p, 'ahp-session:/old')).not.toHaveLength(0); }, { timeout: 3000 });
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; changes?: { files?: number } }[];
+    };
+    expect(listed.items.find((one) => one.resource === 'ahp-session:/old')?.changes).toEqual({ files: 2 });
     await settle(12);
-    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(1);
-    expect(rowsMoved(p, 'ahp-session:/old')[0]).toMatchObject({ status: 1, changes: { files: 4 } });
+    expect(rowsMoved(p, 'ahp-session:/old')).toEqual([]);
 
     // A client showing the row's diff re-reads the directory on every change
-    // the source reports, which is the same answer for a working tree nobody
-    // touched.
+    // the source reports: the row is said once, with its own counts, and the
+    // same read again says nothing.
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old/changeset/uncommitted' } });
     await vi.waitFor(() => { expect(counted_.watching).toHaveLength(1); }, { timeout: 3000 });
-    await settle(12);
-    const read = rowsMoved(p, 'ahp-session:/old').length;
-    expect(counted_.watching).toHaveLength(1);
     counted_.watching[0]?.();
     await settle(12);
-    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(read);
+    expect(rowsMoved(p, 'ahp-session:/old')).toEqual([{ status: 1, changes: { files: 2 } }]);
+    counted_.watching[0]?.();
+    await settle(12);
+    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(1);
 
     // And a flag is a change, so it goes out - once, and not twice.
     client.handle({
@@ -1338,36 +1618,11 @@ describe('a summary that did not change', () => {
       params: { channel: 'ahp-session:/old', action: { type: 'session/isReadChanged', isRead: true } },
     });
     await settle();
-    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(read + 1);
+    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(2);
     expect(rowsMoved(p, 'ahp-session:/old').at(-1)?.status).toBe(33);
     counted_.watching[0]?.();
     await settle(12);
-    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(read + 1);
-  });
-
-  it('sends zero counts for a listed row once its folder has no changes', async () => {
-    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/github/elsewhere' });
-    const counted_ = counted();
-    let files = 4;
-    counted_.source.summary = () => ({ files });
-    const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), changes: counted_.source,
-    });
-    const p = peer();
-    const client = host.accept(p);
-    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
-    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    await vi.waitFor(() => { expect(rowsMoved(p, 'ahp-session:/old').at(-1)).toMatchObject({ changes: { files: 4 } }); }, { timeout: 3000 });
-
-    // Everything committed: the folder has no changes, and the partial has to
-    // say so, because a partial without `changes` keeps the client's old counts.
-    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old/changeset/uncommitted' } });
-    await vi.waitFor(() => { expect(counted_.watching).toHaveLength(1); }, { timeout: 3000 });
-    files = 0;
-    counted_.watching[0]?.();
-    await vi.waitFor(() => {
-      expect(rowsMoved(p, 'ahp-session:/old').at(-1)?.changes).toEqual({ files: 0, additions: 0, deletions: 0 });
-    }, { timeout: 3000 });
+    expect(rowsMoved(p, 'ahp-session:/old')).toHaveLength(2);
   });
 
   it('measures the first move of a session re-created under the same URI against its new row', async () => {
@@ -1380,23 +1635,26 @@ describe('a summary that did not change', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
     try {
-      const { client, peer: p, uri } = await running();
-      await settle();
+      const { client, peer: p, uri, chatUri } = await running();
+      await firstMessage(client, chatUri);
 
       await client.handle({ method: 'disposeSession', params: { channel: uri } });
       await settle();
       const added = p.notes.filter((n) => n.method === 'root/sessionAdded').length;
       await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-      await settle();
+      await firstMessage(client, chatUri);
       // The same conversation, under the same name, added whole: what a client
       // that watched it go now holds, and what the next move is a change from.
       expect(p.notes.filter((n) => n.method === 'root/sessionAdded')).toHaveLength(added + 1);
+      await flushed();
       const before = rowsMoved(p, 'ahp-session:/live');
       await retitle(client, uri, 'Paging');
+      await flushed();
       const moved = rowsMoved(p, 'ahp-session:/live');
       expect(moved).toHaveLength(before.length + 1);
       expect(moved.at(-1)).toMatchObject({ title: 'Paging' });
       await retitle(client, uri, 'Paging');
+      await flushed();
       expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(before.length + 1);
     }
     finally {
@@ -1559,7 +1817,23 @@ describe("a row's counts are the session's own", () => {
 
     files = 6;
     await turn(client, chatUri, 't2');
+    // Said once the session's moves are quiet, on VS Code's 100 ms debounce.
+    await flushed();
     expect(countsOf(p, 'ahp-session:/live')).toMatchObject({ files: 6 });
+  });
+
+  it('says zero counts once a session\'s own work comes to nothing', async () => {
+    let files = 4;
+    const source = { ...ownWork({ live: 4 }), sessionSummary: async () => ({ files }) };
+    const { client, peer: p, chatUri } = await turned({ changes: source }, 'live');
+    expect(countsOf(p, 'ahp-session:/live')).toMatchObject({ files: 4 });
+
+    // Everything committed: the change has to say so, because a change
+    // without `changes` keeps the counts the client holds.
+    files = 0;
+    await turn(client, chatUri, 't2');
+    await flushed();
+    expect(countsOf(p, 'ahp-session:/live')).toEqual({ files: 0, additions: 0, deletions: 0 });
   });
 
   it('moves a row with the work a turn did before it failed', async () => {
@@ -1574,6 +1848,7 @@ describe("a row's counts are the session's own", () => {
     // work nobody can see.
     files = 5;
     await failed(client, chatUri, 't2');
+    await flushed();
     expect(countsOf(p, 'ahp-session:/live')).toMatchObject({ files: 5 });
   });
 
@@ -1641,7 +1916,7 @@ describe("a listed row's _meta", () => {
    * finds them.
    */
   const PATH = '/home/softov';
-  const STAMP = '2026-10-25T00:00:00.000Z';
+  const STAMP = new Date(ago(DAY)).toISOString();
   const row = (id: string, meta?: Record<string, unknown>): Listed => ({
     id,
     title: id,
@@ -1670,17 +1945,24 @@ describe("a listed row's _meta", () => {
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: Row[] };
-    expect(listed.items.find((one) => one.resource === 'ahp-session:/one')?._meta).toEqual({ bot: 'motion', color: 'red' });
+    expect(listed.items.find((one) => one.resource === 'ahp-session:/one')?._meta)
+      .toEqual({ bot: 'motion', color: 'red', 'vscode.external': true });
   });
 
   it("sends a row's _meta when the row is found rather than listed", async () => {
     const found = row('late', { bot: 'motion' });
+    // A session this host ran, which its record names the backend to ask about.
+    const kept = memorySessions();
+    kept.setProvider('late', 'slow');
+    kept.setUri?.('late', 'ahp-session:/late');
     const host = createHost({
       path: PATH,
       agents: [backend([], (id) => (id === 'late' ? found : undefined))],
       ...machine(),
+      sessions: kept,
     });
     const p = peer();
     const client = host.accept(p);
@@ -1691,7 +1973,7 @@ describe("a listed row's _meta", () => {
       snapshot: { state: { _meta?: Record<string, unknown> } };
     };
     expect(opened.snapshot.state._meta).toEqual({ bot: 'motion' });
-    // And the row it announced, so a client that never opened it has the mark.
+    // And the row it announced, so a client that never opened it has the keys.
     const added = p.notes
       .filter((one) => one.method === 'root/sessionAdded')
       .map((one) => (one.params as { summary?: Row }).summary);
@@ -1708,9 +1990,133 @@ describe("a listed row's _meta", () => {
     });
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0']));
+    await showExternal(client);
 
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: Row[] };
     expect(listed.items.find((one) => one.resource === 'ahp-session:/one')?._meta)
-      .toEqual({ git: { branchName: 'main' }, bot: 'motion' });
+      .toEqual({ git: { branchName: 'main' }, bot: 'motion', 'vscode.external': true });
+  });
+});
+
+/*
+ * A session a backend lists that this host never ran is external, as VS Code's
+ * agent host calls a session its provider's CLI made outside the host: marked
+ * `vscode.external`, listed by the root's `showExternalSessions` (none by
+ * default), and made this host's own by a person's turn going out in it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L5764-L5791
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/externalSessionAdoption/externalSessionAdoptionContribution.ts#L25-L30
+ */
+describe('a session made outside this host', () => {
+  const at = (before: number) => ({ lastModified: ago(before), cwd: '/home/softov' });
+  type Row = { resource: string; title: string; _meta?: Record<string, unknown> };
+
+  /** A client of a host over `store`, watching the root, and a way to set the mode and list. */
+  const watching = async (store = memorySessions()) => {
+    const p = peer();
+    const client = serving('/home/softov', [], { sessions: store }).accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    const mode = async (value: string): Promise<void> => {
+      await showExternal(client, value);
+      await settle();
+    };
+    const listed = async (): Promise<Row[]> =>
+      (await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as { items: Row[] }).items;
+    const said = (method: string): unknown[] => p.notes.filter((one) => one.method === method).map((one) => one.params);
+    return { client, p, mode, listed, said };
+  };
+
+  it('lists none of them by default, and every session this host made', async () => {
+    sdk.sessions.push({ sessionId: 'theirs', summary: 'Theirs', ...at(HOUR) });
+    const { client, listed } = await watching();
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/mine', provider: 'claude' } });
+    await firstMessage(client, chatUriFor('ahp-session:/mine'));
+    expect((await listed()).map((one) => one.resource)).toEqual(['ahp-session:/mine']);
+  });
+
+  it('lists the ones the mode names, each marked external', async () => {
+    sdk.sessions.push(
+      { sessionId: 'hour', summary: 'An hour ago', ...at(HOUR) },
+      { sessionId: 'days', summary: 'Two days ago', ...at(2 * DAY) },
+      { sessionId: 'weeks', summary: 'Ten days ago', ...at(10 * DAY) },
+      { sessionId: 'months', summary: 'Forty days ago', ...at(40 * DAY) },
+    );
+    const { mode, listed } = await watching();
+    const titles = async (value: string): Promise<string[]> => {
+      await mode(value);
+      return (await listed()).map((one) => one.title);
+    };
+    expect(await titles('none')).toEqual([]);
+    expect(await titles('last24Hours')).toEqual(['An hour ago']);
+    expect(await titles('last7Days')).toEqual(['An hour ago', 'Two days ago']);
+    expect(await titles('last30Days')).toEqual(['An hour ago', 'Two days ago', 'Ten days ago']);
+    expect(await titles('recent')).toEqual(['An hour ago', 'Two days ago']);
+    expect((await listed())[0]?._meta).toEqual({ 'vscode.external': true });
+  });
+
+  it('keeps recent to the two updated last, none older than the second most recent of this host\'s own', async () => {
+    // Two sessions this host ran, an hour and three hours ago: the cutoff is three hours.
+    const store = memorySessions();
+    store.setProvider('mine1', 'claude');
+    store.setProvider('mine2', 'claude');
+    sdk.sessions.push(
+      { sessionId: 'mine1', summary: 'Mine, an hour ago', ...at(HOUR) },
+      { sessionId: 'mine2', summary: 'Mine, three hours ago', ...at(3 * HOUR) },
+      { sessionId: 'ten', summary: 'Theirs, ten minutes ago', ...at(HOUR / 6) },
+      { sessionId: 'half', summary: 'Theirs, half an hour ago', ...at(HOUR / 2) },
+      { sessionId: 'two', summary: 'Theirs, two hours ago', ...at(2 * HOUR) },
+      { sessionId: 'four', summary: 'Theirs, four hours ago', ...at(4 * HOUR) },
+    );
+    const { mode, listed } = await watching(store);
+    await mode('recent');
+    expect((await listed()).map((one) => one.title))
+      .toEqual(['Theirs, ten minutes ago', 'Theirs, half an hour ago', 'Mine, an hour ago', 'Mine, three hours ago']);
+  });
+
+  it('keeps one this host opened external across a restart until a turn adopts it', async () => {
+    // What a run that opened it and saw no person's turn in it wrote down.
+    const store = memorySessions();
+    store.setProvider('older', 'claude');
+    store.setExternal?.('older', true);
+    sdk.sessions.push({ sessionId: 'older', summary: 'Opened, not adopted', ...at(HOUR) });
+    const { mode, listed } = await watching(store);
+    expect(await listed()).toEqual([]);
+    await mode('last24Hours');
+    expect((await listed()).map((one) => one._meta)).toEqual([{ 'vscode.external': true }]);
+  });
+
+  it('adopts one when a person\'s turn goes out in it, announcing it and listing it under every mode', async () => {
+    sdk.sessions.push({ sessionId: 'older', summary: 'Theirs', ...at(HOUR) });
+    sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
+    wrote('older', '/home/softov');
+    const store = memorySessions();
+    const { client, listed, said } = await watching(store);
+    expect(await listed()).toEqual([]);
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/older' } }) as {
+      snapshot: { state: { _meta?: Record<string, unknown> } };
+    };
+    expect(opened.snapshot.state._meta).toEqual({ 'vscode.external': true });
+
+    await client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUriFor('ahp-session:/older'),
+        action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'and now?' } },
+      },
+    });
+    await settle(6);
+    expect(store.external?.('older')).toBeUndefined();
+    expect((said('root/sessionAdded') as { summary: Row }[]).map((one) => one.summary.resource)).toContain('ahp-session:/older');
+    const row = (await listed()).find((one) => one.resource === 'ahp-session:/older');
+    expect(row?._meta?.['vscode.external']).toBeUndefined();
+  });
+
+  it('tells every client what a change of mode shows and what it hides', async () => {
+    sdk.sessions.push({ sessionId: 'hour', summary: 'An hour ago', ...at(HOUR) });
+    const { mode, listed, said } = await watching();
+    await listed();
+    await mode('last24Hours');
+    expect((said('root/sessionAdded') as { summary: Row }[]).map((one) => one.summary.resource)).toEqual(['ahp-session:/hour']);
+    await mode('none');
+    expect((said('root/sessionRemoved') as { session: string }[]).map((one) => one.session)).toEqual(['ahp-session:/hour']);
   });
 });

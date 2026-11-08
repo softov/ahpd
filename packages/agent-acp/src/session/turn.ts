@@ -5,6 +5,17 @@ import type { AcpConnection } from '../types.js';
 import { bag, messageOf, UNTITLED } from './common.js';
 import type { SessionContext } from './context.js';
 
+/**
+ * What each stop reason that is not an answer says, by name: the model ran out
+ * of room, the session used up the requests it was allowed, or the agent
+ * declined.
+ */
+const NOT_AN_ANSWER: Partial<Record<StopReason, string>> = {
+  max_tokens: 'The agent ran out of tokens before it answered',
+  max_turn_requests: 'The agent used every turn request this session allowed',
+  refusal: 'The agent declined to answer this prompt',
+};
+
 /** One prompted turn, from its opening to its ending, and the turns handed behind it. */
 export interface Turn {
   /**
@@ -29,7 +40,7 @@ export interface Turn {
 }
 
 export function createTurn(ctx: SessionContext): Turn {
-  const { emit, provider, start, inside, turns } = ctx;
+  const { emit, start, inside, turns } = ctx;
 
   /**
    * The first message titles a session nobody has named, and replaces a title
@@ -51,8 +62,16 @@ export function createTurn(ctx: SessionContext): Turn {
     emit('session', { type: 'session/titleChanged', title: said });
   };
 
-  /** Start a turn the host said: hold it as the one running, before the prompt is sent. */
-  const startTurn = (turnId: string, text: string, from: MessageFrom | undefined): void => {
+  /**
+   * Start a turn the host said: hold it as the one running, before the prompt is sent.
+   *
+   * The attachments stay on the turn's message, live and on the watched record,
+   * so a client reopening the chat reads them beside the words they came with,
+   * as VS Code reads a message back with its attachments.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L858-L859
+   */
+  const startTurn = (turnId: string, text: string, from: MessageFrom | undefined, attachments: MessageAttachment[] | undefined): void => {
+    const attached = attachments !== undefined && attachments.length > 0 ? { attachments } : {};
     ctx.active = {
       id: turnId,
       startedAt: new Date().toISOString(),
@@ -60,6 +79,7 @@ export function createTurn(ctx: SessionContext): Turn {
         text,
         ...(from?.origin !== undefined ? { origin: from.origin } : {}),
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+        ...attached,
       },
       responseParts: [],
     };
@@ -70,6 +90,7 @@ export function createTurn(ctx: SessionContext): Turn {
       message: {
         text,
         ...(from?.origin !== undefined ? { origin: from.origin } : {}),
+        ...attached,
       },
       state: 'complete',
       updates: [],
@@ -89,7 +110,7 @@ export function createTurn(ctx: SessionContext): Turn {
     ctx.cancelRequested = false;
     ctx.error = undefined;
     titled(next.text);
-    startTurn(next.turnId, next.text, next.from);
+    startTurn(next.turnId, next.text, next.from, next.attachments);
     // What the host has to say on this turn, asked now that the turn exists.
     const instructions = (next.options?.instructions?.() ?? []).filter((one) => one.trim() !== '');
     void send(next.turnId, next.text, next.model, next.attachments, instructions);
@@ -185,14 +206,27 @@ export function createTurn(ctx: SessionContext): Turn {
   /**
    * End the turn the way the server's stop reason says to.
    *
-   * A stop is the end of what the agent did, so every reason but `cancelled`
-   * completes the turn: a turn the model ended at its token or request limit,
-   * or by declining, is one VS Code's agents complete, an error being a turn
-   * whose send or execution failed.
+   * `end_turn` completes it and `cancelled` cancels it. The other three are the
+   * server saying it stopped early, and a turn that stopped early is not an
+   * answer: the model ran out of room, the session used up the requests it was
+   * allowed, or the agent declined. AHP has no field saying a completed turn
+   * was cut short, so each ends in an error typed by its reason, which lets a
+   * client tell a refusal from a ceiling reached without reading prose, with a
+   * sentence saying what the agent did. A reason this bridge has not heard of
+   * completes the turn, a stop this code cannot describe being better read as
+   * an answer than reported as a failure with no reason. A record whose
+   * `cutTurns` is `complete` completes the three as well, as VS Code's agents
+   * complete a turn the model ended at a limit or by declining.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
    */
   const stopReasonFor = (turnId: string, reason: StopReason): void => {
-    endTurn(turnId, reason === 'cancelled' ? 'cancelled' : 'complete');
+    if (reason === 'cancelled') {
+      endTurn(turnId, 'cancelled');
+      return;
+    }
+    const said = NOT_AN_ANSWER[reason];
+    if (said === undefined || ctx.options.cutTurns === 'complete') endTurn(turnId, 'complete');
+    else endTurn(turnId, 'error', { errorType: reason, message: said });
   };
 
   /**
@@ -249,16 +283,6 @@ export function createTurn(ctx: SessionContext): Turn {
   };
 
   /**
-   * The URI an attachment with no URI of its own is sent under.
-   *
-   * A pasted image is bytes with a name and nothing to point at, and ACP's
-   * blocks name what they carry. The scheme is this bridge's own, as the one a
-   * command leaf uses: nothing reads it, so it has to be honest rather than
-   * resolve.
-   */
-  const attachmentUri = (label: string): string => `acp-attachment:${provider}/${label}`;
-
-  /**
    * Whether the session's instructions have gone out.
    *
    * ACP gives a prompt rather than a system prompt, so what the host wants the
@@ -302,13 +326,14 @@ export function createTurn(ctx: SessionContext): Turn {
     }
     if (instructions.length > 0) blocks.push({ type: 'text', text: instructions.join('\n\n') });
     for (const part of parts) {
+      /*
+       * An image goes as its bytes and its type, the two fields ACP requires of
+       * an image block: a pasted image has nothing to point at, and the block's
+       * URI is an optional reference to where an image came from.
+       * https://agentclientprotocol.com/protocol/content#image-content
+       */
       if (part.type === 'image') {
-        blocks.push({
-          type: 'image',
-          data: part.data,
-          mimeType: part.mimeType,
-          uri: attachmentUri(part.source?.label ?? 'attachment'),
-        });
+        blocks.push({ type: 'image', data: part.data, mimeType: part.mimeType });
         continue;
       }
       /*
@@ -390,11 +415,15 @@ export function createTurn(ctx: SessionContext): Turn {
           // A server's terminal id is the host's name for it, which the
           // session holds its handle under.
           isPty: (uri) => ctx.terminals.get(uri)?.handle.isPty,
+          exited: (uri) => {
+            const held = ctx.terminals.get(uri);
+            return held?.exited === true ? held.handle.output() : undefined;
+          },
         },
         // The clients' tools, read off what the host last said this session may
         // offer: a call the agent reports for one is held for the client that
         // owns it, and asks that client to run it.
-        ownerOf: ctx.ownerOf,
+        clientToolOf: ctx.clientToolOf,
         ...(ctx.cumulative !== undefined ? { costAtStart: ctx.cumulative } : {}),
       };
       /*
@@ -416,6 +445,8 @@ export function createTurn(ctx: SessionContext): Turn {
       }
       ctx.mapping.prompted = true;
       const response = await held.connection.prompt(held.sessionId, blocks);
+      // The parts the host was still keeping are the turn's, said before it ends.
+      await ctx.keeping;
       told = true;
       saidUsage(response.usage);
       stopReasonFor(turnId, response.stopReason);
@@ -439,9 +470,20 @@ export function createTurn(ctx: SessionContext): Turn {
         endTurn(turnId, 'error', authentication);
         return;
       }
-      // The failure's own words: what the server wrote on stderr went to the
-      // log as it arrived, as VS Code's agents log a runtime's stderr.
-      endTurn(turnId, 'error', { errorType: 'sendFailed', message: messageOf(why) });
+      /*
+       * The failure's own words, typed as the failed send VS Code's host names,
+       * and whatever the server said on stderr rides on it, because an exit
+       * code is rarely why and the trace under it is, and a person on a client
+       * cannot read the daemon's log. Read from the connection this turn
+       * prompted: a server that died is already off `live`, which is exactly
+       * the case a person most wants the trace for. A record whose
+       * `stderrTail` is `log` leaves the trace to the log alone, as VS Code's
+       * agents log a runtime's stderr.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2564-L2574
+       */
+      const said = messageOf(why);
+      const tail = connection === undefined || ctx.options.stderrTail === 'log' ? '' : await connection.stderrTail();
+      endTurn(turnId, 'error', { errorType: 'sendFailed', message: tail === '' ? said : `${said}\n${tail}` });
     }
   };
 

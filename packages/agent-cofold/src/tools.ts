@@ -11,8 +11,9 @@
 
 import { createTool } from '@cofold/agents';
 import type { Tool } from '@cofold/agents';
+import { resolveWithin } from '@cofold/tools';
 import { appendEscapedMarkdownInlineCode, truncate } from '@ahpd/sdk';
-import type { Bag, BoundTool, CommandTerminal } from '@ahpd/sdk';
+import type { Bag, BoundTool, CommandTerminal, PendingConfirmation, PermissionKind } from '@ahpd/sdk';
 
 /**
  * cofold's own input-schema type, read off its factory.
@@ -24,14 +25,49 @@ import type { Bag, BoundTool, CommandTerminal } from '@ahpd/sdk';
 type CofoldInput = Parameters<typeof createTool>[0]['input'];
 
 /**
- * A call's tool as the operator's `eligibleForAutoApproval` rule names it.
- *
- * A tool the host offered is `ahp/<name>`, which is the name Claude and ACP
- * give the same tool on the host's MCP server, so one rule reaches it in every
- * backend. cofold's own tools keep their own names.
+ * What each of cofold's own tools asks to do, and the field of its input
+ * naming the path or the URL it acts on, as VS Code's Claude table rows the
+ * CLI's tools: cofold's standard tools at ee481964 (packages/tools/src
+ * files.ts, shell.ts, web.ts, memory.ts). Any other tool, a host's or a
+ * client's among them, is a custom tool, as VS Code's table falls back.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeToolDisplay.ts#L78-L134
  */
-export const ruleName = (offered: readonly BoundTool[], name: string): string =>
-  offered.some((one) => one.definition.name === name) ? `ahp/${name}` : name;
+const PERMISSION_ROWS: Readonly<Record<string, { kind: PermissionKind; field?: string }>> = {
+  shell_exec: { kind: 'shell' },
+  read_file: { kind: 'read', field: 'path' },
+  list_files: { kind: 'read', field: 'cwd' },
+  search_files: { kind: 'read', field: 'path' },
+  write_file: { kind: 'write', field: 'path' },
+  edit_file: { kind: 'write', field: 'path' },
+  web_fetch: { kind: 'url', field: 'url' },
+  memory_read: { kind: 'memory' },
+  memory_write: { kind: 'memory' },
+};
+
+/**
+ * What the host decides a question about a call by, from the call's tool and
+ * input, as VS Code's agents raise a pending confirmation: its kind by the
+ * table above, the path its input names resolved against the workspace with
+ * cofold's own resolver, the URL a fetch is of, and a shell call's command in
+ * the language of the shell cofold runs it through, its `DEFAULT_SHELL`:
+ * PowerShell on Windows and `sh` everywhere else, read as bash.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeCanUseTool.ts#L147-L175
+ */
+export const confirmationOf = (name: string, input: unknown, workspace: string): PendingConfirmation => {
+  const row = PERMISSION_ROWS[name];
+  const permissionKind = row?.kind ?? 'custom-tool';
+  const given = typeof input === 'object' && input !== null ? input as Bag : {};
+  const named = row?.field === undefined ? undefined : given[row.field];
+  const target = typeof named === 'string' && named !== '' ? named : undefined;
+  const command = given.command;
+  return {
+    permissionKind,
+    ...(target === undefined ? {} : permissionKind === 'url' ? { permissionUrl: target } : { permissionPath: resolveWithin(workspace, target).absolute }),
+    ...(permissionKind === 'shell' && typeof command === 'string'
+      ? { shellCommand: command, shellLanguage: process.platform === 'win32' ? 'powershell' as const : 'bash' as const }
+      : {}),
+  };
+};
 
 /** The keys of a schema whose values are one schema each. */
 const ONE_SCHEMA = ['items', 'additionalProperties'] as const;
@@ -77,16 +113,16 @@ const inputOf = (bound: BoundTool): CofoldInput => {
  * A call a client announced it can run, on its way out to that client.
  *
  * The session holds one of these from the moment cofold tries to execute an
- * owner-bound tool until the owning client answers or goes away. The fields
- * are what `completeToolCall` and `clientGone` need: the owner tells one
- * client's call from another's, and the name is what a call failed by a lost
- * client can say it was.
+ * owner-bound tool until the owning client answers it, or the host fails it
+ * for a client that went. The fields are what `completeToolCall` needs: the
+ * contributor tells one client's call from another's, and the name is what a
+ * call can say it was.
  */
 export interface ClientToolCall {
   /** The model's own id for the call, which every chat action names. */
   callId: string;
-  /** The client that announced the tool, and the only one that may answer. */
-  owner: string;
+  /** The client that announced the tool, by its id, and the only one that may answer: the spec's `contributor` of the call. */
+  contributor: string;
   /** The offered name, for the result a client that went away earns. */
   name: string;
   /** The arguments, held for as long as the round trip lasts. */
@@ -142,7 +178,7 @@ export const cofoldTool = (bound: BoundTool, relay?: ClientToolRelay): Tool<Reco
         // means a caller wrapped one by hand.
         throw new Error(`${bound.definition.name} is ${bound.owner}'s to run, and no session is here to wait on it`);
       }
-      return await relay.call({ callId: ctx.callId, owner: bound.owner, name: bound.definition.name, input });
+      return await relay.call({ callId: ctx.callId, contributor: bound.owner, name: bound.definition.name, input });
     }
     if (bound.run === undefined) {
       throw new Error(`${bound.definition.name} has no implementation to run`);

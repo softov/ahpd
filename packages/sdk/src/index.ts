@@ -45,11 +45,22 @@ export { gitBranches } from './repo/git.js';
 export { gitArgv } from './repo/hardened.js';
 export { gitChanges } from './sessions/changes.js';
 export { fileResources } from './resources/resources.js';
+export { ripgrepFiles } from './resources/workspacefiles.js';
 export { localPath, uriOf } from './resources/fileuri.js';
 export { clientPluginsIn } from './plugins/clientplugins.js';
+export { partsOf as pluginPartsOf } from './plugins/pluginparts.js';
 export { shellTerminals } from './machines/terminals.js';
 export { isShellName, shellEnvOf } from './machines/shellenv.js';
 export type { ShellEnv } from './machines/shellenv.js';
+export { isManagedDomainBoundaryRule } from './vscode/managedrules.js';
+export { normalizeDomainPattern } from './vscode/domainmatcher.js';
+export {
+  getReasoningEffortDescription, getReasoningEffortLabel, isReasoningEffortLevel, ReasoningEffortConfigKey, reasoningEffortLevels,
+  resolveDefaultReasoningEffort,
+} from './vscode/reasoningeffort.js';
+export type { ReasoningEffortLevel } from './vscode/reasoningeffort.js';
+export { readSkillArgumentHint, withSkillArgumentHintMeta } from './vscode/skillcustomizationmeta.js';
+export { managedRuleOf } from './host/permissions.js';
 export { hostTools } from './tools/index.js';
 export { answerTools, toolServers, TOOLS_PREFIX } from './tools/server.js';
 export type {

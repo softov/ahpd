@@ -47,7 +47,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import type { Account, Bag, MessageFrom, SecretRef, Seed, ToolsChanged } from '@ahpd/sdk';
+import type { Account, Bag, MessageAttachment, MessageFrom, SecretRef, Seed, ToolsChanged } from '@ahpd/sdk';
 
 /**
  * What a machine needs for one agent to run in it, as the agent declares it.
@@ -149,6 +149,102 @@ export interface AcpOptions {
    * it would otherwise never make.
    */
   toolsChanged?: ToolsChanged;
+  /**
+   * How a turn the server stopped early ends: at `max_tokens`,
+   * `max_turn_requests` or by a refusal.
+   *
+   * `error`, the default, ends it in `chat/error` typed by the reason, since
+   * AHP has no field saying a completed turn was cut short (Softov 2026-10-02:
+   * "non-answer stops are errors"); `complete` completes it, as VS Code's
+   * agents complete a turn the model ended at a limit or by declining.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L568-L576
+   */
+  cutTurns?: 'error' | 'complete';
+  /**
+   * Where the last of a failed server's stderr goes.
+   *
+   * `sentence`, the default, puts it under the failure's own words in the
+   * error a client is shown, since a person on a client cannot read the
+   * daemon's log (Softov's "stderr tail"); `log` leaves it to the log alone,
+   * as VS Code's agents log a runtime's stderr. Each line goes to the log
+   * either way.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2716
+   */
+  stderrTail?: 'sentence' | 'log';
+  /**
+   * Where the agent's modes come from: the record's `modes`.
+   *
+   * `refreshed`, the default, lists the preset's modes until a session hears
+   * its server's, then the modes the last session's server named (Softov
+   * 2026-10-30: "modes in each preset, refresh from the last session modes");
+   * `preset` keeps the modes as the preset declares them, as VS Code's agents
+   * declare theirs. Each session reports its server's modes as its own either
+   * way.
+   */
+  modesFrom?: 'refreshed' | 'preset';
+  /**
+   * What a request for a client's tool that no reported call matched gets.
+   *
+   * `row`, the default, holds it under an id of this bridge's own, draws it on
+   * the chat and asks its owner, since an ACP agent may call a client's tool
+   * without reporting the call (Softov 2026-10-06: "Own row"); `error` answers
+   * it with an error result, as VS Code's client tool server answers a request
+   * it cannot name a call for.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/clientTools/claudeClientToolMcpServer.ts#L46-L55
+   */
+  unreportedClientCalls?: 'row' | 'error';
+  /**
+   * How long the listing a find made answers the finds after it, in
+   * milliseconds.
+   *
+   * 2000, the default: a find inside the window is answered from that listing,
+   * a failed one included, so a server that did not start is not spawned again
+   * for each id a client asks about (Softov 2026-10-06: "reuse its result for
+   * the same 2 s window ...; after a failed start, do not respawn for that
+   * window either"); 0 joins only the listing in flight, as VS Code's Codex
+   * shares a listing while it runs and serves no settled one to a later caller.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L7960-L7963
+   */
+  findFreshMs?: number;
+  /**
+   * How long the connection a listing opened stays after its last read, in
+   * milliseconds.
+   *
+   * 0, the default: closed once the read is done, as VS Code's Codex disposes
+   * of the connection it opens for an action when the action ends.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L2521-L2550
+   */
+  listingIdleMs?: number;
+  /**
+   * How many pages of `session/list` one listing reads at most.
+   *
+   * 50, the default, VS Code's Codex's stop for its own paged listing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexThreadList.ts#L15-L16
+   */
+  sessionListMaxPages?: number;
+  /**
+   * How long a call that failed because the server's stream closed waits for
+   * the server's exit, whose code is its sentence, in milliseconds; 1000 by
+   * default, as upstream planned it.
+   */
+  exitGraceMs?: number;
+  /**
+   * How much of the server's stderr a failure carries, in bytes; 8192 by
+   * default, as VS Code keeps the last 8192 of a helper's stderr.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sshProxyCommand.ts#L80
+   */
+  stderrBytes?: number;
+  /**
+   * How long the server's process group has between SIGTERM and SIGKILL, in
+   * milliseconds; 5000 by default, VS Code's grace for ending a process tree.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/localModelBridge/shim/processRunner.ts#L344-L352
+   */
+  killGraceMs?: number;
+  /**
+   * How long a session's `session/close` is waited for, in milliseconds; 1000
+   * by default, as upstream planned it.
+   */
+  closeGraceMs?: number;
   /**
    * Where a session says what it left out or had to invent.
    *
@@ -268,10 +364,23 @@ export interface AcpConnectionOptions {
   handlers: AcpHandlers;
   /** Where each line the server writes on stderr goes. */
   log?: (line: string) => void;
+  /** The record's `exitGraceMs`, `stderrBytes` and `killGraceMs`. */
+  exitGraceMs?: number;
+  stderrBytes?: number;
+  killGraceMs?: number;
 }
 
 /** One open ACP connection over a server's stdio. */
 export interface AcpConnection {
+  /**
+   * The last of what the server wrote on stderr, for a failure to carry.
+   *
+   * Nothing surfaces it while the server runs: a healthy server's chatter is
+   * the server's and the log's, and a client is told about it only when its
+   * turn failed. Settles once a dead server's last words have been read off
+   * the pipe.
+   */
+  stderrTail(): Promise<string>;
   /**
    * The handshake, which is where the server says what it can do.
    *
@@ -360,11 +469,20 @@ export interface AcpConnection {
   close(): Promise<void>;
 }
 
+/** A client's tool, by the client that owns it and the name the client announced it with. */
+export interface ClientTool {
+  owner: string;
+  name: string;
+}
+
 /** One tool call the server opened, as the mapping remembers it between updates. */
 export interface AcpCall {
   /** The server's own id for the call, which every action names. */
   toolCallId: string;
-  /** The programmatic name, when the server gave one, and its title otherwise. */
+  /**
+   * The programmatic name, when the server gave one, and its title otherwise;
+   * for a client's tool, the name the client announced it with.
+   */
   toolName: string;
   /** What a client draws instead of the name. */
   displayName: string;
@@ -377,6 +495,13 @@ export interface AcpCall {
    * would say the question is not there.
    */
   asked: boolean;
+  /**
+   * Whether a person refused it when asked, so the failure the server reports
+   * for it is a denial, as VS Code's Codex agent keeps the calls its host
+   * declined at the approval prompt.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexMapAppServerEvents.ts#L86-L92
+   */
+  declined?: boolean;
   /** The arguments the server has given it, as the JSON a client reads. */
   input?: string;
   /**
@@ -396,12 +521,14 @@ export interface AcpCall {
    */
   startedAt?: number;
   /**
-   * The client whose tool this call is for, when the agent reached one.
+   * The client whose tool this call is for, by its id, when the agent reached
+   * one: the spec's `contributor` of a client's call.
    *
-   * Read off what the agent reported - see `AcpTurn.ownerOf` - and never set on
-   * a call that is the agent's own, the host's, or one nobody's tool matches.
+   * Read off what the agent reported - see `AcpTurn.clientToolOf` - and set on
+   * a call of a client's tool alone: the agent's own calls, the host's, and one
+   * nobody's tool matches carry none.
    */
-  owner?: string;
+  contributor?: string;
 }
 
 /**
@@ -435,6 +562,12 @@ export interface AcpReach {
    * handle says nothing.
    */
   isPty(uri: string): boolean | undefined;
+  /**
+   * What a terminal this session opened printed, with its exit code, once its
+   * process has exited. Nothing while it runs, for one this session did not
+   * open, or for one the server has released.
+   */
+  exited(uri: string): { output: string; exitCode?: number } | undefined;
 }
 
 /**
@@ -453,6 +586,8 @@ export interface AcpTurn {
   parts: Bag[];
   /** Tool calls this turn opened, by the server's own id. */
   calls: Map<string, AcpCall>;
+  /** The `messageId` the last chunk carried, which a chunk of another message opens a part after. */
+  messageId?: string;
   /** The session behind this turn, absent on one the transcript replays. */
   reach?: AcpReach;
   /**
@@ -471,14 +606,15 @@ export interface AcpTurn {
   /** What the last `usage_update` said, which is what this turn holds. */
   usage?: Bag;
   /**
-   * Which client's tool a call the agent reported is for, if any.
+   * Which client's tool a call the agent reported is for, if any: the client
+   * that owns it, and the name the client announced it with.
    *
    * The agent reaches a client's tool through the host's own MCP server, so it
    * names the call the way that server spells the tool, or says it in the title
    * when it names nothing. A turn the transcript replays has no session behind
    * it and no lookup: a call with no owner is one nobody's tool matched.
    */
-  ownerOf?(name: string | undefined, title: string): string | undefined;
+  clientToolOf?(name: string | undefined, title: string): ClientTool | undefined;
   /**
    * The calls this turn has started that somebody is to run, waiting for the
    * ready that says each is running to go out.
@@ -504,8 +640,8 @@ export interface WatchedTurn {
   turnId: string;
   /** ISO 8601 timestamp, taken from the action the turn began with. */
   startedAt: string;
-  /** What began the turn, as the transcript reports it. */
-  message: { text: string; origin?: MessageFrom['origin'] };
+  /** What began the turn, as the transcript reports it, with what was attached to it. */
+  message: { text: string; origin?: MessageFrom['origin']; attachments?: MessageAttachment[] };
   /** How it ended, once it has. */
   state: 'complete' | 'cancelled' | 'error';
   /**

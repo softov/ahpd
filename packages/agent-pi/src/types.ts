@@ -9,14 +9,12 @@ import type { Bag } from '@ahpd/sdk';
 import type { BackendOptions, PiBackend } from './backend.js';
 
 /**
- * The title a pi conversation carries until something better is known.
- *
- * `session` gives it to a session nobody has said anything in, and `catalog`
- * gives it to a row pi itself never named, so the two are here rather than
- * written twice: a client sent one word for a row and another for the session
- * behind it would be sent a change that never happened.
+ * The title a pi conversation carries until something names it: empty, which
+ * a client draws as an untitled session, as VS Code's host holds a session
+ * with no summary, and as the catalogue lists a row pi never named.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L6140-L6146
  */
-export const UNTITLED = 'pi session';
+export const UNTITLED = '';
 
 /**
  * The custom entry a turn's message is kept under in pi's file.
@@ -81,7 +79,13 @@ export const modeOf = (value: unknown): PermissionMode =>
     ? value as PermissionMode
     : 'default');
 
-/** The `permissionMode` control a session publishes, as a client draws it. */
+/**
+ * The `permissionMode` control a session publishes, as a client draws it.
+ *
+ * Each chat keeps its own, as VS Code's Claude agent marks its mode
+ * `chatMutable`: every chat of a pi session is a pi session of its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2283-L2305
+ */
 export const permissionModeProperty = (): Bag => ({
   type: 'string',
   title: 'Approvals',
@@ -91,6 +95,7 @@ export const permissionModeProperty = (): Bag => ({
   enumDescriptions: [...PERMISSION_DESCRIPTIONS],
   default: 'default',
   sessionMutable: true,
+  chatMutable: true,
 });
 
 /** One pi backend, as the configuration names it. */

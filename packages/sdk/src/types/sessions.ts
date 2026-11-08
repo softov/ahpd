@@ -99,6 +99,17 @@ export interface CreatedBy {
 }
 
 /**
+ * The multi-root workspace a session was made from, as the window that made
+ * it recorded it: the URI of its workspace file. VS Code's
+ * `ISessionMultiRootMetadata`, under `_meta.multiRoot`, which is what lets a
+ * window add and remove the session's folders.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/sessionState.ts#L1119-L1127
+ */
+export interface MultiRoot {
+  workspaceFile: string;
+}
+
+/**
  * One chat of a session, as the store keeps it.
  *
  * A session is a container and a chat is a conversation in it, and what makes
@@ -240,6 +251,17 @@ export interface SessionStore {
   /** Record it, or forget it with `undefined`. */
   setOwner(id: string, value: Owner | undefined): void;
   /**
+   * Who sent one of this session's turns, as the same typed reference.
+   *
+   * Keyed by turn as well as by session because two people can be talking in
+   * one session and only the turn says which of them it was. Undefined is the
+   * answer for a turn nobody was recorded as having sent: one sent before this
+   * was kept, and a worker's turn this host opened rather than a person asked.
+   */
+  sender(id: string, turnId: string): Owner | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setSender(id: string, turnId: string, value: Owner | undefined): void;
+  /**
    * Which harness this session runs on, or nothing where none was recorded.
    *
    * Two harnesses can read the same transcripts, so an id on its own says
@@ -310,6 +332,23 @@ export interface SessionStore {
   userSettings?(id: string): boolean | undefined;
   /** Record it, or forget it with `undefined`. */
   setUserSettings?(id: string, value: boolean | undefined): void;
+  /**
+   * Whether this session is external: one a backend listed, made outside this
+   * host, that this host opened and nobody has sent a turn in since, as VS
+   * Code's registry keeps a discovered session external until it is adopted.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSessionRegistry.ts#L104-L122
+   *
+   * Kept with the session for the reason its provider is: opening it writes
+   * the session's record, and a record is what makes a listed session this
+   * host's own, so what opening it did not change has to be written beside
+   * it. Only `true` is written down; a session this host made is never one.
+   *
+   * Optional: a store that leaves it out holds a session external while it
+   * has no record here.
+   */
+  external?(id: string): boolean | undefined;
+  /** Record it, or forget it with `false` or `undefined`. */
+  setExternal?(id: string, value: boolean | undefined): void;
   /**
    * The session this one was started from, as the id that session is held
    * under, or nothing where nothing started it.
@@ -390,6 +429,18 @@ export interface SessionStore {
   /** Record it, or forget it with `undefined`. */
   setWorktree?(id: string, value: StoredWorktree | undefined): void;
   /**
+   * The other worktrees the session keeps: each tree it worked in before a
+   * move took it to another folder, kept on disk as the session's, and
+   * archived, put back and removed with it, as VS Code's host keeps a moved
+   * session's worktree among its additional worktrees.
+   *
+   * Optional: a store without it holds none, and a tree a move left stays on
+   * disk with nothing to remove it.
+   */
+  additionalWorktrees?(id: string): StoredWorktree[];
+  /** Record them, or forget them with an empty list. */
+  setAdditionalWorktrees?(id: string, value: StoredWorktree[]): void;
+  /**
    * When the host archived this session itself, because its pull requests
    * were merged, as an ISO time. Nothing for a session a person archived, and
    * for one that is not archived.
@@ -421,6 +472,16 @@ export interface SessionStore {
   automationOrigin?(id: string): AutomationOrigin | undefined;
   /** Record it, or forget it with `undefined`. */
   setAutomationOrigin?(id: string, value: AutomationOrigin | undefined): void;
+  /**
+   * The multi-root workspace the session was made from, as the window that
+   * made it recorded it, or nothing.
+   *
+   * Optional: a store without it holds none, and a window's folder changes
+   * are then refused for every session.
+   */
+  multiRoot?(id: string): MultiRoot | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setMultiRoot?(id: string, value: MultiRoot | undefined): void;
   /**
    * The folder this session works in, as a path, or nothing where none was
    * recorded.
@@ -497,6 +558,17 @@ export interface SessionStore {
    */
   setPullRequests(id: string, value: PullRequestBaseline): void;
   /**
+   * The title the session was given, or nothing where it was never named.
+   *
+   * Kept beside its default chat's own, as VS Code's host keeps a session's
+   * custom title beside each chat's: a session renamed while it has other
+   * chats takes the title, and its default chat keeps the one it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L78
+   */
+  customTitle?(id: string): string | undefined;
+  /** Set it. An empty string is the session having none of its own. */
+  setCustomTitle?(id: string, value: string): void;
+  /**
    * The title a chat was given, or nothing where it was never named.
    *
    * The catalogue's title is derived and the reference host keeps a chat's
@@ -519,6 +591,37 @@ export interface SessionStore {
   /** Replace them. The whole bitset, because that is what the protocol sends. */
   setChatFlags(id: string, chatUri: string, value: number): void;
   /**
+   * What one chat's own work added and removed, or nothing where none was
+   * read for it: the counts its entry in the session's catalogue carries, as
+   * VS Code's host keeps each listed chat's aggregate in its session's record.
+   * Kept by chat URI for the reason a chat's title is, and kept at all because
+   * a session this host is not running lists its chats with them. Optional: a
+   * store without it keeps no chat's counts, and its chats carry none.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostChangesetService.ts#L1810-L1828
+   */
+  chatChanges?(id: string, chatUri: string): ChangesSummary | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setChatChanges?(id: string, chatUri: string, value: ChangesSummary | undefined): void;
+  /**
+   * The draft typed into one chat, the `Message` its client last sent, or
+   * nothing. Kept by chat URI for the reason a chat's title is, so a draft
+   * outlives the process and comes back when the chat opens, as VS Code's
+   * host keeps a chat's draft.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/chatDraft/chatDraftContribution.ts#L14-L68
+   */
+  chatDraft?(id: string, chatUri: string): Record<string, unknown> | undefined;
+  /** Replace it. Nothing forgets it, which is a draft cleared. */
+  setChatDraft?(id: string, chatUri: string, draft: Record<string, unknown> | undefined): void;
+  /**
+   * What clients marked on the session, the annotations channel's state as
+   * its reducer left it, or nothing. Kept so the marks outlive the process,
+   * as VS Code's host keeps a session's annotations in its own record.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10936-L10963
+   */
+  annotations?(id: string): Record<string, unknown> | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setAnnotations?(id: string, value: Record<string, unknown> | undefined): void;
+  /**
    * The chats this session has, in the order they were opened.
    *
    * A session is a container for conversations, and this is what makes a
@@ -535,12 +638,15 @@ export interface SessionStore {
    * Move one chat from one session to another, in one write.
    *
    * A chat's own record travels with it: its title, its entry on the source's
-   * chat list and its place on the destination's.
+   * chat list and its place on the destination's. `turns` names the turns the
+   * store must carry too, because it cannot find them itself - a sender is kept
+   * per session and turn, and every chat of a session writes into the same map,
+   * so which of those turns are the moved chat's is only known to the caller.
    *
    * Both ids are session ids, as everywhere in this store. A chat the source
    * does not hold is not an error here: the caller has already read it.
    */
-  moveChat(from: string, to: string, uri: string): void;
+  moveChat(from: string, to: string, uri: string, turns: string[]): void;
   /**
    * The ids of the sessions this store holds.
    *

@@ -108,7 +108,7 @@ async function sitting(): Promise<Sitting> {
 
 /** The asking over one main turn, with the back session's chat recording what it is sent. */
 function asking(handle: TurnHandle, entries: Map<string, Bag>, toBack: Bag[], askIn: AskIn = 'main'): ReturnType<typeof botAsk> {
-  const held: Answering = { session: MAIN, turnId: 't1', handle, bot: 'Backer', waiting: new Map() };
+  const held: Answering = { session: MAIN, turnId: 't1', handle, bot: 'Backer', chat: 'ahp-chat:/back', waiting: new Map() };
   return botAsk({
     main: (back) => (back === 'bot:/backer/ana/work' ? held : undefined),
     request: async (back, id) => (back === 'bot:/backer/ana/work' ? entries.get(id) : undefined),

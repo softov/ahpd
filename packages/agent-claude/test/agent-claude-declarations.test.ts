@@ -5,6 +5,8 @@ import { expect, it, vi } from 'vitest';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { env, extraArgs, optionDefaults, outputStyle, sandbox, thinking } from '../src/options.js';
+import { startedNow } from '../../sdk/test/support/started.js';
+import { bag } from '@ahpd/sdk';
 import type { Engine, AgentView, Bag, Start } from '@ahpd/sdk';
 
 /*
@@ -13,7 +15,7 @@ import type { Engine, AgentView, Bag, Start } from '@ahpd/sdk';
  * A declaration is what a value may be and where it goes, and both the engine schema a record is drawn from and the options a session's `query()` is built from are made of them. So the cases here are the two questions a declaration answers - does this value hold, and what does it become - and a record's values going through them into a session, which is the half that only holds if `session.ts` asks.
  */
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/test/support/warmed.js')).warmed({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
   query: ({ options }: { options: Record<string, unknown> }) => {
     sdk.options.push(options);
@@ -72,7 +74,7 @@ const viewOf = (id: string, held: () => Bag, name = id): AgentView => ({
   get config() { return held(); },
 });
 
-/** One session's `query()` options, on a record holding the given values. */
+/** The `query()` options one session's first send started its CLI with, on a record holding the given values. */
 const queried = async (
   config: Bag,
   settings?: Record<string, unknown>,
@@ -81,7 +83,7 @@ const queried = async (
   sdk.options = [];
   sdk.flags = [];
   const engine = await engineOf();
-  engine.open(viewOf('claude', () => config)).create({
+  startedNow(engine.open(viewOf('claude', () => config)).create({
     uri: 'ahp-session:/declared',
     chatUri: 'ahp-chat:/declared',
     settings: settings ?? {},
@@ -90,7 +92,7 @@ const queried = async (
     emit: () => {},
     workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
     ...extra,
-  });
+  })).sendMessage('t1', 'hello');
   await settle();
   const one = sdk.options.at(0);
   if (one === undefined) throw new Error('no query was built');
@@ -124,7 +126,114 @@ it('leaves the output style to the flag settings, which the CLI takes live', () 
 });
 
 it('says what an option is when nothing named one', () => {
-  expect(optionDefaults()).toEqual({ thinking: 'adaptive', hostTasks: true, hostTools: true, enableTasks: true });
+  expect(optionDefaults()).toEqual({
+    thinking: 'adaptive', hostTasks: true, hostTools: true, enableTasks: true, stopEnds: 'turn', dontAsk: true, portFailures: 'spawn', subagentsFrom: 'meta',
+    taskOutputFirstWaitMs: 500, taskOutputLongestWaitMs: 10_000, taskOutputQuietReads: 2, subagentTitleMax: 60, subagentStartTimeoutMs: 30_000,
+    maxShellInitScript: 64 * 1024, maxTerminalOutputBytes: 10 * 1024 * 1024, keepFramed: 64, watchWaitMs: 300, fileMostBytes: 64 * 1024,
+    ruleDepth: 32, ruleMost: 1000,
+  });
+});
+
+/*
+ * The Approvals control offers the SDK's `dontAsk` beside VS Code's five, and
+ * a record whose `dontAsk` is off offers VS Code's five alone.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2273-L2309
+ */
+it('offers VS Code\'s five approval modes when the record turns dontAsk off', async () => {
+  const engine = await engineOf();
+  const modesOf = (held: Bag): unknown => ((engine.open(viewOf('claude', () => held)).schema() as Bag).properties as Bag)
+    .permissionMode as Bag;
+  expect((modesOf({}) as Bag).enum).toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
+  expect(modesOf({ dontAsk: false })).toMatchObject({
+    enum: ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions'],
+    enumLabels: ['Ask Before Edits', 'Edit Automatically', 'Plan Mode', 'Auto Mode', 'Bypass Permissions'],
+  });
+});
+
+/*
+ * A permission mode the record does not offer is refused in VS Code's sentence
+ * for a value not offered.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L147
+ */
+it('refuses a permission mode the record does not offer in VS Code\'s sentence', async () => {
+  const engine = await engineOf();
+  const session = startedNow(engine.open(viewOf('claude', () => ({ dontAsk: false }))).create({
+    uri: 'ahp-session:/declared',
+    chatUri: 'ahp-chat:/declared',
+    settings: {},
+    clientToolTimeoutMs: 60_000,
+    schema: () => ({ type: 'object', properties: {} }),
+    emit: () => {},
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
+  }));
+  expect(await session.setConfig?.('permissionMode', 'dontAsk')).toBe('Session configuration \'permissionMode\' does not offer \'dontAsk\'.');
+  expect(await session.setConfig?.('permissionMode', 'plan')).toBe(true);
+  await session.close();
+});
+
+/*
+ * The operator's bypass lock takes away the modes VS Code's window locks for
+ * Claude under its auto-approval restriction, which VS Code sets from that
+ * lock, and a session holding one runs Ask Before Edits, as VS Code's Copilot
+ * runs a mode its policy withholds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSessionPermissions.ts#L65-L94
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotApprovalPolicy.ts#L165-L166
+ */
+it('offers the modes VS Code leaves open under the operator\'s bypass lock, and runs a withheld one as Ask Before Edits', async () => {
+  sdk.options = [];
+  const engine = await engineOf();
+  const agent = engine.open(viewOf('claude', () => ({})));
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/declared',
+    chatUri: 'ahp-chat:/declared',
+    settings: { permissionMode: 'bypassPermissions' },
+    clientToolTimeoutMs: 60_000,
+    schema: () => agent.schema(),
+    emit: () => {},
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
+    managedSettings: { permissions: { disableBypassPermissionsMode: 'disable' } },
+  }));
+  const config = bag(session.sessionState().config);
+  expect(bag(bag(config.schema).properties).permissionMode).toMatchObject({
+    enum: ['default', 'plan', 'dontAsk'],
+    enumLabels: ['Ask Before Edits', 'Plan Mode', 'Don\'t Ask'],
+  });
+  expect(bag(config.values).permissionMode).toBe('default');
+  expect(await session.setConfig?.('permissionMode', 'bypassPermissions'))
+    .toBe('Session configuration \'permissionMode\' does not offer \'bypassPermissions\'.');
+  session.sendMessage('t1', 'hello');
+  await settle();
+  expect(sdk.options.at(0)?.permissionMode).toBe('default');
+  await session.close();
+});
+
+/*
+ * A tool's name the operator's eligibility sets `false` takes the same lock,
+ * VS Code's fallback for a tool no rule family names, and the same modes go.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L31-L40
+ */
+it('takes the same modes away for a tool\'s name the operator\'s eligibility sets false', async () => {
+  sdk.options = [];
+  const engine = await engineOf();
+  const agent = engine.open(viewOf('claude', () => ({})));
+  const session = startedNow(agent.create({
+    uri: 'ahp-session:/declared',
+    chatUri: 'ahp-chat:/declared',
+    settings: { permissionMode: 'acceptEdits' },
+    clientToolTimeoutMs: 60_000,
+    schema: () => agent.schema(),
+    emit: () => {},
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
+    managedSettings: { eligibleForAutoApproval: { runInTerminal: false } },
+  }));
+  const config = bag(session.sessionState().config);
+  expect(bag(bag(config.schema).properties).permissionMode).toMatchObject({ enum: ['default', 'plan', 'dontAsk'] });
+  expect(bag(config.values).permissionMode).toBe('default');
+  session.sendMessage('t1', 'hello');
+  await settle();
+  expect(sdk.options.at(0)?.permissionMode).toBe('default');
+  expect(bag(bag(sdk.options.at(0)?.managedSettings).permissions).disableBypassPermissionsMode).toBe('disable');
+  await session.close();
 });
 
 it('builds a session query from the declared values of its record', async () => {

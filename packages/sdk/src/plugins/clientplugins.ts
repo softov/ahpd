@@ -250,10 +250,12 @@ export function clientPluginsIn(dir: string, clients: () => Clients): ClientPlug
     join(automations, createHash('sha256').update(`${uri}\n${nonce}`).digest('hex'));
 
   const capture = async (client: string, plugins: TemplatePlugin[]): Promise<HeldCopies> => {
+    // In VS Code's words for a template whose plugins it cannot tell apart.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostAutomationCustomizations.ts#L42-L48
     const ids = new Set<string>();
     for (const one of plugins) {
       const id = str(one.id)?.trim() ?? '';
-      if (id === '' || ids.has(id)) throw new Error('Every plugin a template names needs an id of its own');
+      if (id === '' || ids.has(id)) throw new Error('Automation customization ids must be non-empty and unique.');
       ids.add(id);
     }
     // A copy is the client's tree read over its connection, so a template with
@@ -261,7 +263,7 @@ export function clientPluginsIn(dir: string, clients: () => Clients): ClientPlug
     if (plugins.length > 0 && client === '') {
       throw new Error('A template\'s plugins are copied from the client that asked for it, and this one named none');
     }
-    /** What this capture has decided on, held back from a prune until it lets go. */
+    /** What this capture has decided on, held back from a garbage collection until it lets go. */
     const mine = new Set<string>();
     const hold = (path: string): void => {
       mine.add(path);
@@ -285,11 +287,12 @@ export function clientPluginsIn(dir: string, clients: () => Clients): ClientPlug
         const nonce = one.nonce === undefined || one.nonce === '' ? NO_NONCE : one.nonce;
         const at = placeIn(uri, nonce);
         /*
-         * Held from here, before a byte moves. A prune from another write runs
-         * while this one is between two reads, and what it would find at this
-         * name is a copy no automation names yet - which is exactly what it
-         * removes. The name it is built under is held with it, or a prune
-         * would take the half-written directory out from under the copy.
+         * Held from here, before a byte moves. A garbage collection from another
+         * write runs while this one is between two reads, and what it would
+         * find at this name is a copy no automation names yet - which is exactly
+         * what it removes. The name it is built under is held with it, or a
+         * collection would take the half-written directory out from under the
+         * copy.
          */
         hold(at);
         if (!isDir(at)) {
@@ -338,7 +341,7 @@ export function clientPluginsIn(dir: string, clients: () => Clients): ClientPlug
    * automation that named them may be gone by then: a turn that loaded a
    * plugin in its first message still has it open when somebody removes the
    * automation, and the directory under that turn is not this host's to pull
-   * away. So what a run was handed is held here, and `prune` leaves it - for
+   * away. So what a run was handed is held here, and `collectGarbage` leaves it - for
    * as long as the process, which is as long as anything reading it lasts.
    */
   const inUse = new Set<string>();
@@ -346,8 +349,8 @@ export function clientPluginsIn(dir: string, clients: () => Clients): ClientPlug
   /**
    * The copies a capture has decided on and not yet let go of.
    *
-   * A capture reads a client several times over one connection, and a prune
-   * from another write may run between two of those reads. A copy that is
+   * A capture reads a client several times over one connection, and a garbage
+   * collection from another write may run between two of those reads. A copy that is
    * placed and not yet stored is named by no automation, so without this it
    * looks like one to remove - and the entry about to name it would point at a
    * folder that is gone. Counted rather than listed, because two writes may
@@ -364,7 +367,7 @@ export function clientPluginsIn(dir: string, clients: () => Clients): ClientPlug
    * where it is: this runs beside a write that has already been made, and a
    * copy nobody can delete is not a reason to fail it.
    */
-  const prune = (kept: readonly string[]): void => {
+  const collectGarbage = (kept: readonly string[]): void => {
     let children: string[];
     try { children = readdirSync(automations); }
     catch { return; }
@@ -382,5 +385,5 @@ export function clientPluginsIn(dir: string, clients: () => Clients): ClientPlug
   };
 
   load();
-  return { sync, capture, prune, spare };
+  return { sync, capture, collectGarbage, spare };
 }

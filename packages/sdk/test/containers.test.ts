@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
 import { holds } from '../src/access/users.js';
+import { normalizeDevContainerWorkspaceFolder } from '../src/host/vscodemethods.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { ContainerPort, ContainerSink } from '../src/types/containers.js';
 import type { HostOptions } from '../src/types/host.js';
@@ -53,12 +54,17 @@ const directory = (tokens: Record<string, Grant[]>): Users => ({
   mint: async () => '',
 });
 
-/** A peer that keeps what it was told, for the half that answers with a notification. */
-const watching = (): Peer & { seen: { method: string; params: Bag }[] } => {
+/**
+ * A peer that keeps what it was told, for the half that answers with a
+ * notification, and vouches for a folder it is asked about unless told not to.
+ */
+const watching = (trusts = true): Peer & { seen: { method: string; params: Bag }[] } => {
   const seen: { method: string; params: Bag }[] = [];
   return {
     seen,
-    send: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
+    send: () => {},
+    request: async (method: string) => (method === 'vscode/requestWorkspaceTrust' ? { trusted: trusts } : {}),
+    answered: () => {}, close: () => {},
     notify: (method: string, params: unknown) => { seen.push({ method, params: params as Bag }); },
   };
 };
@@ -210,6 +216,10 @@ it('answers the reference shape, and carries frames both ways', async () => {
     .toMatchObject({ code: -32008 });
 });
 
+/*
+ * A connection another client opened is refused in VS Code's words.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L151-L157
+ */
 it('keeps one client\'s names to itself', async () => {
   const fake = launcher();
   const first = await open({ containers: fake.port });
@@ -218,22 +228,44 @@ it('keeps one client\'s names to itself', async () => {
   expect((await call(first.client, 'vscode/devContainers/connect', connect)).result).toBeDefined();
   // The other client never opened `a`, whatever the first one did.
   expect(await call(second.client, 'vscode/devContainers/relaySend', { connectionId: 'a', data: '{}' }))
-    .toMatchObject({ code: -32008 });
+    .toMatchObject({ code: -32008, message: 'Dev Container connection is not owned by this client' });
   expect(await call(second.client, 'vscode/devContainers/disconnect', { connectionId: 'a' }))
-    .toMatchObject({ code: -32008 });
+    .toMatchObject({ code: -32008, message: 'Dev Container connection is not owned by this client' });
   // The same name is the second client's own to use, and the port sees two.
   expect((await call(second.client, 'vscode/devContainers/connect', connect)).result).toBeDefined();
   expect(fake.opened).toBe(2);
 });
 
+// In VS Code's words for the same refusal.
+// https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L159-L162
 it('refuses a second container under a name the client is already using', async () => {
   const fake = launcher();
   const { client } = await open({ containers: fake.port });
   await call(client, 'vscode/devContainers/connect', connect);
   const again = await call(client, 'vscode/devContainers/connect', connect);
-  expect(again).toMatchObject({ code: -32602 });
-  expect(again.message).toContain('already in use');
+  expect(again).toMatchObject({ code: -32602, message: 'Dev Container connectionId is already in use' });
   expect(fake.opened).toBe(1);
+});
+
+/*
+ * The window asking vouches for the folder first, as VS Code's host asks it
+ * before a Dev Container is started, stopped or removed there.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostProtocol.ts#L103-L108
+ */
+it('refuses a container in a folder the window does not vouch for, as VS Code\'s host', async () => {
+  const fake = launcher();
+  const host = createHost({
+    path: root,
+    agents: [{ ...echo({ path: root, pace: 0 }), provider: 'base', displayName: 'Base' }],
+    containers: fake.port,
+  });
+  const client = host.accept(watching(false));
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+  expect(await call(client, 'vscode/devContainers/connect', connect))
+    .toMatchObject({ code: -32009, message: 'Workspace trust is required to start a Dev Container' });
+  expect(await call(client, 'vscode/devContainers/stop', { workspaceFolder: connect.workspaceFolder }))
+    .toMatchObject({ code: -32009, message: 'Workspace trust is required to manage a Dev Container' });
+  expect(fake.opened).toBe(0);
 });
 
 it('asks for the container operation rather than assuming it', async () => {
@@ -275,18 +307,34 @@ it('stops a connection\'s containers when it goes', async () => {
   expect(fake.stopped).toEqual(['a']);
 });
 
-it('checks the three strings a connect carries', async () => {
+it('checks the three strings a connect carries, in VS Code\'s words', async () => {
   const fake = launcher();
   const { client } = await open({ containers: fake.port });
   for (const bad of [
     { connectionId: '', workspaceFolder: '/work', name: 'Box' },
     { connectionId: 'a'.repeat(257), workspaceFolder: '/work', name: 'Box' },
+  ]) {
+    expect(await call(client, 'vscode/devContainers/connect', bad))
+      .toMatchObject({ code: -32602, message: 'connectionId must be a non-empty identifier' });
+  }
+  for (const bad of [
     { connectionId: 'a', workspaceFolder: '', name: 'Box' },
+    // A relative folder is no folder a client chose: the one it reaches
+    // depends on this process's working directory.
+    { connectionId: 'a', workspaceFolder: 'work/one', name: 'Box' },
     { connectionId: 'a', workspaceFolder: '/work', name: '  ' },
   ]) {
-    expect(await call(client, 'vscode/devContainers/connect', bad)).toMatchObject({ code: -32602 });
+    expect(await call(client, 'vscode/devContainers/connect', bad))
+      .toMatchObject({ code: -32602, message: 'workspaceFolder must be an absolute host path and name must be non-empty' });
   }
   expect(fake.opened).toBe(0);
+});
+
+it('reads a dev container folder as VS Code does on Windows, a host URI\'s path as the file it names', () => {
+  expect(normalizeDevContainerWorkspaceFolder('/c:/work/one', 'win32')).toBe('c:\\work\\one');
+  expect(normalizeDevContainerWorkspaceFolder('C:/work/one', 'win32')).toBe('C:\\work\\one');
+  expect(normalizeDevContainerWorkspaceFolder('//server/share/one', 'win32')).toBe('\\\\server\\share\\one');
+  expect(normalizeDevContainerWorkspaceFolder('/c:/work/one', 'linux')).toBe('/c:/work/one');
 });
 
 /*
@@ -299,22 +347,23 @@ it('checks the three strings a connect carries', async () => {
  * helpers below exist on the host rather than on one connection.
  */
 
-it('checks the folder a stop or a remove names', async () => {
+it('checks the folder a stop or a remove names, in VS Code\'s words', async () => {
   const fake = launcher();
   const { client } = await open({ containers: fake.port });
+  const refused = { code: -32602, message: 'workspaceFolder must be an absolute host path' };
   for (const bad of [
     {},
     { workspaceFolder: '' },
     { workspaceFolder: '   ' },
-    // A relative path is not a folder a client chose: resolving it against
-    // this process's own working directory would stop something nobody asked
-    // about.
+    // A relative path is no folder a client chose: the one it reaches
+    // depends on this process's working directory, and stopping it would
+    // stop something nobody asked about.
     { workspaceFolder: 'work/one' },
     { workspaceFolder: 7 },
     { workspaceFolder: '/work\0/one' },
   ]) {
-    expect(await call(client, 'vscode/devContainers/stop', bad)).toMatchObject({ code: -32602 });
-    expect(await call(client, 'vscode/devContainers/remove', bad)).toMatchObject({ code: -32602 });
+    expect(await call(client, 'vscode/devContainers/stop', bad)).toMatchObject(refused);
+    expect(await call(client, 'vscode/devContainers/remove', bad)).toMatchObject(refused);
   }
   expect(fake.halted).toEqual([]);
   expect(fake.gone).toEqual([]);

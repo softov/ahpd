@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   actions, resetSdk, claude, createHost, hello, machine, open, peer,
- sdk, sessionQueries, serving, settle, running,
+ sdk, sendAnswered, sendTurn, sessionQueries, serving, settle, running,
 } from './support/host.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
@@ -104,6 +104,8 @@ describe('choosing a model', () => {
     await client.handle(hello(['0.9.0']));
     const made = async (channel: string, provider: string) => {
       await client.handle({ method: 'createSession', params: { channel, provider, config: {} } });
+      // The CLI its first send starts.
+      await sendTurn(client, channel);
       await settle();
       return sessionQueries().at(-1)?.options as Record<string, unknown>;
     };
@@ -117,18 +119,18 @@ describe('choosing a model', () => {
     expect(onTest.settings).toBeUndefined();
   });
 
-  it('sources the client\'s shell init script before every shell command, while one is in force', async () => {
+  /*
+   * The CLI's session environment file, `CLAUDE_ENV_FILE`, a script whose
+   * contents the CLI runs before each Bash command, read once by each CLI.
+   * https://code.claude.com/docs/en/hooks#persist-environment-variables
+   */
+  it('hands the CLI the client\'s shell init script as its session environment file, the CLI after a change taking the change', async () => {
     const { client, uri } = await running();
-    const options = sessionQueries().at(-1)?.options as {
-      hooks?: { PreToolUse?: { matcher?: string; hooks: ((input: unknown) => Promise<{ hookSpecificOutput?: { updatedInput?: { command?: string } } }>)[] }[] };
-    };
-    const matcher = options.hooks?.PreToolUse?.[0];
-    expect(matcher?.matcher).toBe('Bash');
-    const hook = matcher?.hooks[0];
-    if (hook === undefined) throw new Error('no PreToolUse hook on Bash');
-    const before = (command: string) => hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, tool_use_id: 'x', session_id: 's', transcript_path: '', cwd: '' });
-    // Nothing in force: the command runs as written.
-    expect((await before('make')).hookSpecificOutput).toBeUndefined();
+    await sendAnswered(client, uri);
+    /** The session environment file the CLI that answered the last turn was handed. */
+    const envFile = (): unknown => (sessionQueries().at(-1)?.options as { settings?: { env?: Record<string, unknown> } }).settings?.env?.CLAUDE_ENV_FILE;
+    // Nothing in force: no file.
+    expect(envFile()).toBeUndefined();
     const set = async (value: unknown) => {
       client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/configChanged', config: { shellInitScripts: value } } } });
       await settle();
@@ -137,12 +139,14 @@ describe('choosing a model', () => {
       }).snapshot.state.config.values.shellInitScripts;
     };
     // The reference client's shape, declared `readOnly` in the schema so the
-    // window sends it and draws no control for it.
+    // window sends it and draws no control for it. The turn after it is
+    // answered by a CLI that reads it.
     expect(await set([{ shell: 'bash', script: 'export FOO=bar\n' }])).toEqual([{ shell: 'bash', script: 'export FOO=bar\n' }]);
-    const sourced = (await before('make')).hookSpecificOutput?.updatedInput?.command ?? '';
-    expect(sourced).toMatch(/^\{ \. '.*ahpd-shell-init-.*\.sh'; \} 2>\/dev\/null \|\| printf 'shell init script exited %s\\n' "\$\?"\nmake$/);
-    const path = /'([^']*)'/.exec(sourced)?.[1] ?? '';
+    await sendAnswered(client, uri);
+    const path = String(envFile());
+    expect(path).toMatch(/ahpd-shell-init-.*\.sh$/);
     expect(readFileSync(path, 'utf8')).toBe('export FOO=bar\n');
+    const started = sessionQueries().length;
     /*
      * A malformed value, a shell VS Code's list does not take or more than
      * its one entry, is held as it was set and leaves the last valid script
@@ -152,17 +156,22 @@ describe('choosing a model', () => {
     const two = [{ shell: 'bash', script: 'export A=1\n' }, { shell: 'bash', script: 'export B=2\n' }];
     expect(await set(two)).toEqual(two);
     expect(await set([{ shell: 'zsh', script: 'x' }])).toEqual([{ shell: 'zsh', script: 'x' }]);
-    expect((await before('make')).hookSpecificOutput?.updatedInput?.command).toBe(sourced);
+    await sendAnswered(client, uri);
+    expect(sessionQueries()).toHaveLength(started);
     expect(readFileSync(path, 'utf8')).toBe('export FOO=bar\n');
-    // A PowerShell script is nothing to a bash tool.
+    // A PowerShell script is nothing to a bash tool: no file, and none for the CLI after it.
     expect(await set([{ shell: 'powershell', script: '$x = 1' }])).toEqual([{ shell: 'powershell', script: '$x = 1' }]);
-    expect((await before('make')).hookSpecificOutput).toBeUndefined();
+    expect(existsSync(path)).toBe(false);
+    await sendAnswered(client, uri);
+    expect(envFile()).toBeUndefined();
     // Cleared, and the file with it.
+    expect(await set([{ shell: 'bash', script: 'export FOO=bar\n' }])).toEqual([{ shell: 'bash', script: 'export FOO=bar\n' }]);
+    expect(existsSync(path)).toBe(true);
     expect(await set([])).toEqual([]);
     expect(existsSync(path)).toBe(false);
   });
 
-  it('hands the allow and deny lists to the harness when the session starts', async () => {
+  it('hands the allow list to the harness when the session starts, and leaves the deny list to the permission check', async () => {
     const client = open();
     await client.handle(hello(['0.9.0']));
     await client.handle({
@@ -172,17 +181,20 @@ describe('choosing a model', () => {
         config: { permissions: { allow: ['Read', 'Grep'], deny: ['Bash'] } },
       },
     });
+    // The CLI its first send starts.
+    await sendTurn(client, 'ahp-session:/listed');
     await settle();
-    // The SDK takes both natively, which is what makes advertising the key
-    // the smallest thing that works - and it is the half that only applies to
-    // a session being built.
+    // The SDK takes the allow list natively, the half that applies to a
+    // session being built; a denied tool stays the model's, refused when the
+    // CLI asks about it, as VS Code's Claude leaves a person's denials.
     const options = sessionQueries().at(-1)?.options;
     expect(options?.allowedTools).toEqual(['Read', 'Grep']);
-    expect(options?.disallowedTools).toEqual(['Bash']);
+    expect(options?.disallowedTools).toBeUndefined();
   });
 
   it('answers a tool from the list instead of asking, once one is set', async () => {
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     client.handle({
       method: 'dispatchAction',
       params: {
@@ -200,10 +212,14 @@ describe('choosing a model', () => {
 
     /*
      * The live half. The query was built before the list existed, so the SDK
-     * cannot have been told - `canUseTool` is the only thing that can answer,
-     * and a control that reported success and changed nothing is what this
-     * would otherwise be.
+     * cannot have been told: the question the CLI raises in a turn is the
+     * host's to answer, and its chain answers it from the list, as VS Code's
+     * host answers a question its session's permissions settle.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L286-L308
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionPermissions.ts#L397-L425
      */
+    await sendTurn(client, uri, 'again');
+    await settle();
     expect(await sdk.canUseTool?.('Read', { path: 'x' }, { toolUseID: 'c1' }))
       .toMatchObject({ behavior: 'allow' });
     expect(await sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'c2' }))
@@ -212,6 +228,7 @@ describe('choosing a model', () => {
 
   it('lets a denial win over an approval, because they answer different questions', async () => {
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     client.handle({
       method: 'dispatchAction',
       params: {
@@ -225,7 +242,13 @@ describe('choosing a model', () => {
     expect(await sdk.canUseTool?.('Bash', {}, { toolUseID: 'c1' })).toMatchObject({ behavior: 'deny' });
   });
 
-  it('says a permissions value as the client sent it, and takes one that is one', async () => {
+  /*
+   * A key the schema declares is the host's to check, and a value its checks
+   * pass is said as sent and handed on, the backend's answer for it logged, as
+   * VS Code's host applies a config change to its agents.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
+   */
+  it('says a permissions value as sent, a malformed one included, and hands it on', async () => {
     const { client, peer: p, uri } = await running();
     const set = async (value: unknown) => {
       client.handle({
@@ -237,12 +260,9 @@ describe('choosing a model', () => {
         rejectionReason?: string; action?: { config?: Record<string, unknown> };
       };
     };
-    // The reference host checks a value against its property's list and
-    // nothing else, so a string where the schema says an object is said, and
-    // the backend's refusal of it is this host's log.
-    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L150
-    expect((await set('all')).rejectionReason).toBeUndefined();
-    // And the good one is echoed with its value.
+    const odd = await set('all');
+    expect(odd.rejectionReason).toBeUndefined();
+    expect(odd.action?.config).toEqual({ permissions: 'all' });
     const took = await set({ allow: ['Read'], deny: [] });
     expect(took.rejectionReason).toBeUndefined();
     expect(took.action?.config).toEqual({ permissions: { allow: ['Read'], deny: [] } });
@@ -302,6 +322,7 @@ describe('choosing a model', () => {
    */
   it('switches no model for a model a client sets as config', async () => {
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'session/configChanged', config: { model: 'default' } } },
@@ -312,6 +333,7 @@ describe('choosing a model', () => {
 
   it('refuses a permission mode the CLI does not know', async () => {
     const { client, uri } = await running();
+    await sendAnswered(client, uri);
     client.handle({
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'session/configChanged', config: { permissionMode: 'bypass' } } },
@@ -585,8 +607,10 @@ describe('a session\'s config across a restart', () => {
   /*
    * A change is said in the client's own keys, as VS Code's host says a
    * client's config action: an answer that is neither `true` nor a sentence
-   * takes nothing, and no key of the backend's own goes out in its place.
+   * takes nothing, refused in VS Code's words for a key it cannot write, and
+   * no key of the backend's own goes out in its place.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4220-L4222
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
    */
   it('says a change in the client\'s own keys, and takes no answer under the backend\'s', async () => {
     const { echo } = await import('../../../examples/echo/agent.js');
@@ -609,8 +633,28 @@ describe('a session\'s config across a restart', () => {
     await settle();
     const answered = actions(p, uri).filter((e) => e.origin?.clientSeq === 1);
     expect(answered.map((e) => [e.action.type, e.rejectionReason]))
-      .toEqual([['session/configChanged', 'mode is not a config key this backend takes']]);
+      .toEqual([['session/configChanged', 'Session configuration \'mode\' is not writable.']]);
     expect(actions(p, uri).some((e) => Object.hasOwn((e.action.config ?? {}) as Record<string, unknown>, 'permissionMode'))).toBe(false);
+  });
+
+  // A backend that takes no key at all, in VS Code's words for a key it cannot write.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L136-L143
+  it('refuses a key a backend that takes none is sent, in VS Code\'s words', async () => {
+    const { echo } = await import('../../../examples/echo/agent.js');
+    const p = peer();
+    const host = createHost({ path: '/tmp', agents: [echo({ path: '/tmp', pace: 0 })], ...machine(), sessions: memorySessions() });
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/plain';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, clientSeq: 1, action: { type: 'session/configChanged', config: { mode: 'plan' } } },
+    });
+    await settle();
+    expect(actions(p, uri).filter((e) => e.origin?.clientSeq === 1).map((e) => e.rejectionReason))
+      .toEqual(['Session configuration \'mode\' is not writable.']);
   });
 
   /** A host over a store already holding a config for the session `stale`, as a restart finds it. */

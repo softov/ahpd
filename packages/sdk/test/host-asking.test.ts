@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { actions, claude, resetSdk, running, sessionQueries, settle } from './support/host.js';
+import { actions, builtServer, claude, resetSdk, running, settle } from './support/host.js';
 import type { Agent } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { AskedQuestion, HostTool } from '../src/types/host.js';
@@ -74,8 +74,8 @@ async function serving() {
 
   /** The tool as the backend was handed it. */
   const tool = (): Tool => {
-    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
-    const found = servers?.host?.tools.find((one) => one.name === 'inquire');
+    const host = builtServer('host') as { tools: Tool[] } | undefined;
+    const found = host?.tools.find((one) => one.name === 'inquire');
     if (found === undefined) throw new Error('the backend was handed no inquire tool');
     return found;
   };
@@ -114,6 +114,30 @@ async function serving() {
 }
 
 describe('a host tool asks the person', () => {
+  /*
+   * The session lists it as it lists any chat's question, so a client watching
+   * only the session sees the session waits on a person, as VS Code's host
+   * mirrors every chat's question whoever asked it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L85-L103
+   */
+  it('lists its question in the session under VS Code\'s id, and takes it down once answered', async () => {
+    const { p, uri, chatUri, tool, begin, lastRequest, completing } = await serving();
+    await begin();
+    const pending = tool().handler({ questions: two });
+    await settle();
+
+    const request = lastRequest();
+    const raised = actions(p, uri).filter((one) => one.action.type === 'session/inputNeededSet');
+    expect(raised.map((one) => one.action.request)).toMatchObject([
+      { id: `chatInput:${chatUri}:${String(request.id)}`, kind: 'chatInput', chat: chatUri, request: { id: request.id } },
+    ]);
+
+    await completing(String(request.id), { response: 'cancel' });
+    await pending;
+    const removed = actions(p, uri).filter((one) => one.action.type === 'session/inputNeededRemoved');
+    expect(removed.map((one) => one.action.id)).toEqual([`chatInput:${chatUri}:${String(request.id)}`]);
+  });
+
   it('puts one request on the chat and returns the answers, in order', async () => {
     const { client, p, chatUri, answered, tool, begin, lastRequest, completing } = await serving();
     await begin();
