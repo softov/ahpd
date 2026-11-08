@@ -120,7 +120,7 @@ const { OpenLogins } = await import('../src/logins.js');
 type Logins = InstanceType<typeof OpenLogins>;
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
 };
 
 /** Wait for `done` to hold, for three seconds at most, and then for what follows from it. */
@@ -935,8 +935,10 @@ describe('a failed login', () => {
     }
   });
 
-  it('ends the turn as it does today for every other error', async () => {
-    for (const error of ['billing_error', 'account_on_hold', 'invalid_request', 'model_not_found', 'unknown', 'max_output_tokens', 'cloud_credential_error']) {
+  // One case per error: seven turns in one case took most of a Windows case's budget.
+  it.each(['billing_error', 'account_on_hold', 'invalid_request', 'model_not_found', 'unknown', 'max_output_tokens', 'cloud_credential_error'])(
+    'ends the turn as it does today for every other error (%s)',
+    async (error) => {
       sdk.reset();
       const { session, chat } = await answeredOnce(twoLogins());
       session.sendMessage('t2', 'two');
@@ -947,8 +949,8 @@ describe('a failed login', () => {
       expect(sdk.queries, error).toHaveLength(1);
       expect(ofTurn(chat, 'chat/error', 't2'), error).toHaveLength(1);
       expect(shown(chat, said), error).toBe(true);
-    }
-  });
+    },
+  );
 });
 
 /*
