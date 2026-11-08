@@ -143,12 +143,12 @@ it('resolves a chat\'s sandbox for its runtime on Start.computers, the root sett
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sessionSandbox.ts#L17-L69
  */
 it('reads each chat\'s selection from the values it runs on, its own where it has them and its session\'s otherwise', () => {
-  const own = { sandboxEnabled: 'off' };
+  const own: Record<string, Bag> = { 'ahp-chat:/peer': { sandboxEnabled: 'off' } };
   const held = {
     config: { sandboxEnabled: 'on' },
     defaultChat: 'ahp-chat:/lead',
     chats: new Map([['ahp-chat:/lead', {}], ['ahp-chat:/peer', {}], ['ahp-chat:/other', {}]]),
-    backends: new Map([['ahp-chat:/other', { config: own }]]),
+    backends: new Map([['ahp-chat:/other', { config: { sandboxEnabled: 'off' } }]]),
   };
   const sandbox = createSandbox({
     sessions: new Map([['echo:/chats', held]]),
@@ -157,21 +157,35 @@ it('reads each chat\'s selection from the values it runs on, its own where it ha
     log: () => {},
     options: {},
     rootConfig: {},
-    chatConfig: (_uri: string, one: typeof held, chat: string) => (chat === 'ahp-chat:/other' ? own : one.config),
-    getChatOwnConfigValues: () => ({}),
+    // The host's: a chat of another backend runs on its own config, any other
+    // chat on its own values laid over its session's.
+    chatConfig: (_uri: string, one: typeof held, chat: string) => one.backends.get(chat)?.config ?? { ...one.config, ...own[chat] },
+    getChatOwnConfigValues: (_uri: string, chat: string) => ({ ...own[chat] }),
   } as unknown as HostContext);
   expect(sandbox.config('echo:/chats', 'ahp-chat:/lead').enabled).toBe('on');
-  expect(sandbox.config('echo:/chats', 'ahp-chat:/peer').enabled).toBe('on');
+  expect(sandbox.config('echo:/chats', 'ahp-chat:/peer').enabled).toBe('off');
   expect(sandbox.config('echo:/chats', 'ahp-chat:/other').enabled).toBe('off');
 });
 
+/** A chat's own selection, a client's `chat/configChanged` on the chat. */
+const chatSelecting = async (client: Awaited<ReturnType<typeof opened>>, chat: string, clientSeq: number, value: string): Promise<void> => {
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, clientSeq, action: { type: 'chat/configChanged', config: { sandboxEnabled: value } } },
+  });
+  await settle();
+};
+
 /*
- * A change of the session's selection reaches every chat that takes it, each
- * chat's applied enablement kept apart and the default chat's also at the
- * session level, which older clients read.
+ * A change of the session's selection reaches the chats that set none of
+ * their own, a new chat starting with its default chat's as its own, and a
+ * chat's own change reaches that chat alone; each chat's applied enablement
+ * kept apart and the default chat's also at the session level, which older
+ * clients read.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L255-L282
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1159-L1170
  */
-it('applies a session\'s selection to each chat that takes it, each chat\'s state apart and the default chat\'s also at the top', async () => {
+it('applies a session\'s selection to the chats that set none and a chat\'s own to that chat, each chat\'s state apart and the default chat\'s also at the top', async () => {
   const client = await opened([], { path: DIR, agents: [switched([])], computers: port() });
   const uri = 'echo:/chats';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo', config: { sandboxEnabled: 'off' } } });
@@ -182,8 +196,78 @@ it('applies a session\'s selection to each chat that takes it, each chat\'s stat
   await settle();
   expect(sandboxStateOf(await stateOf(client, uri))).toMatchObject({ chats: { [lead]: { enabled: false }, [PEER]: { enabled: false } }, enabled: false });
 
+  // The peer started with the default chat's off as its own, which the
+  // session's change does not reach.
   await selecting(client, uri, 3, 'on');
+  expect(sandboxStateOf(await stateOf(client, uri))).toMatchObject({ chats: { [lead]: { enabled: true }, [PEER]: { enabled: false } }, enabled: true });
+
+  await chatSelecting(client, PEER, 4, 'on');
   expect(sandboxStateOf(await stateOf(client, uri))).toMatchObject({ chats: { [lead]: { enabled: true }, [PEER]: { enabled: true } }, enabled: true });
+});
+
+/*
+ * A chat's own request the computer cannot host is rejected on that chat and
+ * its own selection put back, its session's left as it was.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1206-L1223
+ */
+it('rejects a chat\'s own request to turn the sandbox on where its computer cannot host it, and puts the chat\'s own selection back', async () => {
+  const notes: Note[] = [];
+  const client = await opened(notes, { path: DIR, agents: [switched([])], computers: port() });
+  const uri = 'echo:/chat-rejected';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo', config: { computer: 'computer://box', sandboxEnabled: 'off' } } });
+  await settle();
+  const PEER = 'ahp-chat:/sandbox-peer-rejected';
+  await client.handle({ method: 'createChat', params: { channel: uri, chat: PEER } });
+  await settle();
+  await client.handle({ method: 'subscribe', params: { channel: PEER } });
+  await client.handle({ method: 'subscribe', params: { channel: uri } });
+
+  await chatSelecting(client, PEER, 9, 'on');
+  const failure = { enabled: false, rejectedSelection: true, error: { clientId: 'probe', clientSeq: 9, message: REFUSAL } };
+  const said = notes
+    .filter((one) => one.method === 'action')
+    .map((one) => one.params as { channel: string; action: Bag });
+  const failed = said.findIndex((one) => one.action.type === 'session/metaChanged'
+    && JSON.stringify((one.action._meta as Bag | undefined)?.['vscode.sandboxState']).includes(JSON.stringify({ [PEER]: failure }).slice(1, -1)));
+  const back = said.findIndex((one, at) => at > failed && one.channel === PEER && one.action.type === 'chat/configChanged'
+    && (one.action.config as Bag).sandboxEnabled === 'off');
+  expect(failed).toBeGreaterThanOrEqual(0);
+  expect(back).toBeGreaterThan(failed);
+  const peer = await stateOf(client, PEER);
+  expect((peer.config as { values: Bag }).values.sandboxEnabled).toBe('off');
+  expect(sandboxStateOf(await stateOf(client, uri))).toMatchObject({ chats: { [PEER]: { enabled: false, rejectedSelection: true } } });
+  expect(((await stateOf(client, uri)).config as { values: Bag }).values.sandboxEnabled).toBe('off');
+});
+
+/*
+ * A chat's own off that the floor does not allow becomes on when the floor is
+ * published again, said on that chat as the host's own change.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1106-L1116
+ */
+it('moves a chat\'s own off that the floor does not allow to on, on that chat', async () => {
+  const notes: Note[] = [];
+  const client = await opened(notes, { path: DIR, agents: [switched([])], computers: port(), managedSettingsSandbox: { enabled: true } });
+  const uri = 'echo:/chat-floor';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+  await settle();
+  const PEER = 'ahp-chat:/sandbox-peer-floor';
+  await client.handle({ method: 'createChat', params: { channel: uri, chat: PEER } });
+  await settle();
+  await client.handle({ method: 'subscribe', params: { channel: PEER } });
+  await chatSelecting(client, PEER, 2, 'off');
+
+  // The floor is published again on a change of the root settings.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-root://', clientSeq: 3, action: { type: 'root/configChanged', config: { sandbox: { enabled: 'on' } } } },
+  });
+  await settle();
+  const moved = notes
+    .filter((one) => one.method === 'action')
+    .map((one) => one.params as { channel: string; action: Bag })
+    .filter((one) => one.channel === PEER && one.action.type === 'chat/configChanged');
+  expect(moved.at(-1)?.action.config).toEqual({ sandboxEnabled: 'on' });
+  expect(((await stateOf(client, PEER)).config as { values: Bag }).values.sandboxEnabled).toBe('on');
 });
 
 /*

@@ -968,7 +968,7 @@ The floor decides what a selection of `off` comes to, as VS Code's host does:
 | `enabled` without `allowBypass` | It becomes `on` |
 | `failClosed` | It stays as selected and the sandbox stays on; a client's `off` is refused in the words VS Code reads as its runtime's refusal, and put back |
 
-The host applies a chat's sandbox at each start of the chat, at each change of the selection the chat takes, and at each change of the root `sandbox` settings.
+A client sets a chat's own selection with `chat/configChanged` on the chat, and the session's with `session/configChanged`, which reaches the chats that set none of their own; a new chat starts with its default chat's selection as its own. The host applies a chat's sandbox at each start of the chat, at each change of the selection the chat takes, and at each change of the root `sandbox` settings, and a selection of `off` the floor moves to `on` is moved where it was made, on the chat or on the session.
 
 A backend reads its chat's resolved sandbox from `Start.computers.sandbox(chat)`, and a runtime with a sandbox of its own applies it there.
 
@@ -995,7 +995,7 @@ Each kind of computer says whether it can host the runtime, from the computer as
 
 A machine made for a session whose sandbox is on is made to host the runtime, as VS Code prepares a dev container it starts with the sandbox enabled. A container gets `--security-opt seccomp=unconfined`, `apparmor=unconfined` and `systempaths=unconfined` and `--device /dev/net/tun`, and a Compose definition's service gets the same as `security_opt` and `devices`.
 
-A client's request to turn the sandbox on where the computer cannot host it is rejected with the computer's reason, as VS Code rejects a sandbox change its runtime cannot apply. The failure is published in `vscode.sandboxState` with the client's id and sequence number, and then the selection is put back to the enablement last applied. The chat applies the selection put back, which keeps `rejectedSelection` in its state until a new selection is made. A session that starts with its sandbox on where its computer cannot host it reports the failure in the same place.
+A client's request to turn the sandbox on where the computer cannot host it is rejected with the computer's reason, as VS Code rejects a sandbox change its runtime cannot apply. The failure is published in `vscode.sandboxState` with the client's id and sequence number, and then the selection is put back to the enablement last applied where it was made, the chat's own or its session's. The chat applies the selection put back, which keeps `rejectedSelection` in its state until a new selection is made. A session that starts with its sandbox on where its computer cannot host it reports the failure in the same place.
 
 ## Parts
 

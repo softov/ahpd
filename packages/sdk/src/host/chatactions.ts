@@ -674,6 +674,10 @@ export function chatAction(
         ctx.keepChat(uri, channel, undefined, false, provider, settings);
       }
       dispatch(channel, action, origin);
+      // The sandbox's part of the change, once it is said, as VS Code's host
+      // handles a chat's config change and then its runtime applies the
+      // sandbox (agentConfigurationService.ts L506-L536 at 6b68d3fe).
+      ctx.sandbox.chatConfigChanged(uri, channel, config, origin);
       const chat = owning === undefined ? undefined : byChat.get(channel)?.chat;
       if (owning === undefined || chat === undefined) return;
       const effective = { ...agent.defaults(), ...contributedDefaults(), ...chatConfig(uri, owning, channel) };

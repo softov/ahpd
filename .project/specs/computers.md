@@ -197,6 +197,7 @@ WHEN a backend reads `Start.computers.sandbox(chat)`
 THEN the host answers the chat's sandbox as VS Code's `getSessionSandboxConfig` resolves it
 AND the root settings come first, then the chat's selection, within the operator's `managedSettingsSandbox`.
 A chat reads its selection from the values it runs on: its own where it has them, its session's otherwise.
+A client sets a chat's own selection with `chat/configChanged`, and a session's selection reaches the chats that set none.
 Each session publishes the floor as `vscode.resolvedSandboxPolicy`.
 Under a floor that allows bypass, a client's `off` is the chat's enablement.
 A floor with `failClosed` keeps the sandbox on with no way out, and refuses a client's `off`.
@@ -226,7 +227,7 @@ A machine made for a session whose sandbox is on gets VS Code's options for it.
 
 WHEN a client turns a chat's sandbox on where its computer cannot host it
 THEN the host publishes the computer's reason in `vscode.sandboxState` with the client's id and sequence number
-AND it puts the selection back to the enablement last applied.
+AND it puts the selection back to the enablement last applied, where the selection was made.
 The rejection stays reported until a new selection is made.
 A start that meets the same reason reports it in the same place.
 

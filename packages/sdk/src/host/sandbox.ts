@@ -60,6 +60,8 @@ export interface Sandbox {
   check(session: string, chat: string, origin?: Origin, requested?: unknown): Promise<void>;
   /** The sandbox's part of a change of a session's config, said once it is checked. */
   configChanged(session: string, config: Bag, origin?: Origin): void;
+  /** The sandbox's part of a change of one chat's own config, its `chat/configChanged`, said once it is checked. */
+  chatConfigChanged(session: string, chat: string, config: Bag, origin?: Origin): void;
   /** The sandbox's part of a change of the root settings: every session's floor, and every chat's sandbox applied again. */
   rootChanged(): void;
   /** A session gone, and what this held of it with it. */
@@ -76,6 +78,8 @@ export function createSandbox(ctx: HostContext): Sandbox {
    * `_sessionSandboxUserSelections`.
    */
   const chosenBy = new Set<string>();
+  /** The chats whose own selection a client made, VS Code's `_chatSandboxUserSelections`. */
+  const chosenFor = new Set<string>();
   const policy = () => ctx.options.managedSettingsSandbox;
 
   /** The values a chat runs on: its own laid over its session's, the host's `chatConfig`. */
@@ -91,7 +95,12 @@ export function createSandbox(ctx: HostContext): Sandbox {
     sessions.get(session)?.config[SANDBOX_ENABLED_KEY] ?? kept.config(idOf(session))?.[SANDBOX_ENABLED_KEY];
   /** A chat's selection, from the values it runs on. */
   const selection = (session: string, chat: string): unknown => valuesOf(session, chat)?.[SANDBOX_ENABLED_KEY];
-  /** The chats that take their session's selection, which a change of it reaches. */
+  /*
+   * The chats that take their session's selection, which a change of it
+   * reaches: every chat on the session's backend that set none of its own, as
+   * the host hands a session's value of a chat-mutable key.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L263-L266
+   */
   const following = (session: string): string[] => {
     const held = sessions.get(session);
     return held === undefined ? [] : [...held.chats.keys()].filter((chat) => !ownSelection(session, chat));
@@ -143,22 +152,22 @@ export function createSandbox(ctx: HostContext): Sandbox {
   };
 
   /*
-   * A new selection made for the chats that take the session's: the
-   * rejection each reported, and the session level's, cleared.
+   * A new selection made for these chats: the rejection each reported cleared,
+   * and the session level's where `level` says so.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1180-L1204
    */
-  const clearRejected = (session: string): void => {
+  const clearRejected = (session: string, chats: readonly string[], level: boolean): void => {
     const before = metas.get(session);
     if (before === undefined) return;
     let meta = before;
-    const level = readSessionSandboxState({ _meta: meta });
-    if (level?.rejectedSelection === true) {
+    const top = readSessionSandboxState({ _meta: meta });
+    if (level && top?.rejectedSelection === true) {
       meta = withSessionSandboxState(meta, {
-        ...(level.enabled === undefined ? {} : { enabled: level.enabled }),
-        ...(level.error === undefined ? {} : { error: level.error }),
+        ...(top.enabled === undefined ? {} : { enabled: top.enabled }),
+        ...(top.error === undefined ? {} : { error: top.error }),
       });
     }
-    for (const chat of following(session)) {
+    for (const chat of chats) {
       const state = readChatSandboxState({ _meta: meta }, chat);
       if (state?.rejectedSelection !== true) continue;
       meta = withChatSandboxState(meta, chat, {
@@ -190,12 +199,28 @@ export function createSandbox(ctx: HostContext): Sandbox {
    */
   const changed = (session: string, config: Bag, origin: Origin | undefined, rollback: boolean): void => {
     const moved = Object.hasOwn(config, SANDBOX_ENABLED_KEY);
-    if (moved && !rollback) clearRejected(session);
+    if (moved && !rollback) clearRejected(session, following(session), true);
     if (moved && origin !== undefined) chosenBy.add(session);
     else if (moved) chosenBy.delete(session);
     publish(session, origin !== undefined);
     if (!moved) return;
     for (const chat of following(session)) applyTo(session, chat, origin, origin === undefined ? undefined : config[SANDBOX_ENABLED_KEY]);
+  };
+
+  /*
+   * The sandbox's part of one chat's own config change, VS Code's handling of
+   * a `chat/configChanged`: a new selection clears that chat's rejection, and
+   * the session level's for the default chat, unless it puts one back; a
+   * client's selection is remembered as a client's; and the chat applies its
+   * sandbox with the selection a client's change carried.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L506-L536
+   */
+  const chatChanged = (session: string, chat: string, config: Bag, origin: Origin | undefined, rollback: boolean): void => {
+    if (!Object.hasOwn(config, SANDBOX_ENABLED_KEY) || !sessions.has(session)) return;
+    if (!rollback) clearRejected(session, [chat], sessions.get(session)?.defaultChat === chat);
+    if (origin !== undefined) chosenFor.add(chat);
+    else chosenFor.delete(chat);
+    applyTo(session, chat, origin, origin === undefined ? undefined : config[SANDBOX_ENABLED_KEY]);
   };
 
   /*
@@ -214,6 +239,22 @@ export function createSandbox(ctx: HostContext): Sandbox {
     changed(session, { [SANDBOX_ENABLED_KEY]: value }, undefined, rollback);
   };
 
+  /*
+   * One chat's own selection this host moves, said as a `chat/configChanged`
+   * of its own, kept with the chat's own values and handed to the chat's
+   * backend, as the host keeps and hands a client's, then applied: VS Code's
+   * `updateChatConfig`.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L630-L660
+   */
+  const writeChat = (session: string, chat: string, value: string, rollback: boolean): void => {
+    const held = sessions.get(session);
+    if (held === undefined) return;
+    ctx.persistChatOwnConfigValues(session, chat, { ...ctx.getChatOwnConfigValues(session, chat), [SANDBOX_ENABLED_KEY]: value });
+    dispatch(chat, { type: 'chat/configChanged', config: { [SANDBOX_ENABLED_KEY]: value } });
+    void Promise.resolve(held.chats.get(chat)?.setConfig?.(SANDBOX_ENABLED_KEY, value));
+    chatChanged(session, chat, { [SANDBOX_ENABLED_KEY]: value }, undefined, rollback);
+  };
+
   const config = (session: string, chat: string): SandboxConfigValue => sessionSandboxConfig(
     ctx.rootConfig[SANDBOX_ROOT_KEY] as SandboxConfigValue | undefined,
     selection(session, chat),
@@ -225,9 +266,10 @@ export function createSandbox(ctx: HostContext): Sandbox {
    * Published where the session's schema has the switch or a floor is set.
    * A floor that newly keeps the sandbox on without bypass clears the state
    * applied before it; then a selection of `off` that the floor does not
-   * allow becomes `on`, unless a client made it and the floor allows bypass
-   * and has not moved since, or the floor fails closed, which keeps the
-   * selection and leaves the sandbox on.
+   * allow becomes `on`, a chat's own and the session's, unless a client made
+   * it and the floor allows bypass and has not moved since, or the floor fails
+   * closed, which keeps the selection and leaves the sandbox on. A tool's chat
+   * takes its spawning chat's selection and moves none of its own.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1088-L1127
    */
   const publish = (session: string, chosen = false): void => {
@@ -246,8 +288,15 @@ export function createSandbox(ctx: HostContext): Sandbox {
       metas.set(session, withSessionSandboxPolicy(base, floor));
       said(session);
     }
+    if (floor?.failClosed === true) return;
+    for (const chat of held.chats.keys()) {
+      const chatPreserved = !moved && chosenFor.has(chat) && floor?.allowBypass === true;
+      if (chatPreserved || held.backends.has(chat) || ctx.getChatOrigin(chat).kind === 'tool') continue;
+      if (ctx.getChatOwnConfigValues(session, chat)[SANDBOX_ENABLED_KEY] !== 'off') continue;
+      if (resolveSandboxEnabled('off', floor, appliedState(session, chat)?.enabled) === 'on') writeChat(session, chat, 'on', false);
+    }
     const preserved = (chosen || (!moved && chosenBy.has(session))) && floor?.allowBypass === true;
-    if (floor?.failClosed === true || preserved) return;
+    if (preserved) return;
     if (sessionSelection(session) === 'off' && resolveSandboxEnabled('off', floor, sessionEnabled(session)) === 'on') write(session, 'on', false);
   };
 
@@ -276,10 +325,10 @@ export function createSandbox(ctx: HostContext): Sandbox {
 
   /*
    * The failure published before the rollback, so a client can say it before
-   * it reconciles its toggle; then the session's selection put back to the
-   * enablement last applied. A chat with no enablement applied yet has
-   * nothing to go back to, and a selection made since the one asked for
-   * stands.
+   * it reconciles its toggle; then the selection put back to the enablement
+   * last applied where it was made, the chat's own or its session's. A chat
+   * with no enablement applied yet has nothing to go back to, and a selection
+   * made since the one asked for stands.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentConfigurationService.ts#L1206-L1240
    */
   const reject = (session: string, chat: string, asked: unknown, origin: Origin, message: string): void => {
@@ -290,7 +339,8 @@ export function createSandbox(ctx: HostContext): Sandbox {
       rejectedSelection: true,
       error: { clientId: origin.clientId, clientSeq: origin.clientSeq, message },
     });
-    write(session, previous.enabled ? 'on' : 'off', true);
+    if (Object.hasOwn(ctx.getChatOwnConfigValues(session, chat), SANDBOX_ENABLED_KEY)) writeChat(session, chat, previous.enabled ? 'on' : 'off', true);
+    else write(session, previous.enabled ? 'on' : 'off', true);
   };
 
   /*
@@ -329,6 +379,7 @@ export function createSandbox(ctx: HostContext): Sandbox {
     reject,
     check,
     configChanged: (session, config, origin) => { changed(session, config, origin, false); },
+    chatConfigChanged: (session, chat, config, origin) => { chatChanged(session, chat, config, origin, false); },
 
     /*
      * Every session's floor published again and every chat's sandbox applied
@@ -345,6 +396,7 @@ export function createSandbox(ctx: HostContext): Sandbox {
     },
 
     forget: (session) => {
+      for (const chat of sessions.get(session)?.chats.keys() ?? []) chosenFor.delete(chat);
       metas.delete(session);
       chosenBy.delete(session);
     },
