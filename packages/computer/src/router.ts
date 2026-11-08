@@ -286,5 +286,8 @@ export const routed = (
     hasImage: (tag) => maker().hasImage(tag),
     buildImage: (tag, context) => maker().buildImage(tag, context),
     pullImage: (from, tag) => maker().pullImage(from, tag),
+    removeImage: (tag) => maker().removeImage(tag),
+    imagesOf: (name) => maker().imagesOf(name),
+    checkPart: (part, requires, bins, image) => maker().checkPart(part, requires, bins, image),
   };
 };

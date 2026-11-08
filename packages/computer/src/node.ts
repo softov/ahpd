@@ -183,5 +183,8 @@ export const nodeRuntime = (nodes: NodeRegistry): ComputerRuntime => {
     hasImage: async () => false,
     buildImage: async () => { throw new Error('an image is not built for a node that joined this host'); },
     pullImage: async () => { throw new Error('an image is not pulled for a node that joined this host'); },
+    removeImage: async () => { throw new Error('an image is not removed for a node that joined this host'); },
+    imagesOf: async () => [],
+    checkPart: async () => 'a part is not checked for a node that joined this host',
   };
 };

@@ -125,6 +125,27 @@ if (verb === 'image') {
    */
   const tag = args[args.length - 1];
   const images = held.images ?? [];
+  /*
+   * `docker image ls --format {{.Tag}} <name>`: the tags of that name in
+   * `images`, the newest first, which is the last one put there.
+   */
+  if (args[1] === 'ls') {
+    keep();
+    for (const one of [...images].reverse().filter((image) => image.startsWith(`${tag}:`))) process.stdout.write(`${one.slice(tag.length + 1)}\n`);
+    process.exit(0);
+  }
+  // `docker image rm <tag>`: the tag gone from `images`, and recorded in `removed`.
+  if (args[1] === 'rm') {
+    if (!images.includes(tag)) {
+      keep();
+      process.stderr.write(`Error response from daemon: No such image: ${tag}\n`);
+      process.exit(1);
+    }
+    held.images = images.filter((one) => one !== tag);
+    (held.removed ??= []).push(tag);
+    keep();
+    process.exit(0);
+  }
   if (args[1] === 'inspect' && images.includes(tag)) {
     const env = (held.imageEnv ?? {})[tag] ?? ['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'];
     // The user its containers run as: `imageUser` by tag, else root's empty one.
@@ -732,6 +753,22 @@ if (verb === 'run' || verb === 'create') {
     const ids = (held.users ?? {})[user] ?? { uid: 0, gid: 0 };
     if (command[0] === 'id') process.stdout.write(`${command[1] === '-g' ? ids.gid : ids.uid}\n`);
     if (command[0] === 'chown') (held.chowns ??= []).push(command);
+    /*
+     * A part's check, its launchers run with `--version` in turn: recorded in
+     * `checks` with the image it ran in, the part images mounted and the
+     * launchers, and failed as VS Code words a CLI that fails its check when
+     * a part image mounted is in `failCheck`.
+     */
+    if (command[0] === 'sh' && command[1] === '-c' && String(command[2]).includes('--version')) {
+      const parts = images.map((one) => field(one, 'source'));
+      const launchers = command.slice(4);
+      (held.checks ??= []).push({ image, parts, launchers });
+      if (parts.some((one) => (held.failCheck ?? []).includes(one))) {
+        keep();
+        process.stdout.write(`CLI at ${launchers[0]} failed --version check after install (exit code 1)\n`);
+        process.exit(1);
+      }
+    }
     keep();
     process.exit(0);
   }

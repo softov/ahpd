@@ -369,7 +369,16 @@ export interface EnsureOptions {
   parts?: Part[];
   /** Where a line the load says goes: the override in use. */
   log?: (line: string) => void;
+  /**
+   * The image a machine runs when its profile names none, which a pulled
+   * part's launchers are run in once: `MACHINE_IMAGE` unless the host was
+   * configured with another.
+   */
+  image?: string;
 }
+
+/** The image a machine runs when its profile names none. */
+export const MACHINE_IMAGE = 'debian:bookworm-slim';
 
 /** Where a workspace package of this repository lives, by the name it publishes under. */
 const workspaceDir = (root: string, name: string): string | undefined => {
@@ -927,6 +936,15 @@ const failedLoads = new WeakMap<ComputerRuntime, Map<string, { error: Error; unt
  * load failed is refused with that failure until `LOAD_FAILURE_HELD_MS` has
  * passed, and loaded again after it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395
+ *
+ * A pulled part's launchers are each run once with `--version`, and a pull or
+ * a check that fails falls back to the newest earlier image of the part here
+ * whose launchers answer it, as VS Code checks its CLI after an install and
+ * falls back to an older CLI it finds; the image that failed its check loses
+ * its tag, so the next load pulls it again. The answer is the tag of the image
+ * the part is loaded from.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L102-L123
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L158-L175
  */
 export const ensurePart = async (id: string, options: EnsureOptions): Promise<string> => {
   const failures = failedLoads.get(options.runtime) ?? new Map<string, { error: Error; until: number }>();
@@ -937,8 +955,10 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
     const parts = options.parts ?? readParts();
     const part = parts.find((one) => one.id === id);
     if (part === undefined) throw new Error(`${versionsPath()} names no ${id} part`);
-    for (const need of part.requires ?? []) {
-      await ensurePart(need, { ...options, parts });
+    const required: MadePart[] = [];
+    for (const need of withRequires([id], parts).slice(1)) {
+      const at = await ensurePart(need, { ...options, parts });
+      required.push({ id: need, tag: at, version: at.slice(at.lastIndexOf(':') + 1) });
     }
     const source = part.kind === 'ahpd' ? await ahpdSourceOf(options.log) : undefined;
     // The Dockerfile is what the image is, so it is written once and is both what
@@ -947,13 +967,44 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
     // lock that moved, whose sums it holds.
     const file = dockerfileOf(part, source, lockOf(part));
     const tag = tagOf(part, source?.hash, file);
-    await once(tag, async () => {
-      if (await options.runtime.hasImage(tag)) return;
-      if (source?.from === 'workspace') await options.runtime.buildImage(tag, contextOf(file, [...source.tarballs, ...source.plugins]));
-      else await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
+    const checked = (at: string): Promise<string | undefined> => options.runtime.checkPart(
+      { id, tag: at, version: at.slice(at.lastIndexOf(':') + 1), ...(part.requires === undefined ? {} : { requires: part.requires }) },
+      required,
+      part.bin,
+      options.image ?? MACHINE_IMAGE,
+    );
+    const loaded = await once(tag, async (): Promise<string> => {
+      if (await options.runtime.hasImage(tag)) return tag;
+      if (source?.from === 'workspace') {
+        await options.runtime.buildImage(tag, contextOf(file, [...source.tarballs, ...source.plugins]));
+        return tag;
+      }
+      try {
+        await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
+        const said = await checked(tag);
+        if (said !== undefined) {
+          await options.runtime.removeImage(tag).catch((error: unknown) => {
+            options.log?.(`${tag} keeps its tag: ${error instanceof Error ? error.message : String(error)}`);
+          });
+          throw new Error(said);
+        }
+        return tag;
+      }
+      catch (error) {
+        const reason = (error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, ' ');
+        options.log?.(`could not load ${tag}: ${reason}. Looking for an earlier image of the ${id} part...`);
+        for (const earlier of (await options.runtime.imagesOf(tag.slice(0, tag.lastIndexOf(':')))).filter((one) => one !== tag)) {
+          if (await checked(earlier) === undefined) {
+            options.log?.(`using ${earlier}, an earlier image of the ${id} part, in place of ${tag}`);
+            return earlier;
+          }
+          options.log?.(`${earlier}, an earlier image of the ${id} part, failed its check too`);
+        }
+        throw error;
+      }
     });
     failures.delete(id);
-    return tag;
+    return loaded;
   }
   catch (error) {
     const failed = error instanceof Error ? error : new Error(String(error));

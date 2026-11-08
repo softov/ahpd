@@ -731,6 +731,18 @@ export interface ComputerRuntime {
   buildImage(tag: string, context: Uint8Array): Promise<void>;
   /** Pull one image from its registry and give it `tag` here. */
   pullImage(from: string, tag: string): Promise<void>;
+  /** Take one tag away from the image it names, which stays under its other names. */
+  removeImage(tag: string): Promise<void>;
+  /** The tags here of one image name, `<name>:<tag>` each, in the order Docker lists them, the newest first. */
+  imagesOf(name: string): Promise<string[]>;
+  /**
+   * Each of a part's launchers run once with `--version`, in a container of
+   * `image` with the part and the parts it requires mounted as a machine's
+   * are, as VS Code runs its CLI's `--version` after an install: nothing when
+   * each answered, else what the first that did not said.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/remoteAgentHostCliInstaller.ts#L102-L106
+   */
+  checkPart(part: MadePart, requires: readonly MadePart[], bins: readonly string[], image: string): Promise<string | undefined>;
   /**
    * Remove each part volume `requested` does not keep that no machine has used
    * for `PART_VOLUME_KEPT_MS`, as VS Code removes a cached SDK version the
@@ -3512,6 +3524,37 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           throw new Error(`${options.command} ${argv.join(' ')} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
         }
       }
+    },
+
+    removeImage: async (tag) => { await must(['image', 'rm', tag]); },
+
+    imagesOf: async (name) => (await must(['image', 'ls', '--format', '{{.Tag}}', name]))
+      .split('\n')
+      .map((one) => one.trim())
+      .filter((one) => one !== '' && one !== '<none>')
+      .map((one) => `${name}:${one}`),
+
+    /*
+     * One container, removed when it ends, its parts mounted as a machine's
+     * are and its launchers run in turn with nothing on their input, so a
+     * launcher that serves a protocol on it reads its end at once. The first
+     * that does not answer is said in VS Code's words for a CLI that fails
+     * its check.
+     */
+    checkPart: async (part, requires, bins, image) => {
+      const { route, parts } = await mountable(`the ${part.id} part's check`, [...requires, part]);
+      if (!parts.includes(part)) return `the ${part.id} part could not be mounted to run its launchers`;
+      const flags = parts.flatMap((one) => (route === 'image'
+        ? ['--mount', imageMountOf(one)]
+        : ['-v', `${volumeOf(one)}:${partTarget(one.id)}:ro`]));
+      const script = 'for one; do "$one" --version >/dev/null 2>&1 </dev/null; code=$?; '
+        + '[ "$code" -eq 0 ] || { printf \'CLI at %s failed --version check after install (exit code %s)\\n\' "$one" "$code"; exit 1; }; done';
+      const held = await ran(options, [
+        'run', '--rm', ...flags, '-e', `PATH=${pathWith(parts.map((one) => one.id), IMAGE_PATH)}`, image,
+        'sh', '-c', script, 'sh', ...bins.map((bin) => `${partTarget(part.id)}/bin/${bin}`),
+      ]);
+      if (held.code === 0) return undefined;
+      return (held.stdout.trim() || held.stderr.trim() || `${options.command} run exited ${held.code}`).split('\n').slice(-8).join('\n');
     },
 
     /*

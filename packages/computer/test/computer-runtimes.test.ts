@@ -54,6 +54,9 @@ const faker = (name: string, over: Partial<ComputerRuntime> = {}): ComputerRunti
   hasImage: async () => false,
   buildImage: async () => {},
   pullImage: async () => {},
+  removeImage: async () => {},
+  imagesOf: async () => [],
+  checkPart: async () => undefined,
   ...over,
 });
 

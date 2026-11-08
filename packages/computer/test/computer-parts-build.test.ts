@@ -181,6 +181,64 @@ it('names what Docker said when a pull fails, refuses the part for 30 seconds, a
   }
 });
 
+/** What the scripted docker ran as part checks: the image, the part images mounted, the launchers. */
+const checks = (path: string): { image: string; parts: string[]; launchers: string[] }[] =>
+  (held(path) as unknown as { checks?: { image: string; parts: string[]; launchers: string[] }[] }).checks ?? [];
+
+/** The state file with these images already here, and the scripted docker's failures. */
+const seeded = (path: string, over: Record<string, unknown>): void => {
+  writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), ...over }));
+};
+
+/*
+ * A pulled part's launchers each run once with `--version`, in the image a
+ * machine runs, as VS Code runs its CLI's `--version` after an install
+ * (remoteAgentHostCliInstaller.ts L102-L106 at 6b68d3fe).
+ */
+it('runs each launcher of a pulled part once with --version, in the image a machine runs, the parts it requires mounted', async () => {
+  const path = state();
+  await ensurePart('codex', { runtime: runtime(path), parts });
+  expect(checks(path)).toEqual([
+    { image: 'debian:bookworm-slim', parts: [tagFor(node)], launchers: ['/opt/ahpd/node/bin/node', '/opt/ahpd/node/bin/npm', '/opt/ahpd/node/bin/npx'] },
+    { image: 'debian:bookworm-slim', parts: [tagFor(node), tagFor(codex)], launchers: ['/opt/ahpd/codex/bin/codex-acp'] },
+  ]);
+  // A part already here is reused as it is, as VS Code reuses its CLI.
+  await ensurePart('codex', { runtime: runtime(path), parts });
+  expect(checks(path)).toHaveLength(2);
+});
+
+/*
+ * A pull that fails, or a pulled image that fails its check, falls back to the
+ * newest earlier image of the part whose launchers answer, as VS Code falls
+ * back to an older CLI it finds (remoteAgentHostCliInstaller.ts L111-L123,
+ * L158-L175 at 6b68d3fe); the image that failed its check loses its tag.
+ */
+it('loads the newest earlier image of a part whose pull fails, once its launchers answer', async () => {
+  const path = state();
+  seeded(path, { images: [tagFor(node), 'ahpd-part/codex:2.0.0-aaaaaaaaaaaa', 'ahpd-part/codex:2.1.0-bbbbbbbbbbbb'], failPull: [remoteFor(codex)] });
+  const lines: string[] = [];
+  expect(await ensurePart('codex', { runtime: runtime(path), parts, log: (line) => { lines.push(line); } }))
+    .toBe('ahpd-part/codex:2.1.0-bbbbbbbbbbbb');
+  expect(checks(path).at(-1)?.parts).toEqual([tagFor(node), 'ahpd-part/codex:2.1.0-bbbbbbbbbbbb']);
+  expect(lines.at(-1)).toBe(`using ahpd-part/codex:2.1.0-bbbbbbbbbbbb, an earlier image of the codex part, in place of ${tagFor(codex)}`);
+});
+
+it('takes the tag from a pulled image that fails its check, and loads the newest earlier image that answers', async () => {
+  const path = state();
+  seeded(path, {
+    images: [tagFor(node), 'ahpd-part/codex:2.0.0-aaaaaaaaaaaa', 'ahpd-part/codex:2.1.0-bbbbbbbbbbbb'],
+    failCheck: [tagFor(codex), 'ahpd-part/codex:2.1.0-bbbbbbbbbbbb'],
+  });
+  expect(await ensurePart('codex', { runtime: runtime(path), parts })).toBe('ahpd-part/codex:2.0.0-aaaaaaaaaaaa');
+  expect((held(path) as unknown as { removed?: string[] }).removed).toEqual([tagFor(codex)]);
+  expect(held(path).images).not.toContain(tagFor(codex));
+  // With no earlier image that answers, the check's own failure is the answer.
+  seeded(path, { failCheck: [tagFor(codex), 'ahpd-part/codex:2.1.0-bbbbbbbbbbbb', 'ahpd-part/codex:2.0.0-aaaaaaaaaaaa'] });
+  const other = runtime(path);
+  await expect(ensurePart('codex', { runtime: other, parts }))
+    .rejects.toThrow('CLI at /opt/ahpd/codex/bin/codex-acp failed --version check after install (exit code 1)');
+});
+
 it('pipes the joined image a context holding its Dockerfile and nothing else', async () => {
   const path = state();
   const joined = await ensureJoined({ runtime: runtime(path), parts });

@@ -124,6 +124,9 @@ const fake = () => {
     hasImage: async () => true,
     buildImage: async (tag) => { calls.push(`build ${tag}`); },
     pullImage: async (from, tag) => { calls.push(`pull ${from} ${tag}`); },
+    removeImage: async (tag) => { calls.push(`remove ${tag}`); },
+    imagesOf: async () => [],
+    checkPart: async () => undefined,
   };
   return { runtime, held, calls, specs };
 };

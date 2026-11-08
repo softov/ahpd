@@ -675,6 +675,9 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
     hasImage: async () => false,
     buildImage: async () => { throw new Error('an image is not built for a box this host reaches over ssh'); },
     pullImage: async () => { throw new Error('an image is not pulled for a box this host reaches over ssh'); },
+    removeImage: async () => { throw new Error('an image is not removed for a box this host reaches over ssh'); },
+    imagesOf: async () => [],
+    checkPart: async () => 'a part is not checked for a box this host reaches over ssh',
   };
 };
 
