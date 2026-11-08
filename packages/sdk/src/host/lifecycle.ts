@@ -1338,14 +1338,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       : undefined;
     const base = typeof config.branch === 'string' ? config.branch : 'HEAD';
     const path = join(worktreesOf(repository, options.worktreesRoot), worktreeFor(branch ?? base));
-    // Read as either spelling: the array the schema declares, or a
-    // comma-separated string. A config value is `unknown` on the wire - the
-    // protocol declares the bag `Record<string, unknown>` and `permissions` is
-    // an object - so a key this host declared is narrowed where it is used.
+    // The files to copy, read as the array the schema declares. A config
+    // value is `unknown` - the protocol declares the bag
+    // `Record<string, unknown>` and `permissions` is an object - so a key this
+    // host declared is narrowed where it is used.
     const patterns = config.worktreeIncludeFiles;
     const include = (Array.isArray(patterns)
       ? patterns.filter((one): one is string => typeof one === 'string')
-      : typeof patterns === 'string' ? patterns.split(',') : [])
+      : [])
       .map((one) => one.trim()).filter((one) => one !== '');
     // The folders to link.
     const symlink = symlinkFolders(config);

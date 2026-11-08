@@ -1821,18 +1821,31 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       /*
        * In the order the reference host composes the schema: the computer and
        * isolation, then whatever the backend and another plugin offered, then
-       * this host's other keys. What wins a shared name is the host's value,
-       * and then the scoped one.
+       * this host's other keys, and what wins a shared name is the host's
+       * value, and then the scoped one.
        */
+      const scopedProperties = formIn(scoped.properties, 'session', locale, hostCatalogs);
       const properties = formOrdered(
-        { ...contributed, ...hostProperties, ...formIn(scoped.properties, 'session', locale, hostCatalogs) },
+        { ...contributed, ...hostProperties, ...scopedProperties },
         [...Object.keys(hostProperties), ...Object.keys(scoped.properties)],
       );
-      // Iterative, as a real host's is: what has been answered comes back
-      // answered, so re-asking does not quietly undo a choice.
+      /*
+       * Iterative, as a real host's is: what has been answered comes back
+       * answered, so re-asking does not quietly undo a choice. The backend's
+       * defaults sit under a contributed key's, and a key this host owns comes
+       * back only where its property takes it and the default where it does
+       * not, the backend's value for it taken out, as VS Code's host sets its
+       * own values over the provider's and validates them.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11035-L11055
+       */
       return {
         schema: { ...theirs, properties },
-        values: { ...agent.defaults(), ...mine.defaults, ...scoped.defaults, ...answered },
+        values: {
+          ...ctx.omitHostOwnedSessionConfig({ ...agent.defaults(), ...ctx.contributedDefaults(), ...answered }),
+          ...mine.defaults,
+          ...scoped.defaults,
+          ...ctx.hostOwnedSessionConfig(answered, { ...hostProperties, ...scopedProperties }),
+        },
       };
     },
     /**

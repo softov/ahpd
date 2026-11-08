@@ -725,6 +725,63 @@ describe('a session\'s config across a restart', () => {
 });
 
 /*
+ * A session's config is the backend's with every key this host owns taken out
+ * and this host's laid over it, and a contributed property and its default win
+ * a name the backend's schema also declares, as VS Code's host composes a
+ * session's config and publishes its own contribution in place of the
+ * provider's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11010-L11057
+ */
+describe('the keys this host owns and contributes', () => {
+  it('takes a backend\'s row and value for a key this host owns out of a session\'s config, and publishes a contributed property and its default over the backend\'s', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-owned-'));
+    try {
+      const base = echo({ path: dir, pace: 0 });
+      const agent: Agent = {
+        ...base,
+        schema: () => ({
+          type: 'object',
+          properties: {
+            mode: { type: 'string', title: 'Backend mode', enum: ['a', 'b'], default: 'a', sessionMutable: true },
+            branch: { type: 'string', title: 'Backend branch', default: 'the backend\'s' },
+          },
+        }),
+        defaults: () => ({ ...base.defaults(), mode: 'a', branch: 'the backend\'s' }),
+      };
+      const host = createHost({
+        path: dir,
+        agents: [agent],
+        sessionConfig: { mode: { type: 'string', title: 'Contributed mode', enum: ['x', 'y'], default: 'x', sessionMutable: true } },
+      });
+      const client = host.accept(peer());
+      await client.handle(hello(['0.9.0']));
+      const cfg = await client.handle({ method: 'resolveSessionConfig', params: { provider: 'echo' } }) as {
+        schema: { properties: Record<string, { title?: string }> };
+        values: Record<string, unknown>;
+      };
+      expect(cfg.schema.properties.mode?.title).toBe('Contributed mode');
+      expect(cfg.values.mode).toBe('x');
+      expect(cfg.schema.properties).not.toHaveProperty('branch');
+      expect(cfg.values).not.toHaveProperty('branch');
+
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/owned', provider: 'echo' } });
+      const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/owned' } }) as {
+        snapshot: { state: { config?: { schema: { properties: Record<string, { title?: string }> }; values: Record<string, unknown> } } };
+      }).snapshot.state;
+      expect(state.config?.schema.properties.mode?.title).toBe('Contributed mode');
+      expect(state.config?.values.mode).toBe('x');
+      expect(state.config?.schema.properties).not.toHaveProperty('branch');
+      expect(state.config?.values).not.toHaveProperty('branch');
+      await host.close();
+    }
+    finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/*
  * A VS Code window forwards its policy's auto-approval restriction into the
  * root config, and VS Code's agents read it when they resolve a chat's config
  * and when they launch a session, so a backend is handed it on the schema a

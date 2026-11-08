@@ -1063,10 +1063,10 @@ A new tree carries what git checked out and nothing else: a checkout has no
 to run, so the isolation would work and the session inside it could not build -
 a failure the person meets after choosing it rather than while choosing it.
 `worktreeIncludeFiles` is what is brought along after the checkout: a list of
-patterns, in `.gitignore` syntax, for the git-ignored files to copy in. A
-comma-separated string is read as one list. The copy is best effort, one pattern at a time - a pattern that
-matches nothing is the ordinary case, and a session that refused to start over
-a missing optional file would be worse than one without it.
+patterns, in `.gitignore` syntax, for the git-ignored files to copy in. The
+copy is best effort, one pattern at a time - a pattern that matches nothing is
+the ordinary case, and a session that refused to start over a missing optional
+file would be worse than one without it.
 `worktreeSymlinkFolders` is the same idea for folders, and reaches them by
 linking rather than copying: a list of `.gitignore` patterns for the git-ignored
 folders to point at the checkout's, which is what makes `node_modules` - the

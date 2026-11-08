@@ -25,7 +25,8 @@ export interface SessionConfig {
   ): Promise<Bag>;
   contributedDefaults(): Record<string, unknown>;
   storedConfig(owner: Agent, id: string): Record<string, unknown>;
-  hostOwnedSessionConfig(config: Record<string, unknown>): Record<string, unknown>;
+  hostOwnedSessionConfig(config: Record<string, unknown>, offered: Bag): Record<string, unknown>;
+  omitHostOwnedSessionConfig(config: Bag): Bag;
 }
 
 /**
@@ -254,13 +255,25 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
   };
 
   /**
+   * A config's properties or values with every key this host owns taken out,
+   * as VS Code's `omitHostOwnedSessionConfig` takes them out of a provider's
+   * config before its host lays its own over it.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+   */
+  const omitHostOwnedSessionConfig = (config: Bag): Bag =>
+    Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
+
+  /**
    * A session's config with this host's own answers folded in.
    *
    * The schema as well as the values: a client draws a control from the
    * schema, so reporting `isolation: 'worktree'` against a schema that never
    * mentions `isolation` is a value with nothing to draw it. Every one of them
    * is `sessionMutable: false`, which is what stops the control once the
-   * session has started rather than before it has.
+   * session has started rather than before it has. The backend's half has
+   * every key this host owns taken out before this host's half is laid over
+   * it, as VS Code's host composes a session's config.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11010-L11057
    */
   const mergedConfig = (uri: string, theirs: unknown, mine: Record<string, unknown>): Bag => {
     const held = (typeof theirs === 'object' && theirs !== null ? theirs : {}) as Bag;
@@ -274,9 +287,9 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
       ...held,
       schema: {
         ...schema,
-        properties: formOrdered({ ...properties, ...hostProperties }, Object.keys(hostProperties)),
+        properties: formOrdered({ ...omitHostOwnedSessionConfig(properties), ...hostProperties }, Object.keys(hostProperties)),
       },
-      values: { ...values, ...mine },
+      values: { ...omitHostOwnedSessionConfig(values), ...mine },
     };
   };
 
@@ -365,11 +378,11 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L622-L623
    *
    * A key a plugin contributed is found here too, which is what makes a
-   * key like `computer` obey the schema it was declared with. The backend's
-   * own property wins where both declare one, the same way `sessionSchema`
-   * folds them. Read from the raw schemas rather than from `sessionSchema`,
-   * because `published` drops `scope` on the way out and this is the one
-   * reader that needs it.
+   * key like `computer` obey the schema it was declared with. The contributed
+   * property wins where both declare one, the same way `sessionSchema` folds
+   * them. Read from the raw schemas rather than from `sessionSchema`, because
+   * `published` drops `scope` on the way out and this is the one reader that
+   * needs it.
    */
   const propertyOf = (agent: Agent | undefined, key: string): { sessionMutable?: boolean; scope?: string } | undefined => {
     if (!agent) return undefined;
@@ -377,7 +390,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     const ownProperties = (typeof own.properties === 'object' && own.properties !== null
       ? own.properties
       : {}) as Bag;
-    const held = ownProperties[key] ?? options.sessionConfig?.[key];
+    const held = options.sessionConfig?.[key] ?? ownProperties[key];
     return typeof held === 'object' && held !== null
       ? held as { sessionMutable?: boolean; scope?: string }
       : undefined;
@@ -456,19 +469,23 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    * A contributed key is a control a client draws beside the backend's own,
    * and it exists only while its plugin is loaded. A key this host takes is on
    * every session, as the reference host declares it on its sessions, so a
-   * client that sends one only where the schema declares it sends it here. The
-   * backend's own property wins where it declares one, because the fold
-   * already reported that as a collision and a plugin may not quietly move a
-   * setting a backend owns.
+   * client that sends one only where the schema declares it sends it here,
+   * under the backend's own as VS Code's agents spread the platform schema
+   * under theirs. A contributed property is this host's contribution and wins
+   * a name the backend's schema also declares, and a backend's row for a key
+   * this host owns is taken out, as VS Code's host publishes its own in place
+   * of the provider's and omits the provider's for every key it owns.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L6168-L6190
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentHostSchema.ts#L374
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
    */
   const sessionSchema = (agent: Agent): Bag => {
     const schema = published(agent.schema(schemaPolicy()));
     const properties = (typeof schema.properties === 'object' && schema.properties !== null
       ? schema.properties
       : {}) as Bag;
-    const theirs = answeredKeys(agent, properties);
-    return { ...schema, type: 'object', properties: { ...HOSTS_TAKEN, ...options.sessionConfig, ...theirs } };
+    const theirs = omitHostOwnedSessionConfig(answeredKeys(agent, properties));
+    return { ...schema, type: 'object', properties: { ...HOSTS_TAKEN, ...theirs, ...options.sessionConfig } };
   };
 
   /**
@@ -549,7 +566,11 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     return out;
   };
 
-  /** The defaults a contributed key names, under the backend's own. */
+  /**
+   * The defaults a contributed key names, which every caller lays over the
+   * backend's own, as VS Code's host sets its values over the provider's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11035-L11036
+   */
   const contributedDefaults = (): Record<string, unknown> => {
     const held: Record<string, unknown> = {};
     for (const [key, schema] of Object.entries(options.sessionConfig ?? {})) {
@@ -606,26 +627,29 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     && Object.values(value).every((one) => typeof one === 'string');
 
   /**
-   * The host-owned keys of a client's config, each in the shape this host
-   * accepts it, for saying back on the session: the keys VS Code's host owns
-   * and keeps from the provider's config.
+   * The host-owned keys of a client's config, each where its property in
+   * `offered` (this host's offer for the session, or the declared
+   * `connectors`) takes it, for saying back on the session; a key this host
+   * takes, as it was sent. VS Code's host takes isolation only as its
+   * property validates it, the branch and its prefix as strings, and the two
+   * pattern keys only as lists of strings, keeping each from the provider's
+   * config; a value outside its property's shape leaves the default.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L539-L545
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1016-L1018
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11037-L11055
    */
-  const hostOwnedSessionConfig = (config: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(
-    Object.entries(config)
-      // A string, the strings of a list for the two pattern keys, or the alias
-      // map `connectors` holds, and a key this host takes, as it was sent: an
-      // entry of a pattern list that is no pattern is dropped, and the tree a
-      // first send makes from these brings along the rest.
-      .filter(([key, value]) => Object.hasOwn(HOSTS_TAKEN, key) || (HOSTS_OWN.includes(key)
-        && (typeof value === 'string' || Array.isArray(value) || (key === 'connectors' && isAliasMap(value)))))
-      .map(([key, value]) => [key, !Object.hasOwn(HOSTS_TAKEN, key) && Array.isArray(value)
-        ? value.filter((one): one is string => typeof one === 'string')
-        : value]),
+  const hostOwnedSessionConfig = (config: Record<string, unknown>, offered: Bag): Record<string, unknown> => Object.fromEntries(
+    Object.entries(config).filter(([key, value]) => {
+      if (Object.hasOwn(HOSTS_TAKEN, key)) return true;
+      const property = offered[key] ?? declared[key];
+      return HOSTS_OWN.includes(key) && property !== undefined && accepts(property, value)
+        && (!Array.isArray(value) || value.every((one) => typeof one === 'string'))
+        && (key !== 'connectors' || isAliasMap(value));
+    }),
   );
 
   return {
     isolating, mergedConfig, formOrdered, propertyOf, sessionSchema, runningSchema, schemaPolicy, seeded,
-    contributedDefaults, storedConfig, hostOwnedSessionConfig,
+    contributedDefaults, storedConfig, hostOwnedSessionConfig, omitHostOwnedSessionConfig,
   };
 }

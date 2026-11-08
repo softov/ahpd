@@ -91,7 +91,7 @@ The properties come in the order VS Code's agent host composes them, which is th
 | `isolation` | `folder` or `worktree` | `folder` | Whether the agent works in the folder itself or in a worktree of its own. Outside a git repository a folder is all there is, offered read-only, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L979-L1003) offers it |
 | `branch` | one of the repository's branches | for a folder, the branch checked out; for a worktree, the repository's default branch (the upstream its remote's `HEAD` names), else the one checked out | The base to work from: one seed and a picker that asks for the rest as they are typed, for either isolation, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/worktreeIsolation.ts#L1035-L1063) seeds it |
 | `worktreeBranchPrefix` | a string | empty | Prepended to the branch the worktree creates |
-| `worktreeIncludeFiles` | a list of patterns, in `.gitignore` syntax | none | Git-ignored files to copy into a worktree, such as `.env`. A comma-separated string is read as the list it spells |
+| `worktreeIncludeFiles` | a list of patterns, in `.gitignore` syntax | none | Git-ignored files to copy into a worktree, such as `.env` |
 | `worktreeSymlinkFolders` | the same | none | Git-ignored folders to link into a worktree, such as `node_modules` |
 | `worktreeCreateNewBranch` | `true` or `false` | `true` | Make a branch for the worktree, or check out the chosen one as it is |
 | `worktreeBranchTrack` | `true` or `false` | `false` | Whether the branch it creates tracks the upstream of the one it started from |
@@ -99,9 +99,11 @@ The properties come in the order VS Code's agent host composes them, which is th
 
 Every key in the table is `sessionMutable: false`: it is decided once, when the session is made, and a session that changed isolation halfway would be an agent whose files moved out from under a conversation. A client hides such a control once the session has started, and this host refuses the change.
 
+A key in the table is taken only in its property's shape, as [VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L11035-L11055) takes it: `isolation` only as the folder's offer allows, so a worktree asked for outside a repository is a folder session; the branch and the other single values as strings; and the two pattern keys only as lists whose every entry is a string. Anything else leaves the default. A backend's own property or value for one of these keys is taken out of what the session reports, since the keys are this host's.
+
 The backend's own keys are the rest, and a key that says neither `sessionMutable` nor `scope` gets the safe answers: mutable, and the session's. A key whose property says `scope: chat` reaches one chat and the others all reach the session, because a voice set on one chat is a session whose two conversations answer differently.
 
-A key a plugin contributed is a control a client draws beside the backend's own, and it exists only while its plugin is loaded. Where both declare one the backend's wins, because a plugin may not quietly move a setting a backend owns. A contributed key with a picker of its own is marked `enumDynamic` and answers through `sessionConfigCompletions`.
+A key a plugin contributed is a control a client draws beside the backend's own, and it exists only while its plugin is loaded. It is this host's contribution, so where both declare one the contributed property and its default win, as VS Code's host publishes its own property in place of the provider's. A contributed key with a picker of its own is marked `enumDynamic` and answers through `sessionConfigCompletions`.
 
 A value a session was stored with and its backend no longer offers is left out so the default applies, and said once in the log; the store only holds keys the backend took, and a backend takes some it does not declare. A stored string for `worktreeIncludeFiles` is read as the list it spells rather than refused.
 
