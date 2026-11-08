@@ -1867,6 +1867,8 @@ it('a command typed into a nested session runs in the host inside, and in no ter
     // The host inside goes as a process does once it is stopped, which is what the close waits on.
     inner.crash(0, 'SIGTERM');
     await host.close();
+    // And the shell the host inside ran the command in, which Windows will not remove the folder under.
+    await inner.host.close();
     rmSync(dir, { recursive: true, force: true });
     if (mounted !== dir) rmSync(mounted, { recursive: true, force: true });
   }

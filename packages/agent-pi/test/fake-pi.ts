@@ -11,7 +11,8 @@
  * turned `isolate` off would share one `root` across files.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeAll, beforeEach } from 'vitest';
@@ -33,7 +34,8 @@ beforeAll(async () => { await loadPi(); }, 60_000);
 
 export let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ahpd-pi-')); });
-afterEach(() => { rmSync(root, { recursive: true, force: true }); forget(); });
+// A shell a case opened may still hold the folder, which Windows will not remove until it exits.
+afterEach(async () => { await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); forget(); });
 
 /** The call some parts hold for a tool call id, found on the call, where the protocol puts the id. */
 export const callIn = (parts: Bag[], id: string): Bag | undefined =>

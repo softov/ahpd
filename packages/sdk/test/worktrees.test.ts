@@ -471,10 +471,12 @@ describe('a session with a working tree of its own', () => {
       method: 'dispatchAction',
       params: { channel: live.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } } },
     });
-    await new Promise((resolve) => { setTimeout(resolve, 60); });
-    const rows = await a.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
-      items: { resource: string }[];
-    };
+    // Listed once the turn has run, which waits on git making the worktree: slow on Windows.
+    let rows: { items: { resource: string }[] } = { items: [] };
+    for (const until = Date.now() + 10_000; rows.items.length === 0 && Date.now() < until;) {
+      await new Promise((resolve) => { setTimeout(resolve, 60); });
+      rows = await a.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as typeof rows;
+    }
     const id = rows.items[0]?.resource.replace('ahp-session:/', '') ?? '';
 
     // What a host that declared the key a string would have written, which is

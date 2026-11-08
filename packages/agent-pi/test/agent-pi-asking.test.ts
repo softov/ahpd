@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
@@ -407,7 +407,8 @@ it('says what the host decides a question by on its ready', async () => {
   await powershell;
   const read = driveCall(pi, 'c2', 'read', { path: '/elsewhere/a.txt' });
   await settled();
-  expect(readyOf('c2')).toMatchObject({ permissionKind: 'read', permissionPath: '/elsewhere/a.txt' });
+  // Resolved in the session's folder, which names its drive on Windows.
+  expect(readyOf('c2')).toMatchObject({ permissionKind: 'read', permissionPath: resolve(root, '/elsewhere/a.txt') });
   session.confirm('c2', false);
   await read;
   const write = driveCall(pi, 'c3', 'write', { path: 'notes/b.txt', content: 'x' });
