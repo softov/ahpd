@@ -54,17 +54,17 @@ const WRITE: Grant = 'computer:write';
 export function computerTools(runtime: ComputerRuntime, options: ToolOptions): HostTool[] {
   /**
    * Whether the turn's person may use one machine: their own, the host's, or
-   * a team's, as a machine is owned by whoever made it and the host's serve
-   * everyone it serves. The host, and a turn nobody is behind, use any. A
-   * machine charged to a team is every person's here, since a call carries
-   * nothing of its person's teams.
+   * one charged to a team they are on, as a machine is owned by whoever made
+   * it and the host's serve everyone it serves. The host, and a turn nobody is
+   * behind, use any. The call carries its person's teams.
    */
   const usable = async (id: string, at: ToolCall): Promise<boolean> => {
     const person = at.person();
     if (person === undefined || person === 'host' || person.startsWith('root:')) return true;
     const held = await runtime.owner(id);
     if (held === undefined) return false;
-    return held.owner === undefined || held.owner === person || held.owner.startsWith('root:') || held.team !== undefined;
+    return held.owner === undefined || held.owner === person || held.owner.startsWith('root:')
+      || (held.team !== undefined && at.teams().includes(held.team));
   };
 
   /** The machine a call names among those its person may use, or a sentence saying there is none. */

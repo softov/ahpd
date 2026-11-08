@@ -1090,7 +1090,7 @@ With neither it builds for both platforms and pushes nothing, which is how the r
 
 `request_disposable_computer`, `release_computer` and `run_in_computer` let a model ask for a scratch machine during a session. They are separate from the machine a session runs in, and they follow the same image rules.
 
-Each asks `computer:write` of the person who sent the turn, as the host's own tools ask that person's grants, and is refused in the host's words without it. A machine a tool makes is owned by that person, as a machine is by whoever made it, and the tools act on the machines the person may use: their own, the host's, and one charged to a team. Another person's machine is one the tools say is not there.
+Each asks `computer:write` of the person who sent the turn, as the host's own tools ask that person's grants, and is refused in the host's words without it. A machine a tool makes is owned by that person, as a machine is by whoever made it, and the tools act on the machines the person may use: their own, the host's, and one charged to a team they are on, which a call carries. Another person's machine, and one charged to another team, is one the tools say is not there.
 
 They are off until the daemon enables advanced tools:
 
