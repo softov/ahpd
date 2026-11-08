@@ -207,6 +207,47 @@ it('names an MCP tool a call carries no contributor for by its full tool name al
 });
 
 /*
+ * A server a client's plugin contributes is a customization of the list the
+ * host lays over the session, which no backend is handed, so the host stamps
+ * its customization on the start of a call of it the backend named no
+ * contributor for, as VS Code's Claude session stamps a call from the list it
+ * holds.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L420-L441
+ */
+it('stamps the customization of an MCP server the session lists on the start of a call of it no contributor names', async () => {
+  const base = echo({ path: dir, pace: 50 });
+  const agent: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return {
+        ...session,
+        sessionState: () => ({
+          ...session.sessionState(),
+          customizations: [{
+            type: 'plugin', id: 'plugin:tools', uri: 'file:///plugin', name: 'tools',
+            children: [{ type: 'mcpServer', id: 'mcp:tracker', uri: 'file:///plugin/.mcp.json', name: 'tracker', state: { status: 'ready' } }],
+          }],
+        }),
+        sendMessage: (...args: Parameters<Session['sendMessage']>) => {
+          session.sendMessage(...args);
+          const turnId = args[0];
+          start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: `call-${turnId}`, toolName: 'mcp__tracker__create', displayName: 'Create' });
+          start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: `other-${turnId}`, toolName: 'mcp__other__create', displayName: 'Create' });
+        },
+      };
+    },
+  };
+  const { host, p, dispatch } = await serving(agent);
+  await dispatch(CHAT, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } });
+  const started = (id: string): Bag | undefined => p.heard.find((one) => one.action.type === 'chat/toolCallStart' && one.action.toolCallId === id)?.action;
+  await until(() => started('other-t1') !== undefined, 'the starts');
+  expect(started('call-t1')?.contributor).toEqual({ kind: 'mcp', customizationId: 'mcp:tracker' });
+  expect(started('other-t1')).not.toHaveProperty('contributor');
+  await host.close();
+});
+
+/*
  * A call no client and no MCP server of the session contributes is a
  * server-side tool's, as AHP has a call say whose tool it runs, and one of the
  * tools this host offered is `host/<name>` to the rule, read from the call's

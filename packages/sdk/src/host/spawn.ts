@@ -18,6 +18,7 @@ import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, toolCallOfSubagentChat } from './channels.js';
 import { buildSubagentChatUri, chatUriFormatOf, subagentChatUri } from '../vscode/chatminting.js';
+import { findMcpChildId } from '../vscode/mcpcustomizations.js';
 import { CLOSING, withSenderOn } from './common.js';
 import { commandTurnKey, sessionFlag, sessionFollows, startsRead } from './chatactions.js';
 import {
@@ -268,6 +269,23 @@ export function createSpawn(ctx: HostContext): Spawn {
     const linked = linkIn(action.content) ?? linkIn(result?.content) ?? links.linkOf(chat, action.toolCallId);
     const uri = linked ?? mintSubagentChatUri(session, chat, action.toolCallId);
     return { ...action, _meta: { ...action._meta, subagentChatUri: uri } };
+  };
+  /**
+   * A backend's start of an MCP server's call, the server's customization
+   * stamped on it where the backend named no contributor: a server a client's
+   * plugin contributes is a customization of the list this host lays over the
+   * session, which no backend is handed, so it is stamped here, where that list
+   * lives, as VS Code's Claude session stamps a call from the list it holds.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L420-L441
+   */
+  const withMcpContributor = (session: string, action: Bag): Bag => {
+    if (action.type !== 'chat/toolCallStart' || action.contributor !== undefined) return action;
+    const toolName = typeof action.toolName === 'string' ? action.toolName : '';
+    if (!toolName.startsWith('mcp__')) return action;
+    const serverName = toolName.split('__')[1];
+    const laid = ctx.stateOf(session)?.customizations;
+    const customizationId = serverName ? findMcpChildId(Array.isArray(laid) ? laid as Bag[] : [], serverName) : undefined;
+    return customizationId === undefined ? action : { ...action, contributor: { kind: 'mcp', customizationId } };
   };
   /**
    * The chat a call spawns a worker in, as VS Code's host mints one: in the
@@ -585,7 +603,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
     // A question a worker's call puts is the lead chat's backend's to be answered, as a client's answer on the worker's chat is.
-    const action = toolReady(ref.session, uri, withWorkerUri(uri, given), () => {
+    const action = toolReady(ref.session, uri, withMcpContributor(ref.session, withWorkerUri(uri, given)), () => {
       const owning = sessions.get(ref.session);
       return owning === undefined ? undefined : ctx.leadOf(owning);
     });
@@ -1554,7 +1572,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         // A client's decision on a call is said once, as the client's.
         if (channel === 'chat' && decidedAlready(chatUri, action)) return;
         if (channel === 'chat') {
-          const put = toolReady(uri, chatUri, action, () => sessions.get(uri)?.chats.get(chatUri));
+          const put = toolReady(uri, chatUri, withMcpContributor(uri, action), () => sessions.get(uri)?.chats.get(chatUri));
           if (put === undefined) return;
           action = put;
         }
