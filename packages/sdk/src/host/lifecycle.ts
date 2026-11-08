@@ -1000,6 +1000,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         credentialsOf(held.defaultChat),
         keeping?.additional ?? held.additional,
         undefined,
+        undefined,
         { agent: held.agent, config: backendsOwn(held.config) },
       );
       /*
