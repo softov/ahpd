@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
+import { posix } from '../../../tools/posix.ts';
 import { acpAgent, connectAcp, watchSession } from '../src/index.js';
 
 /*
@@ -222,7 +223,10 @@ it('keeps as much of the stderr as the record\'s stderrBytes names', async () =>
   await connection.close();
 });
 
-it('waits the record\'s exitGraceMs for the exit of a server that closed its stream', async () => {
+// A Node server cannot close its stdout on Windows while it keeps running:
+// libuv's stdout holds a copy of the pipe handle, and fs.closeSync(1) skips
+// fds 0-2, so the parent never reads an end. On POSIX, end() shuts the socket.
+it.skipIf(!posix)('waits the record\'s exitGraceMs for the exit of a server that closed its stream', async () => {
   const connection = connectAcp({
     command: process.execPath,
     args: ['-e', 'process.stdout.end(); setInterval(() => {}, 1000);'],
