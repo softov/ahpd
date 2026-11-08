@@ -109,7 +109,7 @@ export interface Lifecycle {
   /** The move `set_workspace` asked for, once the turn that asked is over. */
   moveSession(uri: string, move: Move): Promise<void>;
   /** Relaunch one chat, in the directories it now has, as the same conversation, as VS Code relaunches a chat's provider. */
-  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void;
+  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): Promise<void>;
   /** The name a backend is handed for one chat, which is the id a restart resumes it by. */
   chatIdOf(uri: string, chatUri: string, own: string | undefined): string | undefined;
   /** The backend's own copy of one chat's conversation disposed, as VS Code's provider disposes a chat. */
@@ -1217,10 +1217,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * moved chat worked in, which it goes on working in under the session that
    * holds it now. The chat keeps its place among its session's chats.
    */
-  const relaunchChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection, directory?: string): void => {
+  const relaunchChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection, directory?: string): Promise<void> => {
     const held = sessions.get(uri);
     const chat = held?.chats.get(chatUri);
-    if (held === undefined || chat === undefined) return;
+    if (held === undefined || chat === undefined) return Promise.resolve();
     // Read before the chat is closed, and kept: the name the backend answered
     // with is what the record is written under, and what the new process
     // resumes.
@@ -1249,8 +1249,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       }
     };
     // A resume makes nothing first, so the chat that takes this one's place
-    // is held by the time the start returns, as the caller reads it.
-    void spawn(
+    // is held by the time the start returns, as the caller reads it. The start
+    // rejects with the backend's failure, which a caller waiting on it ends
+    // its turn in.
+    const started = spawn(
       getProviderForChat(held, chatUri),
       uri,
       chatUri,
@@ -1263,9 +1265,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       sender,
     ).then(
       () => { keepPlace(); log(`restarted ${chatUri}`); },
-      (error: unknown) => { log(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`); },
+      (error: unknown) => {
+        log(`${chatUri} did not start again: ${error instanceof Error ? error.message : String(error)}`);
+        throw error;
+      },
     );
     keepPlace();
+    return started;
   };
 
   /**
@@ -1890,10 +1896,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (moved !== undefined) {
       ctx.chatRelaunches.delete(session.chatUri);
       const owner = byChat.get(session.chatUri)?.uri;
-      if (owner !== undefined) relaunchChat(owner, session.chatUri, moved.credentials, moved.sender, moved.directory);
-      const back = byChat.get(session.chatUri)?.chat;
-      if (back === undefined) throw new Error(`${session.chatUri} did not start again`);
-      return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
+      const started = owner === undefined ? Promise.resolve() : relaunchChat(owner, session.chatUri, moved.credentials, moved.sender, moved.directory);
+      return started.then(() => {
+        const back = byChat.get(session.chatUri)?.chat;
+        if (back === undefined) throw new Error(`${session.chatUri} did not start again`);
+        return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
+      });
     }
     // Carried to another host where this session runs on one, and the host
     // there runs the command a start's text names.

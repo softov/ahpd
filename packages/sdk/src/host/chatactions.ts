@@ -979,7 +979,9 @@ export function chatAction(
         return active === undefined || active === null || (chat === session.chatUri && active.id === turnId);
       });
       if (owner !== undefined && between && pluginsMoved(session.uri, session.chatUri)) {
-        relaunchChat(session.uri, session.chatUri, conn.tokensFor(getProviderForChat(owner, session.chatUri).provider), connection);
+        // A failed start is logged where it fails, and the turn below goes to
+        // whatever the chat holds then.
+        void relaunchChat(session.uri, session.chatUri, conn.tokensFor(getProviderForChat(owner, session.chatUri).provider), connection).catch(() => {});
         // The chat that was running is closed and this is the one that took its
         // place, so the turn below goes to the agent listening now.
         live = owner.chats.get(session.chatUri) ?? session;
