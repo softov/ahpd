@@ -36,7 +36,6 @@ import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, BoundTool, Start } from '../types/agent.js';
 import type { TurnEndEvent, TurnEndReason } from '../types/events.js';
 import type { Owner } from '../types/usage.js';
-import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
@@ -105,12 +104,6 @@ export interface Spawn {
   /**
    * Start one backend's session, and the worker chats it goes on to ask for.
    *
-   * `sender` is the connection that sent the turn this start is for, when a
-   * client sent it. It is what the start's `trusted` and `getAutoApproval` are
-   * read from and nothing else is, so a start nobody's connection asked for -
-   * an automation, a host tool, a daemon restarting what it held - is a start
-   * with no trust and no rules at all.
-   *
    * `askedInstructions` is what the request that asked for this session says,
    * added to `Start.instructions` after what the host's tools say. It is not
    * kept, so a session started again after a restart is not told it: what has
@@ -132,7 +125,6 @@ export interface Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
-    sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
   ): Session;
@@ -1021,7 +1013,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
-    sender?: Connection,
     askedInstructions?: string[],
     own?: { agent: Agent; config: Record<string, unknown> },
   ): Session => {

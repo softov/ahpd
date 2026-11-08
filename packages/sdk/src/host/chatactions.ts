@@ -948,7 +948,7 @@ export function chatAction(
         return active === undefined || active === null || (chat === session.chatUri && active.id === turnId);
       });
       const relaunched = owner !== undefined && between && pluginsMoved(session.uri, session.chatUri)
-        ? () => relaunchChat(session.uri, session.chatUri, conn.tokensFor(getProviderForChat(owner, session.chatUri).provider), connection)
+        ? () => relaunchChat(session.uri, session.chatUri, conn.tokensFor(getProviderForChat(owner, session.chatUri).provider))
           .then(() => owner.chats.get(session.chatUri) ?? session)
         : undefined;
       const provider = owner?.agent.provider ?? 'This provider';
@@ -1110,7 +1110,6 @@ export function chatAction(
             config: due?.config ?? {},
             folders: true,
             credentials: conn.tokensFor(owner.agent.provider),
-            sender: connection,
             tokensFor: conn.tokensFor,
           });
           dispatch(uri, action, origin);
@@ -1200,7 +1199,6 @@ export function chatAction(
             uri,
             conn.tokensFor(owner.agent.provider),
             { additional: owner.additional, ...(moving ? { directory: next[0] } : {}) },
-            connection,
             (repository, path) => requireWorktreeTrust({ folder: next[0] ?? repository, repository, path, sender: connection, autoApproved: auto }),
             conn.tokensFor,
           );
@@ -1628,7 +1626,6 @@ export function chatAction(
             config: { ...due?.config, ...config },
             ...(due?.folders ? { folders: true } : {}),
             credentials: conn.tokensFor(owning.agent.provider),
-            sender: connection,
             tokensFor: conn.tokensFor,
           });
         },
@@ -2278,7 +2275,6 @@ export function chatAction(
             owner.workingDirectory,
             undefined,
             beside.get(chatUri) ?? owner.additional,
-            connection,
           );
           if (failed !== undefined) throw failed;
           log(`started ${chatUri} over`);
@@ -2390,7 +2386,6 @@ export function chatAction(
         owner.workingDirectory,
         undefined,
         beside.get(session.chatUri) ?? owner.additional,
-        connection,
       );
       log(`truncated ${session.chatUri} to ${turnId}`);
       break;

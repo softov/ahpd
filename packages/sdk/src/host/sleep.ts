@@ -463,7 +463,6 @@ export function createSleep(ctx: HostContext): Sleep {
       ran,
       undefined,
       undefined,
-      sender,
       undefined,
       { agent: owner, config: restored },
     );
@@ -490,7 +489,6 @@ export function createSleep(ctx: HostContext): Sleep {
         ran,
         undefined,
         undefined,
-        sender,
       );
     }
     /*

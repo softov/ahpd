@@ -103,7 +103,6 @@ export interface Lifecycle {
     uri: string,
     credentials: Record<string, string>,
     keeping?: { additional?: string[]; directory?: string },
-    sender?: Connection,
     before?: BeforeWorktree,
     tokensFor?: (provider: string) => Record<string, string>,
   ): Promise<void>;
@@ -113,7 +112,7 @@ export interface Lifecycle {
    * Relaunch one chat, in the directories it now has, as the same conversation, as VS Code relaunches a chat's
    * provider; answered once the chat that takes its place is held.
    */
-  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): Promise<void>;
+  relaunchChat(uri: string, chatUri: string, credentials: Record<string, string>): Promise<void>;
   /** The name a backend is handed for one chat, which is the id a restart resumes it by. */
   chatIdOf(uri: string, chatUri: string, own: string | undefined): string | undefined;
   /** The backend's own copy of one chat's conversation disposed, as VS Code's provider disposes a chat. */
@@ -139,7 +138,7 @@ export interface Lifecycle {
     before?: BeforeWorktree,
   ): Promise<string | undefined>;
   /** A worktree session's tree, owed to its first send, which starts the session again in it. */
-  oweTree(uri: string, credentials: Record<string, string>, sender: Connection | undefined, tokensFor: (provider: string) => Record<string, string>): void;
+  oweTree(uri: string, credentials: Record<string, string>, tokensFor: (provider: string) => Record<string, string>): void;
   /**
    * An archived session's tree taken away once the session has stopped, with
    * its branch kept for `restoreSessionWorktree`, as VS Code requests a
@@ -834,7 +833,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     uri: string,
     credentials: Record<string, string>,
     keeping?: { additional?: string[]; directory?: string },
-    sender?: Connection,
     before?: BeforeWorktree,
     tokensFor?: (provider: string) => Record<string, string>,
   ): Promise<void> => {
@@ -986,7 +984,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         to,
         credentialsOf(held.defaultChat),
         keeping?.additional ?? held.additional,
-        sender,
       );
       /*
        * And every other chat of the session, which comes back with it.
@@ -1018,7 +1015,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           to,
           credentialsOf(chatUri),
           beside.get(chatUri) ?? keeping?.additional ?? held.additional,
-          sender,
         );
       }
     }
@@ -1050,7 +1046,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       if (!sessions.has(uri)) {
         sessions.set(uri, held);
         for (const [chatUri, road] of roads) byChat.set(chatUri, road);
-        if (!ctx.relaunches.has(uri)) ctx.relaunches.set(uri, { config: {}, folders: true, credentials, sender, tokensFor: tokensFor ?? (() => ({})) });
+        if (!ctx.relaunches.has(uri)) ctx.relaunches.set(uri, { config: {}, folders: true, credentials, tokensFor: tokensFor ?? (() => ({})) });
       }
       throw error;
     }
@@ -1103,7 +1099,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       await requireTrust({ folder: move.directory, sender: move.sender, autoApproved: auto });
       decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
       offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
-      await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, (repository, path) =>
+      await restart(uri, {}, { additional: [], directory: move.directory }, (repository, path) =>
         requireWorktreeTrust({ folder: move.directory, repository, path, sender: move.sender, autoApproved: auto }));
     }
     catch (error) {
@@ -1180,7 +1176,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const work = (async (): Promise<void> => {
       // In the folders the session now holds, its conversation resumed, where
       // the folders are what changed.
-      await restart(uri, due.credentials, due.folders ? { additional: owning.additional ?? [] } : undefined, due.sender, undefined, due.tokensFor);
+      await restart(uri, due.credentials, due.folders ? { additional: owning.additional ?? [] } : undefined, undefined, due.tokensFor);
       const made = Object.entries(due.config).filter(([key, value]) => owning.config[key] !== undefined && owning.config[key] !== value);
       if (made.length === 0) return;
       const machine = Object.fromEntries(made.map(([key]) => [key, owning.config[key]]));
@@ -1219,7 +1215,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * one's place after it is held, and a start that fails rejects, which ends
    * the turn that waited on it.
    */
-  const relaunchChat = async (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection, directory?: string): Promise<void> => {
+  const relaunchChat = async (uri: string, chatUri: string, credentials: Record<string, string>, directory?: string): Promise<void> => {
     const held = sessions.get(uri);
     const chat = held?.chats.get(chatUri);
     if (held === undefined || chat === undefined) return;
@@ -1250,7 +1246,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       directory ?? held.workingDirectory,
       credentials,
       beside.get(chatUri) ?? held.additional,
-      sender,
     );
     const now = new Map(held.chats);
     held.chats.clear();
@@ -1306,11 +1301,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const oweTree = (
     uri: string,
     credentials: Record<string, string>,
-    sender: Connection | undefined,
     tokensFor: (provider: string) => Record<string, string>,
   ): void => {
     if (options.worktrees === undefined || decided.get(uri)?.isolation !== 'worktree' || worktreeOf(uri) !== undefined) return;
-    ctx.relaunches.set(uri, { config: {}, credentials, sender, tokensFor });
+    ctx.relaunches.set(uri, { config: {}, credentials, tokensFor });
   };
 
   /**
@@ -1884,7 +1878,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       ctx.chatRelaunches.delete(session.chatUri);
       const owner = byChat.get(session.chatUri)?.uri;
       if (owner === undefined) throw new Error(`${session.chatUri} did not start again`);
-      return relaunchChat(owner, session.chatUri, moved.credentials, moved.sender, moved.directory).then(() => {
+      return relaunchChat(owner, session.chatUri, moved.credentials, moved.directory).then(() => {
         const back = byChat.get(session.chatUri)?.chat;
         if (back === undefined) throw new Error(`${session.chatUri} did not start again`);
         return beginOrRun(back, provider, turnId, text, model, from, sender, attachments, said, stopped, relay);
@@ -2424,7 +2418,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        */
       const legacy = by?.legacyChatUris ?? by?.sender?.legacyChatUris === true;
       const defaultChat = mintDefaultChatUri(legacy ? 'shaped' : 'opaque', uri, undefined);
-      const lead = spawn(agent, uri, defaultChat, undefined, backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
+      const lead = spawn(agent, uri, defaultChat, undefined, backendsOwn(config), undefined, where, credentials, additional, asked?.instructions);
       // Written down for the same reason a rename is: a first name outlives a
       // restart too.
       if (title !== undefined) ctx.persistSessionTitle(uri, title);

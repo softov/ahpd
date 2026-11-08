@@ -2014,7 +2014,7 @@ export function createTooling(ctx: HostContext): Tooling {
        * whichever scheme this host is publishing it by then.
        */
       kept.setParent?.(idOf(made), idOf(uri));
-      ctx.oweTree(made, {}, undefined, () => ({}));
+      ctx.oweTree(made, {}, () => ({}));
       const opened = sessions.get(made)?.defaultChat;
       const lead = opened === undefined ? undefined : byChat.get(opened);
       if (opened === undefined || lead === undefined) throw new Error(`${made} did not start`);
@@ -2225,7 +2225,7 @@ export function createTooling(ctx: HostContext): Tooling {
         await resolveCreatedSessionConfig(made, where, config);
         createProviderSession(made, provider, config, where, undefined, undefined, undefined, asked.title,
           sender === undefined ? undefined : forWhom(sender, caller.principal));
-        ctx.oweTree(made, {}, undefined, () => ({}));
+        ctx.oweTree(made, {}, () => ({}));
         const opened = sessions.get(made)?.defaultChat;
         const lead = opened === undefined ? undefined : byChat.get(opened);
         if (opened === undefined || lead === undefined) throw new Error(`${made} did not start`);

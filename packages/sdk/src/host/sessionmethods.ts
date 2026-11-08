@@ -224,7 +224,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     if (folders !== undefined) beside.set(chatUri, folders);
     ctx.chatRelaunches.set(chatUri, {
       credentials: conn.tokensFor(held.agent.provider),
-      sender: connection,
       directory: ctx.chatRelaunches.get(chatUri)?.directory ?? held.workingDirectory,
     });
     /*
@@ -1166,7 +1165,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           throw error;
         }
         // The tree its first send makes, owed as the start again that send runs.
-        oweTree(uri, conn.tokensFor(provider), connection, conn.tokensFor);
+        oweTree(uri, conn.tokensFor(provider), conn.tokensFor);
         if (activeClient !== undefined) {
           dispatch(uri, { type: 'session/activeClientSet', activeClient });
           retool(uri);
@@ -1465,7 +1464,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           : from === '' ? 'Forked Chat'
             : from.startsWith(forked) ? from : `${forked}${from}`;
       if (title !== undefined) kept.setChatTitle(idOf(uri), chatUri, title);
-      const chat = spawn(agent, uri, chatUri, chatIdFor(uri, chatUri), backendsOwn(config), made, held.workingDirectory, undefined, peers, connection);
+      const chat = spawn(agent, uri, chatUri, chatIdFor(uri, chatUri), backendsOwn(config), made, held.workingDirectory, undefined, peers);
       log(`opened ${chatUri} in ${uri}`);
       if (title !== undefined) ctx.persistChatTitle(uri, chatUri, title);
       /*
