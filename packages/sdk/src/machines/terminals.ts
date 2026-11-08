@@ -409,7 +409,12 @@ export function createTerminal(
    * both arrive broken without this. The spawn is told the argv is verbatim
    * for the same reason, and both are what Node's own `shell: true` does.
    */
-  let args = line === undefined ? [] : [...flagOf(kind), shellLine(kind, line)];
+  /*
+   * A shell to sit in has no line. On pipes PowerShell is told to print no
+   * banner: its version line arrives after a command typed into it there, and
+   * would read as the start of that command's output.
+   */
+  let args = line !== undefined ? [...flagOf(kind), shellLine(kind, line)] : kind === 'powershell' && pty === undefined ? ['-NoLogo'] : [];
   const environment: Record<string, string | undefined> = {
     // The operator's map over the daemon's own environment, which is what
     // makes a service unit with a private `XDG_CONFIG_HOME` reach its shells.
