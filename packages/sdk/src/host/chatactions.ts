@@ -2580,13 +2580,6 @@ export function chatAction(
         no(`${toolCallId} is not a call ${clientId} is running here`);
         break;
       }
-      // A call completes once: a second result, sent before the first was
-      // taken, finds the call the chat holds complete.
-      const status = callOf(toolCallId)?.status;
-      if (status !== undefined && status !== 'running') {
-        no(`${toolCallId} is not running`);
-        break;
-      }
       dispatch(channel, action, origin);
       if (callOf(toolCallId, ctx.stateOf(channel) ?? {})?.status === 'pending-result-confirmation') break;
       handOn(toolCallId, clientId, (typeof action.result === 'object' && action.result !== null ? action.result : {}) as Bag);
