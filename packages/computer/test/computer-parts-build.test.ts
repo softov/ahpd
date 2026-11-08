@@ -335,12 +335,13 @@ it('pulls the joined image the release built, at a tag that moves with the file,
  * A joined image holding an earlier image of a part is no release's, and is
  * built here from the part images here.
  */
-it('builds the joined image here when it holds an earlier image of a part, which no release holds', async () => {
+it('builds the joined image here, on the pinned base, when it holds an earlier image of a part, which no release holds', async () => {
   const path = state();
   seeded(path, { images: ['ahpd-part/codex:2.0.0-aaaaaaaaaaaa'], failPull: [remoteFor(codex)] });
   const joined = await ensureJoined({ runtime: runtime(path), parts });
   expect(joined.missing).toEqual([]);
   const build = held(path).builds.find((one) => one.tag === joined.tag);
+  expect(build?.dockerfile.split('\n')[0]).toBe(`FROM ${JOINED_BASE}`);
   expect(build?.dockerfile).toContain('COPY --from=ahpd-part/codex:2.0.0-aaaaaaaaaaaa /opt/ahpd/codex /opt/ahpd/codex');
   expect(pulled(path)).not.toContain(`${registryOf()}/${joined.tag}`);
 });
