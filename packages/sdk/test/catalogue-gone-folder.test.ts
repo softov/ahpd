@@ -1,3 +1,5 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -52,6 +54,35 @@ const watching = async (agents: Agent[], store: SessionStore = memorySessions())
   const client = host.accept(p);
   await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
   return { client, notes: p.notes };
+};
+
+/**
+ * Remove a folder a running session works in, as a person removes it by hand.
+ *
+ * Windows will not remove a folder that a process has as its working
+ * directory, and the host runs `git -C` in a session's folder, each with a 2 s
+ * timeout; on a busy runner several of them outlasted a fixed set of retries.
+ * So the removal is retried until the case's own budget runs out, and a
+ * failure on Windows names the processes the worker had started, so it says
+ * what was holding the folder.
+ */
+const removeWhileRunning = async (folder: string): Promise<void> => {
+  for (const until = Date.now() + WAIT_MS; ;) {
+    try {
+      rmSync(folder, { recursive: true, force: true });
+      return;
+    }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EBUSY' && (error as NodeJS.ErrnoException).code !== 'EPERM') throw error;
+      if (Date.now() < until) {
+        await new Promise((r) => { setTimeout(r, 100); });
+        continue;
+      }
+      if (process.platform !== 'win32') throw error;
+      const tree = execFileSync('powershell.exe', ['-NoProfile', '-Command', `$all = Get-CimInstance Win32_Process; $ids = @(${process.pid}); $found = @(); do { $kids = $all | Where-Object { $ids -contains $_.ParentProcessId -and $found.ProcessId -notcontains $_.ProcessId }; $found += $kids; $ids = @($kids.ProcessId) } while ($kids); $found | ForEach-Object { "$($_.Name) $($_.CommandLine)" }`]).toString().trim();
+      throw new Error(`${(error as Error).message}; the worker's processes: ${tree === '' ? 'none' : tree}`);
+    }
+  }
 };
 
 /** The whole of what one listing answers. */
@@ -123,9 +154,7 @@ describe('a folder that has gone', () => {
         { summary?: { workingDirectories?: string[] } } | undefined;
       expect(added?.summary?.workingDirectories).toEqual([uriOf(folder)]);
 
-      // With retries: on Windows the checkpoint the first message ran can still
-      // have git working in the folder, which Windows will not remove under it.
-      rmSync(folder, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+      await removeWhileRunning(folder);
       await client.handle({
         method: 'dispatchAction',
         params: { channel: 'ahp-session:/live', action: { type: 'session/titleChanged', title: 'Gone' } },
