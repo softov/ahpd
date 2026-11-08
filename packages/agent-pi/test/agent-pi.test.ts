@@ -1162,9 +1162,11 @@ it('reads back a turn that had not ended as interrupted, as pi file reads one ba
 /*
  * A turn whose session closes under it ends for every client as VS Code's
  * agent ends a turn whose runtime goes: an error part that is not resumable,
- * and then the turn's completion. The read back above finds the same turn
- * interrupted and resumable, since nothing records an ending for it.
+ * in VS Code's words for a turn its agent left unfinished, and then the turn's
+ * completion. The read back above finds the same turn interrupted and
+ * resumable, since nothing records an ending for it.
  * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/codex/codexAgent.ts#L4606-L4646
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7991-L7994
  */
 it('ends a turn still running at close for every client, an error not marked resumable and then its completion', async () => {
   const { session, pi, sent } = opened();
@@ -1178,7 +1180,7 @@ it('ends a turn still running at close for every client, an error not marked res
       type: 'chat/error',
       turnId: 't1',
       duration: expect.any(Number) as number,
-      part: { kind: 'error', error: { errorType: 'sessionClosed', message: 'The session closed while the turn ran.' } },
+      part: { kind: 'error', error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' } },
     },
     { type: 'chat/turnComplete', turnId: 't1', duration: expect.any(Number) as number },
   ]);
