@@ -21,6 +21,9 @@ import { undeclaredIn } from '../../sdk/test/support/wire.js';
 import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
 import type { Bag } from '@ahpd/sdk';
 
+/** The space a command is typed after, which keeps it out of a POSIX shell's history; PowerShell, Windows' shell here, keeps none. */
+const HISTORY_SPACE = process.platform === 'win32' ? '' : ' ';
+
 /*
  * The ports an ACP server reaches for.
  *
@@ -433,7 +436,7 @@ it('says a pseudoterminal runs a terminal, and names a command\'s while it runs'
     .find((e) => e.action.type === 'chat/toolCallContentChanged' && e.action.turnId === 't2')?.action;
   await until(() => pty.started.length > shells);
   pty.say('\u001b]633;A\u0007$ \u001b]633;B\u0007');
-  await until(() => changed() !== undefined && pty.typed.at(-1) === ' make preview\r');
+  await until(() => changed() !== undefined && pty.typed.at(-1) === `${HISTORY_SPACE}make preview\r`);
   expect(changed()?.content).toEqual([named]);
   expect(changed()).not.toHaveProperty('_meta');
   const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));

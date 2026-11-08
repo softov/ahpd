@@ -1952,8 +1952,10 @@ describe('more than one chat in a session', () => {
     const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
     vi.stubEnv('HOME', root);
     vi.stubEnv('USERPROFILE', root);
+    let close = async (): Promise<void> => {};
     try {
-      const { client } = await hostAt(join(root, 'sessions'), backend([]), { workspacelessFolder: 'scratch' });
+      const { client, host } = await hostAt(join(root, 'sessions'), backend([]), { workspacelessFolder: 'scratch' });
+      close = async () => { await host.close(); };
       await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
       await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
       await settle();
@@ -1968,6 +1970,8 @@ describe('more than one chat in a session', () => {
         });
     }
     finally {
+      // The host holds the scratch folder open, which Windows will not remove while it does.
+      await close();
       vi.unstubAllEnvs();
       rmSync(root, { recursive: true, force: true });
     }

@@ -506,6 +506,8 @@ it('runs a command typed into the chat in a terminal, and tells nobody who answe
   expect(done).toMatchObject({ turnId: 't1', result: { success: true, pastTenseMessage: 'Ran command' } });
   expect(JSON.stringify(done?.['result'])).toContain('from-the-bot-chat');
   expect(heard).toEqual([]);
+  // The shell the command ran in sits in the bot's folder, which Windows will not remove while it runs.
+  await host.close();
 });
 
 it('ends a turn with a notice, and with a cancellation', async () => {
