@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, realpathSync, writeFileSync, existsSync, lst
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { gitWorktrees, worktreesOf } from '../src/repo/worktrees.js';
@@ -13,7 +13,7 @@ import { localPath, uriOf } from '../src/resources/fileuri.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
-import type { Agent } from '../src/types/agent.js';
+import type { Agent, Start } from '../src/types/agent.js';
 import type { HostOptions } from '../src/types/host.js';
 
 /*
@@ -494,6 +494,45 @@ describe('a session with a working tree of its own', () => {
      * would silently arrive at a worktree with nothing brought along.
      */
     expect(state.config.values.worktreeIncludeFiles).toEqual(['.env', '.env.local']);
+  });
+
+  /*
+   * A chat started over is handed its backend's own keys, as every other start
+   * is: the window sends its whole bag back, this host's isolation among it,
+   * and that key is this host's and goes to no backend.
+   */
+  it('starts a chat over on its backend\'s own keys, the ones this host owns left out', async () => {
+    const root = repository();
+    const starts: Start[] = [];
+    const base = echo({ path: join(root, 'project'), pace: 0 });
+    const agent: Agent = {
+      ...base,
+      create: (start: Start) => { starts.push(start); return base.create(start); },
+      delete: async () => {},
+    };
+    const host = createHost({ path: root, agents: [agent], worktrees: gitWorktrees() });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+    const uri = 'ahp-session:/over';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(project(root))] } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/configChanged', config: { isolation: 'folder' } } } });
+    await vi.waitFor(() => {
+      const said = p.notes.map((one) => one.params as { action?: { type?: string }; rejectionReason?: string })
+        .find((one) => one.action?.type === 'session/configChanged');
+      expect(said).toBeDefined();
+      expect(said?.rejectionReason).toBeUndefined();
+    });
+    await firstSent(client, uri);
+    const { defaultChat } = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state;
+    const before = starts.length;
+    void client.handle({ method: 'dispatchAction', params: { channel: defaultChat, action: { type: 'chat/truncated' } } });
+    await vi.waitFor(() => { expect(starts.length).toBeGreaterThan(before); });
+    expect(starts.at(-1)?.settings).toMatchObject({ voice: 'plain' });
+    expect(starts.at(-1)?.settings).not.toHaveProperty('isolation');
   });
 
   /*
