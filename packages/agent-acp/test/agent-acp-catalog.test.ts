@@ -179,7 +179,7 @@ it('carries an approvals control on the session, with no enum before a server is
   const agent = acpAgent({ command: 'node', model: 'gpt-5' });
   const properties = agent.schema().properties as Record<string, Record<string, unknown>>;
   expect(Object.keys(properties)).toEqual(['permissionMode']);
-  expect(properties.permissionMode).toMatchObject({ type: 'string', scope: 'session', sessionMutable: true });
+  expect(properties.permissionMode).toMatchObject({ type: 'string', sessionMutable: true });
   expect(properties.permissionMode?.enum).toBeUndefined();
   // A model is the turn's rather than a config property, but the configured id
   // is still the default a client is offered.

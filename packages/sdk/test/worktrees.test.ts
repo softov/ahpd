@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, realpathSync, writeFileSync, existsSync, lst
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { gitWorktrees, worktreesOf } from '../src/repo/worktrees.js';
@@ -13,7 +13,7 @@ import { localPath, uriOf } from '../src/resources/fileuri.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
-import type { Agent } from '../src/types/agent.js';
+import type { Agent, Start } from '../src/types/agent.js';
 import type { HostOptions } from '../src/types/host.js';
 
 /*
@@ -494,6 +494,96 @@ describe('a session with a working tree of its own', () => {
      * would silently arrive at a worktree with nothing brought along.
      */
     expect(state.config.values.worktreeIncludeFiles).toEqual(['.env', '.env.local']);
+  });
+
+  /*
+   * A chat started over is handed its backend's own keys, as every other start
+   * is: the window sends its whole bag back, this host's isolation among it,
+   * and that key is this host's and goes to no backend.
+   */
+  it('starts a chat over on its backend\'s own keys, the ones this host owns left out', async () => {
+    const root = repository();
+    const starts: Start[] = [];
+    const base = echo({ path: join(root, 'project'), pace: 0 });
+    const agent: Agent = {
+      ...base,
+      create: (start: Start) => { starts.push(start); return base.create(start); },
+      delete: async () => {},
+    };
+    const host = createHost({ path: root, agents: [agent], worktrees: gitWorktrees() });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+    const uri = 'ahp-session:/over';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo', workingDirectories: [uriOf(project(root))] } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/configChanged', config: { isolation: 'folder' } } } });
+    await vi.waitFor(() => {
+      const said = p.notes.map((one) => one.params as { action?: { type?: string }; rejectionReason?: string })
+        .find((one) => one.action?.type === 'session/configChanged');
+      expect(said).toBeDefined();
+      expect(said?.rejectionReason).toBeUndefined();
+    });
+    await firstSent(client, uri);
+    const { defaultChat } = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state;
+    const before = starts.length;
+    void client.handle({ method: 'dispatchAction', params: { channel: defaultChat, action: { type: 'chat/truncated' } } });
+    await vi.waitFor(() => { expect(starts.length).toBeGreaterThan(before); });
+    expect(starts.at(-1)?.settings).toMatchObject({ voice: 'plain' });
+    expect(starts.at(-1)?.settings).not.toHaveProperty('isolation');
+  });
+
+  /*
+   * A session read back after a restart has its config resolved as a created
+   * one's, against the folder its choice was made in: the rows are what that
+   * folder is offered, and the values are its own, as VS Code's host resolves
+   * a restored session's config with the call that resolved its created one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14877-L14911
+   */
+  describe('read back after a restart', () => {
+    /** A session made and spoken to on one host, and the same session subscribed on a second host over the same store. */
+    const restored = async (root: string, folder: string, config: Record<string, unknown>) => {
+      const store = memorySessions();
+      const agent = echo({ path: join(root, 'project'), pace: 0 });
+      const first = createHost({ path: root, agents: [agent], worktrees: gitWorktrees(), sessions: store });
+      const a = first.accept(peer());
+      await a.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+      await a.handle({
+        method: 'createSession',
+        params: { channel: 'ahp-session:/again', provider: 'echo', workingDirectories: [uriOf(folder)], config },
+      });
+      await firstSent(a, 'ahp-session:/again');
+      const rows = await a.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+        items: { resource: string }[];
+      };
+      const id = rows.items[0]?.resource.replace('ahp-session:/', '') ?? '';
+      const second = createHost({ path: root, agents: [agent], worktrees: gitWorktrees(), sessions: store });
+      const b = second.accept(peer());
+      await b.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+      await b.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+      return (await b.handle({ method: 'subscribe', params: { channel: `echo:/${id}` } }) as {
+        snapshot: { state: { config: { schema: { properties: Record<string, { enum?: string[]; readOnly?: boolean }> }; values: Record<string, unknown> } } };
+      }).snapshot.state.config;
+    };
+
+    it('offers a worktree session its repository\'s isolation and branch, and says it is in a worktree', async () => {
+      const root = repository();
+      const config = await restored(root, project(root), { isolation: 'worktree', branch: 'main' });
+      expect(config.schema.properties.isolation?.enum).toEqual(['folder', 'worktree']);
+      expect(config.schema.properties.branch?.enum).toEqual(['main']);
+      expect(config.values).toMatchObject({ isolation: 'worktree', branch: 'main' });
+    });
+
+    it('offers a session in a folder with no repository the folder alone', async () => {
+      const root = repository();
+      const plain = join(root, 'plain');
+      mkdirSync(plain);
+      const config = await restored(root, plain, {});
+      expect(config.schema.properties.isolation).toMatchObject({ enum: ['folder'], readOnly: true });
+      expect(config.values.isolation).toBe('folder');
+    });
   });
 
   /*

@@ -17,6 +17,8 @@ import { teamsOf } from '../usage/scopes.js';
 import { enablementKeyOf } from '../plugins/enablement.js';
 import { chatIdFor, schemeOf } from './channels.js';
 import { chatUriFormatOf, mintPeerChatUri } from '../vscode/chatminting.js';
+import { filterChatConfigValues } from '../vscode/chatconfig.js';
+import type { ConfigSchema } from '../vscode/chatconfig.js';
 import { AGENT_CLIENT_SCHEME } from './clienturi.js';
 import { need, noProvider } from './common.js';
 import { asksForTool } from './permissions.js';
@@ -1770,7 +1772,7 @@ export function createTooling(ctx: HostContext): Tooling {
      */
     const agent = asked.provider === undefined ? held.agent : ctx.agents.get(asked.provider);
     if (agent === undefined) throw new Error(noProvider(asked.provider));
-    const config = chatConfigOf(agent, held, checkedConfig(agent, asked.config));
+    const given = checkedConfig(agent, asked.config);
     // Asked for no model, a tool's chat runs the calling chat's where the two
     // run one agent, as VS Code's create-chat takes it.
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1375-L1378
@@ -1780,6 +1782,16 @@ export function createTooling(ctx: HostContext): Tooling {
     // mints a peer chat, so every client that sees the session addresses it.
     // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L1379
     const chatUri = mintPeerChatUri(chatUriFormatOf(held.defaultChat), at);
+    /*
+     * The values a chat of the session's backend starts with as its own: what
+     * the default chat runs on, with what was asked of the properties a chat
+     * may set over them, as VS Code starts a new chat with the default chat's.
+     * A chat of another backend runs on a config of its own.
+     */
+    const own = agent === held.agent
+      ? { ...ctx.initialChatConfig(at, held, chatUri, undefined), ...filterChatConfigValues(ctx.sessionSchema(agent) as ConfigSchema, given) }
+      : {};
+    const config = chatConfigOf(agent, held, { ...own, ...given });
     // What the plugins give a chat a tool opens, ahead of the tool's prompt.
     const preambles = options.chatPreambles ?? [];
     const preamble = preambles.length === 0 ? undefined : await preambleOf(preambles, {
@@ -1796,6 +1808,7 @@ export function createTooling(ctx: HostContext): Tooling {
     if (asked.title !== undefined) kept.setChatTitle(idOf(at), chatUri, asked.title);
     const chat = spawn(agent, at, chatUri, chatIdFor(at, chatUri), config, preamble === undefined ? undefined : { context: preamble }, held.workingDirectory, undefined, held.additional);
     log(`opened ${chatUri} in ${at}`);
+    ctx.keepChatOwnConfigValues(at, chatUri, own);
     if (asked.title !== undefined) persistChatTitle(at, chatUri, asked.title);
     // The default chat takes its own title from here, before the new chat is said.
     snapshotDefaultChatTitle(at);

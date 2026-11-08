@@ -816,13 +816,16 @@ export interface Session {
    * with. Held by the session for the same reason a draft message is: two
    * people on one chat are answering one form.
    *
-   * Handed over once the chat's state has the request open. The backend says
-   * the `chat/inputAnswerChanged` back. False when nothing here is waiting on
-   * that request, or when what is waiting is a tool confirmation rather than a
-   * question, and the host then says the draft itself.
+   * Handed over once the chat's state has the request open and the host has
+   * said the client's `chat/inputAnswerChanged`, which every client holds the
+   * draft from, as VS Code's host says a client's action before its side
+   * effects reach an agent: the backend keeps the draft and says nothing back.
+   * False when nothing here is waiting on that request, or when what is
+   * waiting is a tool confirmation rather than a question.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
    *
-   * Optional. A backend that keeps no drafts leaves it out, and the host
-   * refuses the action with that as the reason.
+   * Optional. A backend that keeps no drafts leaves it out, and the draft is
+   * said all the same.
    */
   setAnswer?(requestId: string, questionId: string, answer: Bag | undefined): boolean;
 

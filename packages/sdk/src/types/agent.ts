@@ -789,16 +789,17 @@ export interface Agent {
    *
    * A JSON-Schema-shaped `{ properties }`. Each property may carry `title`,
    * `description`, `enum`, `enumLabels`, `enumDescriptions`, `default`,
-   * `sessionMutable` and `scope`.
+   * `sessionMutable` and `chatMutable`.
    *
    * The last two are what the *host* reads, and they are the only two things
    * it needs to know about a key it otherwise knows nothing about.
-   * A key whose `sessionMutable` is not `true` is refused on a running session
-   * rather than accepted and dropped. `scope` is `'session'` - the default - for a key the
-   * chats of one session share, and `'chat'` for one each chat answers for
-   * itself: a permission mode is the session's, and a model is the chat's.
-   * `scope` is this library's, not the protocol's, whose config schema is
-   * deliberately generic and says nothing about either.
+   * A key whose `sessionMutable` is not `true` is refused on a running session.
+   * `chatMutable: true` is VS Code's, for a key each chat may hold its own
+   * value of: a client sets it with `chat/configChanged` on the chat, which
+   * reaches that chat alone, and a value set on the session reaches the chats
+   * that hold none of their own. Every other key the chats of one session
+   * share.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/protocol/channels-session/state.ts#L612-L618
    *
    * Everything else is between the backend and whatever client draws it.
    *

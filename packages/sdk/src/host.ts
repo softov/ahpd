@@ -34,6 +34,8 @@ import { idFor, idOf, uriFor, Status } from './sessions/catalog.js';
 import { memorySessions } from './sessions/sessions.js';
 import { meter } from './usage/meter.js';
 import { debugLogs } from './sessions/debuglogs.js';
+import { reduceChatConfigChanged } from './vscode/chatconfig.js';
+import type { ChatConfigChangedAction } from './vscode/chatconfig.js';
 import type { Terminal } from './types/terminals.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from './types/completions.js';
 import type { MessageAttachment, MessageFrom } from './types/session.js';
@@ -506,12 +508,15 @@ export function createHost(options: HostOptions): Host {
   /**
    * One action through the protocol's reducer for the kind of state it lands
    * on. A type the reducer does not know is said in this host's log, which is
-   * where the reducer's own warning goes.
+   * where the reducer's own warning goes. A chat's `chat/configChanged`, which
+   * VS Code's protocol adds ahead of the package, goes through VS Code's own
+   * case for it.
    */
   const reduced = (open: HeldState, action: Bag): Bag => {
     const said = (message: string): void => { log(message); };
     if (open.kind === 'root') return rootReducer(open.state as unknown as RootState, action as unknown as RootAction, said) as unknown as Bag;
     if (open.kind === 'session') return sessionReducer(open.state as unknown as SessionState, action as unknown as SessionAction, said) as unknown as Bag;
+    if (action.type === 'chat/configChanged') return reduceChatConfigChanged(open.state, action as unknown as ChatConfigChangedAction);
     return chatReducer(open.state as unknown as ChatState, action as unknown as ChatAction, said) as unknown as Bag;
   };
   /** Everything subscribed to a channel, which is not everything connected. */

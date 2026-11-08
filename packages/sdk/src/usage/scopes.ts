@@ -47,6 +47,9 @@ export const membership = (written: string): Membership | undefined => {
   return { written, team, project };
 };
 
+/** A scope as a membership writes it, `team` or `team:project`, the name `namesOf` offers for it. */
+export const scopeName = (scope: Scope): string => (scope.project === undefined ? scope.team : `${scope.team}:${scope.project}`);
+
 /** Whether this membership says any project of its team rather than one of them. */
 const anyProject = (one: Membership): boolean => one.project === '*';
 

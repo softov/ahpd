@@ -91,7 +91,6 @@ export function acpAgent(options: AcpOptions): Agent {
       type: 'object',
       properties: {
         permissionMode: {
-          scope: 'session',
           type: 'string',
           title: 'Approvals',
           description: 'How the agent handles tool approvals.',

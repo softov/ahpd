@@ -49,6 +49,8 @@ import type {
 } from '@microsoft/agent-host-protocol';
 import { idOf, Status, uriFor } from './catalog.js';
 import { posixUriOf, uriOf } from '../resources/fileuri.js';
+import { reduceChatConfigChanged } from '../vscode/chatconfig.js';
+import type { ChatConfigChangedAction, ChatConfigState } from '../vscode/chatconfig.js';
 import { machinePathOf } from '../machines/machine.js';
 import { canvasResource, chatOfCanvas } from '../host/channels.js';
 import { STOP_FLAG } from '../host/background.js';
@@ -1105,7 +1107,11 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
             if (session !== undefined) session = sessionReducer(session, action as SessionAction);
           }
           else if (chat !== undefined) {
-            chat = chatReducer(chat, action as ChatAction);
+            // A chat's own config through VS Code's case for it, which the
+            // package's reducer is behind.
+            chat = String(action.type) === 'chat/configChanged'
+              ? reduceChatConfigChanged(chat as ChatState & { config?: ChatConfigState }, action as unknown as ChatConfigChangedAction)
+              : chatReducer(chat, action as ChatAction);
           }
         }
         catch (error) {
@@ -1690,11 +1696,18 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
      * Taken for a key the inner session's schema declares and does not fix
      * once the session runs; anything else is answered in a sentence for the
      * host's log, since the inner host would refuse it where no client could
-     * hear.
+     * hear. A key that schema marks `chatMutable` is this chat's own there,
+     * carried as its `chat/configChanged`, which a chat may set while the
+     * session's value is fixed, as VS Code checks a chat's write.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L372-L381
      */
     setConfig: (key: string, value: unknown): true | string => {
       const property = declared(key);
       if (property === undefined) return `${provider} in computer://${id} has no setting called ${key}`;
+      if (property.chatMutable === true) {
+        carry('chat', { type: 'chat/configChanged', config: { [key]: value } });
+        return true;
+      }
       if (property.sessionMutable === false) return `${key} is fixed once the session has started`;
       carry('session', { type: 'session/configChanged', config: { [key]: value } });
       return true;

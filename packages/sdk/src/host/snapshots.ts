@@ -5,6 +5,9 @@ import { RpcError } from '../rpc.js';
 import { runState } from './automations.js';
 import { ROOT, isRootChannel, isAutomations, automationOwner, queryOf, ANNOTATIONS_PATH_SEGMENT, chatUriFor, servedIn, schemeOf, spaceOf, toolCallOfSubagentChat } from './channels.js';
 import { ownerFilter } from '../utils/values.js';
+import { filterChatConfigValues } from '../vscode/chatconfig.js';
+import type { ChatConfigState, ConfigSchema } from '../vscode/chatconfig.js';
+import type { Agent } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { WireTurn } from '../types/wire.js';
@@ -133,7 +136,27 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * activity is its own chat's, and the session's is the chat that decides
      * it, which this host reads across all of them.
      */
-    const { resource: _resource, activity: _activity, customizations: reported, inputNeeded: _raised, ...theirs } = lead.sessionState();
+    const { resource: _resource, activity: _activity, customizations: reported, inputNeeded: _raised, ...answer } = lead.sessionState();
+    /*
+     * The session's own values for the keys its default chat set for itself:
+     * the backend running that chat reports the chat's, which a client lays
+     * over the session's, as VS Code keeps a chat's values apart from its
+     * session's.
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L263-L266
+     */
+    const leadOwn = Object.keys(ctx.getChatOwnConfigValues(channel, held.defaultChat));
+    const answered = (typeof answer.config === 'object' && answer.config !== null ? answer.config : undefined) as Bag | undefined;
+    const sessionValues: Bag = { ...held.agent.defaults(), ...contributedDefaults(), ...held.config };
+    const theirs = answered === undefined || leadOwn.length === 0 ? answer : {
+      ...answer,
+      config: {
+        ...answered,
+        values: {
+          ...(answered.values as Bag | undefined),
+          ...Object.fromEntries(leadOwn.filter((key) => sessionValues[key] !== undefined).map((key) => [key, sessionValues[key]])),
+        },
+      },
+    };
     const mine = decided.get(channel);
     const activity = activityOf(held);
     const customizations = ctx.laidCustomizations(channel, reported);
@@ -175,6 +198,23 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       chats: chatCatalogOf(channel, held, restored),
       ...(activity === undefined ? {} : { activity }),
     };
+  };
+
+  /**
+   * A chat's own config, as VS Code's host sets `config` on every chat: the
+   * values the chat set for itself, which a client lays over its session's.
+   * A chat of another backend runs on nothing of its session's, so it says
+   * its own schema beside them, the properties of its backend's a chat may
+   * set, and its values are its own config's.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/state/protocol/channels-chat/state.ts#L416-L445
+   */
+  const chatConfigState = (
+    session: string, chatUri: string, foreign: { agent: Agent; config: Record<string, unknown> } | undefined,
+  ): ChatConfigState => {
+    if (foreign === undefined) return { values: ctx.getChatOwnConfigValues(session, chatUri) };
+    const schema = sessionSchema(foreign.agent) as ConfigSchema;
+    const properties = Object.fromEntries(Object.entries(schema.properties).filter(([, property]) => property?.chatMutable === true));
+    return { schema: { ...schema, properties }, values: filterChatConfigValues(schema, foreign.config) };
   };
 
   const resolveChatState = (session: string, chatUri: string): Bag => {
@@ -231,6 +271,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      */
     const foreign = owner?.backends.get(talking.chat.chatUri);
     if (foreign !== undefined) state.provider = foreign.agent.provider;
+    state.config = chatConfigState(session, chatUri, foreign);
     // Every turn the backend holds, with each worker linked from its call and
     // the sender on each message; the window a subscribe asks for is cut from
     // these when it is served.
@@ -649,6 +690,9 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       ? undefined
       : recordedChat(id, channel);
     const stamp = moves.get(owning) ?? new Date().toISOString();
+    // The backend of its own a recorded chat runs on, where it has one this host serves.
+    const backend = opened?.provider === undefined ? undefined : ctx.agents.get(opened.provider);
+    const config = chatConfigState(owning, channel, backend === undefined ? undefined : { agent: backend, config: opened?.config ?? {} });
     if (opened !== undefined && !ctx.ownChat(nameOf(id), opened.uri)) {
       const own = await ctx.transcriptOf(owner, opened.backendId, ctx.launchWorkingDirectory(id), nameOf(id), opened.uri);
       return {
@@ -660,6 +704,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           modifiedAt: stamp,
           turns: ctx.withSender(owning, ctx.stampedCalls(owning, channel, (own ?? []) as unknown as Bag[])),
           ...(kept.chatDraft?.(id, channel) !== undefined ? { draft: kept.chatDraft?.(id, channel) } : {}),
+          config,
         },
       };
     }
@@ -712,6 +757,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           // Kept in the session's record. A client that typed into this row
           // and came back finds what it typed, which is what a draft is for.
           ...(kept.chatDraft?.(id, channel) !== undefined ? { draft: kept.chatDraft?.(id, channel) } : {}),
+          config,
         },
       };
     }
@@ -723,7 +769,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       schema: sessionSchema(owner),
       values: { ...owner.defaults(), ...contributedDefaults(), ...storedConfig(owner, id) },
     };
-    const mine = decided.get(nameOf(id));
     return {
       kind: 'session',
       state: {
@@ -796,16 +841,17 @@ export function createSnapshots(ctx: HostContext): Snapshots {
          * The config this session runs with, composed as its state composes
          * it once its backend runs: the backend's schema with a plugin's keys,
          * the backend's and a plugin's defaults, the stored values over them,
-         * and this host's own keys laid on. A browsed row draws its controls
-         * from it before anybody continues the session, and a wake keeps the
-         * state read here, since no action carries a schema. The reference host
-         * resolves a restored session's config with the call that resolved its
-         * created one, and lays it in before a client reads the state.
-         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L14864-L14898
-         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L10960-L10981
+         * and this host's own keys laid on, which the restore resolved as a
+         * created session's. A browsed row draws its controls from it before
+         * anybody continues the session, and a wake keeps the state read here,
+         * since no action carries a schema. The reference host resolves a
+         * restored session's config with the call that resolved its created
+         * one, and lays it in before a client reads the state.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14877-L14911
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10973-L10994
          * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L614-L620
          */
-        config: mine === undefined ? running : mergedConfig(nameOf(id), running, mine),
+        config: mergedConfig(nameOf(id), running, decided.get(nameOf(id)) ?? {}),
       },
     };
   };

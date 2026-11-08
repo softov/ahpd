@@ -78,20 +78,23 @@ export function createSandbox(ctx: HostContext): Sandbox {
   const chosenBy = new Set<string>();
   const policy = () => ctx.options.managedSettingsSandbox;
 
-  /** The values a chat runs on: its own where it has them, its session's otherwise, the host's `chatConfig`. */
+  /** The values a chat runs on: its own laid over its session's, the host's `chatConfig`. */
   const valuesOf = (session: string, chat: string): Record<string, unknown> | undefined => {
     const held = sessions.get(session);
-    return held === undefined ? kept.config(idOf(session)) : ctx.chatConfig(held, chat);
+    return held === undefined ? kept.config(idOf(session)) : ctx.chatConfig(session, held, chat);
   };
+  /** Whether a chat set a selection of its own, which a change of its session's does not reach. */
+  const ownSelection = (session: string, chat: string): boolean =>
+    sessions.get(session)?.backends.has(chat) === true || Object.hasOwn(ctx.getChatOwnConfigValues(session, chat), SANDBOX_ENABLED_KEY);
   /** The session's own selection, which every chat that has no values of its own takes. */
   const sessionSelection = (session: string): unknown =>
     sessions.get(session)?.config[SANDBOX_ENABLED_KEY] ?? kept.config(idOf(session))?.[SANDBOX_ENABLED_KEY];
   /** A chat's selection, from the values it runs on. */
   const selection = (session: string, chat: string): unknown => valuesOf(session, chat)?.[SANDBOX_ENABLED_KEY];
-  /** The chats that run on their session's values, which a change of the session's selection reaches. */
+  /** The chats that take their session's selection, which a change of it reaches. */
   const following = (session: string): string[] => {
     const held = sessions.get(session);
-    return held === undefined ? [] : [...held.chats.keys()].filter((chat) => ctx.chatConfig(held, chat) === held.config);
+    return held === undefined ? [] : [...held.chats.keys()].filter((chat) => !ownSelection(session, chat));
   };
 
   /*
@@ -113,7 +116,7 @@ export function createSandbox(ctx: HostContext): Sandbox {
    */
   const sessionEnabled = (session: string): boolean | undefined => {
     const held = sessions.get(session);
-    if (held !== undefined && ctx.chatConfig(held, held.defaultChat) === held.config) {
+    if (held !== undefined && !ownSelection(session, held.defaultChat)) {
       return readSessionSandboxState({ _meta: metas.get(session) ?? {} })?.enabled;
     }
     const chosen = sessionSelection(session);

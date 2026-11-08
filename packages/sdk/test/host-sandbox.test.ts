@@ -157,7 +157,8 @@ it('reads each chat\'s selection from the values it runs on, its own where it ha
     log: () => {},
     options: {},
     rootConfig: {},
-    chatConfig: (one: typeof held, chat: string) => (chat === 'ahp-chat:/other' ? own : one.config),
+    chatConfig: (_uri: string, one: typeof held, chat: string) => (chat === 'ahp-chat:/other' ? own : one.config),
+    getChatOwnConfigValues: () => ({}),
   } as unknown as HostContext);
   expect(sandbox.config('echo:/chats', 'ahp-chat:/lead').enabled).toBe('on');
   expect(sandbox.config('echo:/chats', 'ahp-chat:/peer').enabled).toBe('on');

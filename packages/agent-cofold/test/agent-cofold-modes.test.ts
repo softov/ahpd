@@ -108,13 +108,14 @@ async function turn(mode: string | undefined, path = 'a.txt') {
 it('advertises an approvals mode and a thinking level, in the window own names', () => {
   const props = properties(cofoldAgent({}));
   expect(Object.keys(props)).toEqual(['baseUrl', 'instructions', 'permissionMode', 'effortLevel']);
-  expect(props.permissionMode).toMatchObject({ scope: 'session', sessionMutable: true, default: 'auto' });
+  expect(props.permissionMode).toMatchObject({ sessionMutable: true, default: 'auto' });
+  expect(props.permissionMode?.chatMutable).toBeUndefined();
   expect(props.permissionMode?.enum).toEqual([...PERMISSION_MODES]);
   expect((props.permissionMode?.enumLabels as string[]).length).toBe(PERMISSION_MODES.length);
   // cofold's own sentences, in cofold's own order: what a mode means is the
   // library's to say, and a host that wrote its own would drift from it.
   expect(props.permissionMode?.enumDescriptions).toEqual(PERMISSION_MODES.map((mode) => PERMISSION_MODE_DESCRIPTIONS[mode]));
-  expect(props.effortLevel).toMatchObject({ scope: 'chat', sessionMutable: true, default: 'off' });
+  expect(props.effortLevel).toMatchObject({ chatMutable: true, sessionMutable: true, default: 'off' });
   expect(props.effortLevel?.enum).toEqual([...EFFORT_LEVELS]);
 });
 
