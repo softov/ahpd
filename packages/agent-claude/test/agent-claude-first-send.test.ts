@@ -174,7 +174,7 @@ it("lists the agent's own and its disk scan until its first CLI answers", async 
   expect(skills?.children).toEqual([expect.objectContaining({ name: 'review', description: 'Reviews a change' })]);
   // The scan's servers, each declared and not started; the seeds' are another CLI's.
   expect(listed(session).filter((one) => one.type === 'mcpServer').map((one) => one.name)).toEqual(['docs']);
-  expect(serverOf(session, 'docs')).toMatchObject({ uri: `file://${join(cwd, '.mcp.json')}`, state: { kind: 'stopped' } });
+  expect(serverOf(session, 'docs')).toMatchObject({ uri: uriOf(join(cwd, '.mcp.json')), state: { kind: 'stopped' } });
 
   session.sendMessage('t1', 'hello');
   await settle();

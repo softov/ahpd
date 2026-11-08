@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import { posix } from '../../../tools/posix.ts';
 import { claude, claudeExecutablePath } from '../../agent-claude/src/claude.js';
@@ -116,12 +116,12 @@ it('cofold declares its harness configuration, wherever it is read from', () => 
     // carries is read from the path its own variable names.
     process.env['PAPO_CONFIG'] = '/srv/config/papo/config.json';
     needs = cofoldAgent({ memory: true, provider: 'cofold2' }).machine?.() ?? {};
-    expect(needs.cofoldConfig).toMatchObject({ file: '/srv/config/papo/config.json' });
+    expect(needs.cofoldConfig).toMatchObject({ file: resolve('/srv/config/papo/config.json') });
 
     delete process.env['PAPO_CONFIG'];
     delete process.env['XDG_CONFIG_HOME'];
     needs = cofoldAgent({ memory: true, provider: 'cofold3' }).machine?.() ?? {};
-    expect(needs.cofoldConfig).toMatchObject({ file: join(process.env['HOME'] ?? '', '.config', 'papo', 'config.json') });
+    expect(needs.cofoldConfig).toMatchObject({ file: join(homedir(), '.config', 'papo', 'config.json') });
   }
   finally {
     if (before === undefined) delete process.env['XDG_CONFIG_HOME'];

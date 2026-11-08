@@ -1,4 +1,7 @@
 import { expect, it } from 'vitest';
+import { tmpdir } from 'node:os';
+import { localPath } from '../src/resources/fileuri.js';
+import { uriOf } from '../src/resources/resources.js';
 import { createHost } from '../src/host.js';
 import { memoryAutomations } from '../src/automations/automations.js';
 import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
@@ -754,12 +757,13 @@ it('fires terminal_open once the terminal exists', async () => {
   } as unknown as TerminalStore;
   const { seen, client } = watched({ terminals: store });
   await hello(client);
-  await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/one', claim: { kind: 'client', clientId: 'probe' }, cwd: 'file:///tmp' } });
+  // A folder that is there on every platform, as one that is not opens in the home folder.
+  await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/one', claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(tmpdir()) } });
   await settle();
 
   const opened = of(seen, 'terminal_open');
   expect(opened).toHaveLength(1);
-  expect(opened[0]).toMatchObject({ terminal: 'ahp-terminal:/one', cwd: '/tmp' });
+  expect(opened[0]).toMatchObject({ terminal: 'ahp-terminal:/one', cwd: localPath(uriOf(tmpdir())) });
 });
 
 it('fires automation_fire when an automation starts a session', async () => {

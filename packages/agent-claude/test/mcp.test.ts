@@ -137,8 +137,10 @@ describe('the servers a session declares', () => {
       mcpServers: { shared: { type: 'http', url: 'https://user/one' }, mine: { type: 'http', url: 'https://user/mine' } },
       projects: { [dir]: { mcpServers: { shared: { type: 'http', url: 'https://local/one' }, notes: { type: 'http', url: 'https://local/notes' } } } },
     }));
-    const before = process.env.HOME;
+    // The home folder by both names, as Windows reads it from USERPROFILE.
+    const before = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
     try {
       const found = serversFor([dir], vouched);
       expect(urlOf(found.shared)).toBe('https://local/one');
@@ -148,8 +150,10 @@ describe('the servers a session declares', () => {
       expect(urlOf(serversFor([dir], () => false).notes)).toBe('https://local/notes');
     }
     finally {
-      if (before === undefined) delete process.env.HOME;
-      else process.env.HOME = before;
+      for (const [key, value] of Object.entries(before)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 });

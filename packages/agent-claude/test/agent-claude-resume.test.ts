@@ -323,8 +323,13 @@ it('clears a transcript the SDK holds no session in, in the folder the CLI names
   mkdirSync(long, { recursive: true });
   sdk.held = [];
   try {
-    // The CLI's name for that path, its hash as CLI 2.1.301 computes it.
-    const project = join(home, 'config', 'projects', `${long.replace(/[^A-Za-z0-9]/g, '-').slice(0, 200)}-nkqd48`);
+    // The CLI's name for that path, its hash as CLI 2.1.301 computes it, of the
+    // real path, which on Windows starts with a drive.
+    const real = realpathSync(long);
+    let hash = 0;
+    for (let at = 0; at < real.length; at++) hash = ((hash << 5) - hash + real.charCodeAt(at)) | 0;
+    if (real === long) expect(Math.abs(hash).toString(36)).toBe('nkqd48');
+    const project = join(home, 'config', 'projects', `${real.replace(/[^A-Za-z0-9]/g, '-').slice(0, 200)}-${Math.abs(hash).toString(36)}`);
     mkdirSync(project, { recursive: true });
     const file = join(project, `${LONG}.jsonl`);
     writeFileSync(file, `${JSON.stringify({ type: 'atis-latch', atis: '', sessionId: LONG })}\n`);
