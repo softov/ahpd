@@ -1,4 +1,4 @@
-import { namesOf, scopeFor } from '../usage/scopes.js';
+import { namesOf, scopeFor, scopeName } from '../usage/scopes.js';
 import { chargeFor, countCall } from '../usage/charge.js';
 import { decide } from '../access/decide.js';
 import { idOf } from '../sessions/catalog.js';
@@ -50,7 +50,7 @@ export interface Owners {
   keepKeys(turn: string, keys: readonly string[]): void;
   forgetKeys(turn: string): void;
   scoping(principal: Principal | undefined): { properties: Bag; defaults: Record<string, string> };
-  resolveCreatedSessionConfig(uri: string, where: string | undefined, config: Record<string, unknown>, principal?: Principal): Promise<void>;
+  resolveCreatedSessionConfig(uri: string, where: string | undefined, config: Record<string, unknown>, principal?: Principal, restoring?: boolean): Promise<void>;
 }
 
 export function createOwners(ctx: HostContext): Owners {
@@ -255,9 +255,7 @@ export function createOwners(ctx: HostContext): Owners {
   const scoping = (principal: Principal | undefined): { properties: Bag; defaults: Record<string, string> } => {
     const names = principal === undefined ? [] : namesOf(principal);
     const scope = scopeFor(principal)?.scope;
-    const spelled = scope === undefined
-      ? undefined
-      : scope.project === undefined ? scope.team : `${scope.team}:${scope.project}`;
+    const spelled = scope === undefined ? undefined : scopeName(scope);
     return {
       properties: names.length === 0
         ? {}
@@ -290,12 +288,19 @@ export function createOwners(ctx: HostContext): Owners {
    * it was sent. A window draws its isolation and branch chips from the
    * session's schema once a provisional session exists, and it sends
    * `{ isolation: 'folder' }` or nothing at all.
+   *
+   * A restored session's config is resolved by the same call, `restoring`, as
+   * VS Code's host resolves a restored session's before a client reads its
+   * state; what it is charged to and its project were settled when it was
+   * made, so a restore resolves the config alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14877-L14911
    */
   const resolveCreatedSessionConfig = async (
     uri: string,
     where: string | undefined,
     config: Record<string, unknown>,
     principal?: Principal,
+    restoring = false,
   ): Promise<void> => {
     const mine = await ctx.isolating(where, typeof config.isolation === 'string' ? config.isolation : undefined);
     const scoped = scoping(principal);
@@ -305,6 +310,7 @@ export function createOwners(ctx: HostContext): Owners {
     ctx.offered.set(uri, { ...mine.schema, properties: { ...properties, ...scoped.properties } });
     const mine_ = { ...mine.defaults, ...scoped.defaults, ...ctx.hostOwnedSessionConfig(config, { ...properties, ...scoped.properties }) };
     ctx.decided.set(uri, mine_);
+    if (restoring) return;
     charge(uri, principal, typeof mine_.scope === 'string' ? mine_.scope : undefined);
     /*
      * The folder's project, read before the session is first described: it is

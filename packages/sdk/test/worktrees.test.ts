@@ -497,6 +497,57 @@ describe('a session with a working tree of its own', () => {
   });
 
   /*
+   * A session read back after a restart has its config resolved as a created
+   * one's, against the folder its choice was made in: the rows are what that
+   * folder is offered, and the values are its own, as VS Code's host resolves
+   * a restored session's config with the call that resolved its created one.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14877-L14911
+   */
+  describe('read back after a restart', () => {
+    /** A session made and spoken to on one host, and the same session subscribed on a second host over the same store. */
+    const restored = async (root: string, folder: string, config: Record<string, unknown>) => {
+      const store = memorySessions();
+      const agent = echo({ path: join(root, 'project'), pace: 0 });
+      const first = createHost({ path: root, agents: [agent], worktrees: gitWorktrees(), sessions: store });
+      const a = first.accept(peer());
+      await a.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+      await a.handle({
+        method: 'createSession',
+        params: { channel: 'ahp-session:/again', provider: 'echo', workingDirectories: [uriOf(folder)], config },
+      });
+      await firstSent(a, 'ahp-session:/again');
+      const rows = await a.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+        items: { resource: string }[];
+      };
+      const id = rows.items[0]?.resource.replace('ahp-session:/', '') ?? '';
+      const second = createHost({ path: root, agents: [agent], worktrees: gitWorktrees(), sessions: store });
+      const b = second.accept(peer());
+      await b.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+      await b.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+      return (await b.handle({ method: 'subscribe', params: { channel: `echo:/${id}` } }) as {
+        snapshot: { state: { config: { schema: { properties: Record<string, { enum?: string[]; readOnly?: boolean }> }; values: Record<string, unknown> } } };
+      }).snapshot.state.config;
+    };
+
+    it('offers a worktree session its repository\'s isolation and branch, and says it is in a worktree', async () => {
+      const root = repository();
+      const config = await restored(root, project(root), { isolation: 'worktree', branch: 'main' });
+      expect(config.schema.properties.isolation?.enum).toEqual(['folder', 'worktree']);
+      expect(config.schema.properties.branch?.enum).toEqual(['main']);
+      expect(config.values).toMatchObject({ isolation: 'worktree', branch: 'main' });
+    });
+
+    it('offers a session in a folder with no repository the folder alone', async () => {
+      const root = repository();
+      const plain = join(root, 'plain');
+      mkdirSync(plain);
+      const config = await restored(root, plain, {});
+      expect(config.schema.properties.isolation).toMatchObject({ enum: ['folder'], readOnly: true });
+      expect(config.values.isolation).toBe('folder');
+    });
+  });
+
+  /*
    * A pattern list with an entry that is no pattern is not the property's
    * shape, so the default applies, which brings nothing along, and the
    * session still starts, as VS Code's host takes a pattern list only when

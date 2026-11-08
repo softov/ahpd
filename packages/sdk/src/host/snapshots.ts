@@ -723,7 +723,6 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       schema: sessionSchema(owner),
       values: { ...owner.defaults(), ...contributedDefaults(), ...storedConfig(owner, id) },
     };
-    const mine = decided.get(nameOf(id));
     return {
       kind: 'session',
       state: {
@@ -796,16 +795,17 @@ export function createSnapshots(ctx: HostContext): Snapshots {
          * The config this session runs with, composed as its state composes
          * it once its backend runs: the backend's schema with a plugin's keys,
          * the backend's and a plugin's defaults, the stored values over them,
-         * and this host's own keys laid on. A browsed row draws its controls
-         * from it before anybody continues the session, and a wake keeps the
-         * state read here, since no action carries a schema. The reference host
-         * resolves a restored session's config with the call that resolved its
-         * created one, and lays it in before a client reads the state.
-         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L14864-L14898
-         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L10960-L10981
+         * and this host's own keys laid on, which the restore resolved as a
+         * created session's. A browsed row draws its controls from it before
+         * anybody continues the session, and a wake keeps the state read here,
+         * since no action carries a schema. The reference host resolves a
+         * restored session's config with the call that resolved its created
+         * one, and lays it in before a client reads the state.
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L14877-L14911
+         * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L10973-L10994
          * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L614-L620
          */
-        config: mine === undefined ? running : mergedConfig(nameOf(id), running, mine),
+        config: mergedConfig(nameOf(id), running, decided.get(nameOf(id)) ?? {}),
       },
     };
   };
