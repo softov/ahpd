@@ -740,6 +740,10 @@ export const vmRuntime = (maker: VmMaker, options: VmOptions): ComputerRuntime =
       await lookOrFail(name);
       throw new Error(`${name} is a VM on another box, and ${paths.length === 1 ? 'a file is' : 'files are'} not removed from it yet`);
     },
+    copyOut: async (name) => {
+      await lookOrFail(name);
+      throw new Error(`${name} is a VM on another box, and files are not read out of it yet`);
+    },
 
     bringBack: async (name): Promise<BroughtBack | undefined> => {
       const found = await look(name);

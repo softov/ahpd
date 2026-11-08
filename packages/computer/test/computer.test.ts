@@ -113,6 +113,7 @@ const fake = () => {
     // for a session's attachments - recorded here, and nothing more.
     putIn: async (id, paths) => { calls.push(`putIn ${id} ${paths.join(',')}`); },
     takeOut: async (id, paths) => { calls.push(`takeOut ${id} ${paths.join(',')}`); },
+    copyOut: async (id, path) => { calls.push(`copyOut ${id} ${path}`); return false; },
     capabilities: () => ({
       runtime: 'docker',
       actions: ['create', 'start', 'stop', 'restart', 'exec', 'delete'],

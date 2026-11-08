@@ -650,6 +650,10 @@ export const sshRuntime = (options: SshOptions): ComputerRuntime => {
       must(id);
       throw new Error(`${id} is a box this host reaches over ssh, and ${paths.length === 1 ? 'a file is' : 'files are'} not removed from it`);
     },
+    copyOut: async (id) => {
+      must(id);
+      throw new Error(`${id} is a box this host reaches over ssh, and files are not read out of it`);
+    },
 
     /*
      * The two git verbs, which a box has nothing of.

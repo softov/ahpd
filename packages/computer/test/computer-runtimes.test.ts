@@ -45,6 +45,7 @@ const faker = (name: string, over: Partial<ComputerRuntime> = {}): ComputerRunti
   exec: async () => ({ output: '', code: 0 }),
   putIn: async () => {},
   takeOut: async () => {},
+  copyOut: async () => false,
   bringBack: async () => undefined,
   follow: async () => {},
   start: async () => {},

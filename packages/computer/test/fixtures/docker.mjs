@@ -14,6 +14,7 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 /*
  * A Docker on another box is another daemon, so a `DOCKER_HOST` keeps its own
@@ -888,6 +889,34 @@ if (verb === 'cp') {
       bytes.copy(padded);
       process.stdout.write(Buffer.concat([header, padded, Buffer.alloc(1024)]));
     }
+    process.exit(0);
+  }
+  /*
+   * A path out to a folder of this host's, as `docker cp <id>:<path> <dir>`
+   * copies one: each file `files` holds for that machine under the path,
+   * keyed `<machine>:<path>`, written under `<dir>/<the path's last name>`,
+   * and the copy recorded in `copiedOut`; a path it holds nothing under is
+   * Docker's words for a file it cannot find.
+   */
+  const source = String(args[1]);
+  const machine = source.indexOf(':') > 0 ? named(source.slice(0, source.indexOf(':'))) : undefined;
+  if (machine !== undefined && args[2] !== undefined && args[2] !== '-') {
+    const path = source.slice(source.indexOf(':') + 1).replace(/\/$/, '');
+    const prefix = `${machine.name}:${path}/`;
+    const under = Object.entries(held.files ?? {}).filter(([key]) => key.startsWith(prefix));
+    if (under.length === 0) {
+      keep();
+      process.stderr.write(`Error response from daemon: Could not find the file ${path} in container ${machine.name}\n`);
+      process.exit(1);
+    }
+    const root = join(String(args[2]), path.slice(path.lastIndexOf('/') + 1));
+    for (const [key, text] of under) {
+      const file = join(root, ...key.slice(prefix.length).split('/'));
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, String(text));
+    }
+    (held.copiedOut ??= []).push(source);
+    keep();
     process.exit(0);
   }
   keep();

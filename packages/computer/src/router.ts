@@ -274,6 +274,7 @@ export const routed = (
     },
     putIn: async (id, paths) => { const { runtime, name } = must(id); await runtime.putIn(name, paths); },
     takeOut: async (id, paths) => { const { runtime, name } = must(id); await runtime.takeOut(name, paths); },
+    copyOut: async (id, path, into) => { const { runtime, name } = must(id); return runtime.copyOut(name, path, into); },
     follow: async (id) => { const { runtime, name } = must(id); await runtime.follow(name); },
 
     // What this host can be asked for is the default runtime's own answer: a

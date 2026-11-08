@@ -135,6 +135,8 @@ A machine is also kept to the agents it was prepared for. A profile with `agents
 
 Clients get a picker for free: the key is marked `enumDynamic`, and `sessionConfigCompletions` answers with "This host" first, then each running machine with its image or folder and status. When the client says which agent the session would run, the machines not prepared for it are left out. A [disposable profile](#disposable-machines) is offered too, as `disposable:<profile>`, and once the session has made one it is an ordinary `computer://<id>`. A `devcontainer://<folder>` row is offered when the session's folder has a `devcontainer.json` and no computer is labelled with it.
 
+A backend reads a folder inside the machine, such as a plugin the CLI there reports by its path, with `Start.computers.readFolder(id, folder, read)`: the folder is copied out through the machine's runtime into a scratch folder of this host's, `read` is handed the copy's path, and the copy is gone once `read` is done, as VS Code reads a plugin's parts where the plugin lives. A machine that is not there, or a folder it does not hold, reads as nothing. A Docker machine is read with Docker's own `cp`; a box, a VM and a node are not read out of.
+
 The session's working directory is mapped through the machine's mounts. With `/srv/app:/workspaces/app`, a session in `/srv/app/x` starts in `/workspaces/app/x`. The longest mount wins, and a path no mount covers starts in the machine's own working directory - for a dev container, the folder it was made from as that is mounted inside.
 
 ### A backend that runs nested

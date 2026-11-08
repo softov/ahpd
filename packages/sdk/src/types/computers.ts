@@ -461,6 +461,18 @@ export interface ComputerPort {
    */
   takeOut?(id: string, paths: string[]): Promise<void>;
   /**
+   * A folder inside a machine, read as the machine holds it: copied out to a
+   * scratch folder of this host's for the time `read` takes, and gone after,
+   * so a backend reads what a session in the machine named by its path there,
+   * as VS Code reads a plugin's parts where the plugin lives. `read` is handed
+   * the copy's own path. Nothing for a machine that is not there or a folder it
+   * does not hold.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L54-L91
+   *
+   * Absent on a port whose machines no file is read out of.
+   */
+  readFolder?<T>(id: string, folder: string, read: (copy: string) => T | Promise<T>): Promise<T | undefined>;
+  /**
    * Make a machine from a source a session named, and answer its id.
    *
    * The host calls this once, before the session's backend is started, when

@@ -161,6 +161,10 @@ export const nodeRuntime = (nodes: NodeRegistry): ComputerRuntime => {
       must(name);
       throw new Error(`${name} is a node on another host, and ${paths.length === 1 ? 'a file is' : 'files are'} not removed from it`);
     },
+    copyOut: async (name) => {
+      must(name);
+      throw new Error(`${name} is a node on another host, and files are not read out of it`);
+    },
 
     /*
      * The two git verbs, which a node has nothing of this host's in it.

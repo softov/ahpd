@@ -664,6 +664,12 @@ export interface ComputerRuntime {
    */
   takeOut(id: string, paths: string[]): Promise<void>;
   /**
+   * One path in a machine copied out into a folder of this host's, under the
+   * path's own last name, with whatever is under it: false for a path the
+   * machine does not hold.
+   */
+  copyOut(id: string, path: string, into: string): Promise<boolean>;
+  /**
    * Bring the commits a machine made in a git directory of its own back into
    * the host's repository, and answer what became of them.
    *
@@ -3430,6 +3436,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     takeOut: async (id, paths) => {
       const at = await containerOrFail(id);
       for (const path of paths) await must(['exec', '--user', '0', at, 'rm', '-rf', machinePathOf(path)]);
+    },
+
+    /** A path copied out by Docker's own `cp`, which a stopped machine answers too. */
+    copyOut: async (id, path, into) => {
+      const at = await containerOrFail(id);
+      return (await ran(options, ['cp', `${at}:${path}`, into])).code === 0;
     },
 
     /** What a machine committed, brought back by fetch: `bringBackOfMachine`. */

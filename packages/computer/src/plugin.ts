@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, resolve, sep } from 'node:path';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { isAbsolute, join, posix, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork, SpawnOptions } from '@ahpd/sdk';
 import { AGENT_RECORD_VARIABLE, resolveNeeds, secretRef, strings } from '@ahpd/sdk';
@@ -1867,6 +1868,26 @@ export const apply: Plugin['apply'] = (host, options) => {
     if (wanted.length > 0) await made.takeOut(id, wanted);
   };
 
+  /*
+   * A folder inside a machine, copied out through the machine's runtime into a
+   * scratch folder of this host's and read there, as VS Code reads a plugin's
+   * parts where the plugin lives: the copy is gone once `read` is done, read or
+   * thrown, and a machine that is not there or a folder it does not hold reads
+   * as nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/claude/customizations/claudeSessionCustomizationDiscovery.ts#L54-L91
+   */
+  const readFolder: NonNullable<ComputerPort['readFolder']> = async (id, folder, read) => {
+    if (await made.inspect(id) === undefined) return undefined;
+    const into = mkdtempSync(join(tmpdir(), 'ahpd-machine-folder-'));
+    try {
+      if (!await made.copyOut(id, folder, into)) return undefined;
+      return await read(join(into, posix.basename(folder)));
+    }
+    finally {
+      rmSync(into, { recursive: true, force: true });
+    }
+  };
+
   /**
    * What a command in a machine printed and how it ended, run by the
    * descriptor the machine's runtime answers for it.
@@ -1977,6 +1998,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     follow,
     putIn,
     takeOut,
+    readFolder,
     sandboxSupport,
     sandboxed,
     /*

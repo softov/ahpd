@@ -220,5 +220,12 @@ export const computersFor = (
         return (computers.nested as NonNullable<ComputerPort['nested']>)(id, { ...asked, provider });
       },
     }),
+    // A folder read out of a machine is the machine's too, behind the same check.
+    ...(computers.readFolder === undefined ? {} : {
+      readFolder: async <T>(id: string, folder: string, read: (copy: string) => T | Promise<T>): Promise<T | undefined> => {
+        await prepared(id);
+        return (computers.readFolder as NonNullable<ComputerPort['readFolder']>)(id, folder, read);
+      },
+    }),
   };
 };
