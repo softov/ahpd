@@ -46,7 +46,7 @@ afterEach(() => {
 });
 
 const settle = async (times = 8): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+  for (let i = 0; i < times; i++) await new Promise((done) => { setImmediate(done); });
 };
 
 const folder = (): string => {

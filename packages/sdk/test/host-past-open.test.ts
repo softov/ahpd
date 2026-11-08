@@ -1,7 +1,8 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { describe, expect, it, vi } from 'vitest';
 import { createHost, hello, machine, peer, settle } from './support/host.js';
 import { echo } from '../../../examples/echo/agent.js';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
@@ -280,23 +281,24 @@ describe('opening a past session', () => {
   });
 
   it('writes the folder of a session it creates into the record file', async () => {
+    // Left to the run's own folder to remove: the checkpoint the session writes
+    // runs git in it, which Windows will not remove a folder under while it runs.
     const root = mkdtempSync(join(tmpdir(), 'ahpd-folder-'));
-    try {
-      const dir = join(root, 'sessions');
-      const store = fileSessions({ dir });
-      const host = createHost({ path: root, agents: [echo({ path: root, pace: 0 })], ...machine(), sessions: store });
-      const client = host.accept(peer());
-      await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
-      await client.handle({
-        method: 'createSession',
-        params: { channel: 'ahp-session:/made', provider: 'echo', workingDirectories: [`file://${root}`] },
-      });
-      await new Promise((tick) => { setTimeout(tick, 5); });
-      const saved = JSON.parse(readFileSync(join(dir, 'made.json'), 'utf8')) as { workingDirectory?: string };
-      expect(saved.workingDirectory).toBe(root);
-      // Closed first: the checkpoint it writes there runs git in the folder, which Windows will not remove under it.
-      await host.close();
+    const dir = join(root, 'sessions');
+    const store = fileSessions({ dir });
+    const host = createHost({ path: root, agents: [echo({ path: root, pace: 0 })], ...machine(), sessions: store });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/made', provider: 'echo', workingDirectories: [`file://${root}`] },
+    });
+    const record = join(dir, 'made.json');
+    for (const until = Date.now() + WAIT_MS; Date.now() < until && !existsSync(record);) {
+      await new Promise((tick) => { setTimeout(tick, 10); });
     }
-    finally { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
+    const saved = JSON.parse(readFileSync(record, 'utf8')) as { workingDirectory?: string };
+    expect(saved.workingDirectory).toBe(root);
+    await host.close();
   });
 });

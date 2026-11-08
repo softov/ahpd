@@ -123,7 +123,7 @@ const unheld = (id: string, folder: string): string => {
 };
 
 const settle = async (times = 8): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+  for (let i = 0; i < times; i++) await new Promise((done) => { setImmediate(done); });
 };
 
 /** The `query()` options the first send of a session in `FOLDER` that `create` built from these start fields started its CLI with. */

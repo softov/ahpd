@@ -100,7 +100,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
 const { createSession } = await import('../src/session.js');
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** A session whose first CLI its first turn started is up, reading its input, and has said its id, the turn over. */

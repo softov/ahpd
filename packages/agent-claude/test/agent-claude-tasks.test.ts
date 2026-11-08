@@ -49,7 +49,7 @@ const sdk = vi.hoisted(() => ({ options: [] as Record<string, unknown>[], frames
 const { createSession } = await import('../src/session.js');
 
 const settle = async (times = 8): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+  for (let i = 0; i < times; i++) await new Promise((done) => { setImmediate(done); });
 };
 
 /** The host's `task_add`, which is what puts the host list in reach of a session. */

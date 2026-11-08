@@ -42,7 +42,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('../../sdk/t
 const sdk = vi.hoisted(() => ({ options: [] as Record<string, unknown>[], flags: [] as Record<string, unknown>[] }));
 
 const settle = async (times = 8): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+  for (let i = 0; i < times; i++) await new Promise((done) => { setImmediate(done); });
 };
 
 const REPO = join(import.meta.dirname, '../../..');

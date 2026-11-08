@@ -54,7 +54,7 @@ const fixture = (name: string): Record<string, unknown>[] => readFileSync(
 ).split('\n').filter((line) => line.trim() !== '').map((line) => JSON.parse(line) as Record<string, unknown>);
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** Replay one fixture through a real session and collect what it emitted. */

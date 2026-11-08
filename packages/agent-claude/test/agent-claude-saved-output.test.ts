@@ -127,7 +127,7 @@ const fakeOutputs = (refuses = false): TerminalOutputs & { kept: Map<string, { o
 };
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** Wait for something the session does once a read on the thread pool has come back. */

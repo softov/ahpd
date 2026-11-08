@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { expect, it } from 'vitest';
 import { tmpdir } from 'node:os';
 import { localPath } from '../src/resources/fileuri.js';
@@ -759,6 +760,8 @@ it('fires terminal_open once the terminal exists', async () => {
   await hello(client);
   // A folder that is there on every platform, as one that is not opens in the home folder.
   await client.handle({ method: 'createTerminal', params: { channel: 'ahp-terminal:/one', claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(tmpdir()) } });
+  // Fired once the folder is read, which a busy runner takes longer than a few ticks to do.
+  for (const until = Date.now() + WAIT_MS; Date.now() < until && of(seen, 'terminal_open').length === 0;) await wait(10);
   await settle();
 
   const opened = of(seen, 'terminal_open');

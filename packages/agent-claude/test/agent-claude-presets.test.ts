@@ -46,7 +46,7 @@ const REPO = join(import.meta.dirname, '../../..');
 const SOURCE = './packages/agent-claude/src/index.ts';
 
 const settle = async (times = 8): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+  for (let i = 0; i < times; i++) await new Promise((done) => { setImmediate(done); });
 };
 
 /** The `claude` engine one load registered, with the plugin options it was given. */

@@ -85,7 +85,7 @@ const { createSession } = await import('../src/session.js');
 const { OpenLogins } = await import('../src/logins.js');
 
 const settle = async (times = 40): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** Wait for `done` to hold, for three seconds at most, and then for what follows from it. */

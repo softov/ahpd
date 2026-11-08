@@ -190,7 +190,7 @@ function laid(): { project: string; session: string } {
 }
 
 const settle = async (times = 8): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 it('reads a session\'s subagents back, their turns and the call that ran each', async () => {

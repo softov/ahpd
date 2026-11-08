@@ -91,7 +91,15 @@ const trusting = (): Peer & { seen: { method: string; params: Bag }[] } => ({
  * the frames a real host would parse, and its stdout is whatever that host
  * answers - a real `createPeer` on the other end.
  */
-const innerHost = (agent: Agent, more: Partial<HostOptions> = {}) => {
+/**
+ * A host inside, behind a fake process.
+ *
+ * The process goes once it is killed, as a host inside does on its SIGTERM: a
+ * process that took the signal and stayed made every close wait out the proxy's
+ * kill grace, four seconds a case. `stays` is the process that takes its kill
+ * and stays, for a case that ends it with `crash` itself.
+ */
+const innerHost = (agent: Agent, more: Partial<HostOptions> = {}, { stays = false }: { stays?: boolean } = {}) => {
   const host = createHost({ path: REPO_ROOT, agents: [agent], ...more });
   let toOuter: ((text: string) => void) | undefined;
   const ends = listeners();
@@ -121,7 +129,11 @@ const innerHost = (agent: Agent, more: Partial<HostOptions> = {}) => {
     stdout: { on: (_event: string, listener: (chunk: unknown) => void) => { toOuter = (text) => listener(`${text}\n`); } },
     stderr: { on: (_event: string, listener: (chunk: unknown) => void) => { stderr.push(listener); } },
     on: ends.on,
-    kill: (signal = 'SIGTERM') => { signals.push(String(signal)); return true; },
+    kill: (signal = 'SIGTERM') => {
+      signals.push(String(signal));
+      if (!stays) setImmediate(() => { ends.end(null, String(signal)); });
+      return true;
+    },
   } as unknown as NestedHost;
   return {
     host,
@@ -701,7 +713,7 @@ it('a session removed while its inner session is being made disposes what was ma
 });
 
 it('a restart waits for a host inside that is still starting, and stops it', async () => {
-  const inner = innerHost(backend());
+  const inner = innerHost(backend(), {}, { stays: true });
   const { emit } = recorder();
   const agent = nestedAgent(backend(), {
     plugins: PLUGINS,

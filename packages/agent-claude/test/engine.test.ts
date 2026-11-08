@@ -108,7 +108,7 @@ const SOURCE = './packages/agent-claude/src/index.ts';
 const DIR = mkdtempSync(join(tmpdir(), 'ahpd-engine-'));
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+  for (let i = 0; i < times; i++) await new Promise((done) => { setImmediate(done); });
 };
 
 /** The frame a turn ends with, carrying the id the CLI knows the conversation by. */

@@ -1,7 +1,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { uriOf } from '../src/resources/fileuri.js';
 import { Status } from '../src/sessions/catalog.js';
 import { ROOT, createHost } from '../src/host.js';
@@ -592,6 +592,16 @@ describe("VS Code's limits on spawning and messaging", () => {
   type Tool = { name: string; handler: (input: unknown) => Promise<Answer> };
   type Client = ReturnType<ReturnType<typeof createHost>['accept']>;
 
+  /*
+   * Every host a case made, closed after it. A case here makes fifty sessions
+   * or more, and a host left running keeps each of them and their timers for
+   * the rest of the file, so every case after it ran slower than the last.
+   */
+  const hosts: ReturnType<typeof createHost>[] = [];
+  afterEach(async () => {
+    await Promise.all(hosts.splice(0).map((host) => host.close()));
+  });
+
   /** One session's tools, as the model of the session at `index` reaches them. */
   const toolsOf = (index: number): Record<string, Tool> => {
     const host = builtServer('host', index) as { tools: Tool[] } | undefined;
@@ -612,6 +622,7 @@ describe("VS Code's limits on spawning and messaging", () => {
       path: root, agents: [claude({ paths: [root] })], ...machine(), tools: hostTools(),
       sleepAfterMinutes: 0,
     });
+    hosts.push(host);
     const client = host.accept(peer());
     await hello(client);
     return client;
@@ -667,6 +678,7 @@ describe("VS Code's limits on spawning and messaging", () => {
       path: root, agents: [claude({ paths: [root] })], ...machine(), tools: hostTools(),
       sleepAfterMinutes: 0,
     });
+    hosts.push(host);
     const p = peer();
     const client = host.accept(p);
     await hello(client);
@@ -714,6 +726,7 @@ describe("VS Code's limits on spawning and messaging", () => {
         (config.permissionMode === undefined ? undefined : { permissionMode: config.permissionMode }),
     };
     const host = createHost({ path: root, agents: [inheriting], ...machine(), tools: hostTools(), sleepAfterMinutes: 0 });
+    hosts.push(host);
     const client = host.accept(peer());
     await hello(client);
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/first', provider: 'claude', config: { permissionMode: 'plan' } } });
@@ -775,6 +788,7 @@ describe("VS Code's limits on spawning and messaging", () => {
       path: root, agents: [claude({ paths: [root] })], ...machine(), tools: hostTools(),
       sleepAfterMinutes: 0, agentOrchestrationLimitsScope: 'session',
     });
+    hosts.push(host);
     const client = host.accept(peer());
     await hello(client);
     const first = await started(client, 'first');

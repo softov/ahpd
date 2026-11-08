@@ -69,7 +69,7 @@ const offered = (over: Partial<BoundTool> = {}): BoundTool => ({
 });
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** A session holding `tools`, and what it said on the wire. */

@@ -1056,17 +1056,21 @@ describe('a shell on this machine', () => {
       method: 'dispatchAction',
       params: { channel: uri, action: { type: 'terminal/input', data: 'exit 5\n' } },
     });
+    /*
+     * The root's last word on the terminal, which is all this client hears:
+     * it subscribed to the root and never to the terminal, so a wait for the
+     * terminal's own `terminal/exited` ran to its deadline on every run.
+     */
+    const lifecycle = (): { status?: string; exitCode?: number } | undefined => (actions(p, 'ahp-root://')
+      .filter((e) => e.action.type === 'root/terminalsChanged')
+      .at(-1)?.action.terminals as { resource: string; lifecycle?: { status?: string; exitCode?: number } }[] | undefined)
+      ?.find((one) => one.resource === uri)?.lifecycle;
     for (const until = Date.now() + WAIT_MS; Date.now() < until;) {
       await new Promise((r) => { setTimeout(r, 50); });
-      if (actions(p, uri).some((e) => e.action.type === 'terminal/exited')) break;
+      if (lifecycle()?.status === 'exited') break;
     }
-    await settle();
 
-    const listed = actions(p, 'ahp-root://')
-      .filter((e) => e.action.type === 'root/terminalsChanged')
-      .at(-1)?.action.terminals as { resource: string; lifecycle?: { status?: string; exitCode?: number } }[] | undefined;
-    expect(listed?.find((one) => one.resource === uri)?.lifecycle)
-      .toEqual({ status: 'exited', exitCode: 5 });
+    expect(lifecycle()).toEqual({ status: 'exited', exitCode: 5 });
   });
 
   /*

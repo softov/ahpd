@@ -1,3 +1,4 @@
+import { WAIT_MS } from '../../../tools/wait.ts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,12 +43,18 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
 }
 
 /** Let the subprocess's work finish, up to a point; the fixture never sleeps. */
-const until = async (check: () => boolean | Promise<boolean>, times = 2000): Promise<void> => {
-  for (let i = 0; i < times; i++) {
+/*
+ * By the clock, within the case's own budget: two thousand 1 ms ticks were two
+ * seconds on Linux and forty on Windows, whose timers tick every 15 ms, which is
+ * past the 20 s a case has there.
+ */
+const until = async (check: () => boolean | Promise<boolean>, ms = WAIT_MS): Promise<void> => {
+  for (const deadline = Date.now() + ms; Date.now() < deadline;) {
     if (await check()) return;
     await new Promise((r) => { setTimeout(r, 1); });
   }
-  throw new Error(`still waiting after ${times} tries`);
+  if (await check()) return;
+  throw new Error(`still waiting after ${ms} ms`);
 };
 
 type Note = { channel: string; action: Record<string, unknown>; origin?: { clientId: string; clientSeq: number } };

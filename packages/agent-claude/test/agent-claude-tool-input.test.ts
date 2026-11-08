@@ -151,7 +151,7 @@ const rows: [string, unknown, unknown][] = [
 const textOf = (line: unknown): string => (typeof line === 'string' ? line : String((line as Bag | undefined)?.markdown));
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** The calls as a live session announces them: its snapshot calls and its ready actions. */

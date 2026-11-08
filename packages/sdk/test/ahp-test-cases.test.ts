@@ -26,7 +26,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   annotationsReducer, automationReducer, automationRunReducer, canvasReducer, changesetReducer, chatReducer,
   IS_CLIENT_DISPATCHABLE, resourceWatchReducer, rootReducer, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS,
@@ -101,6 +101,16 @@ const quiet = async (p: { notes: unknown[] }): Promise<void> => {
 
 beforeEach(() => { sdk.queries.length = 0; });
 
+/*
+ * Every host a case made, closed after it. A host left open keeps its session,
+ * the CLI it started and that session's watchers for the rest of the file, so
+ * each case ran beside every one before it.
+ */
+const made: ReturnType<typeof createHost>[] = [];
+afterEach(async () => {
+  await Promise.all(made.splice(0).map((host) => host.close()));
+});
+
 /** A host, with nothing asked of it yet, and the one channel that opens with a state given it. */
 /**
  * A host that opens one channel with a case's `initial`: the one named, or
@@ -109,7 +119,7 @@ beforeEach(() => { sdk.queries.length = 0; });
  */
 const aHost = (seeded?: { channel?: string; initial: Record<string, unknown> }) => {
   let taken = false;
-  return createHost({
+  const host = createHost({
     path: '/home/softov',
     // A CLI started by a send, so a case's session holds what its case gave it.
     agents: [claude({ paths: ['/home/softov'], preset: { cliStart: 'send' } })],
@@ -122,6 +132,8 @@ const aHost = (seeded?: { channel?: string; initial: Record<string, unknown> }) 
       },
     }),
   });
+  made.push(host);
+  return host;
 };
 
 const CASES = join(import.meta.dirname, 'fixtures/ahp-test-cases');

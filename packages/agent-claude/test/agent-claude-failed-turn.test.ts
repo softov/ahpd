@@ -96,7 +96,7 @@ const { createSession } = await import('../src/session.js');
 const { OpenLogins } = await import('../src/logins.js');
 
 const settle = async (times = 30): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+  for (let i = 0; i < times; i++) await new Promise((r) => { setImmediate(r); });
 };
 
 /** A session over a temporary folder, and everything it said on its chat. */

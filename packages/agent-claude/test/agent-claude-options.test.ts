@@ -218,7 +218,7 @@ const { createSession } = await import('../src/session.js');
 
 /** The turns a CLI's start takes, waited out. */
 const settle = async (times = 8): Promise<void> => {
-  for (let i = 0; i < times; i++) await new Promise((done) => { setTimeout(done, 0); });
+  for (let i = 0; i < times; i++) await new Promise((done) => { setImmediate(done); });
 };
 
 /** The `query()` options one session's first send started its CLI with, given these plugins. */
