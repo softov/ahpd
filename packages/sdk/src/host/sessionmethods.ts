@@ -1100,7 +1100,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * A worktree session runs in the folder the client picked until its
          * first send, which makes the tree and starts the session again in
          * it, as VS Code's host resolves a session's worktree on the first
-         * send: a folder that cannot hold one fails that send.
+         * send: a tree git cannot make fails that send.
          * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
          */
         const running = where;

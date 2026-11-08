@@ -1294,8 +1294,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   /**
    * A worktree session's tree, owed to its first send: the start again that
    * send runs makes the tree from the config the session holds by then and
-   * starts the session in it, and one its folder cannot hold fails that send,
-   * as VS Code's host resolves a session's worktree on the first send.
+   * starts the session in it, and a tree git cannot make fails that send, as
+   * VS Code's host resolves a session's worktree on the first send.
    * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2195-L2201
    */
   const oweTree = (
