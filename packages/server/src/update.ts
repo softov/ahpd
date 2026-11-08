@@ -25,7 +25,7 @@ export const MAX_AGE_MS = 6 * 60 * 60 * 1000;
 /** `X.Y.Z` with an optional prerelease tag; anything else is not a version here. */
 const VERSION = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/;
 
-/** The comparison's own reader, exported so `compat.ts` reuses it rather than writing a second one. */
+/** The comparison's own reader, which `install.ts` and `selfupdate.ts` read a registry's versions with. */
 export const parse = (text: string): { numbers: [number, number, number]; prerelease: boolean } | undefined => {
   const found = VERSION.exec(text);
   if (!found) return undefined;
@@ -38,9 +38,9 @@ export const parse = (text: string): { numbers: [number, number, number]; prerel
 /**
  * Is `latest` ahead of `current`?
  *
- * Written rather than taken from `semver`, because one comparison does not
- * earn a dependency. A prerelease loses to its own release, so `0.5.0-beta.1`
- * is told about `0.5.0`. A local build ahead of the registry is not behind,
+ * A prerelease loses to its own release, so `0.5.0-beta.1` is told about
+ * `0.5.0`, and two prereleases of one release are not told about each other.
+ * A local build ahead of the registry is not behind,
  * and neither is anything that does not parse - `version()` answers `unknown`
  * from a bundle, and a checkout is ahead of npm most days; a tool that says
  * so every start is a tool people switch off.

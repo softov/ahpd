@@ -124,9 +124,9 @@ export interface PartNeed extends Need {
   part: string;
   /**
    * A host mount made in the part's place, and only when the part is left out
-   * because it, or a part it requires, could not be built.
+   * because it, or a part it requires, could not be loaded.
    *
-   * Absent, a part that cannot be built is left out and a session needing it
+   * Absent, a part that cannot be loaded is left out and a session needing it
    * is refused. A fallback whose host path is not there is no fallback.
    */
   fallback?: FileNeed | DirectoryNeed;

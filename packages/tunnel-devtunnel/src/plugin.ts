@@ -18,9 +18,11 @@
  */
 
 import { reason } from '@ahpd/sdk';
+import { SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { Plugin, PluginHost, PluginPeer } from '@ahpd/sdk';
 import { hostname as machineName } from 'node:os';
 import { devtunnelAdapter, OpenTunnels } from './adapter.js';
+import { normalizeTunnelName, tunnelNameFromHostname } from './discovery.js';
 import { devtunnelKind, NAME as KIND } from './kind.js';
 import { sdkService } from './service.js';
 import type { Service } from './service.js';
@@ -114,6 +116,10 @@ const CLIENT = name;
  * `connect` is only answered from `listening` on, and a stored connector may
  * open while the host is still being built. So the first call waits for that
  * event rather than reporting a failure the next tick would have avoided.
+ *
+ * The handshake offers every version the package speaks, most preferred
+ * first, as the spec has a client offer them (docs/specification/versioning.md
+ * at spec/v1.0.0, "Negotiation").
  */
 const throughHost = (host: PluginHost): {
   secret: (id: string, values: Record<string, string>) => Promise<void>;
@@ -127,7 +133,7 @@ const throughHost = (host: PluginHost): {
     await started;
     opened ??= (async () => {
       const conn = host.connect();
-      await conn.request('initialize', { clientId: CLIENT, protocolVersions: ['0.9.0'] });
+      await conn.request('initialize', { clientId: CLIENT, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
       return conn;
     })();
     const failed = (): void => { opened = undefined; };
@@ -153,7 +159,13 @@ export const apply: Plugin['apply'] = (plugin, options) => {
   const keep = asked.keep ?? defaults.keep;
   const anonymous = asked.anonymous ?? defaults.anonymous;
   const allowAccountChange = asked.allowAccountChange ?? defaults.allowAccountChange;
-  const wanted = asked.name ?? hostname();
+  /*
+   * The tunnel's name as VS Code names the tunnel it hosts: a configured name
+   * normalized, else the machine's host name cleaned, and `vscode` for a
+   * configured name that normalizes to nothing.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/remoteTunnel/node/tunnelProcessCoordinator.ts#L424-L427
+   */
+  const wanted = (asked.name !== undefined ? normalizeTunnelName(asked.name) : tunnelNameFromHostname(machineName())) || 'vscode';
   const connector = asked.connector;
 
   /*
@@ -173,14 +185,28 @@ export const apply: Plugin['apply'] = (plugin, options) => {
   /** What `listening` said, which the system tunnel's hop and token need. */
   let daemonPort: number | undefined;
   let guarded = false;
+  let connectionToken: string | undefined;
   plugin.on('listening', (event) => {
     daemonPort = event.port;
     guarded = event.guarded;
+    connectionToken = event.connectionToken;
   });
 
+  /** The tunnel each connector hosted, by connector id, which the next run looks up first. */
+  const kept = plugin.records('devtunnel-tunnels');
   const service = seams.service ?? sdkService({
     token: (id) => tunnels.held(id),
     name: wanted,
+    kept: {
+      read: async (id) => {
+        const row = await kept.get(id);
+        if (row === undefined || typeof row['tunnel'] !== 'string' || typeof row['name'] !== 'string') return undefined;
+        return { id: row['tunnel'], name: row['name'], ...(typeof row['cluster'] === 'string' ? { cluster: row['cluster'] } : {}) };
+      },
+      write: async (id, one) => {
+        await kept.put({ id, tunnel: one.id, name: one.name, ...(one.cluster === undefined ? {} : { cluster: one.cluster }) });
+      },
+    },
   });
 
   plugin.registerTunnelKind(devtunnelKind({
@@ -192,6 +218,7 @@ export const apply: Plugin['apply'] = (plugin, options) => {
     open: (id) => tunnels.held(id) !== undefined,
     daemonPort: () => daemonPort,
     guarded: () => guarded,
+    connectionToken: () => connectionToken,
   }));
 
   // Every host the service opened closes with the plugin that opened it, even
@@ -200,15 +227,3 @@ export const apply: Plugin['apply'] = (plugin, options) => {
 
   plugin.log(`${name}: ${KIND} tunnels on ${connector === undefined ? 'no connector until one is set' : `connector ${connector}`}`);
 };
-
-/**
- * This machine's name, which is what a person calls the host they connect to.
- *
- * Only read when nothing was configured, and it falls back to the daemon's
- * own name: a machine that reports nothing usable should still leave a tunnel
- * with something on it to read.
- */
-function hostname(): string {
-  const found = machineName().trim();
-  return found === '' || found === 'localhost' ? 'ahpd' : found;
-}

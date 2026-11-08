@@ -396,7 +396,7 @@ it.skipIf(!posix)('works without the secret, and refuses only a Proxmox machine,
   await provider.write('computer://box', body({ image: 'node:22' }), 'user:ana');
   const listed = (await provider.list('computer://')).map((one) => one.name);
   expect(listed).toContain('box');
-  expect(logged).toContainEqual(expect.stringContaining('the proxmox runtime did not list its machines'));
+  expect(logged).toContainEqual(expect.stringContaining('Could not list the proxmox machines'));
   await expect(provider.write('computer://vm', body({ profile: 'pve' }), 'user:ana'))
     .rejects.toThrow(/the proxmox option's secret host:proxmox could not be read/);
   expect(vmCalled('vm')).toBeUndefined();

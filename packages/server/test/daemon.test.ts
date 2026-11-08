@@ -13,7 +13,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { announcementOf, claim, controlFor, deliver, forget, logSince, readyUrl, recordOf, rewritePaths, running, start, statusLine, stop } from '../src/daemon.js';
+import {
+  announcementOf, claim, configuredMs, controlFor, deliver, forget, logSince, READY_TIMEOUT_MS, readyUrl, recordOf, rewritePaths, running, start,
+  statusLine, stop, STOP_WAIT_MS,
+} from '../src/daemon.js';
 import { automationStatePath, isIdentifier, hostId, namedIssuer, personalUrl, policiesPath, signInIdentifier, vaultPath } from '../src/config.js';
 import type { Control, Running } from '../src/daemon.js';
 import type { Manager } from '../src/service.js';
@@ -175,8 +178,10 @@ describe('controlFor', () => {
     expect(controlFor('linux')).toBeUndefined();
     expect(controlFor('darwin')).toBeUndefined();
     const control = controlFor('win32') as Control;
-    // A random name under the pipe namespace, and a key of 32 bytes as hex.
-    expect(control.pipe).toMatch(/^\\\\\.\\pipe\\ahpd-[0-9a-f]{32}$/u);
+    // The application's name and a random UUID under the pipe namespace, as VS
+    // Code's CLI names its pipe (cli/src/async_pipe.rs L179-L188 at 6b68d3fe),
+    // and a key of 32 bytes as hex.
+    expect(control.pipe).toMatch(/^\\\\\.\\pipe\\ahpd-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
     expect(control.key).toMatch(/^[0-9a-f]{64}$/u);
   });
 
@@ -225,6 +230,32 @@ describe('the record on disk', () => {
     const found = running();
     expect(found?.paths).toEqual(['/a']);
     expect(found?.argv).toBeUndefined();
+  });
+
+  // The stop's wait is VS Code's CLI's five seconds before a forced kill
+  // (cli/src/tunnels/agent_host.rs L736-L752 at 6b68d3fe), the start's
+  // upstream's minute, each the configuration's to say otherwise.
+  it('reads the start\'s and the stop\'s waits from the configuration, a minute and five seconds when it names neither', () => {
+    expect(configuredMs('stopWaitMs', STOP_WAIT_MS)).toBe(5_000);
+    expect(configuredMs('readyTimeoutMs', READY_TIMEOUT_MS)).toBe(60_000);
+    writeFileSync(join(home, 'ahpd', 'config.json'), JSON.stringify({ stopWaitMs: 2500, readyTimeoutMs: 0 }));
+    expect(configuredMs('stopWaitMs', STOP_WAIT_MS)).toBe(2500);
+    expect(configuredMs('readyTimeoutMs', READY_TIMEOUT_MS)).toBe(0);
+  });
+
+  // daemonRecord schemaVersion: VS Code's CLI ignores a registry entry of
+  // another schemaVersion (cli/src/tunnels/agent_host_registry.rs L36-L42,
+  // L217-L228 at 6b68d3fe).
+  it('writes its schemaVersion, and under daemonRecord schemaVersion ignores a record of another and leaves it', () => {
+    expect(recordOf('ahpd on ws://127.0.0.1:9187', process.pid).schemaVersion).toBe(1);
+    put({ pid: process.pid, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/', paths: [], startedAt: '2026-09-19T00:00:00.000Z' });
+    expect(running('schemaVersion')).toBeUndefined();
+    expect(running('fields')?.pid).toBe(process.pid);
+    writeFileSync(join(home, 'ahpd', 'config.json'), JSON.stringify({ daemonRecord: 'schemaVersion' }));
+    expect(running()).toBeUndefined();
+    expect(existsSync(join(home, 'ahpd', 'daemon.json'))).toBe(true);
+    put({ schemaVersion: 1, pid: process.pid, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/', paths: [], startedAt: '2026-09-19T00:00:00.000Z' });
+    expect(running()?.pid).toBe(process.pid);
   });
 
   it('prints the token-free origin through statusLine', () => {

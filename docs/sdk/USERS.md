@@ -356,10 +356,11 @@ is epoch milliseconds in the future. Without it the token does not expire.
 `scope` is a team or a team and project the person is in now, and the token's
 calls are charged to it, so a call naming another scope is refused. `meta` is
 a map of names to values the key keeps about itself, such as
-`{ "env": "prod" }`: a name is 1 to 64 characters of letters, digits, `_`, `.`
-and `-`, and a value is at most 256 characters with no comma and no line
-break. A call made with the key writes these on its usage record, and adds the
-entries of its `X-AHP-Meta` header: a name the key holds keeps the key's value.
+`{ "env": "prod" }`: a name is 1 to 64 characters and a value at most 256,
+and a map holds 32 entries at most. A call made with the key writes these on
+its usage record, and adds the call's own, a JSON object in its `X-AHP-Meta`
+header or its body's `metadata.spend_logs_metadata`, as LiteLLM takes a call's
+`spend_logs_metadata`: a name the key holds keeps the key's value.
 The answer carries the `secret` once, and the directory keeps only its
 hash. The list answers the same records without a hash or a secret.
 

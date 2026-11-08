@@ -18,6 +18,8 @@ import { fileURLToPath } from 'node:url';
  * quoted string: a list of modes may come from the package that defines it.
  * A `views` path is `<surface>.<componentId>.<prop>`, and the plugin makes its
  * views at run time, so only that shape is checked: `text` or `label`, a string.
+ * A `messages` key is one the sources hold as a quoted string, which is the key
+ * a lookup names, and its value is a string.
  *
  * With no argument it reads the sdk's own catalogs and every package whose
  * manifest names `ahpd.i18n`. Each argument is one package folder instead.
@@ -139,6 +141,15 @@ for (const dir of packages) {
               else if (typeof leaf !== 'string') say([block, surface, id, prop], 'is not a string');
             }
           }
+        }
+        continue;
+      }
+      if (block === 'messages') {
+        const messages = object(body);
+        if (messages === undefined) { say([block], 'is not an object'); continue; }
+        for (const [key, leaf] of Object.entries(messages)) {
+          if (!quoted(key)) say([block, key], 'matches no message the sources look up');
+          else if (typeof leaf !== 'string') say([block, key], 'is not a string');
         }
         continue;
       }

@@ -123,7 +123,7 @@ export const declareStart = (registry: Registry<object>): Command => registry.ac
     const at = wordAt(table, argv);
     const rest = forwardedLine(argv, at, table);
     try {
-      const begun = await start(rest, process.argv[1] as string, token);
+      const begun = await start(rest, process.argv[1] as string, token, undefined, options.readyTimeoutMs);
       let text = options.warnings.map((warning) => `${warning}\n`).join('');
       // What the daemon started without, before the line that says it started:
       // a plugin that did not load, a preset of one that was dropped, all of it

@@ -15,7 +15,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { memoryPolicies, type Grant, type ModelDialect, type ModelUse, type ProviderConnector, type ProviderModel, type Users } from '@ahpd/sdk';
 import { modelCatalog, type ModelCatalog } from '../src/proxy/catalog.js';
-import { connectorModels, type ProxyOptions } from '../src/proxy/listener.js';
+import { connectorModels, MAX_BODY_BYTES, type ProxyOptions } from '../src/proxy/listener.js';
 import { proxyConfiguration } from '../src/proxy/providers.js';
 import {
   answerJson, fakeProvider, isAnthropicError, isOpenAiError, MARKER, memoryUsage, pause, people, providerConnector, ROOT_TOKEN, send,
@@ -103,10 +103,12 @@ describe('/v1 answers in each dialect, and refuses in its own error shape', () =
     expect(isOpenAiError(notJson.json)).toBe(true);
     expect(notJson.json).toMatchObject({ error: { type: 'invalid_request_error', message: 'The request body is not JSON' } });
 
+    // Anthropic's own error shape, the request_id it always carries null for
+    // an answer no request of Anthropic's made, as VS Code's proxy writes it.
     const noModel = await send(served.port, MESSAGES, { headers: asRoot, body: { messages: [] } });
     expect(noModel.status).toBe(400);
     expect(isAnthropicError(noModel.json)).toBe(true);
-    expect(noModel.json).toMatchObject({ type: 'error', error: { type: 'invalid_request_error' } });
+    expect(noModel.json).toEqual({ type: 'error', error: { type: 'invalid_request_error', message: expect.any(String) }, request_id: null });
 
     const array = await send(served.port, CHAT, { headers: asRoot, body: [] });
     expect(array.status).toBe(400);
@@ -165,6 +167,10 @@ describe('/v1 answers in each dialect, and refuses in its own error shape', () =
     }
   });
 
+  it('takes a body up to the 128 MB Anthropic documents for its Messages API', () => {
+    expect(MAX_BODY_BYTES).toBe(128 * 1024 * 1024);
+  });
+
   it('refuses a body larger than the limit with 413 before reading it all', async () => {
     const served = await proxy({ maxBodyBytes: 1024 });
     const got = await send(served.port, MESSAGES, { headers: asRoot, body: { model: 'fake/model', pad: 'x'.repeat(4096) } });
@@ -190,6 +196,19 @@ describe('a caller is a person, root or a session, and may call', () => {
       expect(removed.status).toBe(401);
     }
     expect(fake.received).toEqual([]);
+  });
+
+  it('sends each 401 a bearer challenge: the realm alone with no credential, invalid_token with one', async () => {
+    const fake = await okProvider();
+    const served = await proxy({ ...table(fake.endpoint) });
+    for (const path of [CHAT, MESSAGES]) {
+      const none = await send(served.port, path, { body: CALL });
+      expect(none.headers['www-authenticate']).toBe('Bearer realm="ahpd"');
+      const unknown = await send(served.port, path, { headers: { 'x-api-key': 'not-a-token' }, body: CALL });
+      expect(unknown.headers['www-authenticate']).toBe('Bearer realm="ahpd", error="invalid_token"');
+      const removed = await send(served.port, path, { headers: { authorization: `Bearer ${who.rex}` }, body: CALL });
+      expect(removed.headers['www-authenticate']).toBe('Bearer realm="ahpd", error="invalid_token"');
+    }
   });
 
   it('takes the credential as Bearer or as x-api-key, and refuses two that differ', async () => {
@@ -299,23 +318,25 @@ describe('a caller is a person, root or a session, and may call', () => {
     for (const one of fake.received) expect(one.headers['x-ahp-scope']).toBeUndefined();
   });
 
-  it('reads meta from X-AHP-Meta, refuses one that is not name=value, and never sends it upstream', async () => {
+  // A JSON object of string values, as LiteLLM's x-litellm-spend-logs-metadata
+  // carries spend_logs_metadata (https://docs.litellm.ai/docs/proxy/cost_tracking).
+  it('reads meta from X-AHP-Meta as a JSON object of string values, refuses one that is not, and never sends it upstream', async () => {
     const fake = await okProvider();
     const usage = memoryUsage();
     const served = await proxy({ ...table(fake.endpoint), usage: () => usage });
     const key = { 'x-api-key': who.ana };
 
-    expect((await send(served.port, CHAT, { headers: { ...key, 'x-ahp-meta': 'a=1, b=2' }, body: CALL })).status).toBe(200);
+    expect((await send(served.port, CHAT, { headers: { ...key, 'x-ahp-meta': '{"a":"1","b":"two, three"}' }, body: CALL })).status).toBe(200);
     await pause(20);
-    expect(usage.entries.map((entry) => entry.meta)).toEqual([{ a: '1', b: '2' }]);
+    expect(usage.entries.map((entry) => entry.meta)).toEqual([{ a: '1', b: 'two, three' }]);
     // The header is this host's, not the provider's.
     for (const one of fake.received) expect(one.headers['x-ahp-meta']).toBeUndefined();
 
-    const bad = await send(served.port, MESSAGES, { headers: { ...key, 'x-ahp-meta': 'bad' }, body: CALL });
+    const bad = await send(served.port, MESSAGES, { headers: { ...key, 'x-ahp-meta': 'a=1' }, body: CALL });
     expect(bad.status).toBe(400);
     expect(isAnthropicError(bad.json)).toBe(true);
     expect(bad.json).toMatchObject({
-      error: { type: 'invalid_request_error', message: 'bad is not a meta entry; write one as name=value' },
+      error: { type: 'invalid_request_error', message: 'A meta is a JSON object of string values, and a=1 is not JSON' },
     });
 
     // A key at the bound and a call that adds one are over it, and refused
@@ -323,10 +344,24 @@ describe('a caller is a person, root or a session, and may call', () => {
     const full = await who.users.mintToken!('ana', {
       meta: Object.fromEntries(Array.from({ length: 32 }, (_one, at) => [`k${String(at)}`, 'v'])),
     });
-    const over = await send(served.port, CHAT, { headers: { 'x-api-key': full.secret, 'x-ahp-meta': 'extra=1' }, body: CALL });
+    const over = await send(served.port, CHAT, { headers: { 'x-api-key': full.secret, 'x-ahp-meta': '{"extra":"1"}' }, body: CALL });
     expect(over.status).toBe(400);
     expect(over.json).toMatchObject({ error: { message: 'A meta names 32 entries at most, and that body names 33' } });
     expect(fake.received).toHaveLength(1);
+  });
+
+  // LiteLLM takes spend_logs_metadata in the request body's metadata too
+  // (https://docs.litellm.ai/docs/proxy/cost_tracking).
+  it('reads meta from the body\'s metadata.spend_logs_metadata under the header\'s, and sends the provider neither', async () => {
+    const fake = await okProvider();
+    const usage = memoryUsage();
+    const served = await proxy({ ...table(fake.endpoint), usage: () => usage });
+    const body = { ...CALL, metadata: { spend_logs_metadata: { env: 'dev', client: 'pi' } } };
+    const sent = await send(served.port, CHAT, { headers: { 'x-api-key': who.ana, 'x-ahp-meta': '{"env":"prod"}' }, body });
+    expect(sent.status).toBe(200);
+    await pause(20);
+    expect(usage.entries.map((entry) => entry.meta)).toEqual([{ env: 'prod', client: 'pi' }]);
+    expect(JSON.parse(String(fake.received[0]?.body))).not.toHaveProperty('metadata');
   });
 
   it('charges a call with a key that carries a scope, and refuses a header that names another', async () => {

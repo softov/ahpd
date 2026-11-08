@@ -290,7 +290,7 @@ export interface ComputerPort {
    * The parts an agent needs that a machine was made without, or nothing when
    * the port cannot say.
    *
-   * A part whose build failed is left out of the machine rather than refusing
+   * A part whose load failed is left out of the machine rather than refusing
    * it, so a session whose agent needs that part is refused by name and every
    * other session runs; a running machine never gains one. Empty where the
    * machine has every part the agent's needs name.

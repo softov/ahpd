@@ -99,7 +99,7 @@ import {
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
 import { bag, isRecord, reason } from '../utils/values.js';
-import type { CallOutcome, CheckResult, Connector, ConnectorHealth, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, ServedAdapter } from '../types/connectors.js';
+import type { ActionCall, CallOutcome, CheckResult, Connector, ConnectorHealth, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, ServedAdapter } from '../types/connectors.js';
 import type { PluginMethod } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant, Principal } from '../types/users.js';
@@ -273,11 +273,12 @@ export interface ConnectorsChannel {
    * that name and have a `run`, and the reader has to pass `mayRead` - the
    * same answer a listing gives, asked again at each call so a remove or a
    * lost grant takes hold at once. A reader of nothing is the daemon itself,
-   * as it is for a read. `files` is the calling session's attachments folder,
-   * when its store keeps one, which the adapter's `run` gets as `call.files`.
-   * The answer is the adapter's own, passed on unchanged.
+   * as it is for a read. `call` is what the calling session hands the
+   * adapter's `run` beside the input: its attachments folder, and where the
+   * call's partial content is said. The answer is the adapter's own, passed
+   * on unchanged.
    */
-  run(id: string, reader: Principal | undefined, action: string, input: Record<string, unknown>, files?: string): Promise<unknown>;
+  run(id: string, reader: Principal | undefined, action: string, input: Record<string, unknown>, call?: ActionCall): Promise<unknown>;
   /**
    * Record the outcome of one call for one connector, as `run` and a host part
    * do.
@@ -614,7 +615,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     reader: Principal | undefined,
     action: string,
     input: Record<string, unknown>,
-    files?: string,
+    call?: ActionCall,
   ): Promise<unknown> => {
     const entry = open.get(id);
     if (entry === undefined) throw new Error(`${id} is not an open connector`);
@@ -628,9 +629,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       throw new Error(`${id} is not ${reader.id}'s to use`);
     }
     try {
-      // A call with no folder is handed no `call`, so an adapter that reads
-      // `call.files` sees the same absence a host with no store gives.
-      const answer = await adapter.run(entry.connector, action, input, files === undefined ? undefined : { files });
+      const answer = await adapter.run(entry.connector, action, input, call);
       note(id, { ok: true });
       return answer;
     } catch (error) {

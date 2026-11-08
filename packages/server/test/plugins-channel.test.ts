@@ -336,7 +336,7 @@ const servedHttp = (users: Users) => {
     users,
     running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
     turning: () => [],
-    restart: () => {},
+    restart: () => ({ restartDelayMs: 0 }),
   };
   const handler = apiHandler({
     registry: servedRegistry(facts),
@@ -674,6 +674,22 @@ it('applies and reloads as a role holding plugin:write, and refuses one holding 
   await close();
 });
 
+/*
+ * An install npm refuses is the daemon's own work failing, which VS Code
+ * answers with InternalError; a source the daemon cannot take is a parameter
+ * refused, InvalidParams.
+ */
+it('answers an install npm fails with InternalError, and a source it cannot take with InvalidParams', async () => {
+  const { runner } = fakeNpm({}, { fail: (argv) => (argv[0] === 'install' ? 'npm error code E404' : undefined) });
+  const { host, users, close } = await served({ run: runner });
+  const jo = await as(host, users, 'jo');
+
+  expect(await jo.call('x-ahpd/plugins/install', { source: 'github:someone/demo' }))
+    .toMatchObject({ code: -32603, message: expect.stringContaining('npm error code E404') });
+  expect(await jo.call('x-ahpd/plugins/install', {})).toMatchObject({ code: -32602 });
+  await close();
+});
+
 it('installs a source as a role holding plugin:install, and lists the new row', async () => {
   const { runner, calls } = fakeNpm({ demo: 'github:someone/demo' });
   const { host, users, close } = await served({ run: runner });
@@ -825,7 +841,7 @@ it('leaves the files the daemon runs when a rewrite fails in npm', async () => {
     id: 'demo',
     source: writing('second', marker),
     packageJson: { name: 'demo-plugin', version: '2.0.0' },
-  })).toMatchObject({ code: -32602, message: expect.stringContaining('npm error code E404') });
+  })).toMatchObject({ code: -32603, message: expect.stringContaining('npm error code E404') });
 
   expect(readFileSync(join(folder, 'index.ts'), 'utf8')).toBe(first);
   expect(readFileSync(join(folder, 'package.json'), 'utf8')).toBe(packageJson);
@@ -953,8 +969,29 @@ it('serves the problem a plugin that failed to load left, with its URL userinfo 
   const alerts = row['alerts'] as Bag[];
   expect(alerts).toHaveLength(1);
   expect(alerts[0]?.['level']).toBe('error');
-  expect(String(alerts[0]?.['text'])).toContain(`https://${SET}@example.invalid/p.tgz`);
+  expect(String(alerts[0]?.['text'])).toContain('https://<redacted>@example.invalid/p.tgz');
   expect(JSON.stringify(row)).not.toContain('sk-live-2');
+  await close();
+});
+
+// VS Code's agent host clears a text before a person or a log reads it
+// (src/vs/platform/agentHost/common/logRedaction.ts L95-L105,
+// remoteAgentHostBootstrapProgress.ts L16-L19 at 6b68d3fe).
+it('serves an alert with an absolute URL\'s query, a signed-URL parameter and a connection token cleared', async () => {
+  writeFileSync(config, JSON.stringify({ plugins: ['./fixtures/plugin-after/index.ts'] }));
+  const { host, users, close } = await live();
+  const ana = await as(host, users, 'ana');
+  await ana.rows();
+
+  const after = (globalThis as Record<string, unknown>).__pluginAfterHost as PluginHost;
+  after.alert({ level: 'warning', text: 'GET https://store.example/blob?sig=abc123&se=2026 failed; the copy at /blob2?sv=2025&sig=def456 is stale; open /chat?tkn=sekrit' });
+  await wait(50);
+
+  const row = (await ana.rows())['after'] as Bag;
+  expect(row['alerts']).toEqual([{
+    level: 'warning',
+    text: 'GET https://store.example/blob?<redacted> failed; the copy at /blob2?<redacted>&<redacted> is stale; open /chat?tkn=***',
+  }]);
   await close();
 });
 

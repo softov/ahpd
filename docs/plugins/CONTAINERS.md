@@ -135,6 +135,7 @@ Before a container is started, stopped or removed, the window asking vouches for
 The names are the reference client's on purpose.
 `stop` and `remove` answer `true`.
 They answer `false` while another connection still relays to that folder, or while a session of this host is placed on its computer.
+A `connect`, a `stop` and a `remove` of one folder run one at a time, each waiting for the one before it, as VS Code's host queues them by the folder.
 They reach a computer the folder already is, so each asks for the container operation and `computer:write` beside it.
 No owner check is made.
 The four that hold a relay ask for the container operation of their own - `container:connect`, `container:relay` and `container:disconnect` - and not `computer:write`. The group `container:write` covers all three.
@@ -146,6 +147,7 @@ Starting a container is this host's Docker access by proxy.
 1. The folder must be a dev container: `.devcontainer/devcontainer.json` or `.devcontainer.json`, refused with a sentence naming the folder if neither is there.
 2. A computer already labelled with the folder is reused, and so is one that is stopped: `devcontainer up` starts it and keeps its id.
    When there is none of ours, `devcontainer up --log-level debug --workspace-folder <dir> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<dir>` makes it, and the CLI's own JSON is read off whichever line carries it - the CLI logs as it works, so the result is one line among several.
+   The result counts only with the CLI's exit 0 beside it. Anything else is refused as VS Code refuses it, `Dev Container CLI returned an invalid result: <what the CLI wrote>`, its standard output where it wrote any and its standard error otherwise, with each environment value in it masked, a JSON line's value by value.
    The labels are the CLI's own way of finding a container, so a second connect, or a connect after a session made one, reaches the same container rather than a second one.
    A container the CLI made before those labels were on it carries only `devcontainer.local_folder=<dir>`; one that is there is adopted instead, started with `docker start` and taken as it stands, and recorded in `computers.json` under its container id, which is the last thing that stops a folder's own container from being made twice. A later connect, or the first one after a restart, finds it again by that record and does not run `up`.
 3. The environment is derived once per container, before anything runs in it: the user is the last `remoteUser` any entry of the folder's configuration named, else `containerUser`, else the image's own `User`, else `root`; the environment is what that user's login shell was holding, read through one probe of `/proc/self/environ` inside the container, with each entry's `remoteEnv` laid over it in order.

@@ -21,7 +21,7 @@ import { hostname } from 'node:os';
 import { output } from '@cofold/commands';
 import type { Command, CommandContext, Field, Registry } from '@cofold/commands';
 import { HttpError } from '@cofold/remote';
-import { parseMeta } from '@ahpd/sdk';
+import { checkMeta } from '@ahpd/sdk';
 import type { Grant, Measure, Period, PolicyLimit, Principal, Users } from '@ahpd/sdk';
 import { personalUrl } from '../config.js';
 import { isRoot } from './authorize.js';
@@ -122,19 +122,25 @@ const limitsOf = (values: readonly string[]): PolicyLimit[] => values.map((text)
 /**
  * The meta the `--meta` flags wrote, as one map.
  *
- * Each value is read as the header is, so a comma may name two entries in one
- * flag and the bounds are the same. A name written twice across two flags is
- * refused rather than kept, as it is inside one.
+ * Each flag is one entry, `name=value`, cut at its first `=`, so a value may
+ * hold anything else; the bounds are `checkMeta`'s, the ones a call's meta is
+ * held to. A name written twice is refused rather than kept.
  */
 const metaOf = (values: readonly string[]): Record<string, string> => {
   const held = new Map<string, string>();
   for (const text of values) {
-    for (const [name, value] of Object.entries(parseMeta(text))) {
-      if (held.has(name)) stop(`${name} is named twice in --meta.`);
-      held.set(name, value);
-    }
+    const cut = text.indexOf('=');
+    if (cut === -1) stop(`${text} is not a meta entry; write one as name=value.`);
+    const name = text.slice(0, cut).trim();
+    if (held.has(name)) stop(`${name} is named twice in --meta.`);
+    held.set(name, text.slice(cut + 1).trim());
   }
-  return Object.fromEntries(held);
+  try {
+    return checkMeta(Object.fromEntries(held));
+  }
+  catch (error) {
+    return stop(error instanceof Error ? error.message : String(error));
+  }
 };
 
 /**

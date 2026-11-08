@@ -1,11 +1,14 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { createWriteStream, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, posix } from 'node:path';
+import { delimiter, dirname, join, posix, resolve } from 'node:path';
 import { hostPathOf, machinePathOf, ownerOf, partTarget } from '@ahpd/sdk';
 import type { BroughtBack, Owner, ResolvedSeed, Spawn, SpawnOptions } from '@ahpd/sdk';
-import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, runCli, workdirOf } from './devcontainer.js';
+import { parse as parseJsonc } from 'jsonc-parser';
+import type { ParseError } from 'jsonc-parser';
+import { isMap, isScalar, parseDocument as parseYamlDocument } from 'yaml';
+import { cliOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, readConfiguration, runCli, workdirOf } from './devcontainer.js';
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
 import type { MadeNeed } from './owners.js';
 import { byName, DOCKER_OWN, DOCKER_OWN_PREFIX, dockerOwn } from './byname.js';
@@ -17,9 +20,9 @@ import type { CodeRoute } from './clone.js';
 import { bringBack, bundledInto, checkedOut, fetchedInto, followOfCopy, hostGit, keepUncommitted, movesOver } from './machinegit.js';
 import type { FarSeed, MachineGit, Ran } from './machinegit.js';
 import { absoluteOnHost, mountParts } from './manifest.js';
-import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, once, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
+import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, markerText, markerUsed, once, PART_VOLUME_KEPT_MS, PART_VOLUME_USE_REFRESH_MS, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
 import type { ArchiveEntry, MadePart, Tarball } from './parts.js';
-import type { Cli, CliOptions, Reach } from './devcontainer.js';
+import type { Cli, CliOptions, DevContainerConfiguration, Reach } from './devcontainer.js';
 import type { ServerReport } from './servercheck.js';
 
 /**
@@ -116,6 +119,9 @@ export interface MadeState extends AskedState {
 
 /** The label a machine with state volumes carries, valued `volume`. */
 export const MACHINE_STATE = 'ahpd.state';
+
+/** The label a part volume carries, valued with the image it is filled from. */
+export const PART_VOLUME_LABEL = 'ahpd.part';
 
 /** A name as one piece of a volume name: lowercased, every character outside `[a-z0-9-]` a dash. */
 const volumePiece = (said: string): string => said.toLowerCase().replace(/[^a-z0-9-]/g, '-');
@@ -316,8 +322,9 @@ export interface MachineSpec {
    * What a profile's `ociRuntime` comes to, and the profile's alone: the
    * boundary a machine is given is the operator's to choose. Written as one argument,
    * `--runtime=<value>`, and passed as given, so a Docker that has no such
-   * runtime refuses the machine with its own message. Nothing reads it on the
-   * dev container route, which the CLI makes rather than `docker run`.
+   * runtime refuses the machine with its own message. A dev container takes it
+   * where its labels and limits go: the override config's `runArgs`, or the
+   * Compose override's `runtime` for a Compose definition.
    */
   ociRuntime?: string;
   /**
@@ -381,17 +388,17 @@ export interface MachineSpec {
    */
   parts?: MadePart[];
   /**
-   * The host mount each asked part is replaced by when it cannot be built, by
+   * The host mount each asked part is replaced by when it cannot be loaded, by
    * part id, as the agent that needs the part declared it.
    *
    * What a manifest answers; the plugin adds a fallback's mount to `mounts`
-   * and its part to `hostParts` only for a part whose build failed.
+   * and its part to `hostParts` only for a part whose load failed.
    */
   partFallbacks?: PartFallback[];
   /**
    * The parts this machine has from this host rather than from their image,
-   * each a fallback mount made in place of a part that could not be built.
-   * The `ahpd.parts` label names each as `<id>@host`.
+   * each a fallback mount made in place of a part that could not be loaded.
+   * The `ahpd.parts` label names each at the version `host`.
    */
   hostParts?: string[];
   /**
@@ -712,48 +719,69 @@ export interface ComputerRuntime {
   hasImage(tag: string): Promise<boolean>;
   /** Build one image from a build context piped on stdin. */
   buildImage(tag: string, context: Uint8Array): Promise<void>;
+  /** Pull one image from its registry and give it `tag` here. */
+  pullImage(from: string, tag: string): Promise<void>;
+  /**
+   * Remove each part volume `requested` does not keep that no machine has used
+   * for `PART_VOLUME_KEPT_MS`, as VS Code removes a cached SDK version the
+   * product does not ask for. Best effort: a volume Docker will not remove,
+   * one a machine still mounts among them, is left for the next time.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L30-L78
+   */
+  removeUnusedPartVolumes?(requested: (volume: string) => boolean): Promise<void>;
 }
 
 /**
  * The machines already here when one more would pass `max`, or nothing.
  *
- * Every road that makes a machine asks this: a write to `computer://<name>`,
- * the tool that asks for one in words, and a session that names a source it is
- * started in. One count rather than three, because a limit one road checks and
- * another does not is no limit at all.
- *
- * The machines come back with it, because each road says so in its own words:
- * the ones already here to a tool that has to name them, and the one that
- * would not fit to a request that names what was refused. They are the caller's
- * own listing rather than a listing of their own, so a road that counts them
- * against something else - a name that is taken - lists them once.
+ * The tool an agent asks for a machine with asks this, as VS Code caps what an
+ * agent's tools create (sessionServerTools.ts L38-L41 at 6b68d3fe); a client's
+ * write and a session's source are made as VS Code's host makes every
+ * container a client asks for. The machines come back with it, because the
+ * tool names the ones already here. They are the caller's own listing, so a
+ * caller that counts them against something else - a name that is taken -
+ * lists them once.
  */
 export const roomFor = (held: Machine[], max: number): Machine[] | undefined =>
   held.length >= max ? held : undefined;
 
-/** The turn each runtime takes, which is the last one asked for and not yet over. */
-const turns = new WeakMap<ComputerRuntime, Promise<unknown>>();
+/**
+ * One operation at a time for each key, VS Code's `SequencerByKey`: an
+ * operation waits on the last one queued under its key, one that fails settles
+ * like any other and the next one runs, and a key is dropped once its last
+ * operation has settled.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/base/common/async.ts#L338-L363
+ */
+export class SequencerByKey<K> {
+  private readonly promises = new Map<K, Promise<unknown>>();
+
+  queue<T>(key: K, task: () => Promise<T>): Promise<T> {
+    const next: Promise<T> = (this.promises.get(key) ?? Promise.resolve())
+      .catch(() => {})
+      .then(task)
+      .finally(() => {
+        if (this.promises.get(key) === next) this.promises.delete(key);
+      });
+    this.promises.set(key, next);
+    return next;
+  }
+}
+
+/** The create each runtime has queued, keyed by the runtime. */
+const creates = new SequencerByKey<ComputerRuntime>();
 
 /**
- * One create at a time per runtime.
+ * One create at a time per runtime, queued as VS Code queues one source's dev
+ * container operations (devContainerAgentHostService.ts L224 and L246 at
+ * 6b68d3fe), keyed by the runtime.
  *
- * `max` is a count, and a count read and then acted on is read too early: two
- * calls at once both read the same listing, both find room, and one more machine
- * exists than the limit says. So the count and the create it allows go in one
- * turn, and a caller that arrives second counts the first create as one of the
- * machines rather than racing it.
- *
- * Per runtime rather than per host: two runtimes are two sets of machines, and
- * a limit on one is not a limit on the other. A turn a create fails in is over
- * like any other, and the next one starts.
+ * The tool's `max` is a count, and a count read and then acted on is read too
+ * early: two calls at once both read the same listing, both find room, and one
+ * more machine exists than the limit says. So the count and the create it
+ * allows are one operation, and a caller that arrives second counts the first
+ * create as one of the machines. Two runtimes are two sets of machines.
  */
-export const inTurn = <T>(runtime: ComputerRuntime, work: () => Promise<T>): Promise<T> => {
-  const next = (turns.get(runtime) ?? Promise.resolve()).then(work);
-  // What is held is the turn after this one and never its result, so a create
-  // that threw does not refuse every create behind it.
-  turns.set(runtime, next.catch(() => {}));
-  return next;
-};
+export const queue = <T>(runtime: ComputerRuntime, task: () => Promise<T>): Promise<T> => creates.queue(runtime, task);
 
 /**
  * What a machine is using, as numbers rather than as a runtime's display text.
@@ -880,7 +908,8 @@ export interface DockerOptions extends CommandOptions {
   /** How a nested host is started in a machine, before a profile says otherwise. */
   host?: string[];
   /**
-   * Whether a part may be mounted from its own image. Absent asks Docker once.
+   * Whether a part may be mounted from its own image. Absent asks the daemon
+   * once, by the condition Docker documents for image mounts.
    *
    * `false` mounts every part from its volume without asking, which is the
    * route a Docker that refuses image mounts takes anyway.
@@ -924,17 +953,6 @@ export type PartRoute = 'image' | 'volume';
  */
 const stateDirOf = (options: DockerOptions): string => options.configDir ?? tmpdir();
 
-/**
- * Whether a refused image mount was refused for the mount type itself.
- *
- * Only that answer is kept for the daemon's life: Docker answers a missing
- * source image with a pull error that names the container's image, and an
- * unreachable daemon says so, and neither says anything about image mounts.
- */
-const refusesImageMounts = (said: string): boolean =>
-  /type=image|image-subpath|mount type|type "image"|invalid field 'type'/i.test(said)
-  && !/no such image|unable to find image|pull access denied|cannot connect/i.test(said);
-
 /** A part as the `--mount` that takes it from its own image, read-only. */
 const imageMountOf = (part: MadePart): string =>
   `type=image,source=${part.tag},image-subpath=${partTarget(part.id).slice(1)},target=${partTarget(part.id)},readonly`;
@@ -969,19 +987,24 @@ const ran = (options: CommandOptions, args: string[], input?: Buffer, env?: Reco
   child.on('close', (code) => { resolve({ code: code ?? 0, stdout, stderr }); });
 });
 
-/** The lines of a `--format {{json .}}` listing, as objects. */
-const rows = (text: string): Record<string, unknown>[] => text
-  .split('\n')
-  .map((line) => line.trim())
-  .filter((line) => line !== '')
-  .flatMap((line) => {
-    try {
-      const parsed = JSON.parse(line) as unknown;
-      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-        ? [parsed as Record<string, unknown>]
-        : [];
+/**
+ * The lines of a `--format {{json .}}` answer, as objects, each line read as
+ * VS Code's dev container host reads a listing (devContainerAgentHostService.ts
+ * L973-L977 at 6b68d3fe): parsed, and checked as an object whose `strings`
+ * fields are strings, in its validator's words (src/vs/base/common/validation.ts).
+ * A line that fails either fails the whole answer.
+ */
+const rows = (text: string, strings: readonly string[] = []): Record<string, unknown>[] => text
+  .split(/\r?\n/)
+  .filter((line) => line.trim() !== '')
+  .map((line) => {
+    const parsed: unknown = JSON.parse(line);
+    if (typeof parsed !== 'object' || parsed === null) throw new Error('Expected object');
+    const row = parsed as Record<string, unknown>;
+    for (const key of strings) {
+      if (typeof row[key] !== 'string') throw new Error(`Error in property '${key}': Expected string, but got ${typeof row[key]}`);
     }
-    catch { return []; }
+    return row;
   });
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
@@ -1268,68 +1291,27 @@ const cliMount = (mount: string): string => {
 const readOnlyMount = (mount: string): boolean => mount.endsWith(':ro');
 
 /**
- * A folder's own definition as an object, read the way the CLI reads it.
+ * A folder's own definition as an object, where the CLI's `read-configuration`
+ * finds it, read as VS Code's dev container host reads it
+ * (devContainerSandbox.ts L102-L106 at 6b68d3fe): with VS Code's JSONC parser,
+ * published as jsonc-parser, under its default options
+ * (src/vs/base/common/json.ts L145-L147), a parse error or a value that is
+ * not an object refused in VS Code's words.
  *
- * JSONC rather than JSON: the file is the one the Dev Container CLI documents
- * as carrying comments and a trailing comma, so a plain parse would refuse a
- * folder whose definition works, and the override config is that file's own
- * contents with this host's keys laid over it.
+ * The override config is that file's own contents with this host's keys laid
+ * over it, so the file is read whole.
  */
-const configOf = (folder: string): Record<string, unknown> => {
-  const where = definitionOf(folder);
-  if (where === undefined) {
-    throw new Error(`${folder} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
+const configOf = async (
+  run: (argv: string[]) => Promise<{ code: number; stdout: string; stderr: string }>,
+  folder: string,
+): Promise<{ configuration: DevContainerConfiguration; config: Record<string, unknown> }> => {
+  const configuration = await readConfiguration(run, folder);
+  const errors: ParseError[] = [];
+  const config: unknown = parseJsonc(readFileSync(configuration.configPath, 'utf8'), errors, { allowTrailingComma: true });
+  if (errors.length > 0 || typeof config !== 'object' || config === null || Array.isArray(config)) {
+    throw new Error(`Invalid Dev Container configuration: ${configuration.configPath}`);
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsoncOf(readFileSync(where, 'utf8')));
-  }
-  catch (error) {
-    throw new Error(`${where} is the folder's devcontainer.json and it does not parse: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error(`${where} is the folder's devcontainer.json and it is not an object`);
-  }
-  return parsed as Record<string, unknown>;
-};
-
-/** JSONC as JSON: the comments and trailing commas taken out, nothing else. */
-const jsoncOf = (text: string): string => {
-  let out = '';
-  let quoted = false;
-  let escaped = false;
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i] ?? '';
-    if (quoted) {
-      out += char;
-      // A backslash inside a string escapes the next character, so a quote
-      // behind one is not the end of the string.
-      if (escaped) escaped = false;
-      else if (char === '\\') escaped = true;
-      else if (char === '"') quoted = false;
-      continue;
-    }
-    if (char === '"') { quoted = true; out += char; continue; }
-    if (char === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      out += '\n';
-      continue;
-    }
-    if (char === '/' && text[i + 1] === '*') {
-      i += 2;
-      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
-      i++;
-      continue;
-    }
-    /*
-     * A comma that is the last one before a closing bracket, taken out where a
-     * string is not: a definition's own text may hold `"echo a, }"`, and a
-     * comma inside one is part of the value rather than a JSONC habit.
-     */
-    if (char === ',' && /^[\s]*[}\]]/.test(text.slice(i + 1))) continue;
-    out += char;
-  }
-  return out;
+  return { configuration, config: config as Record<string, unknown> };
 };
 
 /**
@@ -1362,14 +1344,15 @@ const madeWith = (spec: MachineSpec): Record<string, string> => {
  * - the working directory, as `workspaceFolder` with the `workspaceMount` that
  *   puts the folder there, since the CLI mounts at `/workspaces/<basename>`
  *   without it and the path a command is given would name nothing;
- * - the name, the agents, the profile and the limits as `runArgs`, which is the one place a
- *   plain Docker label and a limit reach a container the CLI makes;
- * - each part, as a `--mount type=image` in `runArgs` where `route` is
- *   `image`, or as a read-only volume in `mounts` where it is `volume`, and the
- *   `ahpd.parts` label beside them;
+ * - the machine's `docker run` options (`runOptionsOf`), as `runArgs` for an
+ *   image or Dockerfile definition, the place the CLI takes a plain Docker
+ *   label and a limit from, and for a Compose definition as a Compose file of
+ *   their own (`composeOverrideOf`);
+ * - each part, as an image mount among those options where `route` is
+ *   `image`, or as a read-only volume in `mounts` where it is `volume`;
  * - the git mounts, as `mounts` too: the host's objects read-only, the file a
  *   linked worktree's `.git` is replaced by, and the volume the machine commits
- *   into, with the guard as the `ahpd.git` label in `runArgs`.
+ *   into, with the guard as the `ahpd.git` label.
  *
  * A read-only mount is the CLI's own string spelling and not the object form,
  * because the CLI renders an object mount as `type`, `source` and `target` and
@@ -1440,33 +1423,139 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
       held.workspaceFolder = machinePathOf(spec.devcontainer);
     }
   }
-  const runArgs = [...(Array.isArray(held.runArgs) ? (held.runArgs as string[]) : [])];
-  runArgs.push('--label', `${MACHINE_NAME}=${spec.name}`);
-  if (spec.user !== undefined) runArgs.push('--label', `${MACHINE_USER}=${spec.user}`);
-  if (spec.gitDir !== undefined) runArgs.push('--label', `${MACHINE_GIT}=${guard}`);
-  const agents = spec.agents ?? [];
-  if (agents.length > 0) {
-    runArgs.push('--label', `${MACHINE_AGENTS}=${agents.join(',')}`);
+  // A Compose definition takes its `docker run` options from a Compose file of
+  // their own, which `composeOverrideOf` writes.
+  if (config.dockerComposeFile === undefined) {
+    const options = runOptionsOf(spec, guard, route);
+    held.runArgs = [
+      ...(Array.isArray(held.runArgs) ? (held.runArgs as string[]) : []),
+      ...Object.entries(options.labels).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
+      ...(options.cpus === undefined ? [] : ['--cpus', options.cpus]),
+      ...(options.memory === undefined ? [] : ['--memory', options.memory]),
+      // One argument, as `docker run` is given it.
+      ...(options.runtime === undefined ? [] : [`--runtime=${options.runtime}`]),
+      // A part from its own image, which only `runArgs` can spell: the CLI
+      // passes the entry to its `docker run` as written.
+      ...options.images.flatMap((part) => ['--mount', imageMountOf(part)]),
+    ];
   }
-  // The profile, so a daemon that did not make the container still reads its
-  // recipe - the needs whose vault-named values it reads again among them.
-  if (spec.profile !== undefined && spec.profile !== '') {
-    runArgs.push('--label', `${MACHINE_PROFILE}=${spec.profile}`);
-  }
-  if (spec.cpus !== undefined) runArgs.push('--cpus', spec.cpus);
-  if (spec.memory !== undefined) runArgs.push('--memory', spec.memory);
-  // A part from its own image, which only `runArgs` can spell: the CLI passes
-  // the entry to its `docker run` as written.
-  if (route === 'image') {
-    for (const part of spec.parts ?? []) runArgs.push('--mount', imageMountOf(part));
-  }
-  // The parts it was made with, which is what a session needing one is
-  // checked against and what puts each part's `bin` on every command's `PATH`.
-  if (spec.parts !== undefined) runArgs.push('--label', `${MACHINE_PARTS}=${partsLabel(spec.parts, spec.hostParts)}`);
-  // Whether its agents' state lives in volumes, which a remove reads back.
-  if ((spec.states ?? []).length > 0) runArgs.push('--label', `${MACHINE_STATE}=volume`);
-  held.runArgs = runArgs;
   return held;
+};
+
+/**
+ * The `docker run` options a container the CLI makes is given: the machine's
+ * labels, its limits, its profile's OCI runtime, and each part mounted from
+ * its own image where `route` is `image`.
+ *
+ * The labels are the name; the user and the guard a git directory is made
+ * with; the agents; the profile, so a daemon that did not make the container
+ * still reads its recipe, the needs whose vault-named values it reads again
+ * among them; the parts, which a session needing one is checked against and
+ * which put each part's `bin` on every command's `PATH`; and whether its
+ * agents' state lives in volumes, which a remove reads back.
+ */
+const runOptionsOf = (spec: MachineSpec, guard: GitGuard, route?: PartRoute): {
+  labels: Record<string, string>;
+  cpus?: string;
+  memory?: string;
+  runtime?: string;
+  images: MadePart[];
+} => {
+  const agents = spec.agents ?? [];
+  return {
+    labels: {
+      [MACHINE_NAME]: spec.name,
+      ...(spec.user === undefined ? {} : { [MACHINE_USER]: spec.user }),
+      ...(spec.gitDir === undefined ? {} : { [MACHINE_GIT]: guard }),
+      ...(agents.length === 0 ? {} : { [MACHINE_AGENTS]: agents.join(',') }),
+      ...(spec.profile === undefined || spec.profile === '' ? {} : { [MACHINE_PROFILE]: spec.profile }),
+      ...(spec.parts === undefined ? {} : { [MACHINE_PARTS]: partsLabel(spec.parts, spec.hostParts) }),
+      ...((spec.states ?? []).length === 0 ? {} : { [MACHINE_STATE]: 'volume' }),
+    },
+    ...(spec.cpus === undefined ? {} : { cpus: spec.cpus }),
+    ...(spec.memory === undefined ? {} : { memory: spec.memory }),
+    ...(spec.ociRuntime === undefined ? {} : { runtime: spec.ociRuntime }),
+    images: route === 'image' ? spec.parts ?? [] : [],
+  };
+};
+
+/**
+ * A Compose definition's `docker run` options, as a Compose override of its
+ * service.
+ *
+ * The CLI gives `runArgs` to an image or Dockerfile definition alone, so these
+ * are written as VS Code writes its sandbox's options for a definition with
+ * `dockerComposeFile` (devContainerSandbox.ts L67-L94 and L107-L141 at
+ * 6b68d3fe): a `compose.json` in the override's own directory, owner-only,
+ * carrying the first Compose file's `version` as the CLI carries it into its
+ * own overrides, and added after the definition's files. Where the definition
+ * names `[]`, the CLI's own discovery is followed (`COMPOSE_FILE`, the
+ * workspace's `.env`, else `docker-compose.yml` with its override beside it),
+ * and the list goes to the CLI as `COMPOSE_FILE`, which keeps the workspace's
+ * `.env` reaching it.
+ *
+ * The labels are the service's `labels`, the limits its `cpus` and
+ * `mem_limit`, the OCI runtime its `runtime`, and a part from its own image a
+ * `volumes` entry of Compose's `image` type.
+ * https://github.com/compose-spec/compose-spec/blob/3a4a6995e4a971f6173dff9130cb3e38e6738651/container_spec.md#L1225-L1237
+ */
+const composeOverrideOf = (
+  options: ReturnType<typeof runOptionsOf>,
+  configuration: DevContainerConfiguration,
+  config: Record<string, unknown>,
+  folder: string,
+  directory: string,
+  environment: Record<string, string | undefined>,
+): { dockerComposeFile: string[] } | { COMPOSE_FILE: string } => {
+  const declared = config.dockerComposeFile;
+  const service = configuration.service ?? config.service;
+  const files = typeof declared === 'string' ? [declared] : declared;
+  if (!Array.isArray(files) || files.some((one) => typeof one !== 'string') || typeof service !== 'string' || service === '') {
+    throw new Error('A computer requires a Dev Container Compose configuration with files and a service.');
+  }
+  const implicit = files.length === 0;
+  const configured = configuration.dockerComposeFile ?? (files as string[]);
+  const named = typeof configured === 'string' ? [configured] : configured;
+  // The CLI's discovery, with its deliberately limited `.env` syntax, as VS
+  // Code's `discoverComposeFiles` matches it (devContainerSandbox.ts L67-L94).
+  const discovered = (): string[] => {
+    let composeFile = environment.COMPOSE_FILE;
+    if (composeFile === undefined || composeFile === '') {
+      const env = join(folder, '.env');
+      composeFile = existsSync(env) && statSync(env).isFile() ? /^COMPOSE_FILE=(.+)$/m.exec(readFileSync(env, 'utf8'))?.[1]?.trim() : undefined;
+    }
+    if (composeFile !== undefined && composeFile !== '') return composeFile.split(delimiter).map((one) => resolve(folder, one));
+    const override = resolve(folder, 'docker-compose.override.yml');
+    return [resolve(folder, 'docker-compose.yml'), ...(existsSync(override) && statSync(override).isFile() ? [override] : [])];
+  };
+  const read = implicit ? discovered() : named;
+  const source = readFileSync(resolve(implicit ? folder : dirname(configuration.configPath), read[0] ?? ''), 'utf8');
+  const document = parseYamlDocument(/^\s*(version:.*)$/m.exec(source)?.[1] ?? source);
+  const version = isMap(document.contents) ? document.contents.get('version', true) : undefined;
+  const composePath = join(directory, 'compose.json');
+  writeFileSync(composePath, JSON.stringify({
+    ...(isScalar(version) ? { version: version.source ?? String(version.value) } : {}),
+    services: {
+      [service]: {
+        labels: options.labels,
+        ...(options.cpus === undefined ? {} : { cpus: options.cpus }),
+        ...(options.memory === undefined ? {} : { mem_limit: options.memory }),
+        ...(options.runtime === undefined ? {} : { runtime: options.runtime }),
+        ...(options.images.length === 0 ? {} : {
+          volumes: options.images.map((part) => ({
+            type: 'image',
+            source: part.tag,
+            target: partTarget(part.id),
+            read_only: true,
+            image: { subpath: partTarget(part.id).slice(1) },
+          })),
+        }),
+      },
+    },
+  }), { mode: 0o600 });
+  return implicit
+    ? { COMPOSE_FILE: [...read, composePath].join(delimiter) }
+    : { dockerComposeFile: [...(files as string[]), composePath] };
 };
 
 /**
@@ -1637,10 +1726,10 @@ const LISTED_LABELS = [
  * The `--format` a listing asks with: the fields a machine is read from, and its
  * id, which is what a record of an adopted container names it by.
  */
-const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.CreatedAt}}', '{{.ID}}'].join('\t');
+const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.ID}}'].join('\t');
 
 /**
- * The `--format` the labels come back by.
+ * The `--format` the labels come back by, with when the machine was made.
  *
  * `.Config.Labels` is a map rather than the listing's column, so every value
  * is quoted and escaped and nothing a value holds - a comma, a tab, a newline -
@@ -1650,11 +1739,15 @@ const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.CreatedAt}
  * The name is asked for with it, because the answer is one line per machine and
  * a machine removed between the two calls is a line that is not there: without
  * the name beside it a line cannot be told from whose it is.
+ *
+ * `.Created` is the record's own time, in RFC 3339, the one form a machine's
+ * `created` is written in: a listing's `CreatedAt` is the client's local time
+ * with its zone by name, `+0200 CEST`, which no date parser reads.
  */
-const LISTED_LABELS_FORMAT = ['{{.Name}}', '{{json .Config.Labels}}'].join('\t');
+const LISTED_LABELS_FORMAT = ['{{.Name}}', '{{json .Config.Labels}}', '{{.Created}}'].join('\t');
 
 /** One machine as a listing answered it. */
-type Listed = { name: string; image: string; status: string; created: string; id: string };
+type Listed = { name: string; image: string; status: string; id: string };
 
 /** The labels one row answered, by the keys `LISTED_LABELS` holds. */
 type ListedLabels = Record<(typeof LISTED_LABELS)[number], string>;
@@ -1670,12 +1763,16 @@ const listed = (said: string): Listed[] =>
     .split('\n')
     .filter((line) => line !== '')
     .map((line) => {
-      const [name, image, status, created, id] = line.split('\t');
-      return { name: name ?? '', image: image ?? '', status: status ?? '', created: created ?? '', id: id ?? '' };
+      const [name, image, status, id] = line.split('\t');
+      return { name: name ?? '', image: image ?? '', status: status ?? '', id: id ?? '' };
     });
 
+/** What `inspect` answered of one machine: its labels, and when it was made. */
+type Inspected = { labels: Record<string, unknown>; created: string };
+
 /**
- * The labels `inspect` answered, by the machine each line named.
+ * The labels `inspect` answered, and each machine's creation time, by the
+ * machine each line named.
  *
  * `inspect` prints a machine that is not there as an error and a non-zero exit,
  * with every other machine still printed, so the lines are read by name rather
@@ -1683,17 +1780,17 @@ const listed = (said: string): Listed[] =>
  * back once one of them is gone. A machine with no labels at all is not a row
  * either - `inspect` says `null` for a container that carries none.
  */
-const labelRecords = (said: string): Map<string, Record<string, unknown>> => {
-  const byName = new Map<string, Record<string, unknown>>();
+const labelRecords = (said: string): Map<string, Inspected> => {
+  const byName = new Map<string, Inspected>();
   for (const line of said.split('\n')) {
     if (line.trim() === '') continue;
-    const [named, labels] = line.split('\t');
+    const [named, labels, created] = line.split('\t');
     if (named === undefined || labels === undefined) continue;
     let parsed: unknown;
     try { parsed = JSON.parse(labels); } catch { continue; }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue;
     // `inspect` names a container with a leading `/` where a listing does not.
-    byName.set(named.startsWith('/') ? named.slice(1) : named, parsed as Record<string, unknown>);
+    byName.set(named.startsWith('/') ? named.slice(1) : named, { labels: parsed as Record<string, unknown>, created: created ?? '' });
   }
   return byName;
 };
@@ -1709,14 +1806,15 @@ const labelRecords = (said: string): Map<string, Record<string, unknown>> => {
  */
 const withLabels = (
   found: Listed[],
-  held: Map<string, Record<string, unknown>>,
-): (Listed & { labels: ListedLabels })[] =>
+  held: Map<string, Inspected>,
+): (Listed & { created: string; labels: ListedLabels })[] =>
   found.flatMap((row) => {
-    const labels = held.get(row.name);
-    if (labels === undefined) return [];
+    const record = held.get(row.name);
+    if (record === undefined) return [];
     return [{
       ...row,
-      labels: Object.fromEntries(LISTED_LABELS.map((key) => [key, text(labels[key])])) as ListedLabels,
+      created: record.created,
+      labels: Object.fromEntries(LISTED_LABELS.map((key) => [key, text(record.labels[key])])) as ListedLabels,
     }];
   });
 
@@ -1752,7 +1850,7 @@ export const isRunning = (machine: Machine): boolean =>
  * `a-dev-container-is-reached-by-docker-exec`.
  *
  * Kept under the machine id every road uses rather than under whichever id the
- * road happens to hold, so the three ways in - a create, `computer_exec` and the
+ * road happens to hold, so the three ways in - a create, `run_in_computer` and the
  * relay - read and write one entry for one computer. A probe that answered
  * nothing is not kept, so a container whose shell was not in place yet is
  * asked again rather than reached without an environment for the rest of its
@@ -1811,7 +1909,7 @@ export const adoptedDevContainer = async (
 ): Promise<{ id: string; remoteWorkspaceFolder: string } | undefined> => {
   const listed = await ran(options, ['ps', '-a', '--filter', `label=${LOCAL_FOLDER}=${folder}`, '--format', '{{json .}}']);
   if (listed.code !== 0) return undefined;
-  const named = text(rows(listed.stdout)[0]?.Names);
+  const named = text(rows(listed.stdout, ['Names'])[0]?.Names);
   if (named === '') return undefined;
   const held = rows((await ran(options, ['inspect', '--format', '{{json .}}', named])).stdout)[0];
   if (held === undefined) return undefined;
@@ -1849,60 +1947,72 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   };
 
   /**
-   * Whether this Docker takes an image mount, once it has said so about the
-   * mount type.
+   * Whether this Docker takes an image mount, by the condition Docker
+   * documents, asked of the daemon itself: the containerd image store, which
+   * `docker info` reports as the `io.containerd.snapshotter.v1` driver type, on
+   * an Engine of 28.0.0 or later, the release that added the mount type.
+   * https://github.com/docker/docs/blob/dc9729c35e9ce9d10eef9218bafde2b4214f6f3d/content/manuals/engine/storage/image-mounts.md#L70-L71
+   * https://github.com/docker/docs/blob/6893b3aeddd346a4811ecb0cdc3fad88c4bc5893/content/manuals/engine/storage/containerd.md#L103-L104
+   * https://github.com/docker/docs/blob/53953dc8d0df3810734edbbb5ec9e939cf805810/content/manuals/engine/release-notes/28.md#L718-L731
    *
-   * Asked with the part being mounted, after its image is built, so the probe
-   * never names an image that may not exist. A yes, and a refusal of the mount
-   * type, are kept for this runtime's life; any other failure - the image
-   * missing, the daemon unreachable - is not an answer about image mounts, and
-   * the next machine asks again.
+   * The answer is kept for this runtime's life; a daemon that does not answer
+   * is asked again for the next machine.
    */
   let imagesMount: boolean | undefined = options.imageMounts === false ? false : undefined;
-  const canMountImages = async (tag: string): Promise<boolean> => {
+  const canMountImages = async (): Promise<boolean> => {
     if (imagesMount !== undefined) return imagesMount;
-    const probe = `ahpd-part-probe-${randomUUID().slice(0, 8)}`;
-    const held = await ran(options, ['create', '--name', probe, '--mount', `type=image,source=${tag},target=/probe`, tag, 'x']);
-    if (held.code === 0) {
-      await ran(options, ['rm', '-f', probe]);
-      imagesMount = true;
-      return true;
-    }
-    if (refusesImageMounts(held.stderr)) imagesMount = false;
-    return false;
+    const held = await ran(options, ['info', '--format', '{{json .}}']);
+    if (held.code !== 0) return false;
+    let info: Record<string, unknown>;
+    try { info = rows(held.stdout)[0] ?? {}; }
+    catch { return false; }
+    const store = Array.isArray(info.DriverStatus) ? info.DriverStatus as unknown[] : [];
+    const containerd = store.some((pair) => Array.isArray(pair) && pair[0] === 'driver-type' && pair[1] === 'io.containerd.snapshotter.v1');
+    const major = Number.parseInt(text(info.ServerVersion).split('.')[0] ?? '', 10);
+    imagesMount = containerd && major >= 28;
+    return imagesMount;
   };
 
   /**
-   * How a dev container gets its parts, and the one place that is chosen.
-   *
-   * The image route is a `--mount type=image` in the override config's
-   * `runArgs`, which the Dev Container CLI 0.89.0 passes to its `docker run`
-   * as written; it is taken where Docker takes image mounts, and the volume
-   * route everywhere else.
+   * How a machine gets its parts, and the one place that is chosen: the image
+   * route where Docker takes image mounts, and the volume route everywhere
+   * else. A dev container's image route is a `--mount type=image` in the
+   * override config's `runArgs`, which the Dev Container CLI 0.89.0 passes to
+   * its `docker run` as written.
    */
-  const devcontainerPartRoute = async (tag: string): Promise<PartRoute> =>
-    (await canMountImages(tag) ? 'image' : 'volume');
+  const partRoute = async (): Promise<PartRoute> => (await canMountImages() ? 'image' : 'volume');
 
   /**
    * One part's volume, filled from its image the first time it is asked for.
    *
-   * `docker create` with an empty named volume at the part's path fills the
-   * volume from the image, and nothing is started. The marker is written last,
-   * through the same container, so a fill that stopped half way leaves a volume
-   * without it, and such a volume is removed and filled again. One fill per
-   * volume at a time, shared as a build is.
+   * The volume is made with the `ahpd.part` label naming the image it is
+   * filled from, which is how an unused one is found again. `docker create`
+   * with the empty volume at the part's path fills it from the image, and
+   * nothing is started. The marker is written last, through the same
+   * container, so a fill that stopped half way leaves a volume without it, and
+   * such a volume is removed and filled again. Each use writes the time into
+   * the marker again once `PART_VOLUME_USE_REFRESH_MS` has passed, as VS Code
+   * records a cached SDK's use. One fill per volume at a time, shared as a
+   * build is.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L430-L440
    */
   const ensurePartVolume = (part: MadePart): Promise<string> => {
     const volume = volumeOf(part);
     const at = partTarget(part.id);
     const helper = (): string => `ahpd-part-fill-${randomUUID().slice(0, 8)}`;
+    const marker = (): Buffer => archiveOf([{ name: FILLED_MARKER, bytes: Buffer.from(markerText(part.tag, Date.now()), 'utf8') }]);
     return once(`volume:${volume}`, async () => {
       if ((await ran(options, ['volume', 'inspect', volume])).code === 0) {
         const looking = helper();
         let filled = false;
         try {
           await must(['create', '--name', looking, '-v', `${volume}:${at}`, part.tag, 'x']);
-          filled = (await ran(options, ['cp', `${looking}:${at}/${FILLED_MARKER}`, '-'])).code === 0;
+          const read = await ran(options, ['cp', `${looking}:${at}/${FILLED_MARKER}`, '-']);
+          filled = read.code === 0;
+          const used = filled ? markerUsed(firstFileOf(Buffer.from(read.stdout, 'utf8'))?.toString('utf8') ?? '') : undefined;
+          if (filled && (used === undefined || Date.now() - used >= PART_VOLUME_USE_REFRESH_MS)) {
+            await must(['cp', '-', `${looking}:${at}`], undefined, marker());
+          }
         }
         finally {
           await ran(options, ['rm', '-f', looking]);
@@ -1910,11 +2020,11 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         if (filled) return volume;
         await must(['volume', 'rm', volume]);
       }
+      await must(['volume', 'create', '--label', `${PART_VOLUME_LABEL}=${part.tag}`, volume]);
       const filling = helper();
       try {
         await must(['create', '--name', filling, '-v', `${volume}:${at}`, part.tag, 'x']);
-        await must(['cp', '-', `${filling}:${at}`], undefined,
-          archiveOf([{ name: FILLED_MARKER, bytes: Buffer.from(`${part.tag}\n`, 'utf8') }]));
+        await must(['cp', '-', `${filling}:${at}`], undefined, marker());
       }
       finally {
         await ran(options, ['rm', '-f', filling]);
@@ -1927,17 +2037,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
    * How a machine's parts reach it, and the parts that can.
    *
    * On the volume route each volume is filled first, and a part whose volume
-   * cannot be filled is left out with a line naming it, as a part whose build
+   * cannot be filled is left out with a line naming it, as a part whose load
    * failed is: the machine is made with the rest and labelled with them.
    */
-  const mountable = async (
-    name: string,
-    parts: readonly MadePart[],
-    routeOf: (tag: string) => Promise<PartRoute>,
-  ): Promise<{ route?: PartRoute; parts: MadePart[] }> => {
-    const first = parts[0];
-    if (first === undefined) return { parts: [] };
-    const route = await routeOf(first.tag);
+  const mountable = async (name: string, parts: readonly MadePart[]): Promise<{ route?: PartRoute; parts: MadePart[] }> => {
+    if (parts.length === 0) return { parts: [] };
+    const route = await partRoute();
     if (route === 'image') return { route, parts: [...parts] };
     const filled: MadePart[] = [];
     for (const part of parts) {
@@ -2261,7 +2366,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       '--filter', `label=${options.label}`,
       '--filter', `label=${DEVCONTAINER_FOLDER}=${folder}`,
       '--format', '{{json .}}',
-    ]));
+    ]), ['Names']);
     const name = held.map((row) => text(row.Names)).find((one) => one !== '');
     return name ?? containerId;
   };
@@ -2311,7 +2416,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       '--filter', `label=${options.label}`,
       '--filter', `label=${MACHINE_NAME}=${id}`,
       '--format', '{{json .}}',
-    ]));
+    ]), ['Names']);
     const name = text(held[0]?.Names);
     if (name !== '') return name;
     /*
@@ -2622,11 +2727,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
 
     /*
      * A listing is two calls: `ps` for what is there, then one `inspect` for
-     * the labels of exactly those, because a listing prints a label map as one
-     * comma-joined column and a value holding a comma cannot be told from the
-     * pair after it. One `inspect` for the whole listing rather than one per
-     * machine, so the answer is not one call per machine on a host with `max`
-     * of them.
+     * the labels and the creation time of exactly those, because a listing
+     * prints a label map as one comma-joined column and a value holding a comma
+     * cannot be told from the pair after it, and its creation time in the
+     * client's local zone. One `inspect` for the whole listing rather than one
+     * per machine, so the answer is not one call per machine on a host with
+     * `max` of them.
      *
      * The second call is not held to a zero exit. `inspect` prints the machines
      * it found and exits non-zero when one it was asked for is gone, which is
@@ -2664,7 +2770,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           .filter((row) => isAdopted(row) !== undefined && !every.some((one) => one.name === row.name));
       const found = [...every, ...rest];
       const held = found.length === 0
-        ? new Map<string, Record<string, unknown>>()
+        ? new Map<string, Inspected>()
         : labelRecords((await ran(options, [
           'inspect', '--type', 'container', '--format', LISTED_LABELS_FORMAT, ...found.map((one) => one.name),
         ])).stdout);
@@ -2844,6 +2950,13 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        */
       if (spec.devcontainer !== undefined) {
         const cli = cliOf(options.devcontainerCli);
+        // The CLI's two runs, `read-configuration` and `up`, each saying what
+        // installs the CLI where it could not be started, `up` with the
+        // `COMPOSE_FILE` a Compose override may give it.
+        const run = (argv: string[], env?: Record<string, string>): Promise<{ code: number; stdout: string; stderr: string }> =>
+          runCli(env === undefined ? cli : { ...cli, env: { ...(cli.env ?? {}), ...env } }, argv).catch((error: unknown) => {
+            throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer ?? ''} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
+          });
         const argv = [
           'up',
           '--workspace-folder', spec.devcontainer,
@@ -2874,10 +2987,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
          * what is in it.
          *
          * The folder's definition is read before the directory exists, so a
-         * definition that does not parse is refused in its own words and leaves
-         * nothing behind.
+         * definition that does not parse is refused and leaves nothing behind.
          */
-        const config = configOf(spec.devcontainer);
+        const { configuration, config } = await configOf(run, spec.devcontainer);
         /*
          * The tree the machine is given, and the guard its git directory is
          * made with. Under `copy` the machine's volume is the CLI's own
@@ -2906,20 +3018,33 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         }
         /*
          * The parts, by the route a dev container takes: an image mount needs
-         * the part image here before `up`, which the plugin has built, and the
+         * the part image here before `up`, which the plugin has loaded, and the
          * volume route needs each volume filled before the CLI mounts it.
          */
-        const reached = await mountable(spec.name, spec.parts ?? [], devcontainerPartRoute);
+        const reached = await mountable(spec.name, spec.parts ?? []);
         const withParts: MachineSpec = spec.parts === undefined ? spec : { ...spec, parts: reached.parts };
         const scratch = mkdtempSync(join(tmpdir(), 'ahpd-devcontainer-'));
         const override = join(scratch, 'override.json');
         let ran: { code: number; stdout: string; stderr: string };
         try {
-          writeFileSync(override, JSON.stringify(overrideOf(withParts, config, reached.route, git), undefined, 2), { mode: 0o600 });
-          argv.push('--override-config', override);
-          ran = await runCli(cli, argv).catch((error: unknown) => {
-            throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
-          });
+          const held = overrideOf(withParts, config, reached.route, git);
+          const compose = config.dockerComposeFile === undefined
+            ? undefined
+            : composeOverrideOf(
+              runOptionsOf(withParts, guard, reached.route),
+              configuration,
+              config,
+              spec.devcontainer,
+              scratch,
+              { ...process.env, ...(cli.env ?? {}) },
+            );
+          if (compose !== undefined && 'dockerComposeFile' in compose) held.dockerComposeFile = compose.dockerComposeFile;
+          writeFileSync(override, JSON.stringify(held, undefined, 2), { mode: 0o600 });
+          // The folder's own file stays the base for its relative paths and
+          // its identity, as VS Code passes it beside its override
+          // (devContainerSandbox.ts L101 and L151 at 6b68d3fe).
+          argv.push('--config', configuration.configPath, '--override-config', override);
+          ran = await run(argv, compose !== undefined && 'COMPOSE_FILE' in compose ? compose : undefined);
         }
         finally {
           // The directory holds the definition's own values, so it goes whether
@@ -2927,14 +3052,16 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           rmSync(scratch, { recursive: true, force: true });
         }
         const made = parseUp(ran.stdout);
-        if (made === undefined) {
+        if (ran.code !== 0 || made === undefined) {
           /*
+           * A result is taken with the CLI's exit 0 beside it, and anything else
+           * is refused in VS Code's words with what the CLI said, its result
+           * first (devContainerAgentHostService.ts L316-L319 at 6b68d3fe).
            * Masked before it is thrown: the CLI echoes the `docker run` it
            * builds at info level, which carries every `-e` a need asked for, and
            * an error text goes into a log and into whatever a person is told.
            */
-          const said = masked([ran.stdout.trim(), ran.stderr.trim()].filter((one) => one !== '').join(' '));
-          throw new Error(`The Dev Container CLI reported no container for ${spec.devcontainer}: ${said === '' ? `exit ${String(ran.code)}` : said}`);
+          throw new Error(`Dev Container CLI returned an invalid result: ${masked(ran.stdout.trim() || ran.stderr.trim())}`);
         }
         /*
          * A definition that builds its image is seeded now, inside the running
@@ -3127,7 +3254,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        * `bin` in front of the image's own, so a command a preset names is found
        * without its path.
        */
-      const { route, parts } = await mountable(spec.name, spec.parts ?? [], async (tag) => (await canMountImages(tag) ? 'image' : 'volume'));
+      const { route, parts } = await mountable(spec.name, spec.parts ?? []);
       for (const part of parts) {
         if (route === 'image') flags.push('--mount', imageMountOf(part));
         else flags.push('-v', `${volumeOf(part)}:${partTarget(part.id)}:ro`);
@@ -3295,9 +3422,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       if (at === undefined) return undefined;
       const held = await ran(options, ['stats', '--no-stream', '--format', '{{json .}}', at]);
       if (held.code !== 0) return undefined;
-      const row = rows(held.stdout)[0];
+      const row = rows(held.stdout, ['MemUsage', 'MemPerc', 'NetIO', 'BlockIO', 'PIDs', 'CPUPerc'])[0];
       if (row === undefined) return undefined;
-      const said = (key: string): string => (typeof row[key] === 'string' ? row[key] : '');
+      const said = (key: string): string => row[key] as string;
       const memory = pairOf(said('MemUsage'));
       if (memory === undefined) return undefined;
       const network = pairOf(said('NetIO'));
@@ -3316,15 +3443,25 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       };
     },
 
+    /*
+     * The verbs as Docker Engine's API names the operations it serves them
+     * with - ContainerCreate, ContainerStart, ContainerStop, ContainerRestart,
+     * ContainerExec and ContainerDelete - and the resources `state` and `stats`,
+     * what ContainerInspect's State and ContainerStats answer, beside this
+     * scheme's own `status` and `capabilities`. Removing a machine is `delete`,
+     * as the scheme's resourceDelete names it.
+     * https://github.com/moby/moby/blob/dc0ad36c0628d1538be7b2ea27d0bc2d2df955ef/api/swagger.yaml#L8209
+     * https://github.com/moby/moby/blob/dc0ad36c0628d1538be7b2ea27d0bc2d2df955ef/api/swagger.yaml#L9338
+     */
     capabilities: () => ({
       runtime: 'docker',
-      actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
-      resources: ['status', 'capabilities', 'stats', 'state'],
+      actions: ['create', 'start', 'stop', 'restart', 'exec', 'delete'],
+      resources: ['status', 'capabilities', 'state', 'stats'],
     }),
 
     /*
-     * Two verbs about images rather than machines, and they are the ones a part
-     * is built with.
+     * The verbs about images rather than machines, which are the ones a part
+     * is pulled and built with.
      *
      * `image inspect` rather than `inspect`, because the latter is machines and
      * its not-found answer is a container error. The context is piped rather
@@ -3341,6 +3478,59 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         // Dockerfile that names a stage that is not there.
         const said = held.stderr.trim() || held.stdout.trim() || 'no output';
         throw new Error(`${options.command} build -t ${tag} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
+      }
+    },
+
+    // The image under the registry's name, then the tag every machine names it by.
+    pullImage: async (from, tag) => {
+      for (const argv of [['pull', from], ['tag', from, tag]]) {
+        const held = await ran(options, argv);
+        if (held.code !== 0) {
+          // Docker's own last lines: a registry that has no such tag, a login
+          // it asks for, a network that is not there.
+          const said = held.stderr.trim() || held.stdout.trim() || 'no output';
+          throw new Error(`${options.command} ${argv.join(' ')} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
+        }
+      }
+    },
+
+    /*
+     * Each part volume here that `requested` does not keep, removed once its
+     * last use - the marker's time, read through a container of the image its
+     * label names, or else the volume's own - is older than
+     * `PART_VOLUME_KEPT_MS`. One that cannot be read or removed is left, as VS
+     * Code leaves a version it cannot clean up now for the next call.
+     */
+    removeUnusedPartVolumes: async (requested) => {
+      const listed = await ran(options, ['volume', 'ls', '--format', '{{.Name}}']);
+      if (listed.code !== 0) return;
+      const now = Date.now();
+      for (const volume of listed.stdout.split('\n').map((one) => one.trim()).filter((one) => one.startsWith('ahpd-part-') && !requested(one))) {
+        try {
+          const found = rows((await ran(options, ['volume', 'inspect', '--format', '{{json .}}', volume])).stdout)[0] ?? {};
+          const labels = (typeof found.Labels === 'object' && found.Labels !== null ? found.Labels : {}) as Record<string, unknown>;
+          const image = labels[PART_VOLUME_LABEL];
+          let used = Date.parse(text(found.CreatedAt));
+          if (typeof image === 'string' && (await ran(options, ['image', 'inspect', image])).code === 0) {
+            const looking = `ahpd-part-fill-${randomUUID().slice(0, 8)}`;
+            try {
+              await must(['create', '--name', looking, '-v', `${volume}:/opt/ahpd/part`, image, 'x']);
+              const read = await ran(options, ['cp', `${looking}:/opt/ahpd/part/${FILLED_MARKER}`, '-']);
+              const marked = read.code === 0 ? markerUsed(firstFileOf(Buffer.from(read.stdout, 'utf8'))?.toString('utf8') ?? '') : undefined;
+              if (marked !== undefined) used = Number.isNaN(used) ? marked : Math.max(used, marked);
+            }
+            finally {
+              await ran(options, ['rm', '-f', looking]);
+            }
+          }
+          if (Number.isNaN(used) || now - used <= PART_VOLUME_KEPT_MS) continue;
+          if ((await ran(options, ['volume', 'rm', volume])).code === 0) {
+            options.log?.(`removed ${volume}, which no machine has used for over a week`);
+          }
+        }
+        catch {
+          // Left for the next time, as a volume Docker would not remove is.
+        }
       }
     },
   };

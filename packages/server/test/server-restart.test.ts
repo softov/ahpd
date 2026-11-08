@@ -14,14 +14,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fileUsers } from '@ahpd/sdk';
+import type { HostHandlers, PluginContext } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { conflict, type Options } from '../src/commands/options.js';
 import {
-  FORCED_SIGNAL, RESTARTING, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, restartAtTerminal, restartInPlace,
+  FORCED_SIGNAL, RESTARTING, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, parking, restartAtTerminal, restartInPlace,
 } from '../src/commands/restart.js';
-import type { InPlace, LifecycleSteps } from '../src/commands/restart.js';
+import type { AtTerminal, InPlace, LifecycleSteps, Parking } from '../src/commands/restart.js';
 import { apiOrigins } from '../src/commands/run.js';
 import { servedRegistry, type ServedFacts } from '../src/commands/served.js';
 import type { ControlledSignal, Running } from '../src/daemon.js';
@@ -71,9 +72,12 @@ const served = async (turning: string[] = [], refuse?: string): Promise<{
     users,
     running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: ['/x'], startedAt: '' }),
     turning: () => turning,
-    restart: (argv) => {
+    // As the daemon's own restart answers: parked while a turn runs, unless forced.
+    restart: (argv, force) => {
       if (refuse !== undefined) conflict(refuse);
+      if (turning.length > 0 && !force) return { parked: turning };
       restarts.push(argv);
+      return { restartDelayMs: 3000 };
     },
   };
   const handler = apiHandler({
@@ -124,23 +128,22 @@ describe('POST /api/restart', () => {
     const api = await served();
     const answered = await api.post({});
     expect(answered.status).toBe(200);
-    expect(await answered.json()).toEqual({ restarting: true, pid: process.pid });
+    // VS Code's upgrade answer says how long until the server goes down.
+    expect(await answered.json()).toEqual({ restarting: true, pid: process.pid, restartDelayMs: 3000 });
     expect(api.restarts).toEqual([ARGV]);
   });
 
-  it('refuses while a turn runs, naming the sessions, and restarts with force', async () => {
+  it('answers a restart parked while a turn runs, naming the sessions, and restarts at once with force', async () => {
     started();
     const api = await served(['ahp-session:/a', 'ahp-session:/b']);
-    const refused = await api.post({});
-    expect(refused.status).toBe(409);
-    const message = (await refused.json() as { message: string }).message;
-    expect(message).toContain('ahp-session:/a, ahp-session:/b');
-    // A caller of the API forces it in the request, not on a command line.
-    expect(message).toBe('A turn is running in ahp-session:/a, ahp-session:/b; pass force: true to restart anyway.');
+    const parked = await api.post({});
+    expect(parked.status).toBe(200);
+    expect(await parked.json()).toEqual({ restarting: false, pid: process.pid, parked: ['ahp-session:/a', 'ahp-session:/b'] });
     expect(api.restarts).toEqual([]);
 
     const forced = await api.post({ force: true });
     expect(forced.status).toBe(200);
+    expect(await forced.json()).toEqual({ restarting: true, pid: process.pid, restartDelayMs: 3000 });
     expect(api.restarts).toEqual([ARGV]);
   });
 
@@ -163,16 +166,16 @@ describe('POST /api/restart', () => {
     const api = await served();
     const answered = await api.post({});
     expect(answered.status).toBe(200);
-    expect(await answered.json()).toEqual({ restarting: true, pid: process.pid });
+    expect(await answered.json()).toEqual({ restarting: true, pid: process.pid, restartDelayMs: 3000 });
     expect(api.restarts).toEqual([undefined]);
   });
 
-  it('still refuses a supervised restart while a turn runs, unless it is forced', async () => {
+  it('parks a supervised restart while a turn runs, unless it is forced', async () => {
     started({ service: 'launchd' }, null);
     const api = await served(['ahp-session:/a']);
-    const refused = await api.post({});
-    expect(refused.status).toBe(409);
-    expect((await refused.json() as { message: string }).message).toContain('ahp-session:/a');
+    const parked = await api.post({});
+    expect(parked.status).toBe(200);
+    expect(await parked.json()).toMatchObject({ restarting: false, parked: ['ahp-session:/a'] });
     expect(api.restarts).toEqual([]);
 
     const forced = await api.post({ force: true });
@@ -435,7 +438,9 @@ describe('lifecycle', () => {
    * the next one, so this process starts nothing. Its record goes before the
    * manager is asked - the daemon coming up serves the same configuration
    * folder and refuses to run beside a record naming a live daemon - and the
-   * exit is a clean one, which no `Restart=on-failure` unit starts again.
+   * exit is part of the restart the manager was asked for, which a unit's
+   * `Restart=` does not start again
+   * (https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Restart=).
    */
   it('hands a supervised restart to the manager, starts no successor, and exits 0', async () => {
     const said: string[] = [];
@@ -507,15 +512,20 @@ const noManager: Manager = {
 };
 
 describe('the daemon, told to restart by a signal', () => {
+  /** The signal answered over a restart that parks while a turn runs unless forced, as `checkedRestart` does. */
   const answer = async (forced: boolean, over: { recorded?: Running | undefined; turning?: string[]; piped?: boolean } = {}) => {
     const said: string[] = [];
     const restarts: string[][] = [];
     await answerRestartSignal(forced, {
       self: 7,
       recorded: () => ('recorded' in over ? over.recorded : recordFor(7)),
-      turning: () => over.turning ?? [],
       log: (line) => { said.push(line); },
-      restart: (argv) => { restarts.push(argv); },
+      restart: (argv, force) => {
+        const turning = over.turning ?? [];
+        if (turning.length > 0 && !force) return { parked: turning };
+        restarts.push(argv);
+        return { restartDelayMs: 3000 };
+      },
     }, over.piped ?? false);
     return { said, restarts };
   };
@@ -524,13 +534,13 @@ describe('the daemon, told to restart by a signal', () => {
     expect(await answer(false)).toEqual({ said: ['restart: stopping (SIGHUP)'], restarts: [ARGV] });
   });
 
-  it('writes one refusal naming the sessions and the signal while a turn runs, and keeps running', async () => {
+  it('writes the restart parked until the turns end, naming the sessions and the signal, and keeps running', async () => {
     const { said, restarts } = await answer(false, { turning: ['ahp-session:/a', 'ahp-session:/b'] });
     expect(restarts).toEqual([]);
-    expect(said).toEqual(['restart refused (SIGHUP): A turn is running in ahp-session:/a, ahp-session:/b; pass --force to restart anyway.']);
+    expect(said).toEqual(['restart parked (SIGHUP): A turn is running in ahp-session:/a, ahp-session:/b; it restarts once the turns end, or at once with --force.']);
   });
 
-  it('restarts anyway when forced, and names that signal in its receipt', async () => {
+  it('restarts at once when forced, and names that signal in its receipt', async () => {
     expect(await answer(true, { turning: ['ahp-session:/a'] })).toEqual({ said: ['restart: stopping (SIGUSR2)'], restarts: [ARGV] });
   });
 
@@ -538,10 +548,10 @@ describe('the daemon, told to restart by a signal', () => {
    * The Windows run of 2026-10-14: a restart asked through the control pipe
    * logged the name of a signal that was never sent.
    */
-  it('names the control pipe, not a signal, in the refusal and the receipt of a request through it', async () => {
-    const refused = await answer(false, { turning: ['ahp-session:/a'], piped: true });
-    expect(refused).toEqual({
-      said: ['restart refused (control pipe): A turn is running in ahp-session:/a; pass --force to restart anyway.'],
+  it('names the control pipe, not a signal, in the park and the receipt of a request through it', async () => {
+    const parked = await answer(false, { turning: ['ahp-session:/a'], piped: true });
+    expect(parked).toEqual({
+      said: ['restart parked (control pipe): A turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.'],
       restarts: [],
     });
     expect(await answer(false, { piped: true })).toEqual({ said: ['restart: stopping (control pipe)'], restarts: [ARGV] });
@@ -567,7 +577,6 @@ describe('the daemon, told to restart by a signal', () => {
     await answerRestartSignal(false, {
       self: 7,
       recorded: () => recordFor(7),
-      turning: () => [],
       log: (line) => { said.push(line); },
       restart: () => { throw new Error('A restart is already under way.'); },
     });
@@ -580,14 +589,37 @@ describe('the daemon, told to restart by a signal', () => {
     await answerRestartSignal(false, {
       self: 7,
       recorded: () => recordFor(7),
-      turning: () => [],
       log: (line) => { said.push(line); },
-      restart: checkedRestart(async () => { throw new Error('config.json is not JSON'); }, () => [], { restart: (argv, token) => { restarts.push([argv, token]); } }, () => {}),
+      restart: checkedRestart(
+        async () => { throw new Error('config.json is not JSON'); },
+        () => [],
+        { restart: (argv, token) => { restarts.push([argv, token]); } },
+        () => {},
+        { park: () => { throw new Error('parked a restart whose line cannot run'); } },
+        (line) => { said.push(line); },
+      ),
     });
     expect(restarts).toEqual([]);
     expect(said).toEqual(['restart refused (SIGHUP): Its line cannot run now, so it was not stopped: config.json is not JSON']);
   });
 });
+
+/** A park that holds the step it was handed for the case to run, as the turns ending would. */
+const holding = (): { park: (step: () => void) => void; run: () => void; held: () => boolean } => {
+  let step: (() => void) | undefined;
+  return {
+    park: (one) => { step = one; },
+    run: () => {
+      const one = step;
+      step = undefined;
+      one?.();
+    },
+    held: () => step !== undefined,
+  };
+};
+
+/** Every callback queued so far, and the ones they queue, run. */
+const settled = (): Promise<void> => new Promise((done) => { setTimeout(done, 0); });
 
 describe('checkedRestart', () => {
   it('reads the line before the lifecycle is asked, and hands it the token read', async () => {
@@ -596,8 +628,9 @@ describe('checkedRestart', () => {
     const held: (string | undefined)[] = [];
     const restart = checkedRestart(async (argv) => { read.push(argv ?? []); expect(asked).toEqual([]); return 'xyz'; }, () => [], {
       restart: (argv, token) => { asked.push([argv, token]); },
-    }, (why) => { held.push(why); });
-    await restart(ARGV, false);
+    }, (why) => { held.push(why); }, holding(), () => {});
+    // VS Code's upgrade kill delay, which the answer carries.
+    expect(await restart(ARGV, false)).toEqual({ restartDelayMs: 3000 });
     expect(read).toEqual([ARGV]);
     expect(asked).toEqual([[ARGV, 'xyz']]);
     // Held before the line was read, and left held: this restart is going.
@@ -609,16 +642,134 @@ describe('checkedRestart', () => {
     const held: (string | undefined)[] = [];
     const restart = checkedRestart(async () => { throw new Error('connectionTokenFile /nope cannot be read'); }, () => [], {
       restart: (argv) => { asked.push(argv); },
-    }, (why) => { held.push(why); });
+    }, (why) => { held.push(why); }, holding(), () => {});
     await expect(restart(ARGV, false)).rejects.toThrow('Its line cannot run now, so it was not stopped: connectionTokenFile /nope cannot be read');
     expect(asked).toEqual([]);
     // Taken, then let go: this daemon runs on and takes turns again.
     expect(held).toEqual([RESTARTING, undefined]);
   });
+
+  it('parks a restart while a turn runs, lets turns go meanwhile, and runs it from the top once they end', async () => {
+    const asked: [string[], string | undefined][] = [];
+    const held: (string | undefined)[] = [];
+    const said: string[] = [];
+    let turning = ['ahp-session:/a'];
+    let reads = 0;
+    const park = holding();
+    const restart = checkedRestart(async () => { reads += 1; return `token ${String(reads)}`; }, () => turning, {
+      restart: (argv, token) => { asked.push([argv, token]); },
+    }, (why) => { held.push(why); }, park, (line) => { said.push(line); });
+
+    expect(await restart(ARGV, false)).toEqual({ parked: ['ahp-session:/a'] });
+    // Never paid for with the running turn, and not refused: held for later,
+    // and the host takes turns again while it waits.
+    expect(asked).toEqual([]);
+    expect(held).toEqual([RESTARTING, undefined]);
+    expect(park.held()).toBe(true);
+
+    turning = [];
+    park.run();
+    await settled();
+    // The line and its token read again, as they are when it goes.
+    expect(asked).toEqual([[ARGV, 'token 2']]);
+    expect(held).toEqual([RESTARTING, undefined, RESTARTING]);
+    expect(said).toEqual(['restart: the turns have ended, stopping']);
+  });
+
+  it('parks again a parked restart a turn began during, and logs what one that cannot run now could not do', async () => {
+    let turning = ['ahp-session:/a'];
+    let line = true;
+    const said: string[] = [];
+    const asked: string[][] = [];
+    const park = holding();
+    const restart = checkedRestart(async () => {
+      if (!line) throw new Error('config.json is not JSON');
+      return undefined;
+    }, () => turning, { restart: (argv) => { asked.push(argv); } }, () => {}, park, (one) => { said.push(one); });
+
+    await restart(ARGV, false);
+    // A turn that began between the end of the last one and the read.
+    turning = ['ahp-session:/b'];
+    park.run();
+    await settled();
+    expect(park.held()).toBe(true);
+    expect(asked).toEqual([]);
+
+    turning = [];
+    line = false;
+    park.run();
+    await settled();
+    expect(asked).toEqual([]);
+    expect(said).toEqual(['Could not restart it: Its line cannot run now, so it was not stopped: config.json is not JSON']);
+  });
+
+  it('restarts at once when forced, a turn running, as VS Code\'s CLI replaces a running agent host', async () => {
+    const asked: string[][] = [];
+    const park = holding();
+    const restart = checkedRestart(async () => undefined, () => ['ahp-session:/a'], {
+      restart: (argv) => { asked.push(argv); },
+    }, () => {}, park, () => {});
+    expect(await restart(ARGV, true)).toEqual({ restartDelayMs: 3000 });
+    expect(asked).toEqual([ARGV]);
+    expect(park.held()).toBe(false);
+  });
+});
+
+describe('parking', () => {
+  /** A park over a turn list a case moves, whose callbacks wait until the case runs them. */
+  const parked = (): { park: Parking; turning: string[]; flush: () => void } => {
+    const queued: (() => void)[] = [];
+    const turning: string[] = [];
+    return {
+      park: parking(() => turning, (step) => { queued.push(step); }),
+      turning,
+      flush: () => { for (const step of queued.splice(0)) step(); },
+    };
+  };
+
+  it('runs the step held once the last turn ends, off the stack of the event that ended it', () => {
+    const { park, turning, flush } = parked();
+    const ran: string[] = [];
+    turning.push('ahp-session:/a');
+    park.park(() => { ran.push('restart'); });
+    flush();
+    expect(ran).toEqual([]);
+
+    turning.length = 0;
+    park.ended();
+    expect(ran).toEqual([]);
+    flush();
+    expect(ran).toEqual(['restart']);
+    // Once, however many turns end after it.
+    park.ended();
+    flush();
+    expect(ran).toEqual(['restart']);
+  });
+
+  it('holds the latest step alone, and runs one at once when no turn runs', () => {
+    const { park, flush } = parked();
+    const ran: string[] = [];
+    park.park(() => { ran.push('first'); });
+    park.park(() => { ran.push('second'); });
+    flush();
+    expect(ran).toEqual(['second']);
+  });
+
+  it('lets go of the step held when the way down drops it', () => {
+    const { park, turning, flush } = parked();
+    const ran: string[] = [];
+    turning.push('ahp-session:/a');
+    park.park(() => { ran.push('restart'); });
+    park.drop();
+    turning.length = 0;
+    park.ended();
+    flush();
+    expect(ran).toEqual([]);
+  });
 });
 
 describe('a turn that starts while the line is read', () => {
-  it('refuses the signal that was not forced, and the forced one restarts', async () => {
+  it('parks the signal that was not forced, and the forced one restarts', async () => {
     const said: string[] = [];
     let turning: string[] = [];
     let reading = (): void => {};
@@ -631,20 +782,28 @@ describe('a turn that starts while the line is read', () => {
       exit: (code) => { said.push(`exit ${String(code)}`); },
       later: (step) => { setTimeout(step, 0); },
     });
+    const park = holding();
     const facts = {
       self: 7,
       recorded: () => recordFor(7),
-      turning: () => turning,
       log: (line: string) => { said.push(line); },
       // The read waits for the test, and a turn begins meanwhile.
-      restart: checkedRestart(() => new Promise<string | undefined>((done) => { reading = () => { done(undefined); }; }), () => turning, way, () => {}),
+      restart: checkedRestart(
+        () => new Promise<string | undefined>((done) => { reading = () => { done(undefined); }; }),
+        () => turning,
+        way,
+        () => {},
+        park,
+        (line) => { said.push(line); },
+      ),
     };
     const first = answerRestartSignal(false, facts);
     await new Promise((wait) => { setTimeout(wait, 0); });
     turning = ['ahp-session:/a'];
     reading();
     await first;
-    expect(said).toEqual(['restart refused (SIGHUP): A turn is running in ahp-session:/a; pass --force to restart anyway.']);
+    expect(said).toEqual(['restart parked (SIGHUP): A turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.']);
+    expect(park.held()).toBe(true);
 
     const second = answerRestartSignal(true, facts);
     await new Promise((wait) => { setTimeout(wait, 0); });
@@ -693,6 +852,12 @@ describe('restartAtTerminal', () => {
     state.record = recordFor(pid);
     state.log += `2026-09-30T00:00:00.000Z restart: stopping (${signal})\nrestart: starting the successor\nrestarted as ws://127.0.0.1:${String(9000 + pid)} (pid ${String(pid)})\n`;
   };
+  /** The terminal's restart in a case that waits for a successor, which a parked restart is not. */
+  const successorOf = async (force: boolean, steps: AtTerminal): Promise<Running> => {
+    const begun = await restartAtTerminal(force, steps);
+    if ('parked' in begun) throw new Error(`parked: ${begun.parked}`);
+    return begun;
+  };
 
   it('says none is running, and where a foreground one is restarted', async () => {
     const { steps } = faked(undefined);
@@ -716,7 +881,7 @@ describe('restartAtTerminal', () => {
 
   it('sends the restart signal, and answers the new daemon\'s record', async () => {
     const { state, steps } = faked(recordFor(7), restarted(8));
-    const begun = await restartAtTerminal(false, steps);
+    const begun = await successorOf(false, steps);
     expect(state.signals).toEqual([`7 ${RESTART_SIGNAL}`]);
     expect(begun.pid).toBe(8);
     expect(begun.url).toBe('ws://127.0.0.1:9008');
@@ -728,24 +893,34 @@ describe('restartAtTerminal', () => {
     expect(state.signals).toEqual([`7 ${FORCED_SIGNAL}`]);
   });
 
-  it('answers the daemon\'s refusal, which names the sessions', async () => {
+  it('answers the daemon\'s refusal, in its words', async () => {
     const { steps } = faked(recordFor(7), (_signal, state) => {
-      state.log += '2026-09-30T00:00:00.000Z restart refused (SIGHUP): A turn is running in ahp-session:/a; pass --force to restart anyway.\n';
+      state.log += '2026-09-30T00:00:00.000Z restart refused (SIGHUP): Its line cannot run now, so it was not stopped: config.json is not JSON\n';
     });
-    await expect(restartAtTerminal(false, steps)).rejects.toThrow('A turn is running in ahp-session:/a; pass --force to restart anyway.');
+    await expect(restartAtTerminal(false, steps)).rejects.toThrow('Its line cannot run now, so it was not stopped: config.json is not JSON');
+  });
+
+  it('answers a restart the daemon parked until its turns end, which names the sessions, and waits for nothing more', async () => {
+    const { state, steps } = faked(recordFor(7), (_signal, daemon) => {
+      daemon.log += '2026-09-30T00:00:00.000Z restart parked (SIGHUP): A turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.\n';
+    });
+    expect(await restartAtTerminal(false, steps))
+      .toEqual({ parked: 'A turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.' });
+    expect(state.waits).toBe(0);
   });
 
   it('reads the answer that names the control pipe, when the request went through it', async () => {
-    const refused = faked(recordFor(7), (_signal, state) => {
-      state.log += '2026-10-14T00:00:00.000Z restart refused (control pipe): A turn is running in ahp-session:/a; pass --force to restart anyway.\n';
+    const parked = faked(recordFor(7), (_signal, state) => {
+      state.log += '2026-10-14T00:00:00.000Z restart parked (control pipe): A turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.\n';
     }, undefined, undefined, true);
-    await expect(restartAtTerminal(false, refused.steps)).rejects.toThrow('A turn is running in ahp-session:/a; pass --force to restart anyway.');
+    expect(await restartAtTerminal(false, parked.steps))
+      .toEqual({ parked: 'A turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.' });
 
     const { steps } = faked(recordFor(7), (_signal, state) => {
       state.record = recordFor(8);
       state.log += 'restart: stopping (control pipe, forced)\nrestart: starting the successor\nrestarted as ws://127.0.0.1:9008 (pid 8)\n';
     }, undefined, undefined, true);
-    expect((await restartAtTerminal(true, steps)).pid).toBe(8);
+    expect((await successorOf(true, steps)).pid).toBe(8);
   });
 
   it('answers a new daemon that did not start', async () => {
@@ -764,7 +939,7 @@ describe('restartAtTerminal', () => {
         daemon.log += 'restarted as ws://127.0.0.1:9008 (pid 8)\n';
       }
     });
-    expect((await restartAtTerminal(false, steps)).pid).toBe(8);
+    expect((await successorOf(false, steps)).pid).toBe(8);
     expect(state.waits).toBe(63);
   });
 
@@ -800,14 +975,14 @@ describe('restartAtTerminal', () => {
         daemon.log += 'restart: starting the successor\nrestarted as ws://127.0.0.1:9008 (pid 8)\n';
       }
     });
-    expect((await restartAtTerminal(false, steps)).pid).toBe(8);
+    expect((await successorOf(false, steps)).pid).toBe(8);
   });
 
   /*
    * Two terminals at once, one plain and one forced: each reads only the
    * answer of its own kind, through the pipe as with signals.
    */
-  it('ignores the other kind\'s refusal, through the pipe and as a signal', async () => {
+  it('ignores the other kind\'s refusal and park, through the pipe and as a signal', async () => {
     const kinds = [
       { piped: false, force: false, own: 'SIGHUP', other: 'SIGUSR2' },
       { piped: false, force: true, own: 'SIGUSR2', other: 'SIGHUP' },
@@ -816,7 +991,8 @@ describe('restartAtTerminal', () => {
     ];
     for (const kind of kinds) {
       const { steps } = faked(recordFor(7), (_signal, daemon) => {
-        daemon.log += `restart refused (${kind.other}): A turn is running in ahp-session:/a; pass --force to restart anyway.\n`;
+        daemon.log += `restart refused (${kind.other}): A restart is already under way.\n`;
+        daemon.log += `restart parked (${kind.other}): A turn is running in ahp-session:/a; it restarts once the turns end, or at once with --force.\n`;
         daemon.log += `restart: stopping (${kind.own})\n`;
       }, (daemon) => {
         if (daemon.waits === 1) {
@@ -824,7 +1000,7 @@ describe('restartAtTerminal', () => {
           daemon.log += 'restart: starting the successor\nrestarted as ws://127.0.0.1:9008 (pid 8)\n';
         }
       }, undefined, kind.piped);
-      expect((await restartAtTerminal(kind.force, steps)).pid).toBe(8);
+      expect((await successorOf(kind.force, steps)).pid).toBe(8);
     }
   });
 
@@ -849,7 +1025,7 @@ describe('restartAtTerminal', () => {
       daemon.log += 'restart: starting the successor\nrestarted as ws://127.0.0.1:9008 (pid 8)\n';
       return false;
     });
-    expect((await restartAtTerminal(false, steps)).pid).toBe(8);
+    expect((await successorOf(false, steps)).pid).toBe(8);
   });
 
   /*
@@ -862,7 +1038,7 @@ describe('restartAtTerminal', () => {
     // What the real manager does, in one line: the daemon it started writes its
     // own record, which is what the terminal is waiting for.
     const { calls, manager } = asked((_verb, service) => { state.record = recordFor(8, null, service); });
-    const begun = await restartAtTerminal(false, { ...steps, manager });
+    const begun = await successorOf(false, { ...steps, manager });
     expect(calls).toEqual(['restart systemd']);
     expect(state.signals).toEqual([]);
     expect(begun.pid).toBe(8);
@@ -913,9 +1089,9 @@ describe('a turn and a restart that is stopping the daemon', () => {
    * costs a few ticks rather than a process - and `pace` is how long one is held
    * open, which is how a case has a turn running when it needs one.
    */
-  const live = async (pace = 0) => {
+  const live = async (pace = 0, events?: HostHandlers) => {
     const where = join(home, 'work');
-    const host = createHost({ path: where, agents: [echo({ path: where, pace })] });
+    const host = createHost({ path: where, agents: [echo({ path: where, pace })], ...(events === undefined ? {} : { events }) });
     const said = peer();
     const client = host.accept(said);
     await client.handle({
@@ -1000,6 +1176,8 @@ describe('a turn and a restart that is stopping the daemon', () => {
       () => host.turning(),
       way,
       (why) => { host.refuseTurns(why); },
+      holding(),
+      (line) => { log.push(line); },
     );
     await restart(ARGV, false);
 
@@ -1013,44 +1191,62 @@ describe('a turn and a restart that is stopping the daemon', () => {
     expect(log).toContain('exit 0');
   });
 
-  it('takes turns again when a running one refuses the restart', async () => {
+  it('parks the restart a running turn holds back, taking turns meanwhile, and restarts when the host says the turn ended', async () => {
+    let ended = (): void => {};
+    // The daemon's own listener, as `run.ts` hands its host one.
+    const { host, client, said, chat } = await live(500, {
+      turn_end: [{ by: 'ahpd', context: {} as PluginContext, handle: () => { ended(); } }],
+    });
+    const park = parking(() => host.turning(), (step) => { setTimeout(step, 0); });
+    ended = park.ended;
     // Long enough to outlast `settle`, which is eight ticks: about 125 ms on Windows.
-    const { host, client, said, chat } = await live(500);
     await say(client, chat, 'busy', 't1');
-    // As the host spells it, which is the name a refusal names it by.
+    // As the host spells it, which is the name a park names it by.
     const running = host.turning();
     expect(running).toHaveLength(1);
 
     const asked: string[][] = [];
+    const log: string[] = [];
+    const held: (string | undefined)[] = [];
     const restart = checkedRestart(
       async () => 'xyz',
       () => host.turning(),
       { restart: (argv) => { asked.push(argv); } },
-      (why) => { host.refuseTurns(why); },
+      (why) => { held.push(why); host.refuseTurns(why); },
+      park,
+      (line) => { log.push(line); },
     );
-    await expect(restart(ARGV, false)).rejects.toThrow(`A turn is running in ${String(running[0])}; pass --force to restart anyway.`);
+    expect(await restart(ARGV, false)).toEqual({ parked: running });
     expect(asked).toEqual([]);
+    // The hold let go: the host takes turns while the restart waits.
+    expect(held).toEqual([RESTARTING, undefined]);
 
-    // The daemon ran on, so turns are taken again. The turn that held the
-    // restart back is the echo backend's own and nothing stopped it, so it
-    // ends before the next thing somebody says.
+    // The echo backend's turn ends on its own, and the host's `turn_end` is
+    // what runs the restart it held back.
     await quiet(host);
-    await say(client, chat, 'still here', 't2');
-    await quiet(host);
-    expect(endOf(said, chat, 't2')).toEqual({ type: 'chat/turnComplete' });
+    const until = Date.now() + 5000;
+    while (Date.now() < until && asked.length === 0) await settle(1);
+    expect(asked).toEqual([ARGV]);
+    expect(log).toEqual(['restart: the turns have ended, stopping']);
+    expect(held).toEqual([RESTARTING, undefined, RESTARTING]);
+    // Held from there, as any restart that goes is.
+    await say(client, chat, 'after', 't2');
+    expect(endOf(said, chat, 't2')).toEqual({ type: 'chat/error', errorType: 'rejected', message: 'The daemon is restarting' });
     await host.close();
   });
 
   it('takes turns again when its line cannot run, or a restart is already under way', async () => {
     const { host, client, said, chat } = await live();
     const asked: string[][] = [];
-    const holding = (why: string | undefined): void => { host.refuseTurns(why); };
+    const holds = (why: string | undefined): void => { host.refuseTurns(why); };
 
     const unrunnable = checkedRestart(
       async () => { throw new Error('config.json is not JSON'); },
       () => host.turning(),
       { restart: (argv) => { asked.push(argv); } },
-      holding,
+      holds,
+      holding(),
+      () => {},
     );
     await expect(unrunnable(ARGV, false)).rejects.toThrow('Its line cannot run now, so it was not stopped: config.json is not JSON');
     await say(client, chat, 'hello', 't1');
@@ -1061,7 +1257,9 @@ describe('a turn and a restart that is stopping the daemon', () => {
       async () => 'xyz',
       () => host.turning(),
       { restart: () => { conflict('A restart is already under way.'); } },
-      holding,
+      holds,
+      holding(),
+      () => {},
     );
     await expect(underWay(ARGV, false)).rejects.toThrow('A restart is already under way.');
     await say(client, chat, 'and again', 't2');

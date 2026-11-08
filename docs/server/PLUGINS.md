@@ -63,10 +63,9 @@ ahpd looks for a bare name in the configuration directory only. Use `ahpd plugin
 ```bash
 ahpd plugin update all          # every plugin
 ahpd plugin update @ahpd/agent-pi
-ahpd plugin update all --force  # one npm call per plugin, so one failure does not stop the rest
 ```
 
-Each plugin moves to its newest version whose `@ahpd/sdk` range fits this daemon. A plugin installed from a path, git or a URL is left as it is.
+Each plugin moves to its newest version whose `@ahpd/sdk` range fits this daemon, in an npm call of its own, so one npm cannot install stops no other, as VS Code updates each extension and answers each. A plugin with no version that fits is named and left as it is, and a plugin installed from a path, git or a URL is left as it is.
 
 ## Options
 

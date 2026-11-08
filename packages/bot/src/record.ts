@@ -95,10 +95,10 @@ export interface BotKept {
   body: BotBody;
   /** Which colour it is drawn in. */
   color: BotColor;
-  /** The template a chat with it would open with, by name. Absent is the plugin's default. */
+  /** The template its `AGENTS.md` is made from, by name. Absent is the plugin's default. */
   template?: string;
-  /** The backend a session of it runs on, where a bot chooses one. */
-  harness?: string;
+  /** The agent provider a session of it runs on, AHP's `provider`, where a bot chooses one. */
+  provider?: string;
   /** The model it asks for. */
   model?: string;
   /** The session preset it starts from. */
@@ -150,7 +150,7 @@ export interface BotRecord extends BotKept {
   /** What it was asked to be, in its own words, where the file says one. */
   instructions?: string;
   /**
-   * `unavailable` when the agent its `preset` or `harness` names is not one
+   * `unavailable` when the agent its `preset` or `provider` names is not one
    * this host serves, which is a bot that wakes nothing until the record or the
    * agent is changed.
    *
@@ -200,7 +200,7 @@ export interface BotDraft {
   description?: string | undefined;
   instructions?: string | undefined;
   template?: string | undefined;
-  harness?: string | undefined;
+  provider?: string | undefined;
   model?: string | undefined;
   preset?: string | undefined;
   computer?: string | undefined;
@@ -210,15 +210,11 @@ export interface BotDraft {
 /** The keys a body may carry: a bot's own fields, and nothing else. */
 const FIELDS = [
   'id', 'name', 'labels', 'description', 'body', 'color', 'instructions', 'template',
-  'harness', 'model', 'preset', 'session', 'workspace', 'computer', 'connectors', 'owner',
+  'provider', 'model', 'preset', 'session', 'workspace', 'computer', 'connectors', 'owner',
   // The two times are here rather than refused, because a client that read a
   // bot and wrote the whole record back is writing what it was given. Neither
   // is read: what they hold is the host's.
   'createdAt', 'updatedAt',
-  // The reader's own chat, which a read answers and the host keeps. A body that
-  // carries it back is writing what it was given, and it is not read: a chat is
-  // the reader's, so it is the same key for two people reading one bot.
-  'chat',
   // Whether the agent it names is one this host serves. Answering a read and
   // never a record the host keeps, so a body that carries it back changes
   // nothing and a bot that names a missing agent is still a bot someone made.
@@ -399,7 +395,7 @@ export function checkRecord(slug: string, said: unknown, existing?: BotRecord): 
     description: line('description', body['description']) ?? existing?.description,
     instructions: line('instructions', body['instructions']) ?? existing?.instructions,
     template: template ?? existing?.template,
-    harness: line('harness', body['harness']) ?? existing?.harness,
+    provider: line('provider', body['provider']) ?? existing?.provider,
     model: line('model', body['model']) ?? existing?.model,
     preset: line('preset', body['preset']) ?? existing?.preset,
     computer: line('computer', body['computer']) ?? existing?.computer,

@@ -7,17 +7,22 @@
  * a caller with no proof.
  *
  * A timestamped scheme refuses a call more than five minutes from the host's
- * clock, which is the tolerance Stripe and Slack document, and every value is
- * compared in a time that does not depend on the value.
+ * clock, which is the tolerance Stripe, Slack and Standard Webhooks document,
+ * and every value is compared in a time that does not depend on the value.
  */
 
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { bearerChallenge } from '@ahpd/sdk';
 import { answer } from './call.js';
 import type { Call } from './call.js';
 import type { Endpoint } from './record.js';
 
-/** How far a timestamped call may be from the host's clock, in seconds. */
-export const MAX_AGE_SECONDS = 300;
+/**
+ * How far a timestamped call may be from the host's clock, in seconds: the
+ * tolerance, named as Standard Webhooks' reference library names it.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/libraries/javascript/src/index.ts
+ */
+export const WEBHOOK_TOLERANCE_IN_SECONDS = 5 * 60;
 
 /** Two strings are equal, in a time that does not depend on where they differ. */
 const same = (given: string, kept: string): boolean => timingSafeEqual(
@@ -49,8 +54,8 @@ const mac = (algorithm: string, secret: string, data: Buffer, encoding: string):
 };
 
 /** Whether a seconds timestamp is inside the tolerance of `now`. */
-const fresh = (seconds: number, now: number): boolean => Number.isFinite(seconds)
-  && Math.abs(Math.floor(now / 1000) - seconds) <= MAX_AGE_SECONDS;
+const withinTolerance = (seconds: number, now: number): boolean => Number.isFinite(seconds)
+  && Math.abs(Math.floor(now / 1000) - seconds) <= WEBHOOK_TOLERANCE_IN_SECONDS;
 
 /** The `Authorization: Bearer <token>` token, or nothing. */
 const bearerOf = (call: Call): string | undefined => {
@@ -75,10 +80,37 @@ const stripeParts = (header: string): Map<string, string[]> => {
 /** Whether any of the values equals the expected one. */
 const anyIs = (values: string[], expected: string): boolean => values.some((one) => same(one, expected));
 
-/** The Standard Webhooks key: the `whsec_` prefix dropped, and the rest base64. */
-const standardKey = (secret: string): Buffer => (secret.startsWith('whsec_')
-  ? Buffer.from(secret.slice('whsec_'.length), 'base64')
-  : Buffer.from(secret, 'utf8'));
+/**
+ * The Standard Webhooks key: the `whsec_` prefix dropped when it is there, and
+ * the rest decoded from base64, as the reference library decodes a secret
+ * whether or not it carries the prefix. A secret that does not decode, or
+ * decodes to nothing, is a secret the library refuses, and it holds no key.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/libraries/javascript/src/index.ts
+ */
+const standardKey = (secret: string): Buffer | undefined => {
+  const encoded = secret.startsWith('whsec_') ? secret.slice('whsec_'.length) : secret;
+  const key = Buffer.from(encoded, 'base64');
+  return key.length > 0 && key.toString('base64') === encoded ? key : undefined;
+};
+
+/**
+ * The key a message this host sends for one endpoint is signed with, as
+ * Standard Webhooks' reference library keys its producer: a `standard`
+ * endpoint's secret decoded as that scheme's key, and any other endpoint's
+ * secret as its characters, the library's `raw` format.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/libraries/javascript/src/index.ts
+ */
+export const signingKey = (endpoint: Endpoint): Buffer | undefined => (endpoint.auth === 'standard'
+  ? standardKey(endpoint.secret)
+  : Buffer.from(Uint8Array.from(endpoint.secret, (character) => character.charCodeAt(0))));
+
+/**
+ * The `webhook-signature` of one message, as the reference library's `sign`
+ * makes it: `v1,` and the base64 HMAC-SHA256 of `<id>.<timestamp>.<payload>`.
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md
+ */
+export const signatureOf = (key: Buffer, id: string, timestamp: number, payload: string): string =>
+  `v1,${createHmac('sha256', key).update(`${id}.${String(timestamp)}.${payload}`).digest('base64')}`;
 
 /** Whether the GitHub and Meta signature over the raw body is the one the header carries. */
 const hubSignature = (endpoint: Endpoint, call: Call): boolean => {
@@ -128,14 +160,14 @@ const CHECKS: Record<string, (endpoint: Endpoint, call: Call, now: number) => bo
     if (header === undefined) return false;
     const parts = stripeParts(header);
     const stamp = parts.get('t')?.[0] ?? '';
-    if (!fresh(Number(stamp), now)) return false;
+    if (!withinTolerance(Number(stamp), now)) return false;
     const expected = mac('sha256', endpoint.secret, signed(call, `${stamp}.`), 'hex');
     return anyIs(parts.get('v1') ?? [], expected);
   },
 
   slack: (endpoint, call, now) => {
     const stamp = headerOf(call, 'x-slack-request-timestamp') ?? '';
-    if (!fresh(Number(stamp), now)) return false;
+    if (!withinTolerance(Number(stamp), now)) return false;
     const value = headerOf(call, 'x-slack-signature');
     if (value === undefined) return false;
     const expected = `v0=${mac('sha256', endpoint.secret, signed(call, `v0:${stamp}:`), 'hex')}`;
@@ -146,8 +178,9 @@ const CHECKS: Record<string, (endpoint: Endpoint, call: Call, now: number) => bo
     const id = headerOf(call, 'webhook-id');
     const stamp = headerOf(call, 'webhook-timestamp') ?? '';
     const header = headerOf(call, 'webhook-signature');
-    if (id === undefined || header === undefined || !fresh(Number(stamp), now)) return false;
-    const expected = createHmac('sha256', standardKey(endpoint.secret))
+    const key = standardKey(endpoint.secret);
+    if (id === undefined || header === undefined || key === undefined || !withinTolerance(Number(stamp), now)) return false;
+    const expected = createHmac('sha256', key)
       .update(signed(call, `${id}.${stamp}.`))
       .digest('base64');
     // The header holds space-separated `v1,<base64>` entries; the other
@@ -208,6 +241,34 @@ export function shown(endpoint: Endpoint, body: unknown): unknown {
 export function proves(endpoint: Endpoint, call: Call, now = Date.now()): boolean {
   const check = CHECKS[endpoint.auth ?? 'bearer'];
   return check !== undefined && check(endpoint, call, now);
+}
+
+/**
+ * The `WWW-Authenticate` a 401 of this endpoint carries, as HTTP has every 401
+ * carry one (RFC 9110 section 11.6.1): the host's bearer challenge, with
+ * `error="invalid_token"` when the call carried the token its scheme reads.
+ */
+export function wwwAuthenticate(endpoint: Endpoint, call: Call): string {
+  const scheme = endpoint.auth ?? 'bearer';
+  const carried = (scheme === 'bearer' && bearerOf(call) !== undefined)
+    || (scheme === 'query' && call.token !== undefined)
+    || (scheme === 'header' && headerOf(call, endpoint.header ?? '') !== undefined);
+  return bearerChallenge(carried);
+}
+
+/**
+ * The id a sender gives one delivery and gives again when it delivers the same
+ * event again, or nothing for a scheme whose sender names none: GitHub's
+ * `X-GitHub-Delivery` and Standard Webhooks' `webhook-id`.
+ * https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks#use-the-x-github-delivery-header
+ * https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md
+ */
+export function deliveryOf(endpoint: Endpoint, call: Call): string | undefined {
+  switch (endpoint.auth ?? 'bearer') {
+    case 'github': return headerOf(call, 'x-github-delivery');
+    case 'standard': return headerOf(call, 'webhook-id');
+    default: return undefined;
+  }
 }
 
 /**

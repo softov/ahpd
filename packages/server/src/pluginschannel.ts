@@ -23,11 +23,13 @@ import type { Alert, Bag, Catalogs, Grant, Loaded, PluginMethod, PluginSpec, Plu
 import type { Applied } from './applyplugins.js';
 import { maskOption, SET, withoutSpecSecrets, withoutUserinfoIn } from './commands/config.js';
 import {
-  enableNames, installPlugins, oneAtATime, packageOf, pluginRoot, removePlugins, run as runProgram, setPluginEnabled, setPluginOption, specsIn,
-  updatePlugins,
+  enableNames, installPlugins, NpmFailure, oneAtATime, packageOf, pluginRoot, removePlugins, run as runProgram, setPluginEnabled, setPluginOption,
+  specsIn, updatePlugins,
 } from './install.js';
 import type { Moved, Runner } from './install.js';
 import { describePlugin, sourceOf, optionsSchemaLoaded, optionsSchemaOf, pluginIdOf, runPlugins, schemaOf } from './plugins.js';
+import type { Where } from './plugins.js';
+import { redactSecretsInText, redactToken } from './redaction.js';
 import type { Fetch } from './update.js';
 import { version } from './version.js';
 
@@ -37,6 +39,15 @@ const DOMAIN = 'x-ahpd/plugins';
 
 /** The code a wrong param is refused with, which the protocol calls `INVALID_PARAMS`. */
 const INVALID_PARAMS = -32602;
+
+/**
+ * The refusal of an install, update or remove that failed: InternalError where
+ * npm, the daemon's own work, failed, as VS Code refuses a failure of its own
+ * work, and InvalidParams where what was asked could not be taken.
+ * https://www.jsonrpc.org/specification#error_object
+ */
+const failedWith = (error: unknown): RpcError =>
+  new RpcError(error instanceof NpmFailure ? -32603 : INVALID_PARAMS, withoutUserinfoIn(reason(error)));
 
 /** The message of a throw, whatever was thrown. */
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -70,17 +81,19 @@ const secretsOf = (schema: Record<string, unknown> | undefined, value: unknown, 
 };
 
 /**
- * An alert text as a client may read it.
+ * An alert or load problem text as a client may read it.
  *
- * Masked as every other answer is: the userinfo of any URL in the sentence, and
- * each write-only option value the plugin's own error quoted.
+ * Each write-only option value the plugin's own error quoted is masked, and
+ * then the text is cleared as VS Code's agent host clears a text before a
+ * person or a log reads it: an absolute URL's query, any URL's userinfo, a
+ * signed-URL parameter and a connection token (`redaction.ts`).
  */
 const loadProblemOf = (line: string, spec: PluginSpec, schema: Record<string, unknown> | undefined): string => {
   const found: string[] = [];
   if (typeof spec !== 'string') secretsOf(schema, spec.options, found);
   let text = line;
   for (const secret of found) text = text.split(secret).join(SET);
-  return withoutUserinfoIn(text);
+  return redactToken(redactSecretsInText(text));
 };
 
 /**
@@ -131,7 +144,7 @@ export interface PluginsChannelOptions {
   /** The daemon leaves the file's plugins out, so only the `--plugin` ones are listed. */
   noPlugins?: boolean;
   /** What a spec is resolved against, as `describePlugin` takes it. */
-  where: { configDir: string; cwd: string };
+  where: Where;
   /**
    * The plugins the daemon loaded, once it has.
    *
@@ -313,7 +326,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
         ...(row.url === undefined ? {} : { url: withoutUserinfoIn(row.url) }),
         ...(row.path === undefined ? {} : { path: withoutUserinfoIn(row.path) }),
         ...(row.title === undefined ? {} : { title: withoutUserinfoIn(row.title) }),
-        ...(row.problem === undefined ? {} : { problem: withoutUserinfoIn(row.problem) }),
+        ...(row.problem === undefined ? {} : { problem: loadProblemOf(row.problem, row.spec, schema) }),
         // What the running daemon did, which the state does not say: a plugin
         // may be configured and yet not be running.
         loaded: loaded !== undefined,
@@ -504,7 +517,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           });
         }
         catch (error) {
-          throw new RpcError(INVALID_PARAMS, withoutUserinfoIn(reason(error)));
+          throw failedWith(error);
         }
         return {};
       }).then((answer) => {
@@ -548,7 +561,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           if (folder !== undefined && !keep) rmSync(folder, { recursive: true, force: true });
         }
         catch (error) {
-          throw new RpcError(INVALID_PARAMS, withoutUserinfoIn(reason(error)));
+          throw failedWith(error);
         }
         return { id };
       });
@@ -654,9 +667,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           // and the files in it, are as they were before the write arrived.
           rmSync(staged, { recursive: true, force: true });
           const said = done.stderr.trim();
-          throw new RpcError(INVALID_PARAMS, withoutUserinfoIn(
-            `npm could not install ${id} in ${folder}: ${said === '' ? `it ended with code ${String(done.code)}` : said}`,
-          ));
+          throw failedWith(new NpmFailure(`npm could not install ${id} in ${folder}`, said === '' ? `it ended with code ${String(done.code)}` : said));
         }
         /*
          * The staged folder replaces the old one in two renames, so the folder
@@ -849,7 +860,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           moved = all.find((one) => one.name === packageName);
         }
         catch (error) {
-          throw new RpcError(INVALID_PARAMS, withoutUserinfoIn(reason(error)));
+          throw failedWith(error);
         }
         return moved === undefined ? { id } : { id, ...(moved.from === undefined ? {} : { from: moved.from }), ...(moved.to === undefined ? {} : { to: moved.to }) };
       }, () => (moved === undefined ? undefined : [id]));

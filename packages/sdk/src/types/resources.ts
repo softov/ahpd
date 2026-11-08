@@ -37,17 +37,22 @@ export interface Metadata {
   type: `${ResourceType}`;
   /** Size in bytes. Omitted for directories. */
   size?: number;
-  /** ISO 8601 last-modified time. */
-  mtime: string;
-  /** ISO 8601 creation time. */
-  ctime: string;
   /**
-   * A weak validator for the bytes, as `resourceWrite`'s `ifMatch` reads it.
+   * ISO 8601 last-modified time, when known, as the spec's
+   * `ResourceResolveResult` gives it.
+   * https://github.com/microsoft/agent-host-protocol/blob/spec/v1.0.0/types/common/commands.ts#L1082-L1085
+   */
+  mtime?: string;
+  /** ISO 8601 creation time, when known. */
+  ctime?: string;
+  /**
+   * A validator for the bytes, as `resourceWrite`'s `ifMatch` reads it: the
+   * spec's opaque per-provider version token.
    *
-   * Derived from size and modification time rather than from a hash of the
-   * content: it exists to catch a lost update, so it has to be cheap enough to
-   * produce on every stat, and two writes a millisecond apart that leave the
-   * file the same length are not the case anybody is guarding against.
+   * The file system derives its own from size and modification time: it exists
+   * to catch a lost update, so it has to be cheap enough to produce on every
+   * stat, and two writes a millisecond apart that leave the file the same
+   * length are not the case anybody is guarding against.
    */
   etag?: string;
 }

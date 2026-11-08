@@ -110,7 +110,13 @@ An unknown key is logged and ignored:
 | `managedRules` | (file only) | `checked` | Who checks `managedSettingsPermissions` and `eligibleForAutoApproval` on a tool question. `checked` is this host's own check: each managed family on every question of its kind from every backend, a `deny` refusing the call and an `ask`, or a tool set `false`, putting the question with Allow Once and Skip alone, and `/mcp` refusing a host tool set `false`. `handed` is VS Code's: the host checks no managed rule and marks nothing, hands the rules to the backends for the runtimes that take them, and puts a question a backend marked managed with Allow Once and Skip, never a grant or Allow All; `/mcp`, which has no runtime to hand a rule to, runs a host tool set `false`. The start's check of the managed document and the Allow All lock hold under both |
 | `wire` | `--wire` | | Log every frame to this file, for debugging |
 
-Keys with no flag: `httpApi`, `mcpTools`, `modelProxy`, `usage`, `policies`, `service`, `mcpServers`, `commandParser`, `tunnelHosts`. Flags with no key: `--no-plugins`, `--no-cwd`, `--plugin-option`, `--stdio`, `--config-file`.
+Keys with no flag: `httpApi`, `mcpTools`, `modelProxy`, `usage`, `policies`, `service`, `mcpServers`, `commandParser`, `tunnelHosts`, `onPath`, `daemonRecord`. Flags with no key: `--no-plugins`, `--no-cwd`, `--plugin-option`, `--stdio`, `--config-file`.
+
+`daemonRecord` is how `ahpd stop`, `ahpd status` and the other verbs read `daemon.json`, the record of the running daemon. `fields`, the default, reads each field as it is there, so a record an older daemon wrote still names its daemon in the middle of an upgrade. `schemaVersion` ignores a record of another `schemaVersion` and leaves it where it is, as VS Code's CLI ignores a registry entry of another version.
+
+`rootConfigWrite` is how an object a client writes to root config is written. `merged`, the default, writes it over what the key holds: `null` takes a key back, and `<set>`, which is what a client is shown for a credential, leaves that credential as it is. `replaced` writes each top-level key's value whole, as the protocol's reducer applies a root config change; a `<set>` sent back is then taken out with the credential it stood for.
+
+`onPath` is how `ahpd configure` and `ahpd doctor` find a command on PATH. `runnable`, the default, takes a regular file with an execute bit, tries each `PATHEXT` extension and then the name as written on Windows, and skips an empty entry, so a setup reports what the machine installs and not what the folder it ran in holds. `findExecutable` is VS Code's lookup: any file that is not a folder, with every entry that is not absolute, the empty one among them, read against the working directory.
 
 `service.name` names the service a daemon runs under beside another on the same machine. See [More than one daemon](RUN.md#more-than-one-daemon).
 

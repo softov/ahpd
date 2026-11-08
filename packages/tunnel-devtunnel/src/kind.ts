@@ -121,6 +121,8 @@ export interface KindOptions {
   daemonPort(): number | undefined;
   /** Whether the daemon requires a connection token of its own. */
   guarded(): boolean;
+  /** The daemon's connection token, when it requires one, which the hop sets on each request. */
+  connectionToken?(): string | undefined;
 }
 
 /** One tunnel this daemon has up, so a stop knows what to take down. */
@@ -218,7 +220,7 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
     if (port !== TUNNEL_PORT) return undefined;
     const daemon = options.daemonPort();
     if (daemon === undefined || daemon === TUNNEL_PORT) return undefined;
-    return await forward(TUNNEL_PORT, daemon, plugin.log);
+    return await forward(TUNNEL_PORT, daemon, plugin.log, options.connectionToken?.());
   };
 
   /** Put one tunnel up, or say why it is not up. */
@@ -253,20 +255,16 @@ export function devtunnelKind(options: KindOptions): TunnelKind {
         const shown = displayLabel(served.remote.labels);
         plugin.say(`tunnel ${served.remote.id}${shown === undefined ? '' : ` (${shown})`}, port ${port}`);
         /*
-         * A guarded daemon and this convention cannot both be satisfied.
+         * A guarded daemon the tunnel reaches with no hop between them.
          *
          * A client connecting over a tunnel presents a token it derived from
-         * the tunnel id; it never asks a person for one and never reads one
-         * off the tunnel. So a daemon started with a connection token of its
-         * own refuses exactly the client this plugin exists to let in, unless
-         * that token is the derived one.
-         *
-         * Said rather than refused: the tunnel still works for anything that
-         * presents the right token, and a daemon that would not start because
-         * a plugin disapproved of its token is worse than one that says what
-         * will happen and what to set to make it work.
+         * the tunnel id. The hop sets the daemon's own token on every request
+         * it carries, as VS Code's CLI injects its agent host's token into each
+         * request arriving over a tunnel; a daemon bound to the tunnel's own
+         * port has no hop, so it is reached by the derived token alone, and
+         * the line says that token.
          */
-        if (options.guarded()) {
+        if (options.guarded() && hop === undefined) {
           plugin.say(
             `tunnel token ${await deriveConnectionToken(served.remote.id)}`
             + ' - what a client presents over the tunnel; this daemon requires its own',

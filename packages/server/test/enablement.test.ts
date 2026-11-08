@@ -64,14 +64,24 @@ it('writes the decisions whole, under the version this store understands', () =>
   store.setFolder(FOLDER, KEY, true);
   store.setFolder('/elsewhere', KEY, false);
 
+  // The directories' record under VS Code's own name for it.
   const held = written();
-  expect(held.version).toBe(1);
+  expect(held.version).toBe(2);
   expect(held.global).toEqual({ [KEY]: false });
-  expect(held.folders).toEqual({ [FOLDER]: { [KEY]: true } });
+  expect(held.workingDirectories).toEqual({ [FOLDER]: { [KEY]: true } });
 
   // And a decision that says what it inherits is not written down at all.
   store.setFolder(FOLDER, KEY, false);
-  expect(written().folders).toEqual({});
+  expect(written().workingDirectories).toEqual({});
+});
+
+it('reads a file an earlier version wrote, its directories under folders', () => {
+  writeFileSync(file, JSON.stringify({ version: 1, global: { [KEY]: false }, folders: { [FOLDER]: { [SERVER]: false } } }));
+  const store = open();
+
+  expect(store.global(KEY)).toBe(false);
+  expect(store.folder(FOLDER, SERVER)).toBe(false);
+  expect(problems).toEqual([]);
 });
 
 it('starts empty and says so when the file is not readable as JSON', () => {

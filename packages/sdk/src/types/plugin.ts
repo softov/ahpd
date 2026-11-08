@@ -912,6 +912,15 @@ export interface GrantEntry {
  */
 export interface PluginHost extends PluginContext {
   /**
+   * The catalogs this plugin ships in `ahpd.i18n`, by locale, as the loader
+   * read them; absent for a plugin that ships none.
+   *
+   * What a plugin says to a person itself, a notification it sends, is looked
+   * up here with `translated` under `messages.<key>`, as VS Code's `localize`
+   * reads an extension's own bundle.
+   */
+  readonly i18n?: Catalogs;
+  /**
    * One thing this plugin wants a person to read, on the plugin's own row.
    *
    * This is the way a plugin says what it found: a piece that did not load, an

@@ -4,7 +4,7 @@
 [![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
-![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
+![Agent Host Protocol 1.0.0](https://img.shields.io/badge/AHP-1.0.0-0b7285)
 
 Webhooks for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon. A program outside the host calls a URL, and the call talks to a bot, starts the automation its connector names, or fires the `webhook` trigger.
 
@@ -26,13 +26,13 @@ Update, remove and one-run flags such as `--plugin` are in [Plugins](https://git
 In the configuration file, with every option set:
 
 ```json
-{ "plugins": [{ "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 60, "maxBodyBytes": 5242880 } }] }
+{ "plugins": [{ "name": "@ahpd/webhook", "options": { "syncTimeoutSeconds": 10, "maxBodyBytes": 26214400 } }] }
 ```
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `syncTimeoutSeconds` | `60` | How long a sync call waits for its turn to end, in seconds |
-| `maxBodyBytes` | `5242880` | The most of a call body the plugin reads, in bytes. A larger body answers 413 |
+| `syncTimeoutSeconds` | `10` | How long a sync call waits for its turn to end, in seconds: GitHub's window. A GitHub endpoint waits at most 10 and a Microsoft Graph one at most 3, the windows those senders give before they count a delivery failed |
+| `maxBodyBytes` | `26214400` | The most of a call body the plugin reads, in bytes: 25 MiB, which holds GitHub's 25 MB payload cap. A larger body answers 413 |
 
 ## An endpoint
 

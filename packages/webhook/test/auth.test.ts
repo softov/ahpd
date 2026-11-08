@@ -170,6 +170,21 @@ it('passes the Standard Webhooks spec example', () => {
   expect(proves(standard, delivery, 1_614_265_330_000)).toBe(true);
 });
 
+it('decodes a Standard Webhooks secret with no prefix from base64, as the reference library does', () => {
+  // `c2VjcmV0LXRva2Vu` is the base64 of `secret-token`, which is the key it holds.
+  const unprefixed = endpoint({ auth: 'standard', secret: 'c2VjcmV0LXRva2Vu' });
+  const signedWith = (key: Buffer): Call => call(BODY, {
+    'webhook-id': 'msg_1',
+    'webhook-timestamp': TS,
+    'webhook-signature': `v1,${base64(key, `msg_1.${TS}.${BODY}`)}`,
+  });
+  expect(proves(unprefixed, signedWith(Buffer.from(SECRET)), NOW)).toBe(true);
+  expect(proves(unprefixed, signedWith(Buffer.from('c2VjcmV0LXRva2Vu')), NOW)).toBe(false);
+  // A secret that is not base64 holds no key, so no signature proves a call.
+  const text = endpoint({ auth: 'standard', secret: 'not base64 at all' });
+  expect(proves(text, signedWith(Buffer.from('not base64 at all')), NOW)).toBe(false);
+});
+
 it('refuses a Stripe, Slack or Standard Webhooks call 301 seconds old', () => {
   const old = NOW - 301 * 1000;
   const oldTs = String(Math.floor(old / 1000));

@@ -98,22 +98,59 @@ describe('one automation is one Markdown file', () => {
     expect(text).not.toMatch(/^id:/m);
   });
 
-  it('refuses an id that could not name a file', () => {
+  it('keeps every resource the protocol allows, any but a plain id under its URI as url-safe base64', () => {
+    const clock = standing();
+    const first = scheduledAutomations({ dir: folder, state, now: clock.now, timer: clock.timer });
+    // A name that is not lower case, a path that would climb out of the
+    // folder, one longer than a plain id, and a URI with no path: the protocol
+    // asks a client's resource for its scheme alone, and VS Code puts a URI in
+    // one path segment as unpadded url-safe base64.
+    const named: Record<string, string> = {
+      'ahp-automation:/One': 'YWhwLWF1dG9tYXRpb246L09uZQ',
+      'ahp-automation:/../escape': 'YWhwLWF1dG9tYXRpb246Ly4uL2VzY2FwZQ',
+      [`ahp-automation:/${'a'.repeat(65)}`]: 'YWhwLWF1dG9tYXRpb246L2FhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFh',
+      'ahp-automation:nightly': 'YWhwLWF1dG9tYXRpb246bmlnaHRseQ',
+    };
+    const made = Object.keys(named).map((resource) => first.create(resource, nightly()));
+    first.close?.();
+
+    expect(readdirSync(folder).sort()).toEqual(Object.values(named).map((stem) => `${stem}.md`).sort());
+    // A daemon that comes back finds each one at the resource it was made at.
+    store = scheduledAutomations({ dir: folder, state, now: clock.now, timer: clock.timer });
+    expect(Object.keys(named).map((resource) => store?.get(resource))).toEqual(made);
+  });
+
+  it('reads a file a person names with a URI\'s url-safe base64 as that automation', () => {
+    hand('YWhwLWF1dG9tYXRpb246L0RhaWx5IFJldmlldw', '---\ntitle: Nightly review\nenabled: true\n---\nreview what changed today\n');
+    const clock = standing();
+    store = scheduledAutomations({ dir: folder, state, now: clock.now, timer: clock.timer });
+
+    expect(store.list().map((one) => one.resource)).toEqual(['ahp-automation:/Daily Review']);
+  });
+
+  it('refuses a resource in another scheme, in VS Code\'s words', () => {
     const clock = standing();
     const one = scheduledAutomations({ dir: folder, state, now: clock.now, timer: clock.timer });
     store = one;
 
-    // A path that climbs out of the folder, a name that is not lower case, and
-    // one longer than a file name may be: each is refused before the store
-    // underneath is asked, because every automation here is a file and this is
-    // what that file would be named.
-    expect(() => one.create('ahp-automation:/../escape', nightly())).toThrow(/not an automation this host can keep/);
-    expect(() => one.create('ahp-automation:/One', nightly())).toThrow(/not an automation this host can keep/);
-    expect(() => one.create(`ahp-automation:/${'a'.repeat(65)}`, nightly())).toThrow(/not an automation this host can keep/);
-    // Nothing was made, so the folder is empty of automations rather than
-    // holding a file named after a resource nobody can use.
+    expect(() => one.create('ahp-session:/one', nightly()))
+      .toThrow('Automation resource must use the ahp-automation scheme: ahp-session:/one');
     expect(one.list()).toEqual([]);
     expect(readdirSync(folder)).toEqual([]);
+  });
+
+  it('never writes an automation over a file already at its name', () => {
+    // A file whose frontmatter will not read: this host does not load it, and
+    // it is still a person's file. On a file system that folds case, the name
+    // a second URI's base64 takes can be the file of a first one the same way.
+    hand('one', '---\ntitle: [unclosed\n---\nreview what changed today\n');
+    const clock = standing();
+    const one = scheduledAutomations({ dir: folder, state, now: clock.now, timer: clock.timer });
+    store = one;
+
+    expect(() => one.create(ONE, nightly())).toThrow(`Automation file already exists: ${fileOf('one')}`);
+    expect(textOf('one')).toBe('---\ntitle: [unclosed\n---\nreview what changed today\n');
+    expect(one.list()).toEqual([]);
   });
 
   it('keeps an automation a client named with a UUID', () => {
@@ -171,6 +208,88 @@ describe('what a run changes, and what it does not', () => {
     // it, and a count it never used is not one it inherited.
     expect(two?.runCount).toBe(0);
     expect(store.get(ONE)?.runCount).toBe(1);
+  });
+});
+
+/*
+ * VS Code keeps its automations unavailable over storage that does not load,
+ * until it is recovered, and says so: the state file is the only record of what
+ * an allowance has paid for and what each automation is waiting on.
+ */
+describe('a state file that cannot be read', () => {
+  /** VS Code's refusal of a write while automation storage is unavailable. */
+  const UNAVAILABLE = 'Automation storage is unavailable and must be recovered before automations can run.';
+
+  /** One automation with an allowance, written by a store that then closed. */
+  const written = (): void => {
+    const clock = standing();
+    const first = scheduledAutomations({ dir: folder, state, now: clock.now, timer: clock.timer });
+    first.create(ONE, { ...nightly(), disableConditions: [{ kind: 'afterRuns', max: 5 }] });
+    first.close?.();
+  };
+
+  it('leaves automations unavailable, refuses each write in VS Code\'s words and writes nothing over it', async () => {
+    written();
+    writeFileSync(state, '{ "version": 1, "automations": [');
+    const told: string[] = [];
+    const armed: number[] = [];
+    const one = scheduledAutomations({
+      dir: folder,
+      state,
+      now: standing().now,
+      timer: (_fire, ms) => { armed.push(ms); return { cancel: () => { /* nothing fires */ } }; },
+      onProblem: (message) => told.push(message),
+    });
+    store = one;
+
+    expect(one.available).toBe(false);
+    expect(told.join('\n')).toContain(`Could not read ${state}`);
+    expect(told.join('\n')).toContain('Automation state and execution remain unavailable.');
+    // Nothing loaded and nothing armed: a run on state that was not read could
+    // spend an allowance the file says is spent.
+    expect(one.list()).toEqual([]);
+    expect(armed).toEqual([]);
+    expect(() => one.create('ahp-automation:/two', nightly())).toThrow(UNAVAILABLE);
+    expect(() => one.update(ONE, { enabled: false })).toThrow(UNAVAILABLE);
+    expect(() => one.remove(ONE)).toThrow(UNAVAILABLE);
+    await expect(one.run(ONE, { kind: 'manual' }, async () => 'ahp-session:/made')).rejects.toThrow(UNAVAILABLE);
+    expect(readFileSync(state, 'utf8')).toBe('{ "version": 1, "automations": [');
+    expect(readdirSync(folder)).toEqual(['one.md']);
+  });
+
+  it('is unavailable over a state file that cannot be opened', () => {
+    written();
+    // A folder where the file is, which every read of it is refused.
+    rmSync(state);
+    mkdirSync(state);
+    const told: string[] = [];
+    const one = scheduledAutomations({
+      dir: folder, state, now: standing().now, timer: standing().timer, onProblem: (message) => told.push(message),
+    });
+    store = one;
+
+    expect(one.available).toBe(false);
+    expect(one.list()).toEqual([]);
+    expect(told.join('\n')).toContain(`Could not read ${state}`);
+  });
+
+  it('is unavailable over a state file this version does not understand', () => {
+    for (const text of [JSON.stringify({ version: 99, automations: [] }), 'null']) {
+      written();
+      writeFileSync(state, text);
+      const told: string[] = [];
+      const one = scheduledAutomations({
+        dir: folder, state, now: standing().now, timer: standing().timer, onProblem: (message) => told.push(message),
+      });
+
+      expect(one.available).toBe(false);
+      expect(one.list()).toEqual([]);
+      expect(told.join('\n')).toContain('Automation execution remains unavailable until it is recovered.');
+      expect(readFileSync(state, 'utf8')).toBe(text);
+      one.close?.();
+      rmSync(folder, { recursive: true, force: true });
+      rmSync(state, { force: true });
+    }
   });
 });
 
@@ -240,21 +359,32 @@ describe('the one file an earlier daemon left', () => {
       .toEqual([ONE, `ahp-automation:/${uuid}`]);
   });
 
-  it('leaves behind a row whose id could not name a file', () => {
-    // An upper-case name, which is one this host will not write a file for:
-    // the file name is the id, so an id that cannot be one has nowhere to go.
+  it('gives a row whose id is no plain id a file under its URI as url-safe base64', () => {
     left([kept('one'), kept('NotASlug')]);
     const told: string[] = [];
     migrateAutomations({ file: whole(), dir: folder, state, onProblem: (message) => told.push(message) });
 
-    expect(existsSync(fileOf('one'))).toBe(true);
-    expect(existsSync(fileOf('NotASlug'))).toBe(false);
-    expect(told.join('\n')).toContain('ahp-automation:/NotASlug');
+    expect(existsSync(fileOf('YWhwLWF1dG9tYXRpb246L05vdEFTbHVn'))).toBe(true);
+    expect(told).toEqual([]);
+    const clock = standing();
+    store = scheduledAutomations({ dir: folder, state, now: clock.now, timer: clock.timer });
+    expect(store.get('ahp-automation:/NotASlug')?.runCount).toBe(0);
+  });
+
+  it('leaves behind a row whose resource is not an automation\'s', () => {
+    // Another scheme, which no automation has: the file is the automation here,
+    // so a row that names none has nowhere to go.
+    left([kept('one'), { ...kept('two'), resource: 'ahp-session:/two' }]);
+    const told: string[] = [];
+    migrateAutomations({ file: whole(), dir: folder, state, onProblem: (message) => told.push(message) });
+
+    expect(readdirSync(folder)).toEqual(['one.md']);
+    expect(told.join('\n')).toContain('ahp-session:/two');
     expect(told.join('\n')).toContain('was left behind');
     expect(JSON.parse(readFileSync(state, 'utf8')).automations.map((row: Bag) => row.resource)).toEqual([ONE]);
     // The row survives in the file it came from, which is renamed rather than
     // deleted, so nothing is lost - but it is not an automation this host runs.
-    expect(readFileSync(`${whole()}.migrated`, 'utf8')).toContain('NotASlug');
+    expect(readFileSync(`${whole()}.migrated`, 'utf8')).toContain('ahp-session:/two');
   });
 
   it('leaves a file it does not understand where it is', () => {

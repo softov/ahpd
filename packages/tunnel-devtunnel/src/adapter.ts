@@ -8,10 +8,13 @@
  * them.
  *
  * A token lasts eight hours, and a daemon that was down longer wakes with one
- * that has expired. So an open connector refreshes at once and every seven
- * hours after, which is why the vault has the refresh token too. The rotated
- * pair is written back through `x-ahpd/connectors/secret`, before the token is
- * used for anything, so a restart finds the pair that still works.
+ * that has expired. So an open connector refreshes at once, which is why the
+ * vault has the refresh token too, and then keeps its token alive as VS Code's
+ * CLI does: again at two thirds of the lifetime GitHub's answer gives the new
+ * token, an hour on when it gives none, and ten seconds after a refresh that
+ * failed. The rotated pair is written back through `x-ahpd/connectors/secret`,
+ * before the token is used for anything, so a restart finds the pair that
+ * still works.
  *
  * Every open connector's token is kept in memory, by id, for the tunnel kind
  * that uses it. Nothing here reads it back from the vault itself: the host
@@ -75,12 +78,27 @@ const SLOW_DOWN = 5;
 const INTERVALS_KEPT = 100;
 
 /**
- * How often an open connector refreshes its token, in milliseconds.
- *
- * A token lasts eight hours, so the first refresh that matters is the one at
- * open; this one keeps a daemon that stays up for days ahead of the expiry.
+ * When an open connector refreshes again, in milliseconds, as VS Code's CLI
+ * keeps its token alive: an hour when GitHub's answer gives the token no
+ * lifetime, and never sooner than ten seconds, which is also the wait after a
+ * refresh that failed.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/cli/src/auth.rs#L849-L904
  */
-export const REFRESH_MS = 7 * 60 * 60 * 1000;
+export const DEFAULT_REFRESH_MS = 60 * 60 * 1000;
+export const MIN_REFRESH_MS = 10_000;
+
+/**
+ * An answer that was not 2xx, by its status alone.
+ *
+ * The body may quote the code or a token, so the status is all it says; a
+ * caller reads the status to tell a token GitHub no longer takes from a call
+ * that failed on the way.
+ */
+class StatusError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${String(status)}`);
+  }
+}
 
 /** The line every log of this adapter starts with. */
 const NAME = 'tunnel-devtunnel';
@@ -186,9 +204,8 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
   /** Read one answer as an object, or refuse it with its status alone. */
   const bodyOf = async (answer: Response): Promise<Record<string, unknown>> => {
     if (!answer.ok) {
-      // The body may quote the code or a token, so a refusal is its status and nothing else.
       await answer.body?.cancel().catch(() => undefined);
-      throw new Error(`HTTP ${String(answer.status)}`);
+      throw new StatusError(answer.status);
     }
     const held = await answer.json() as unknown;
     if (typeof held !== 'object' || held === null || Array.isArray(held)) {
@@ -197,15 +214,18 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
     return held as Record<string, unknown>;
   };
 
+  /** Post one form to GitHub, and answer what came back. */
+  const send = (url: string, fields: Record<string, string>): Promise<Response> => fetcher(url, {
+    method: 'POST',
+    headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(fields),
+    redirect: 'error',
+    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+  });
+
   /** Post one form to GitHub, and read its JSON answer. */
   const post = async (url: string, fields: Record<string, string>): Promise<Record<string, unknown>> =>
-    bodyOf(await fetcher(url, {
-      method: 'POST',
-      headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams(fields),
-      redirect: 'error',
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    }));
+    bodyOf(await send(url, fields));
 
   /** The login a token belongs to, as GitHub's user API names it. */
   const accountOf = async (token: string): Promise<string> => {
@@ -234,16 +254,29 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
     return { code, url, expires, interval, handle };
   };
 
-  /** Ask once whether the person approved, and answer what that means. */
+  /**
+   * Ask once whether the person approved, and answer what that means.
+   *
+   * GitHub answers a poll that came too soon with a 429 as well as with
+   * `slow_down`, and VS Code's CLI slows down for both.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/cli/src/auth.rs#L827-L837
+   */
   const poll = async (handle: string): Promise<DeviceSignInPoll> => {
-    const held = await post(ACCESS_TOKEN_URL, {
+    const answered = await send(ACCESS_TOKEN_URL, {
       client_id: CLIENT_ID,
       device_code: handle,
       grant_type: DEVICE_GRANT,
     });
+    const wait = intervals.get(handle) ?? DEFAULT_INTERVAL;
+    if (answered.status === 429) {
+      await answered.body?.cancel().catch(() => undefined);
+      const slower = wait + SLOW_DOWN;
+      remember(handle, slower);
+      return { wait: slower };
+    }
+    const held = await bodyOf(answered);
     const error = textOf(held['error']);
     if (error !== undefined) {
-      const wait = intervals.get(handle) ?? DEFAULT_INTERVAL;
       if (error === 'authorization_pending') return { wait };
       if (error === 'slow_down') {
         const slower = wait + SLOW_DOWN;
@@ -269,7 +302,7 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
    * A device-flow token is refreshed with the client id alone: the app has no
    * client secret to send. https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens
    */
-  const refreshed = async (refresh: string): Promise<{ token: string; refresh: string }> => {
+  const refreshed = async (refresh: string): Promise<{ token: string; refresh: string; expires?: number }> => {
     const held = await post(ACCESS_TOKEN_URL, {
       client_id: CLIENT_ID,
       grant_type: REFRESH_GRANT,
@@ -277,8 +310,9 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
     });
     const token = textOf(held['access_token']);
     const next = textOf(held['refresh_token']) ?? refresh;
+    const expires = secondsOf(held['expires_in']);
     if (token === undefined) throw new Error('GitHub answered no token');
-    return { token, refresh: next };
+    return { token, refresh: next, ...(expires === undefined ? {} : { expires }) };
   };
 
   return {
@@ -345,10 +379,19 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
       let stopped = false;
       /** This open's refresh while it runs, which `refreshing` holds too. */
       let running: Promise<void> | undefined;
+      /** The next refresh, once one is set. */
+      let timer: ReturnType<typeof setTimeout> | undefined;
 
       /** Ask the host to check this connector, as a failed refresh does. */
       const checkNow = (): void => {
         void Promise.resolve().then(() => options.check?.(id)).catch(() => undefined);
+      };
+
+      /** Refresh again in `ms`, never sooner than the CLI's ten seconds. */
+      const again = (ms: number): void => {
+        if (stopped) return;
+        timer = setTimeout(() => { void rotate(); }, Math.max(ms, MIN_REFRESH_MS));
+        timer.unref?.();
       };
 
       /**
@@ -373,7 +416,15 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
         return run;
       };
 
-      /** Trade one refresh token, store the pair, and hold it. */
+      /**
+       * Trade one refresh token, store the pair, hold it, and set the next.
+       *
+       * The next refresh is at two thirds of the new token's lifetime, as VS
+       * Code's CLI sets it. A refresh that fails asks the host to check the
+       * connector; a 4xx is a token GitHub no longer takes, which ends the
+       * refreshing as it ends the CLI's, and anything else is tried again in
+       * ten seconds.
+       */
       const exchange = async (refresh: string): Promise<void> => {
         try {
           const next = await refreshed(refresh);
@@ -387,19 +438,19 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
           const still = tunnels.held(id);
           if (still === undefined) return;
           tunnels.hold(id, { ...still, token: next.token, refresh: next.refresh });
+          again(next.expires === undefined ? DEFAULT_REFRESH_MS : next.expires * 1000 * 2 / 3);
         }
         catch (error) {
           log(`${NAME}: connector ${id} could not refresh its token: ${reason(error)}`);
           checkNow();
+          if (!(error instanceof StatusError && error.status >= 400 && error.status < 500)) again(MIN_REFRESH_MS);
         }
       };
 
       void rotate();
-      const timer = setInterval(() => { void rotate(); }, REFRESH_MS);
-      timer.unref?.();
       return () => {
         stopped = true;
-        clearInterval(timer);
+        clearTimeout(timer);
         // A refresh that outlives this open must not hold back the next open's check.
         if (running !== undefined && refreshing.get(id) === running) refreshing.delete(id);
         tunnels.release(id);

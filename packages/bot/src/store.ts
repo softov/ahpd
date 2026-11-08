@@ -1,6 +1,6 @@
 import { AGENTS_FILE, makeFolder, partsOf, readAgentsFile, withAgents, writeAgentsFile } from './folder.js';
 import { BOT_BODIES, DEFAULT_SESSION, isBotColor, isSlug, withoutParts } from './record.js';
-import type { AgentsParts, Yaml } from './agents.js';
+import type { AgentsParts, InstructionsIn, Yaml } from './agents.js';
 import type { BotRecord, KeptBot } from './record.js';
 import type { RecordChange, RecordCollection, StoredRecord } from '@ahpd/sdk';
 
@@ -24,7 +24,7 @@ import type { RecordChange, RecordCollection, StoredRecord } from '@ahpd/sdk';
  *
  * The collections answer later, so every read here is answered from a cache
  * that `ready` loads once and the collection's watch keeps current. That is
- * what lets `all`, `get` and `gone` stay synchronous: the provider reads ten
+ * what lets `all`, `get` and `tombstoned` stay synchronous: the provider reads ten
  * times and writes twice, and only the writes wait.
  *
  * No file and no format is named here. What a record looks like on disk is the
@@ -47,8 +47,8 @@ export interface BotStore {
   all(): BotRecord[];
   /** One bot, or nothing when the slug has none. */
   get(slug: string): BotRecord | undefined;
-  /** Whether this slug had a bot that was deleted. */
-  gone(slug: string): boolean;
+  /** Whether this slug had a bot that was deleted, and keeps its tombstone. */
+  tombstoned(slug: string): boolean;
   /** Read both collections into the cache, once. Every read waits for this. */
   ready(): Promise<void>;
   /** Keep one bot, replacing what the slug held, once the collection has it. */
@@ -120,14 +120,12 @@ const same = (one: BotRecord, other: BotRecord): boolean => {
  *
  * The instructions are asked for as a prefix rather than as the whole section:
  * a file with no section gets one above the text the bot already had, and that
- * text then reads as the rest of the section. The version is the parts' own
- * where they name one, and the file's otherwise.
+ * text then reads as the rest of the section.
  */
 const holds = (wanted: AgentsParts, got: AgentsParts): boolean =>
   got.name.trim() === wanted.name.trim()
   && got.description.trim() === wanted.description.trim()
-  && got.instructions.trim().startsWith(wanted.instructions.trim())
-  && (wanted.version === undefined || got.version === wanted.version);
+  && got.instructions.trim().startsWith(wanted.instructions.trim());
 
 /**
  * What the store reads a bot's folder with.
@@ -141,6 +139,8 @@ const holds = (wanted: AgentsParts, got: AgentsParts): boolean =>
 export interface BotStoreSeams {
   /** The YAML a bot's `AGENTS.md` is read and written with. */
   yaml?: Yaml;
+  /** Where a bot's instructions are in its `AGENTS.md`: its own section unless this says the body. */
+  instructionsIn?: InstructionsIn;
   /** The `AGENTS.md` a bot with no file is given: its template, filled with its words. */
   agents?(bot: BotRecord): Promise<string>;
 }
@@ -159,8 +159,8 @@ export function botStore(
 ): BotStore {
   /** Every bot this store has read, by slug. */
   const held = new Map<string, BotRecord>();
-  /** Every slug that had a bot and lost it. */
-  const dead = new Set<string>();
+  /** Every slug that had a bot and lost it: the tombstones, as VS Code names a deleted record's marker. */
+  const tombstoned = new Set<string>();
   /** The one load of both collections, which every read waits for. */
   let loading: Promise<void> | undefined;
   /** The provider's ear for a change this store did not make. */
@@ -176,8 +176,8 @@ export function botStore(
   const writing = new Set<string>();
 
   /** Leave the tombstone a slug needs, if it is not there already. */
-  const bury = async (slug: string): Promise<void> => {
-    if (dead.has(slug)) return;
+  const tombstone = async (slug: string): Promise<void> => {
+    if (tombstoned.has(slug)) return;
     await graves.put({ id: slug, deletedAt: new Date().toISOString() });
   };
 
@@ -201,14 +201,14 @@ export function botStore(
        * leaves. The record is gone and nothing says who took it, so the name is
        * spent rather than handed to another bot.
        */
-      await bury(change.id);
-      dead.add(change.id);
+      await tombstone(change.id);
+      tombstoned.add(change.id);
       heard?.({ type: 'deleted', bot: before, before: undefined });
       return;
     }
     // A file that came back after its tombstone is the older copy of a bot
     // whose name is spent, and nothing of it is a bot this host answers.
-    if (dead.has(change.id)) {
+    if (tombstoned.has(change.id)) {
       onProblem(`bots/${change.id} has a tombstone; the name is spent and it was left out`);
       return;
     }
@@ -223,7 +223,7 @@ export function botStore(
     // The record's parts where it still carries some - the older copy a load
     // moves - and the file's everywhere else. A hand edit of the record alone
     // therefore answers with the persona the bot's own file has.
-    const bot = withAgents(seams.yaml, one);
+    const bot = withAgents(seams.yaml, one, seams.instructionsIn);
     const before = held.get(bot.id);
     if (before !== undefined && before.owner !== bot.owner) {
       onProblem(`bots/${bot.id} changed owner; the bot was left as it was`);
@@ -259,28 +259,29 @@ export function botStore(
    * the persona between the two.
    */
   const move = async (one: KeptBot, yaml: Yaml): Promise<BotRecord> => {
-    const bot = withAgents(yaml, one);
+    const at = seams.instructionsIn;
+    const bot = withAgents(yaml, one, at);
     const parts = partsOf(bot);
     try {
-      const file = readAgentsFile(bot.workspace, yaml);
+      const file = readAgentsFile(bot.workspace, yaml, at);
       if (file.kind === 'unreadable') {
         onProblem(`bots/${bot.id} was left in its record: its ${AGENTS_FILE} cannot be read: ${String(file.error)}`);
         return bot;
       }
       if (file.kind === 'parts') {
-        writeAgentsFile(bot.workspace, yaml, parts);
+        writeAgentsFile(bot.workspace, yaml, parts, at);
       }
       else if (seams.agents !== undefined) {
-        makeFolder(bot.workspace, await seams.agents(bot), yaml, parts);
+        makeFolder(bot.workspace, await seams.agents(bot), yaml, parts, at);
       }
       else {
-        writeAgentsFile(bot.workspace, yaml, parts);
+        writeAgentsFile(bot.workspace, yaml, parts, at);
       }
       /*
        * Read back before the record gives the parts up: a write that reached no
        * file has nothing to answer them, and the record is the only copy left.
        */
-      const back = readAgentsFile(bot.workspace, yaml);
+      const back = readAgentsFile(bot.workspace, yaml, at);
       if (back.kind !== 'parts' || !holds(parts, back.parts)) {
         onProblem(`bots/${bot.id} was left in its record: its ${AGENTS_FILE} does not read back with those parts`);
         return bot;
@@ -326,21 +327,21 @@ export function botStore(
      * known to be one before it is read: a tombstone is a record too, and only
      * its id is read - it says which slug was a bot, never what that bot was.
      */
-    for (const said of await graves.list()) dead.add(said.id);
+    for (const said of await graves.list()) tombstoned.add(said.id);
     for (const said of await bots.list()) {
       const one = kept(said);
       if (one === undefined) {
         onProblem(`bots/${said.id} is not a bot record; it was left out`);
         continue;
       }
-      if (dead.has(one.id)) {
+      if (tombstoned.has(one.id)) {
         onProblem(`bots/${one.id} has a tombstone; the name is spent and it was left out`);
         continue;
       }
       // A record made before the file was the one copy is moved into its file
       // here, once, rather than at every read: the next daemon to load it finds
       // a record with no parts.
-      held.set(one.id, yaml !== undefined && older(one) ? await move(one, yaml) : withAgents(yaml, one));
+      held.set(one.id, yaml !== undefined && older(one) ? await move(one, yaml) : withAgents(yaml, one, seams.instructionsIn));
     }
   };
 
@@ -355,7 +356,7 @@ export function botStore(
   return {
     all: sorted,
     get: (slug) => held.get(slug),
-    gone: (slug) => dead.has(slug),
+    tombstoned: (slug) => tombstoned.has(slug),
     ready,
     onChange: (one) => { heard = one; },
     put: async (record) => {
@@ -382,14 +383,14 @@ export function botStore(
       try {
         // The tombstone first, so a failure between the two leaves a name that
         // can never be made again rather than one that quietly can.
-        await bury(slug);
+        await tombstone(slug);
         await bots.remove(slug);
       }
       finally {
         writing.delete(slug);
       }
       held.delete(slug);
-      dead.add(slug);
+      tombstoned.add(slug);
     },
   };
 }

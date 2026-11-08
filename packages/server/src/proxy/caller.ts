@@ -18,7 +18,7 @@
  * A team key's work is charged to its team.
  */
 
-import { checkMeta, parseMeta, refusalReason, scopeFor, type Grant, type Owner, type Principal, type Scope, type Users } from '@ahpd/sdk';
+import { bearerChallenge, checkMeta, parseMeta, refusalReason, scopeFor, type Grant, type Owner, type Principal, type Scope, type Users } from '@ahpd/sdk';
 import { same } from '../commands/authorize.js';
 import type { Refusal } from './dialects.js';
 
@@ -66,7 +66,11 @@ export type Called = { caller: ProxyCaller } | { refusal: Refusal };
 /** The header a scope is named in. */
 export const SCOPE_HEADER = 'x-ahp-scope';
 
-/** The header a call adds meta to its key's in: `k=v,k=v`. */
+/**
+ * The header a call adds meta to its key's in: a JSON object of string values,
+ * as LiteLLM's `x-litellm-spend-logs-metadata` carries a call's
+ * `spend_logs_metadata` (https://docs.litellm.ai/docs/proxy/cost_tracking).
+ */
 export const META_HEADER = 'x-ahp-meta';
 
 /** The credential a request presented, `Bearer` first; `false` when it presented two different ones. */
@@ -96,10 +100,11 @@ export interface CallerAsk {
 /**
  * Who sent `request`, holding `grant`, or the refusal.
  *
- * 401 for no credential and one this host does not know; 400 for two that
- * disagree, since one of them is not this caller's; 403 for a person without
- * `grant` or naming a scope they are not in. Root and a session are not asked
- * for a grant or a scope: a session's scope is the one `whose` answered.
+ * 401 for no credential and one this host does not know, each with its bearer
+ * challenge; 400 for two that disagree, since one of them is not this caller's;
+ * 403 for a person without `grant` or naming a scope they are not in. Root and
+ * a session are not asked for a grant or a scope: a session's scope is the one
+ * `whose` answered.
  */
 export async function callerOf(request: Request, options: CallerOptions, grant: Grant, ask: CallerAsk = {}): Promise<Called> {
   const presented = credentialOf(request.headers);
@@ -111,8 +116,9 @@ export async function callerOf(request: Request, options: CallerOptions, grant: 
     const session = options.whose?.(presented);
     if (session !== undefined) return { caller: { kind: 'session', ...session } };
   }
-  if (options.users === undefined) return { refusal: { status: 401, message: 'A connection token is required' } };
-  if (presented === undefined) return { refusal: { status: 401, message: 'Sign in to use this host' } };
+  const challenge = bearerChallenge(presented !== undefined);
+  if (options.users === undefined) return { refusal: { status: 401, message: 'A connection token is required', challenge } };
+  if (presented === undefined) return { refusal: { status: 401, message: 'Sign in to use this host', challenge } };
 
   let who: Principal | undefined;
   try { who = await options.users.verify(presented); }
@@ -123,10 +129,10 @@ export async function callerOf(request: Request, options: CallerOptions, grant: 
     try { who = await options.users.verifyTeamKey(presented); }
     catch { who = undefined; }
   }
-  if (who === undefined) return { refusal: { status: 401, message: 'That credential is not one this host knows' } };
+  if (who === undefined) return { refusal: { status: 401, message: 'That credential is not one this host knows', challenge } };
   // Removed since the token was minted: the directory re-reads its file, so
   // this is current as of this call.
-  if (who.standing !== undefined && !who.standing()) return { refusal: { status: 401, message: 'Sign in to use this host' } };
+  if (who.standing !== undefined && !who.standing()) return { refusal: { status: 401, message: 'Sign in to use this host', challenge } };
   if (!who.can(grant)) return { refusal: { status: 403, message: refusalReason(who.id, grant) } };
 
   const named = request.headers.get(SCOPE_HEADER) ?? new URL(request.url).searchParams.get('scope') ?? undefined;

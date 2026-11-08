@@ -339,6 +339,26 @@ describe('building the action tools', () => {
     expect(problems[0]).toContain('ap_resend_send_email');
   });
 
+  it('hands the adapter the tool call\'s partial content, and a call with nothing beside its input no call', async () => {
+    const ran: Ran[] = [];
+    const calls: unknown[] = [];
+    const [tool] = actionTools({ 'ap-resend': { ...adapterOf(ran), name: 'ap-resend' } }, async (_id, _reader, _action, _input, call) => {
+      calls.push(call);
+      call?.setContent?.([{ type: 'text', text: 'half way' }]);
+      return 'done';
+    }, {
+      bindings: () => ({ work: 'connectors://ap-resend/account-123' }),
+      attachmentsDir: () => undefined,
+      principalOf: () => undefined,
+      onProblem: () => undefined,
+    });
+    const said: unknown[] = [];
+    await tool!.run({ to: 'ana@example.com' }, { session: 'ahp-session:/one', setContent: (content: unknown) => { said.push(content); } } as never);
+    expect(said).toEqual([[{ type: 'text', text: 'half way' }]]);
+    await tool!.run({ to: 'ana@example.com' }, { session: 'ahp-session:/one' } as never);
+    expect(calls[1]).toBeUndefined();
+  });
+
   it('refuses a call for an owner who has not signed in, and runs nothing', async () => {
     const ran: Ran[] = [];
     const runs: string[] = [];

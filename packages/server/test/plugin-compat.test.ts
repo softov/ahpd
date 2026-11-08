@@ -50,6 +50,18 @@ describe('satisfies', () => {
     expect(satisfies(version, range)).toBe(expected);
   });
 
+  // A peer range is written in npm's grammar, which node-semver reads
+  // (https://github.com/npm/node-semver#ranges).
+  it.each([
+    ['0.6.0', '^0.5.0 || ^0.6.0', true],
+    ['0.6.5', '0.6.0 - 0.7.0', true],
+    ['0.6.5', '0.6.x', true],
+    ['0.7.0', '0.6.x', false],
+    ['0.6.0', '>= 0.6', true],
+  ])('reads %s against %s, of the rest of npm\'s grammar, as %s', (version, range, expected) => {
+    expect(satisfies(version, range)).toBe(expected);
+  });
+
   it('refuses a range it cannot read, by name', () => {
     expect(() => satisfies('0.6.0', 'banana')).toThrow(/banana/);
   });

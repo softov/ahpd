@@ -3,13 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
-import { computerCatalogue } from '../src/catalogue.js';
+import { CATALOGUE_PASS_MS, computerCatalogue } from '../src/catalogue.js';
 import { computerProvider } from '../src/provider.js';
 import { claimedOf, stateOf } from '../src/runtime.js';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { hostCall } from './support/calls.js';
 import { closeAll, keeping } from './support/closing.js';
 import type { ComputerRuntime } from '../src/runtime.js';
 import type { HostTool, ToolCall } from '../../sdk/src/types/host.js';
@@ -95,6 +96,18 @@ it('answers every machine with its state and its status', async () => {
     { id: 'cold', record: { state: 'stopped', status: held.get('cold') } },
   ]);
   expect(catalogue.channel.grant).toBe('computer:read');
+});
+
+it('is read again on VS Code\'s five-minute pass over a catalogue its source changes without telling it', () => {
+  expect(CATALOGUE_PASS_MS).toBe(5 * 60 * 1000);
+});
+
+it('leaves a machine\'s state out where its runtime gives none', async () => {
+  const { runtime, put, held } = fake();
+  put('box', true);
+  const quiet = { ...runtime, state: async () => undefined } as ComputerRuntime;
+  const answer = await computerCatalogue(quiet).channel.snapshot(URI, undefined, 'ana') as { records: { id: string; record: Record<string, unknown> }[] };
+  expect(answer.records).toEqual([{ id: 'box', record: { status: held.get('box') } }]);
 });
 
 it('answers each person only the machines they own when asked', async () => {
@@ -211,10 +224,10 @@ it('tells a subscriber of a machine the plugin makes and releases on its own', a
   // The tools a model calls go through the same wrapper a disposable machine's
   // timer removes by.
   const tool = (name: string) => (options.tools ?? []).find((one) => one.definition.name === name) as HostTool;
-  await tool('request_disposable_computer').run({ name: 'box' }, {} as ToolCall);
+  await tool('request_disposable_computer').run({ name: 'box' }, hostCall());
   await until(1);
   expect(heard()).toEqual(['added box running']);
-  await tool('release_computer').run({ id: 'box' }, {} as ToolCall);
+  await tool('release_computer').run({ id: 'box' }, hostCall());
   await until(2);
   expect(heard()).toEqual(['added box running', 'removed box']);
 }, 30000);

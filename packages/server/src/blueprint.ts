@@ -12,7 +12,7 @@
  */
 
 import { parseYaml } from '@cofold/yaml';
-import { bag, isRecord } from '@ahpd/sdk';
+import { bag, isRecord, parseCron } from '@ahpd/sdk';
 import type { AutomationEntry, Bag } from '@ahpd/sdk';
 
 export const AUTOMATION_BLUEPRINT_FILE_SUFFIX = '.automation.md';
@@ -25,14 +25,16 @@ const AUTOMATION_BLUEPRINT_HOURLY_SCHEDULE_PROPERTIES = new Set(['kind']);
 const AUTOMATION_BLUEPRINT_CRON_SCHEDULE_PROPERTIES = new Set(['kind', 'expression', 'timeZone']);
 
 /** The schedules a blueprint holds, as VS Code's editor names them. */
-export type AutomationInterval = 'manual' | 'hourly' | 'daily' | 'weekdays' | 'weekly';
+export type AutomationInterval = 'manual' | 'hourly' | 'daily' | 'weekdays' | 'weekly' | 'cron';
 
 /** When a blueprint runs, in the host's own time zone. */
 export interface AutomationSchedule {
   readonly interval: AutomationInterval;
-  /** Hour of the day, 0-23. Ignored for `manual` and `hourly`. */
+  /** Five-field AHP cron expression. Required for `cron`. */
+  readonly cronExpression?: string;
+  /** Hour of the day, 0-23. Ignored for `manual`, `hourly` and `cron`. */
   readonly scheduleHour: number;
-  /** Minute of the hour, 0-59. Ignored for `manual` and `hourly`. */
+  /** Minute of the hour, 0-59. Ignored for `manual`, `hourly` and `cron`. */
   readonly scheduleMinute: number;
   /** Day of the week, 0 (Sunday) through 6 (Saturday). Only used for `weekly`. */
   readonly scheduleDay: number;
@@ -142,6 +144,7 @@ export function serializeAutomationBlueprint(blueprint: AutomationBlueprint): st
     case 'daily':
     case 'weekdays':
     case 'weekly':
+    case 'cron':
       lines.push(
         '  kind: cron',
         `  expression: ${quoteYamlString(toCronExpression(blueprint.schedule))}`,
@@ -213,12 +216,19 @@ function createAutomationBlueprintId(name: string): string {
   return normalized || 'automation';
 }
 
+/** The weekday names a cron expression may use, Sunday first, as VS Code reads them. */
+const CRON_WEEKDAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
 /**
  * An automation's triggers as a blueprint schedule, refused where the format
  * cannot hold them.
  *
- * The format holds one schedule or none, in the importer's zone, that runs on
- * the hour, daily, on weekdays or weekly, and catches a missed run up.
+ * The format holds one schedule or none, in the importer's zone, and catches a
+ * missed run up. A schedule is read as VS Code's agent host store projects
+ * one: every minute past the hour is hourly, a daily, weekday or weekly time
+ * is one of those, and any other expression is a cron schedule with the
+ * expression as it is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/sessions/contrib/providers/agentHost/browser/agentHostAutomationStore.ts#L1206-L1256
  */
 function projectSchedule(named: string, raw: unknown): AutomationSchedule {
   const triggers = Array.isArray(raw) ? raw.map((one) => bag(one)) : [];
@@ -235,25 +245,21 @@ function projectSchedule(named: string, raw: unknown): AutomationSchedule {
     throw new Error(`${named} skips a missed run, and a VS Code automation file always catches one up.`);
   }
   const expression = typeof held.expression === 'string' ? held.expression.trim() : '';
-  const refused = (): never => {
-    throw new Error(`${named} runs on "${expression}", and a VS Code automation file holds only hourly, daily, weekday and weekly schedules.`);
-  };
+  const cron: AutomationSchedule = { interval: 'cron', cronExpression: expression, scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 };
   const [minuteValue, hourValue, dayOfMonth, month, dayValue, ...remaining] = expression.split(/\s+/);
-  if (remaining.length > 0 || dayOfMonth !== '*' || month !== '*') return refused();
-  const scheduleMinute = parseCronValue(minuteValue, 0, 59) ?? refused();
-  if (hourValue === '*' && dayValue === '*') {
-    if (scheduleMinute !== 0) {
-      throw new Error(`${named} runs at minute ${String(scheduleMinute)} of each hour, and a VS Code automation file runs hourly on the hour.`);
-    }
-    return { interval: 'hourly', scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 };
-  }
-  const scheduleHour = parseCronValue(hourValue, 0, 23) ?? refused();
+  if (remaining.length > 0 || dayOfMonth !== '*' || month !== '*') return cron;
+  const scheduleMinute = parseCronValue(minuteValue, 0, 59);
+  if (scheduleMinute === undefined) return cron;
+  if (hourValue === '*' && dayValue === '*') return { interval: 'hourly', scheduleHour: 0, scheduleMinute, scheduleDay: 0 };
+  const scheduleHour = parseCronValue(hourValue, 0, 23);
+  if (scheduleHour === undefined) return cron;
   if (dayValue === '*') return { interval: 'daily', scheduleHour, scheduleMinute, scheduleDay: 0 };
   if (dayValue === '1-5' || dayValue?.toUpperCase() === 'MON-FRI' || dayValue === '1,2,3,4,5') {
     return { interval: 'weekdays', scheduleHour, scheduleMinute, scheduleDay: 0 };
   }
-  const scheduleDay = parseCronValue(dayValue, 0, 7) ?? refused();
-  return { interval: 'weekly', scheduleHour, scheduleMinute, scheduleDay: scheduleDay === 7 ? 0 : scheduleDay };
+  const weekday = dayValue === undefined ? -1 : CRON_WEEKDAYS.indexOf(dayValue.toUpperCase());
+  const scheduleDay = weekday >= 0 ? weekday : parseCronValue(dayValue, 0, 7);
+  return scheduleDay === undefined ? cron : { interval: 'weekly', scheduleHour, scheduleMinute, scheduleDay: scheduleDay === 7 ? 0 : scheduleDay };
 }
 
 /**
@@ -319,32 +325,37 @@ function toCronExpression(schedule: AutomationSchedule): string {
       return `${String(schedule.scheduleMinute)} ${String(schedule.scheduleHour)} * * 1-5`;
     case 'weekly':
       return `${String(schedule.scheduleMinute)} ${String(schedule.scheduleHour)} * * ${String(schedule.scheduleDay)}`;
+    case 'cron':
+      if (!schedule.cronExpression) {
+        throw new AutomationBlueprintParseError('unsupportedSchedule');
+      }
+      return schedule.cronExpression;
   }
 }
 
+/**
+ * A blueprint's cron expression as a schedule: a daily, weekday or weekly time
+ * where it is one, and a cron schedule otherwise, refused where it is no
+ * five-field AHP cron expression, as VS Code's validator refuses one.
+ */
 function fromCronExpression(expression: string): AutomationSchedule {
+  try {
+    parseCron(expression);
+  }
+  catch {
+    throw new AutomationBlueprintParseError('unsupportedSchedule', expression);
+  }
+  const cron: AutomationSchedule = { interval: 'cron', cronExpression: expression, scheduleHour: 0, scheduleMinute: 0, scheduleDay: 0 };
   const [minuteValue, hourValue, dayOfMonth, month, dayValue, ...remaining] = expression.trim().split(/\s+/);
-  if (remaining.length > 0 || dayOfMonth !== '*' || month !== '*') {
-    throw new AutomationBlueprintParseError('unsupportedSchedule', expression);
-  }
+  if (remaining.length > 0 || dayOfMonth !== '*' || month !== '*') return cron;
   const scheduleMinute = parseCronValue(minuteValue, 0, 59);
-  if (scheduleMinute === undefined) {
-    throw new AutomationBlueprintParseError('unsupportedSchedule', expression);
-  }
+  if (scheduleMinute === undefined) return cron;
   const scheduleHour = parseCronValue(hourValue, 0, 23);
-  if (scheduleHour === undefined) {
-    throw new AutomationBlueprintParseError('unsupportedSchedule', expression);
-  }
-  if (dayValue === '*') {
-    return { interval: 'daily', scheduleHour, scheduleMinute, scheduleDay: 0 };
-  }
-  if (dayValue === '1-5') {
-    return { interval: 'weekdays', scheduleHour, scheduleMinute, scheduleDay: 0 };
-  }
+  if (scheduleHour === undefined) return cron;
+  if (dayValue === '*') return { interval: 'daily', scheduleHour, scheduleMinute, scheduleDay: 0 };
+  if (dayValue === '1-5') return { interval: 'weekdays', scheduleHour, scheduleMinute, scheduleDay: 0 };
   const scheduleDay = parseCronValue(dayValue, 0, 7);
-  if (scheduleDay === undefined) {
-    throw new AutomationBlueprintParseError('unsupportedSchedule', expression);
-  }
+  if (scheduleDay === undefined) return cron;
   return { interval: 'weekly', scheduleHour, scheduleMinute, scheduleDay: scheduleDay === 7 ? 0 : scheduleDay };
 }
 

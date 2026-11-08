@@ -14,11 +14,11 @@ import type { Agent, Bag, Listed, MessageAttachment, MessageFrom, Session, Start
  *
  * 1. `echo()` at the bottom is the `Agent`: what it is called, what it can be
  *    configured with, what sessions it already has, and how to start one.
- * 2. `converse()` is the `Session`: the state its two channels hold, and the
- *    actions it emits as things happen.
+ * 2. `createSession()` is the `Session`: the state its two channels hold, and
+ *    the actions it emits as things happen.
  *
- * Everything a real backend does differently is in `converse`. `echo` would
- * look much the same wrapping a language model, a shell, or a queue.
+ * Everything a real backend does differently is in `createSession`. `echo`
+ * would look much the same wrapping a language model, a shell, or a queue.
  */
 
 /** What the schema offers, and what a turn does with it. */
@@ -30,6 +30,16 @@ const speak = (voice: string, text: string): string => {
   return text;
 };
 
+/** The slash command the backend offers, which says the rest of its line loudly. */
+const SHOUT = '/shout';
+
+/**
+ * A title seeded from a first message, as VS Code's host seeds one: trimmed,
+ * each run of whitespace one space, and cut to 200 characters.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L252-L255
+ */
+const titleOf = (text: string): string => Array.from(text.trim().replace(/\s+/g, ' ')).slice(0, 200).join('').trim();
+
 /**
  * A session that has finished, kept so the catalogue has something in it.
  *
@@ -40,8 +50,11 @@ const speak = (voice: string, text: string): string => {
 interface Kept {
   id: string;
   title: string;
+  /** When the session began, which its later turns leave as it was. */
   createdAt: string;
   modifiedAt: string;
+  /** The folder the session worked in. */
+  workingDirectory: string;
   turns: Bag[];
 }
 
@@ -91,7 +104,7 @@ export function echo(options: EchoOptions): Agent {
    * channel and `emit('session', …)` to the session channel - the host routes
    * them and no session needs to know either URI to do it.
    */
-  function converse(start: Start): Session {
+  function createSession(start: Start): Session {
     const settings = { ...start.settings };
     /** Finished turns. The running one is `active` and is deliberately not here. */
     const turns: Bag[] = [...(start.seed ?? [])];
@@ -117,15 +130,17 @@ export function echo(options: EchoOptions): Agent {
     let draft: Bag | undefined;
     /** The backend's own id, which is not the URI the client chose. */
     const id = start.resume ?? idOf(start.uri);
+    /** When the session began: a resumed one keeps the moment it first did. */
+    const created = kept.get(id)?.createdAt ?? modified;
 
-    // A resumed session opens on what it said before, so a title from the
-    // seed is better than one invented now.
     // Where this session works. Named by the client or the backend's own,
     // and reported rather than assumed - the host does not know which.
     const where = start.workingDirectory ?? dir;
 
+    // A resumed session opens on what it said before, so a title from the
+    // seed is better than one invented now.
     const said = start.seed?.[0];
-    if (said) title = String((said.message as Bag | undefined)?.text ?? title).slice(0, 60);
+    if (said) title = titleOf(String((said.message as Bag | undefined)?.text ?? '')) || title;
 
     const touch = (): void => { modified = new Date().toISOString(); };
 
@@ -146,7 +161,7 @@ export function echo(options: EchoOptions): Agent {
     const status = (): number => (active ? 8 : 1);
 
     const remember = (): void => {
-      kept.set(id, { id, title, createdAt: modified, modifiedAt: modified, turns: [...turns] });
+      kept.set(id, { id, title, createdAt: created, modifiedAt: modified, workingDirectory: where, turns: [...turns] });
     };
 
     /**
@@ -162,8 +177,9 @@ export function echo(options: EchoOptions): Agent {
       attachments?: MessageAttachment[],
       waited?: Bag,
     ): void => {
-      if (waited === undefined && title === 'Echo session' && text) {
-        title = text.slice(0, 60);
+      const seeded = titleOf(text);
+      if (waited === undefined && title === 'Echo session' && seeded !== '') {
+        title = seeded;
         // Said, because a client that opened the session holds the old one.
         start.emit('session', { type: 'session/titleChanged', title });
       }
@@ -196,7 +212,11 @@ export function echo(options: EchoOptions): Agent {
       // A config value is `unknown` on the wire, so a backend narrows the ones
       // it declared rather than assuming every key is a string.
       const voice = typeof settings.voice === 'string' ? settings.voice : 'plain';
-      const words = speak(voice, text).split(/\s+/).filter((word) => word !== '');
+      // A line that starts with the slash command the probe offers runs it, as
+      // VS Code's providers run the commands they offer: the rest of the line,
+      // said loudly.
+      const rest = text === SHOUT ? '' : text.startsWith(`${SHOUT} `) ? text.slice(SHOUT.length + 1) : undefined;
+      const words = (rest === undefined ? speak(voice, text) : speak('shouty', rest)).split(/\s+/).filter((word) => word !== '');
       const began = Date.now();
       void (async () => {
         // A turn a stop ended echoes nothing more.
@@ -337,9 +357,12 @@ export function echo(options: EchoOptions): Agent {
       confirm: () => false,
       answer: () => false,
 
-      // Nothing here has a runtime switch and there are no MCP servers, so
-      // all three refuse. False is a real answer: a control that reported
-      // success and changed nothing would be worse than one that says no.
+      // Nothing here has a runtime switch and there are no MCP servers, so all
+      // three answer false, and the host says no in the session's own state as
+      // VS Code's does: a toggle stands as the client's decision, a listed
+      // server it could not start is in error, and the rest are logged
+      // (src/vs/platform/agentHost/node/agentSideEffects.ts L416-L428,
+      // L2026-L2065 at 6b68d3fe).
       setCustomizationEnabled: async () => false,
       startMcpServer: async () => false,
       stopMcpServer: async () => false,
@@ -405,7 +428,7 @@ export function echo(options: EchoOptions): Agent {
       title: session.title,
       createdAt: session.createdAt,
       modifiedAt: session.modifiedAt,
-      workingDirectories: [uriOf(dir)],
+      workingDirectories: [uriOf(session.workingDirectory)],
     })),
 
     /**
@@ -422,6 +445,6 @@ export function echo(options: EchoOptions): Agent {
     // own.
     transcript: async (id) => kept.get(id)?.turns as WireTurn<Turn>[] | undefined,
 
-    create: converse,
+    create: createSession,
   };
 }

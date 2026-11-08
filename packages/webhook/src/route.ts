@@ -1,5 +1,5 @@
 import { routePrefix } from '@ahpd/sdk';
-import { challenge, omitted, proves, shown, validation } from './auth.js';
+import { challenge, deliveryOf, omitted, proves, shown, validation, WEBHOOK_TOLERANCE_IN_SECONDS, wwwAuthenticate } from './auth.js';
 import { allows, answer, dataOf, readCall } from './call.js';
 import type { Call } from './call.js';
 import type { ConnectorOwner } from '@ahpd/sdk';
@@ -51,8 +51,18 @@ export interface WebhookSeams {
  * The body is read before the proof is checked, because a signature is over
  * the bytes; the limit is what bounds a caller who has no proof, so a caller
  * cannot make this process hold a body larger than the plugin's option.
+ *
+ * A 405 names the methods the endpoint takes in `Allow`, and a 401 carries its
+ * challenge, as HTTP has each carry one (RFC 9110 sections 15.5.6 and 11.6.1).
+ * A proved delivery whose sender id was taken already, GitHub's or Standard
+ * Webhooks', is the same event sent again: it answers 202 `{ duplicate: true }`
+ * and reaches no target. An id is kept for the five minutes Standard Webhooks
+ * gives as its example, which is its tolerance too, and an id whose call was
+ * answered with anything but a 2xx is let go, since its sender sends it again.
  */
 export function webhookRoute(seams: WebhookSeams): Route {
+  /** The delivery ids taken, by endpoint and id, with when each stops counting. */
+  const delivered = new Map<string, number>();
   return async (request) => {
     const path = new URL(request.url).pathname;
     const rest = path.startsWith(PREFIX) ? path.slice(PREFIX.length) : '';
@@ -70,8 +80,11 @@ export function webhookRoute(seams: WebhookSeams): Route {
 
     // Only Meta checks a URL with GET; every other connector takes POST alone.
     const method = request.method;
-    if (method !== 'POST' && !(method === 'GET' && (endpoint.auth ?? 'bearer') === 'meta')) {
-      return answer(405, { message: (endpoint.auth ?? 'bearer') === 'meta' ? 'A Meta webhook takes POST, or GET to confirm its URL.' : 'A webhook takes POST only.' });
+    const meta = (endpoint.auth ?? 'bearer') === 'meta';
+    if (method !== 'POST' && !(method === 'GET' && meta)) {
+      const refused = answer(405, { message: meta ? 'A Meta webhook takes POST, or GET to confirm its URL.' : 'A webhook takes POST only.' });
+      refused.headers.set('allow', meta ? 'GET, POST' : 'POST');
+      return refused;
     }
 
     const read = await readCall(request, seams.maxBodyBytes);
@@ -80,14 +93,29 @@ export function webhookRoute(seams: WebhookSeams): Route {
     const asked = validation(endpoint, read.call);
     if (asked !== undefined) return asked;
 
-    if (!proves(endpoint, read.call, seams.now?.())) {
-      return answer(401, { message: 'The call is not proved with the endpoint secret.' });
+    const now = seams.now?.() ?? Date.now();
+    if (!proves(endpoint, read.call, now)) {
+      const refused = answer(401, { message: 'The call is not proved with the endpoint secret.' });
+      refused.headers.set('www-authenticate', wwwAuthenticate(endpoint, read.call));
+      return refused;
     }
 
     const confirmed = challenge(endpoint, read.call);
     if (confirmed !== undefined) return confirmed;
 
-    const data = dataOf({ ...read.call, body: shown(endpoint, read.call.body) }, endpoint.id, omitted(endpoint));
+    for (const [key, until] of delivered) if (until <= now) delivered.delete(key);
+    const delivery = deliveryOf(endpoint, read.call);
+    const key = delivery === undefined ? undefined : `${endpoint.id}\n${delivery}`;
+    if (key !== undefined && delivered.has(key)) return answer(202, { duplicate: true });
+    if (key !== undefined) delivered.set(key, now + WEBHOOK_TOLERANCE_IN_SECONDS * 1000);
+    const answered = await reached(endpoint, read.call);
+    if (key !== undefined && (answered.status < 200 || answered.status > 299)) delivered.delete(key);
+    return answered;
+  };
+
+  /** What a proved call's target answers it with: its bot, its automation, or the `webhook` trigger. */
+  async function reached(endpoint: Endpoint, call: Call): Promise<Response> {
+    const data = dataOf({ ...call, body: shown(endpoint, call.body) }, endpoint.id, omitted(endpoint));
     if (endpoint.match !== undefined && !allows(endpoint.match, data)) {
       // A sender retries a non-2xx answer, and a call this connector does not
       // take is not a delivery that failed.
@@ -96,7 +124,7 @@ export function webhookRoute(seams: WebhookSeams): Route {
 
     if (endpoint.bot !== undefined) {
       if (seams.bot === undefined) return answer(501, { message: 'This plugin cannot serve this endpoint yet.' });
-      return await seams.bot(endpoint, read.call);
+      return await seams.bot(endpoint, call);
     }
 
     if (endpoint.automation !== undefined) {
@@ -108,5 +136,5 @@ export function webhookRoute(seams: WebhookSeams): Route {
     if (seams.fire === undefined) return answer(501, { message: 'This plugin cannot serve this endpoint yet.' });
     seams.fire(data, endpoint.owner);
     return answer(202, { endpoint: endpoint.id });
-  };
+  }
 }

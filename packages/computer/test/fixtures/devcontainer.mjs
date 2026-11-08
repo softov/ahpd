@@ -2,17 +2,20 @@
 /**
  * A scripted `devcontainer`, for the launcher's tests.
  *
- * It answers `--version` and `up` from one JSON file named by
+ * It answers `--version`, `read-configuration` and `up` from one JSON file named by
  * `DEVCONTAINER_FAKE_STATE`, and appends every call to the same file, so a test
  * can ask what the launcher ran. Nothing here talks to a daemon, and nothing
  * builds anything: the launcher is what is under test.
  *
- * There is no `exec`. The CLI runs `up` and nothing else, and every command in
- * a container it made is a `docker exec` against the container id it reported -
- * so the commands, and what they answer, belong to the Docker fixture.
+ * There is no `exec`. The CLI runs `read-configuration` and `up`, and every
+ * command in a container it made is a `docker exec` against the container id it
+ * reported - so the commands, and what they answer, belong to the Docker fixture.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { parse } from 'jsonc-parser';
 
 const state = process.env.DEVCONTAINER_FAKE_STATE;
 if (state === undefined) {
@@ -90,7 +93,56 @@ if (args.includes('--version')) {
 
 const verb = args[0];
 
+/*
+ * `read-configuration`: where the folder's definition is, found by the CLI's
+ * two names or at the `configFile` a test names, and the definition itself,
+ * parsed as leniently as the CLI parses it, under `configuration` with its
+ * `configFilePath` as the URI object the CLI prints.
+ */
+if (verb === 'read-configuration') {
+  const folder = String(args[args.indexOf('--workspace-folder') + 1]);
+  const named = [held.configFile, join(folder, '.devcontainer', 'devcontainer.json'), join(folder, '.devcontainer.json')]
+    .find((one) => typeof one === 'string' && existsSync(one));
+  if (named === undefined) {
+    process.stderr.write(`Dev container config (${join(folder, '.devcontainer', 'devcontainer.json')}) not found.\n`);
+    keep();
+    process.exit(1);
+  }
+  const configuration = parse(readFileSync(named, 'utf8'));
+  if (typeof configuration !== 'object' || configuration === null || Array.isArray(configuration)) {
+    process.stderr.write(`Dev container config (${named}) must contain a JSON object literal.\n`);
+    keep();
+    process.exit(1);
+  }
+  const path = decodeURIComponent(pathToFileURL(named).pathname);
+  process.stdout.write(`${JSON.stringify({
+    configuration: { ...configuration, configFilePath: { $mid: 1, fsPath: named, path, scheme: 'file' } },
+    workspace: { workspaceFolder: folder },
+  })}\n`);
+  keep();
+  process.exit(0);
+}
+
 if (verb === 'up') {
+  /*
+   * Whether another `up` runs beside this one, which a test of one folder's
+   * connects asks. A directory beside the state stands for the `up` that is
+   * running for as long as it runs; one already there is an `up` this one
+   * overlapped, said by a file beside the state that nothing else writes.
+   */
+  const running = `${state}.up`;
+  let alone = true;
+  try { mkdirSync(running); }
+  catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    alone = false;
+    writeFileSync(`${state}.overlapped`, '');
+  }
+  process.on('exit', () => {
+    if (!alone) return;
+    try { rmdirSync(running); }
+    catch {}
+  });
   // The CLI logs while it works, so the result is one line among several.
   process.stdout.write('{"type":"progress","step":"building"}\n');
   /*
@@ -149,6 +201,20 @@ if (verb === 'up') {
       keep();
       process.exit(1);
     }
+    /*
+     * A Compose definition's files, which the CLI reads in place of `runArgs`:
+     * the override's `dockerComposeFile`, or for `[]` the `COMPOSE_FILE` it is
+     * run with. A JSON one is kept as the CLI was handed it, mode and all,
+     * since it is gone once `up` answers.
+     */
+    if (said.dockerComposeFile !== undefined) {
+      const listed = typeof said.dockerComposeFile === 'string' ? [said.dockerComposeFile] : said.dockerComposeFile;
+      const files = listed.length === 0 ? String(process.env.COMPOSE_FILE ?? '').split(delimiter).filter((one) => one !== '') : listed;
+      held.composeFiles = files;
+      for (const file of files.filter((one) => one.endsWith('.json'))) {
+        (held.composes ??= []).push({ where: file, mode: statSync(file).mode & 0o777, config: JSON.parse(readFileSync(file, 'utf8')) });
+      }
+    }
     const recipes = ['image', 'dockerFile', 'dockerComposeFile'];
     if (!recipes.some((one) => said[one] !== undefined)) {
       const at = args.indexOf('--workspace-folder');
@@ -159,11 +225,18 @@ if (verb === 'up') {
     }
   }
 
-  if (held.upFailure !== undefined) {
-    process.stderr.write(`${held.upFailure}\n`);
+  /*
+   * A failed `up` as the CLI fails it: the cause on stderr, and the result on
+   * stdout, `outcome: 'error'` with the cause as its message, then exit 1.
+   * https://github.com/devcontainers/cli/blob/a190a3f86fe20b582c25c4dcb7bbf5fdb739ab26/src/spec-node/devContainersSpecCLI.ts#L347-L389
+   */
+  const failed = (message) => {
+    process.stderr.write(`${message}\n`);
+    process.stdout.write(`${JSON.stringify({ outcome: 'error', message, description: 'An error occurred setting up the container.' })}\n`);
     keep();
     process.exit(1);
-  }
+  };
+  if (held.upFailure !== undefined) failed(held.upFailure);
   const made = held.up ?? { outcome: 'success', containerId: 'abc123', remoteWorkspaceFolder: '/workspaces/Box' };
   /*
    * Where the folder lands inside.
@@ -228,7 +301,13 @@ if (verb === 'up') {
          * what keeps a name among them from giving a folder a second
          * container.
          */
-        const runArgs = Array.isArray(said.runArgs) ? said.runArgs : [];
+        // `runArgs` reach an image or Dockerfile definition's container alone;
+        // a Compose one takes its service's labels from its Compose files.
+        const runArgs = said.dockerComposeFile === undefined && Array.isArray(said.runArgs) ? said.runArgs : [];
+        for (const one of held.composes ?? []) {
+          const service = one.config?.services?.[said.service] ?? {};
+          Object.assign(labels, service.labels ?? {});
+        }
         const typed = [];
         for (let i = 0; i < runArgs.length; i++) {
           if (runArgs[i] === '--label') {
@@ -310,14 +389,15 @@ if (verb === 'up') {
       replace(`${docker}.${process.pid}.tmp`, docker);
     });
     if (missing !== undefined) {
-      process.stderr.write(`Error response from daemon: pull access denied for vsc-${base}, repository does not exist or may require 'docker login'\n`);
-      keep();
-      process.exit(1);
+      failed(`Error response from daemon: pull access denied for vsc-${base}, repository does not exist or may require 'docker login'`);
     }
   }
+  // The result, and the exit its outcome gives; `upCode` stands for an exit
+  // that is not 0 after a result was written, as a task the CLI finishes after
+  // writing it can fail.
   process.stdout.write(`${JSON.stringify(made)}\n`);
   keep();
-  process.exit(0);
+  process.exit(held.upCode ?? (made.outcome === 'error' ? 1 : 0));
 }
 
 process.stderr.write(`the fake devcontainer does not know ${String(verb)}\n`);

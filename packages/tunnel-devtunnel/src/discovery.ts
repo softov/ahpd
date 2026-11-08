@@ -56,17 +56,8 @@ export const PROTOCOL_VERSION = 5;
 /** The protocol label as it is written on a tunnel. */
 export const PROTOCOL_LABEL = `${PROTOCOL_LABEL_PREFIX}${PROTOCOL_VERSION}`;
 
-/**
- * How this plugin finds the tunnel it made last time.
- *
- * Underscore-prefixed on purpose: VS Code's `TunnelTags` skips those when it
- * works out what to call a tunnel, so this one identifies without becoming the
- * name a person reads in the list.
- */
-export const IDENTITY_LABEL = '_ahpd';
-
-/** Every label a tunnel of this plugin's carries, before the display name. */
-export const LABELS = [LAUNCHER_LABEL, PROTOCOL_LABEL, IDENTITY_LABEL] as const;
+/** Every label a tunnel of this plugin's carries beside its name. */
+export const LABELS = [PROTOCOL_LABEL, LAUNCHER_LABEL] as const;
 
 /**
  * What VS Code will call this tunnel.
@@ -83,18 +74,45 @@ export function displayLabel(labels: readonly string[]): string | undefined {
   ));
 }
 
+/** The longest a tunnel's name is, as VS Code and its CLI hold it. */
+export const MAX_TUNNEL_NAME_LENGTH = 20;
+
+/** What a machine's name that cleans down to almost nothing becomes, as the CLI writes it. */
+const TUNNEL_NAME_PLACEHOLDER = 'remote-machine';
+
 /**
- * A name turned into something that can be a label.
+ * A tunnel's name from the machine's host name, as VS Code derives it.
  *
- * A label is a restricted string and a person's name for their machine is not:
- * leading dashes go, anything that is not a word character or a dash goes, and
- * what is left is cut to twenty. Nothing left is no label rather than an empty
- * one, because an empty label would be the display name and the display name
- * would be nothing.
+ * VS Code's `tunnelNameFromHostname`, which mirrors the CLI's
+ * `clean_hostname_for_tunnel`: `-`, `_` and spaces become `-`, anything else
+ * that is not a letter or a digit goes, dashes are trimmed from both ends, a
+ * result shorter than two is the placeholder, and the name is lowercased and
+ * cut to twenty. `code tunnel`, VS Code's own hosting and this plugin then name
+ * one machine the same, which is how each finds the tunnel it hosts.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/remoteTunnel/common/remoteTunnel.ts#L95-L117
  */
-export function nameLabel(name: string): string | undefined {
-  const slug = name.replace(/^-+/, '').replace(/[^\w-]/g, '').slice(0, 20);
-  return slug === '' ? undefined : slug;
+export function tunnelNameFromHostname(hostname: string): string {
+  let cleaned = '';
+  for (const char of Array.from(hostname).slice(0, 60)) {
+    if (char === '-' || char === '_' || char === ' ') {
+      cleaned += '-';
+    } else if (/[0-9a-zA-Z]/.test(char)) {
+      cleaned += char;
+    }
+  }
+  const trimmed = cleaned.replace(/^-+|-+$/g, '');
+  const name = trimmed.length < 2 ? TUNNEL_NAME_PLACEHOLDER : trimmed;
+  return name.toLowerCase().substring(0, MAX_TUNNEL_NAME_LENGTH);
+}
+
+/**
+ * A name a person configured, as VS Code normalizes it: leading dashes and
+ * anything that is not a word character or a dash go, the rest is cut to
+ * twenty and lowercased.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/remoteTunnel/common/remoteTunnel.ts#L119-L127
+ */
+export function normalizeTunnelName(name: string): string {
+  return name.replace(/^-+/g, '').replace(/[^\w-]/g, '').substring(0, MAX_TUNNEL_NAME_LENGTH).toLowerCase();
 }
 
 /** The alphabet `deriveConnectionToken` spells its answer in. */

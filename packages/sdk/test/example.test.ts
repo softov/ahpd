@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { memorySessions } from '../src/sessions/sessions.js';
@@ -168,6 +172,77 @@ it('leaves a finished session in the catalogue, and opens it again from its tran
   const chat = ((await client.handle({ method: 'subscribe', params: { channel: row } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
   const again = await client.handle({ method: 'subscribe', params: { channel: chat } }) as { snapshot: { state: { turns: unknown[] } } };
   expect(again.snapshot.state.turns).toHaveLength(1);
+});
+
+/*
+ * A finished turn carries its state, as the protocol's `Turn` requires, and a
+ * first message titles the session as VS Code's host seeds a title:
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostSessionTitleController.ts#L252-L255
+ */
+it('keeps a finished turn complete, and titles the session from its first message as VS Code seeds one', async () => {
+  const { client, uri, chatUri } = await talking();
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '  hello\n\tthere  ' } } },
+  });
+  await settle(12);
+  const chat = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { state?: string }[] } };
+  };
+  expect(chat.snapshot.state.turns[0]?.state).toBe('complete');
+  const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { title: string } };
+  };
+  expect(session.snapshot.state.title).toBe('hello there');
+});
+
+// The slash command the probe offers is run, as VS Code's providers run theirs.
+it('runs the slash command it offers: /shout says the rest of its line loudly', async () => {
+  const { client, chatUri } = await talking();
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: '/shout hello there' } } },
+  });
+  await settle(12);
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: { content: string }[] }[] } };
+  };
+  expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('HELLO THERE');
+});
+
+/*
+ * A row carries the moment its session began and the folder it worked in, as
+ * VS Code lists a session: a host started again over the same store lists the
+ * session it ran, handed the same backend, which keeps its sessions in memory.
+ */
+it('lists a finished session with the moment it began and the folder it worked in', async () => {
+  // A folder that is there, since a row naming a folder that is gone is listed without it.
+  const folder = mkdtempSync(join(tmpdir(), 'echo-row-'));
+  const sessions = memorySessions();
+  const agent = echo({ path: '/tmp/echo', pace: 0 });
+  const first = createHost({ path: '/tmp/echo', agents: [agent], sessions }).accept(peer());
+  await first.handle({ method: 'initialize', params: { clientId: 'p', protocolVersions: ['0.9.0'] } });
+  const uri = 'ahp-session:/three';
+  await first.handle({ method: 'createSession', params: { channel: uri, provider: 'echo', workingDirectories: [pathToFileURL(folder).href] } });
+  // The chat the host minted for the session, read off its state.
+  const chatUri = ((await first.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } }).snapshot.state.defaultChat;
+  // Long enough that the session's start and its turn's end are two moments.
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  first.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'remember me' } } },
+  });
+  await settle(12);
+
+  const client = createHost({ path: '/tmp/echo', agents: [agent], sessions }).accept(peer());
+  await client.handle({ method: 'initialize', params: { clientId: 'p', protocolVersions: ['0.9.0'] } });
+  const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+    items: { createdAt: string; modifiedAt: string; workingDirectories?: string[] }[];
+  };
+  const row = listed.items[0];
+  rmSync(folder, { recursive: true, force: true });
+  expect(Date.parse(row?.createdAt ?? '')).toBeLessThan(Date.parse(row?.modifiedAt ?? ''));
+  expect(row?.workingDirectories).toEqual([pathToFileURL(folder).href]);
 });
 
 it('will not take two backends that call themselves the same thing', () => {

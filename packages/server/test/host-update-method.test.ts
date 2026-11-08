@@ -137,7 +137,10 @@ const served = (facts: UpdateFacts = {}): {
     configFile: join(home, 'config.json'),
     running: () => ({ pid: RECORD.pid, url: RECORD.url, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
     turning: () => [],
-    restart: (argv, force) => { restarted.push({ argv: [...argv], force }); },
+    restart: (argv, force) => {
+      restarted.push({ argv: [...argv], force });
+      return { restartDelayMs: 3000 };
+    },
   };
   const host = createHost({
     path: home,

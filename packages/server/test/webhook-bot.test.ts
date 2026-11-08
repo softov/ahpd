@@ -18,20 +18,23 @@ import type { Vault } from '../../sdk/src/types/vault.js';
 /*
  * A webhook call that talks to a bot, on a daemon with both plugins loaded.
  *
- * The daemon has a users directory, so the webhook plugin's connection is
- * answered against the grants its entry names, and nothing else. A root client
- * makes the bot, which starts nothing. A `sync` call then reads the bot, which
- * starts the plugin's own chat with it, and says its text as a turn there. A
- * `bot-chat` turn ends with no response part, so the call is answered with the
- * status of the turn and no text.
+ * The daemon has a users directory, so each plugin's connection is answered
+ * against the grants its entry names, and nothing else. A root client makes
+ * the bot, which starts nothing. A `sync` call then makes the webhook plugin's
+ * own session with the bot, a chat for the call's thread in it, and queues its
+ * text there; the bot's wake hands it to its back session, whose answer is the
+ * turn's, and the call is answered with it.
  */
 
 const REPO = join(import.meta.dirname, '../../..');
 const BOT = './packages/bot/src/index.ts';
 const WEBHOOK = './packages/webhook/src/index.ts';
 
-/** The grants the webhook plugin needs to read a bot, open a chat with it and say a turn there. */
-const GRANTS = ['bot:get', 'bot:chat', 'session:read', 'session:create', 'session:write'];
+/** The grants the webhook plugin needs to make its session with a bot, open a thread's chat there and queue a message. */
+const GRANTS = ['session:read', 'session:create', 'session:write', 'chat:create'];
+
+/** The grants the bot plugin needs to start a back session in the bot's folder and send it a message. */
+const BOT_GRANTS = ['session:read', 'session:write', 'session:trust'];
 
 let loose: string[] = [];
 afterEach(() => {
@@ -98,7 +101,7 @@ async function started(grants: string[] = GRANTS) {
     users: directory(),
   };
   const { options, problems, routes } = await loadPlugins([
-    { name: BOT, options: { root: join(dir, 'bots') } },
+    { name: BOT, options: { root: join(dir, 'bots') }, grants: BOT_GRANTS },
     { name: WEBHOOK, grants },
   ], { base, configDir: join(dir, 'config'), cwd: REPO, log: (line) => { lines.push(line); } });
   const host = createHost(options);
@@ -123,15 +126,15 @@ const openCi = (adapters: Record<string, ServedAdapter>, config: Record<string, 
   adapter.open({ id: 'ci', adapter: 'webhook', owner: 'host', config: { bot: 'bot://motion', secret: 'right-token', ...config } });
 };
 
-it('answers a sync call with the turn status and no text, in the plugin chat', async () => {
+it('answers a sync call with the turn the bot answered it in, in the plugin\'s own chat', async () => {
   const { host, problems, routes, records, adapters } = await started();
   expect(problems).toEqual([]);
 
-  // The host's own key makes the bot, which starts nothing: a chat is started
-  // by the first read of a bot who may chat, and that read is the plugin's.
+  // The host's own key makes the bot, which starts nothing: the plugin makes
+  // its own session with the bot when a call first needs one.
   const root = host.accept(peer(), undefined, true);
   await root.handle({ method: 'initialize', params: { clientId: 'root', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
-  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', harness: 'echo' }) } });
+  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', provider: 'echo' }) } });
 
   openCi(adapters, { reply: 'sync', syncTimeoutSeconds: 10 });
 
@@ -154,30 +157,30 @@ it('answers a sync call with the turn status and no text, in the plugin chat', a
   const first = await call('hello there');
   const said = await first.json() as Bag;
   expect({ status: first.status, said }).toMatchObject({ status: 200, said: { thread: 'pr-12', status: 'complete' } });
-  // A `bot-chat` turn is complete and carries no response part, so there is no text to answer with.
-  expect(said['text']).toBe('');
+  // The turn's answer is the back session's last words, which the echo agent says.
+  expect(String(said['text'])).not.toBe('');
 
   const second = await call('once more');
   expect(second.status).toBe(200);
-  expect((await second.json() as Bag)['text']).toBe('');
 
-  // One thread and one chat: both calls are turns in the one chat the plugin's
-  // read of the bot answered, which is where the bot answers through.
-  const rows = await (await records.collection('bots/motion/chats')).find({ owner: 'plugin:webhook' });
-  expect(rows).toHaveLength(1);
+  // One thread and one chat: both calls are turns in the thread's chat, in the
+  // session the plugin made with the bot, which is a chat with that bot.
   const threads = await (await records.collection('webhook-threads')).list();
   expect(threads).toHaveLength(1);
-  expect(threads[0]).toMatchObject({ endpoint: 'ci', thread: 'pr-12', session: rows[0]?.['chat'] });
+  expect(threads[0]).toMatchObject({ endpoint: 'ci', thread: 'pr-12' });
+  const session = String(threads[0]?.['session']);
+  const opened = await root.handle({ method: 'subscribe', params: { channel: session } }) as { snapshot: { state: Bag } };
+  expect(opened.snapshot.state['_meta']).toMatchObject({ 'ahpd.bot': { id: 'motion' } });
   const chat = String(threads[0]?.['chat']);
   await until(async () => (await turns(chat)).length === 2, 'both turns to reach the plugin chat');
   expect((await turns(chat)).map((one) => one.message.text)).toEqual(['hello there', 'once more']);
 });
 
-it('answers 409 when the plugin may not read the bot', async () => {
+it('answers 409 when the plugin may not make a session', async () => {
   const { host, routes, adapters } = await started([]);
   const root = host.accept(peer(), undefined, true);
   await root.handle({ method: 'initialize', params: { clientId: 'root', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
-  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', harness: 'echo' }) } });
+  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', provider: 'echo' }) } });
   openCi(adapters, { reply: 'none' });
 
   const answer = await routes['webhook']!(new Request('http://127.0.0.1:1/plugins/webhook/ci?thread=pr-12', {
@@ -188,11 +191,11 @@ it('answers 409 when the plugin may not read the bot', async () => {
   expect(answer.status).toBe(409);
 });
 
-it('answers 409 and names the grants when the plugin is answered no chat', async () => {
-  const { host, lines, routes, records, adapters } = await started(['bot:get', 'session:read']);
+it('answers 409 and names the grant when the host makes the plugin no session', async () => {
+  const { host, lines, routes, records, adapters } = await started(['session:read']);
   const root = host.accept(peer(), undefined, true);
   await root.handle({ method: 'initialize', params: { clientId: 'root', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
-  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', harness: 'echo' }) } });
+  await root.handle({ method: 'resourceWrite', params: { uri: 'bot://motion', data: JSON.stringify({ name: 'Motion', provider: 'echo' }) } });
   openCi(adapters, { reply: 'none' });
 
   const answer = await routes['webhook']!(new Request('http://127.0.0.1:1/plugins/webhook/ci?thread=pr-12', {
@@ -201,9 +204,6 @@ it('answers 409 and names the grants when the plugin is answered no chat', async
     body: 'hello',
   }));
   expect(answer.status).toBe(409);
-  expect(lines.some((line) => line.startsWith('webhook: ')
-    && line.includes('bot:chat') && line.includes('session:create'))).toBe(true);
+  expect(lines.some((line) => line.startsWith('webhook: ') && line.includes('session:create'))).toBe(true);
   expect(await (await records.collection('webhook-threads')).list()).toEqual([]);
-  // The read answered the record alone: no chat of the plugin's was started.
-  expect(await (await records.collection('bots/motion/chats')).list()).toEqual([]);
 });

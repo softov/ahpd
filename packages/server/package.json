@@ -52,12 +52,16 @@
     "@cofold/terminal": "^0.4.0",
     "@cofold/yaml": "^0.3.0",
     "@microsoft/agent-host-protocol": "^1.0.0",
-    "@xterm/headless": "^6.0.0"
+    "@xterm/headless": "^6.0.0",
+    "semver": "^7.8.5"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0-beta40"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "devDependencies": {
+    "@types/semver": "^7.8.0"
   }
 }

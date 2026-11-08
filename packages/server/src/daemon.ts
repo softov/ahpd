@@ -1,12 +1,12 @@
 /** Starting one of these in the background, and finding it again. */
 
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, fstatSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { connect } from 'node:net';
 import { basename, dirname, join } from 'node:path';
 import { readJson, writeJsonAtomic } from '@ahpd/sdk';
-import { daemonLog, daemonPath, ensureConfigDir } from './config.js';
+import { daemonLog, daemonPath, ensureConfigDir, loadConfig } from './config.js';
 import { realManager } from './service.js';
 import type { Manager, Service } from './service.js';
 
@@ -28,8 +28,22 @@ export interface Control {
   key: string;
 }
 
+/** The shape of the record this release writes, as `schemaVersion` names it. */
+export const RECORD_SCHEMA_VERSION = 1;
+
+/**
+ * How a record is read, as the configuration's `daemonRecord` says: `fields`,
+ * each field as it is there, so a record an older daemon wrote still names its
+ * daemon mid-upgrade; or `schemaVersion`, a record of another version ignored,
+ * as VS Code's CLI ignores a registry entry of another `schemaVersion`
+ * (cli/src/tunnels/agent_host_registry.rs L36-L42, L217-L228 at 6b68d3fe).
+ */
+export type RecordReading = 'fields' | 'schemaVersion';
+
 /** What a detached daemon records about itself. */
 export interface Running {
+  /** The shape of this record, `RECORD_SCHEMA_VERSION`. Absent from a record an older daemon wrote. */
+  schemaVersion?: number;
   pid: number;
   /** The origin it listens on, without the token. What every verb prints. */
   url: string;
@@ -93,15 +107,32 @@ export interface Running {
 
 /**
  * How long a start waits for the new daemon to say where it is listening.
- * `ahpd restart` gives a successor longer than this, `SUCCESSOR_WAIT_MS`, so
+ * `ahpd restart` gives a successor longer than this, `successorWaitMs`, so
  * the restarting daemon's own answer always reaches it first.
  *
- * A minute, because a first start on a machine that has never run the daemon
- * is the slow one: the pseudoterminal probe, the plugins, and whatever npm
- * does the first time it is asked for something. The stages `run` stamps are what a start that still did not make
- * it is read for; this is only how long it is given before it is killed.
+ * A minute, upstream's (plan daemon/24, Softov), unless the configuration's
+ * `readyTimeoutMs` says otherwise, because a first start on a machine that has
+ * never run the daemon is the slow one: the pseudoterminal probe, the plugins,
+ * and whatever npm does the first time it is asked for something. The stages
+ * `run` stamps are what a start that still did not make it is read for; this
+ * is only how long it is given before it is killed.
  */
 export const READY_TIMEOUT_MS = 60_000;
+
+/**
+ * A wait the configuration names, read where the verb that waits has no
+ * options of its own; `fallback` when it names none or does not load, so a
+ * verb that cannot read its configuration still waits.
+ */
+export const configuredMs = (key: 'readyTimeoutMs' | 'stopWaitMs', fallback: number): number => {
+  try {
+    const held = loadConfig().values[key];
+    return typeof held === 'number' && Number.isInteger(held) && held >= 0 ? held : fallback;
+  }
+  catch {
+    return fallback;
+  }
+};
 
 /**
  * Set in the environment of a daemon `start` spawns: the one process that will
@@ -140,7 +171,7 @@ export const SERVICE_ENV = 'AHPD_SERVICE';
 export const serviceIn = (value: string | undefined): Running['service'] =>
   (value === 'systemd' || value === 'launchd' ? value : undefined);
 
-/** The name every control pipe starts with, before the random part. */
+/** The name every control pipe starts with, before its UUID. */
 const PIPE_PREFIX = '\\\\.\\pipe\\ahpd-';
 
 /**
@@ -161,7 +192,10 @@ export const requestLine = (control: Control, signal: ControlledSignal): string 
  *
  * Both are new for each start, and so for each successor of a restart, because
  * a name another process could predict is a name another process could take
- * first.
+ * first. The name is the application's and a random UUID, as VS Code's CLI
+ * names the pipe its lock file records
+ * (cli/src/async_pipe.rs L179-L188 at 6b68d3fe); the key is what a request is
+ * checked against.
  *
  * `pipe` is only for a test: the control path is `node:net` on both platforms,
  * so a case on Linux drives it over a unix socket path rather than a named
@@ -169,9 +203,7 @@ export const requestLine = (control: Control, signal: ControlledSignal): string 
  */
 export function controlFor(platform: NodeJS.Platform, pipe?: string): Control | undefined {
   if (platform !== 'win32') return undefined;
-  // 16 bytes of name, 32 of key: the name only has to be unguessable, and the
-  // key is what a request is checked against.
-  return { pipe: pipe ?? `${PIPE_PREFIX}${randomBytes(16).toString('hex')}`, key: randomBytes(32).toString('hex') };
+  return { pipe: pipe ?? `${PIPE_PREFIX}${randomUUID()}`, key: randomBytes(32).toString('hex') };
 }
 
 /** Is that process still there? A record outlives a crash, and says nothing about one. */
@@ -212,8 +244,12 @@ const present = (pid: number): boolean => {
  *
  * This is the one reader of the record, and a caller printing one takes `url`:
  * `connectUrl` carries the secret and belongs on no line.
+ *
+ * `reading` is the configuration's `daemonRecord`; under `schemaVersion` a
+ * record of another version is ignored and left where it is, as VS Code's CLI
+ * ignores an entry of another `schemaVersion` rather than rejecting it.
  */
-export function running(): Running | undefined {
+export function running(reading: RecordReading = recordReading()): Running | undefined {
   const read = readJson(daemonPath());
   // A file that is not there, and one that could not be opened, are both a
   // daemon with no record: neither is a file anybody may clear.
@@ -227,6 +263,7 @@ export function running(): Running | undefined {
     catch { /* it was already gone, which is what was wanted */ }
     return undefined;
   }
+  if (reading === 'schemaVersion' && found.schemaVersion !== RECORD_SCHEMA_VERSION) return undefined;
   if (!alive(found.pid)) {
     // Through `forget`, so a record another daemon claimed since the read stays.
     forget([found.pid]);
@@ -234,6 +271,20 @@ export function running(): Running | undefined {
   }
   return found;
 }
+
+/**
+ * How the configuration says a record is read, `fields` when it says nothing
+ * or does not load: a verb that cannot read its configuration still finds the
+ * daemon it was asked about.
+ */
+const recordReading = (): RecordReading => {
+  try {
+    return loadConfig().values.daemonRecord === 'schemaVersion' ? 'schemaVersion' : 'fields';
+  }
+  catch {
+    return 'fields';
+  }
+};
 
 /** The record in that value: a JSON object with a numeric pid, or nothing. */
 const recordIn = (parsed: unknown): Running | undefined => {
@@ -337,6 +388,7 @@ export function recordOf(
   const skipped = skippedOf(announced);
   const startFolder = /^start folder (.+)$/m.exec(announced)?.[1]?.trim();
   return {
+    schemaVersion: RECORD_SCHEMA_VERSION,
     pid,
     url,
     connectUrl: readyUrl(url, token),
@@ -478,7 +530,13 @@ const rotateLog = (): void => {
  * restart on, hands them to it in `CONTROL_ENV`, and records them, because the
  * record is what a verb reads and this process is the one that writes it.
  */
-export async function start(argv: string[], self: string, token?: string, replacing?: number): Promise<Running> {
+export async function start(
+  argv: string[],
+  self: string,
+  token?: string,
+  replacing?: number,
+  readyMs: number = configuredMs('readyTimeoutMs', READY_TIMEOUT_MS),
+): Promise<Running> {
   const already = running();
   if (already && already.pid !== replacing) throw new Error(`One is already running: ${already.url} (pid ${String(already.pid)})`);
 
@@ -567,7 +625,8 @@ export async function start(argv: string[], self: string, token?: string, replac
      * output any more - which is exactly the point.
      */
     await new Promise<string>((answer, fail) => {
-      const gaveUp = Date.now() + READY_TIMEOUT_MS;
+      // 0 waits for ever, as every wait the configuration names does.
+      const gaveUp = readyMs === 0 ? Number.POSITIVE_INFINITY : Date.now() + readyMs;
       const look = (): void => {
         const said = logSince(from);
         const own = child.pid === undefined ? undefined : announcementOf(said, child.pid);
@@ -731,14 +790,15 @@ export async function deliver(
 }
 
 /**
- * How long a daemon is given to answer the stop request before it is killed.
+ * How long a daemon is given to answer the stop request before it is killed,
+ * unless the configuration's `stopWaitMs` says otherwise.
  *
- * A shutdown closes plugin connections first, and a plugin's `stopping` handler
- * may take seconds, so the request is given time rather than the process being
- * ended as soon as it stops listening. A daemon that does not go within this is
- * killed, and the line for it says so.
+ * Five seconds, as VS Code's CLI gives its agent host server before it
+ * escalates to a forced kill (cli/src/tunnels/agent_host.rs L736-L752 at
+ * 6b68d3fe). A daemon that does not go within this is killed, and the line for
+ * it says so.
  */
-export const STOP_WAIT_MS = 30_000;
+export const STOP_WAIT_MS = 5_000;
 
 /** How often the wait looks at the process table, between the request and the limit. */
 const STOP_POLL_MS = 100;
@@ -782,7 +842,8 @@ const realStop = (): StopSteps => ({
   kill: (pid) => { process.kill(pid, 'SIGKILL'); },
   alive,
   wait: () => new Promise((done) => { setTimeout(done, STOP_POLL_MS); }),
-  waitMs: STOP_WAIT_MS,
+  // The configuration's 0 waits for ever, as every wait it names does.
+  waitMs: configuredMs('stopWaitMs', STOP_WAIT_MS) || Number.POSITIVE_INFINITY,
   now: () => Date.now(),
   manager: realManager(),
 });
@@ -803,8 +864,8 @@ const goneWithin = async (pid: number, steps: StopSteps): Promise<boolean> => {
  *
  * Nothing here is killed, and the kill the wait would otherwise fall back to is
  * not sent: the manager does its own, and a daemon this process SIGKILLed under
- * a unit with `Restart=on-failure` is one the unit starts again, so the stop
- * would read as a restart. A process still there when the manager has answered
+ * a unit with `Restart=always` is one the unit starts again, so the stop would
+ * read as a restart. A process still there when the manager has answered
  * is one the manager is still stopping, which is said rather than forced.
  */
 const stoppedUnderService = async (found: Running, service: Service, steps: StopSteps): Promise<StopOutcome> => {

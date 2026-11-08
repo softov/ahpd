@@ -53,6 +53,7 @@ const faker = (name: string, over: Partial<ComputerRuntime> = {}): ComputerRunti
   capabilities: () => capabilities(name, ['create', 'list', 'exec']),
   hasImage: async () => false,
   buildImage: async () => {},
+  pullImage: async () => {},
   ...over,
 });
 
@@ -183,13 +184,32 @@ it('keeps the rows of a runtime that answered when another threw or hung', async
   });
 
   // Docker's own `list` throws by design when Docker is not answering, and a
-  // host that also serves a box over ssh still lists that box.
+  // host that also serves a box over ssh still lists that box, beside a line
+  // for each runtime that did not answer in VS Code's words for a listing
+  // that failed (devContainerAgentHostService.ts L970-L972 at 6b68d3fe).
   expect((await one.list()).map((machine) => machine.id)).toEqual(['ssh.dev02']);
   expect(lines).toHaveLength(2);
-  expect(lines[0]).toMatch(/^the docker runtime did not list its machines, so they are left out: /);
+  expect(lines[0]).toMatch(/^Could not list the docker machines, so the 0 it last listed are kept: /);
   expect(lines[0]).toContain('Cannot connect to the Docker daemon');
-  expect(lines[1]).toMatch(/^the libvirt runtime did not list its machines, so they are left out: /);
+  expect(lines[1]).toMatch(/^Could not list the libvirt machines, so the 0 it last listed are kept: /);
   expect(lines[1]).toContain('did not answer within 20ms');
+});
+
+/*
+ * A runtime that answered once and then does not answer keeps the rows it
+ * last answered, as VS Code keeps the list it had when a refresh fails, so a
+ * catalogue over the listing does not say its machines removed.
+ */
+it('keeps the rows a runtime last answered while it does not answer', async () => {
+  let answering = true;
+  const ssh = faker('ssh', { list: async () => { if (!answering) throw new Error('ssh: connect to host dev02: No route to host'); return [row('dev02')]; } });
+  const lines: string[] = [];
+  const one = routed({ ssh }, 'ssh', { log: (line) => lines.push(line) });
+
+  expect((await one.list()).map((machine) => machine.id)).toEqual(['ssh.dev02']);
+  answering = false;
+  expect((await one.list()).map((machine) => machine.id)).toEqual(['ssh.dev02']);
+  expect(lines).toEqual(['Could not list the ssh machines, so the 1 it last listed are kept: ssh: connect to host dev02: No route to host']);
 });
 
 it('charges the host for a machine a listing runtime found up and then gone', async () => {
@@ -254,7 +274,7 @@ it('bounds a hung runtime\'s listing and reads by its own timeout, and tells wha
   });
 
   expect((await one.list()).map((machine) => machine.id)).toEqual(['here']);
-  expect(lines).toEqual(['the docker-far runtime did not list its machines, so they are left out: the docker-far runtime did not answer within 20ms']);
+  expect(lines).toEqual(['Could not list the docker-far machines, so the 0 it last listed are kept: the docker-far runtime did not answer within 20ms']);
   expect(answered.sort()).toEqual([['docker', ['here']], ['docker-far', undefined]]);
   await expect(one.inspect('docker-far.box')).rejects.toThrow('the docker-far runtime did not answer within 20ms');
 });

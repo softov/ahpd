@@ -143,6 +143,25 @@ if (verb === 'image') {
   process.exit(1);
 }
 
+/**
+ * Every entry of a piped build context, by name, in the order it holds them.
+ *
+ * A tar is a ustar header: `ustar` at 257. Anything else is the Dockerfile on
+ * its own, which is what a part with no files beside it is built from.
+ */
+const contextEntries = (piped) => {
+  if (!(piped.length > 262 && piped.subarray(257, 262).toString('latin1') === 'ustar')) return [{ name: 'Dockerfile', bytes: piped }];
+  const found = [];
+  for (let at = 0; at + 512 <= piped.length;) {
+    const header = piped.subarray(at, at + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const size = Number.parseInt(header.subarray(124, 136).toString('latin1').replace(/\0.*$/s, '').trim(), 8);
+    found.push({ name: header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, ''), bytes: piped.subarray(at + 512, at + 512 + size) });
+    at += 512 + ((size + 511) & ~511);
+  }
+  return found;
+};
+
 if (verb === 'build') {
   /*
    * A build whose context is piped, which is the whole build context: a tar
@@ -152,24 +171,9 @@ if (verb === 'build') {
    * assert on the text without a real build - `pnpm test` runs nowhere near a
    * daemon, and the point of the provider is the Dockerfile, not Docker.
    */
-  const piped = await readStdin();
   const named = args.indexOf('-t');
   const tag = named === -1 ? undefined : args[named + 1];
-  // A tar is a ustar header: `ustar` at 257. Anything else is the Dockerfile on
-  // its own, which is what a part with no files beside it is built from.
-  const isTar = piped.length > 262 && piped.subarray(257, 262).toString('latin1') === 'ustar';
-  // Every entry of a tar, by name, in the order the archive holds them.
-  const entries = isTar ? (() => {
-    const found = [];
-    for (let at = 0; at + 512 <= piped.length;) {
-      const header = piped.subarray(at, at + 512);
-      if (header.every((byte) => byte === 0)) break;
-      const size = Number.parseInt(header.subarray(124, 136).toString('latin1').replace(/\0.*$/s, '').trim(), 8);
-      found.push({ name: header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, ''), bytes: piped.subarray(at + 512, at + 512 + size) });
-      at += 512 + ((size + 511) & ~511);
-    }
-    return found;
-  })() : [{ name: 'Dockerfile', bytes: piped }];
+  const entries = contextEntries(await readStdin());
   const dockerfile = entries.find((one) => one.name === 'Dockerfile');
   if (dockerfile === undefined) {
     keep();
@@ -197,18 +201,86 @@ if (verb === 'build') {
 }
 
 /*
+ * `docker info --format {{json .}}`: the Engine's version and its image
+ * store, the containerd one unless `imageMounts: false` says the daemon runs
+ * a classic storage driver; `engine` names another version, and `failInfo`
+ * is a daemon that does not answer.
+ */
+if (verb === 'info') {
+  keep();
+  if (held.failInfo === true) {
+    process.stderr.write('Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?\n');
+    process.exit(1);
+  }
+  const classic = held.imageMounts === false;
+  process.stdout.write(`${JSON.stringify({
+    ServerVersion: held.engine ?? '29.0.0',
+    Driver: classic ? 'overlay2' : 'overlayfs',
+    DriverStatus: classic ? [['Backing Filesystem', 'extfs'], ['Supports d_type', 'true']] : [['driver-type', 'io.containerd.snapshotter.v1']],
+  })}\n`);
+  process.exit(0);
+}
+
+/*
+ * `docker buildx`, as the release workflow builds with it: `imagetools
+ * inspect` answers for an image the registry holds, which `published` lists,
+ * and `build` is recorded in `buildx` with its platforms, tags, build
+ * contexts, labels, whether it pushed, the Dockerfile it was piped and the
+ * names of the other files beside it; a pushed tag is then published.
+ */
+if (verb === 'buildx') {
+  if (args[1] === 'imagetools' && args[2] === 'inspect') {
+    keep();
+    process.exit((held.published ?? []).includes(args[3]) ? 0 : 1);
+  }
+  const flag = (name) => args.flatMap((one, at) => (args[at - 1] === name ? [one] : []));
+  const entries = contextEntries(await readStdin());
+  const dockerfile = entries.find((one) => one.name === 'Dockerfile');
+  held.buildx ??= [];
+  held.buildx.push({
+    platforms: flag('--platform'),
+    tags: flag('--tag'),
+    contexts: flag('--build-context'),
+    labels: flag('--label'),
+    push: args.includes('--push'),
+    dockerfile: dockerfile?.bytes.toString('utf8'),
+    files: entries.map((one) => one.name).filter((name) => name !== 'Dockerfile'),
+  });
+  if (args.includes('--push')) held.published = [...held.published ?? [], ...flag('--tag')];
+  keep();
+  process.exit(0);
+}
+
+/*
  * `docker pull`, which puts an image here unless `failPull` says the registry
- * has none.
+ * has none: `true` for every image, or the references it has none of. Each
+ * pull is recorded in `pulls`, the failed ones too, as a build is in `builds`.
  */
 if (verb === 'pull') {
   const tag = args[args.length - 1];
-  if (held.failPull === true) {
+  held.pulls ??= [];
+  held.pulls.push(tag);
+  if (held.failPull === true || (Array.isArray(held.failPull) && held.failPull.includes(tag))) {
     keep();
     process.stderr.write(`Error response from daemon: pull access denied for ${tag}, repository does not exist or may require 'docker login'\n`);
     process.exit(1);
   }
   held.images ??= [];
   if (!held.images.includes(tag)) held.images.push(tag);
+  keep();
+  process.exit(0);
+}
+
+/* `docker tag <image> <tag>`, which names an image that is here by another tag. */
+if (verb === 'tag') {
+  const [from, to] = args.slice(1);
+  held.images ??= [];
+  if (!held.images.includes(from)) {
+    keep();
+    process.stderr.write(`Error response from daemon: No such image: ${from}\n`);
+    process.exit(1);
+  }
+  if (!held.images.includes(to)) held.images.push(to);
   keep();
   process.exit(0);
 }
@@ -222,12 +294,42 @@ if (verb === 'pull') {
 if (verb === 'volume') {
   const name = args[args.length - 1];
   held.volumes ??= {};
+  // `volume ls --format {{.Name}}`: every volume's name, one a line.
+  if (args[1] === 'ls') {
+    keep();
+    process.stdout.write(Object.keys(held.volumes).map((one) => `${one}\n`).join(''));
+    process.exit(0);
+  }
+  // `volume create --label <key>=<value> <name>`: an empty volume with its
+  // labels and the time it was made.
+  if (args[1] === 'create') {
+    const labels = Object.fromEntries(args.flatMap((one, at) => (args[at - 1] === '--label' ? [[one.slice(0, one.indexOf('=')), one.slice(one.indexOf('=') + 1)]] : [])));
+    held.volumes[name] ??= { files: [], created: new Date().toISOString() };
+    held.volumes[name].labels = labels;
+    keep();
+    process.stdout.write(`${name}\n`);
+    process.exit(0);
+  }
   if (held.volumes[name] === undefined) {
     keep();
     process.stderr.write(`Error response from daemon: get ${name}: no such volume\n`);
     process.exit(1);
   }
-  if (args[1] === 'rm') delete held.volumes[name];
+  if (args[1] === 'rm') {
+    // A volume a container mounts is in use, and Docker will not remove it.
+    const user = (held.machines ?? []).find((one) => (one.mounts ?? []).some((mount) => String(mount).split(':')[0] === name));
+    if (user !== undefined) {
+      keep();
+      process.stderr.write(`Error response from daemon: remove ${name}: volume is in use - [${user.name}]\n`);
+      process.exit(1);
+    }
+    delete held.volumes[name];
+  }
+  else if (args.includes('--format')) {
+    // `{{json .}}`: the record, with when the volume was made and its labels.
+    const one = held.volumes[name];
+    process.stdout.write(`${JSON.stringify({ Name: name, Driver: 'local', CreatedAt: one.created ?? new Date().toISOString(), Labels: one.labels ?? null })}\n`);
+  }
   else process.stdout.write(`${JSON.stringify([{ Name: name, Driver: 'local' }])}\n`);
   keep();
   process.exit(0);
@@ -356,7 +458,8 @@ if (verb === 'ps') {
       // `Exited ...` for one that is not, which is what tells a listing's rows
       // apart. The listing is `ps -a`, so it holds both.
       Status: (machine.state ?? 'running') === 'running' ? 'Up 1 second' : 'Exited (0) 2 minutes ago',
-      CreatedAt: '2026-09-22 00:00:00 +0000',
+      // As a client in a zone of its own prints it: local time, the zone by name.
+      CreatedAt: '2026-09-22 02:00:00 +0200 CEST',
     };
     // `{{json .}}` keeps the shape Docker gives it, where every label is one
     // comma-joined column and a value holding a comma cannot be told from the
@@ -497,6 +600,12 @@ if (verb === 'stats') {
     keep();
     process.exit(1);
   }
+  // A line a test writes in place of the answer, to see a malformed one read.
+  if (typeof found.statsLine === 'string') {
+    process.stdout.write(`${found.statsLine}\n`);
+    keep();
+    process.exit(0);
+  }
   process.stdout.write(`${JSON.stringify({
     Container: id,
     Name: id,
@@ -558,9 +667,8 @@ if (verb === 'run' || verb === 'create') {
    * An image mount, as Docker 29 takes it and an older Docker refuses it.
    *
    * `imageMounts: false` is a Docker that does not know the type, in the
-   * daemon's own words; `failMount` is any other refusal a test wants, such as
-   * the source image missing. A Docker that takes one warns on stderr that it
-   * is experimental, and makes the container all the same.
+   * daemon's own words. A Docker that takes one warns on stderr that it is
+   * experimental, and makes the container all the same.
    */
   const field = (mount, key) => String(mount).split(',').find((one) => one.startsWith(`${key}=`))?.slice(key.length + 1);
   const images = typed.filter((one) => field(one, 'type') === 'image');
@@ -568,11 +676,6 @@ if (verb === 'run' || verb === 'create') {
     if (held.imageMounts === false) {
       keep();
       process.stderr.write('Error response from daemon: invalid mount config for type "image": mount type unknown\n');
-      process.exit(1);
-    }
-    if (typeof held.failMount === 'string') {
-      keep();
-      process.stderr.write(`${held.failMount}\n`);
       process.exit(1);
     }
     const absent = images.map((one) => field(one, 'source')).find((one) => !(held.images ?? []).includes(one));
@@ -598,7 +701,7 @@ if (verb === 'run' || verb === 'create') {
       process.stderr.write(`Error response from daemon: failed to populate volume ${source}: no space left on device\n`);
       process.exit(1);
     }
-    const volume = (held.volumes[source] ??= { files: [] });
+    const volume = (held.volumes[source] ??= { files: [], created: new Date().toISOString() });
     if (volume.files.length === 0 && (held.images ?? []).includes(image)) {
       volume.files.push(`from ${image} at ${target}`);
       (held.fills ??= []).push(source);

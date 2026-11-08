@@ -1,5 +1,6 @@
+import { posix } from '../../../tools/posix.ts';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +35,7 @@ const partOf = (id: string, version: string): Record<string, unknown> => ({
     'linux-arm64': { url: `https://example.test/${id}-arm64.tar.gz`, sha256: 'cd'.repeat(32) },
   },
   bin: [id],
+  paths: { [id]: id },
 });
 
 /** The goose part, the one part these cases bump or refuse. */
@@ -120,6 +122,54 @@ it('writes a file that reads, skipping the part whose version is not one version
   expect(parts[1]?.version).toBe('0.0.35');
 });
 
+/**
+ * An npm on `PATH` that records where it ran and with what, and writes a lock
+ * there, standing in for the one that resolves the graph.
+ */
+const NPM_STANDIN = `#!/bin/sh
+echo "$(pwd) $*" >> "$NPM_LOG"
+echo '{ "lockfileVersion": 3 }' > package-lock.json
+`;
+
+// POSIX-only: the stand-in npm is a shell script on `PATH`, which Windows does not run.
+it.skipIf(!posix)('writes the lock of every part with npm packages from the versions the file pins, and runs nothing', () => {
+  const at = mkdtempSync(join(tmpdir(), 'ahpd-bump-'));
+  loose.push(at);
+  mkdirSync(join(at, 'scripts'), { recursive: true });
+  mkdirSync(join(at, 'packages/computer/images'), { recursive: true });
+  mkdirSync(join(at, 'bin'), { recursive: true });
+  writeFileSync(join(at, 'scripts/parts-bump.mjs'), readFileSync(SCRIPT));
+  writeFileSync(join(at, 'bin/npm'), NPM_STANDIN, { mode: 0o755 });
+  const parts = [
+    GOOSE,
+    { id: 'claude', name: 'Claude', kind: 'npm', version: '0.85.1', requires: ['node'], packages: ['@agentclientprotocol/claude-agent-acp', '@anthropic-ai/claude-code@2.1.291'], bin: ['claude'] },
+    { id: 'ahpd', name: 'ahpd', kind: 'ahpd', version: '0.8.0', requires: ['node'], plugins: ['@ahpd/agent-cofold'], bin: ['ahpd'] },
+  ];
+  writeFileSync(join(at, 'packages/computer/images/versions.json'), `${JSON.stringify(parts, null, 2)}\n`);
+  const run = spawnSync(process.execPath, [join(at, 'scripts/parts-bump.mjs'), '--locks'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${join(at, 'bin')}:${process.env.PATH ?? ''}`, NPM_LOG: join(at, 'npm.log') },
+  });
+  expect(run.status, run.stdout + run.stderr).toBe(0);
+  expect(run.stdout).toBe('locked claude\nlocked ahpd\n');
+
+  const manifest = (id: string): unknown => JSON.parse(readFileSync(join(at, 'packages/computer/images/parts', id, 'package.json'), 'utf8'));
+  expect(manifest('claude')).toEqual({
+    name: 'ahpd-part-claude',
+    private: true,
+    dependencies: { '@agentclientprotocol/claude-agent-acp': '0.85.1', '@anthropic-ai/claude-code': '2.1.291' },
+  });
+  expect(manifest('ahpd')).toEqual({ name: 'ahpd-part-ahpd', private: true, dependencies: { '@ahpd/sdk': '0.8.0', '@ahpd/server': '0.8.0' } });
+  // A part with no npm packages has no lock.
+  expect(existsSync(join(at, 'packages/computer/images/parts/goose'))).toBe(false);
+  // npm wrote each lock in the part's own folder, resolving and running nothing.
+  expect(readFileSync(join(at, 'npm.log'), 'utf8')).toBe([
+    `${join(at, 'packages/computer/images/parts/claude')} install --package-lock-only --ignore-scripts --no-audit --no-fund`,
+    `${join(at, 'packages/computer/images/parts/ahpd')} install --package-lock-only --ignore-scripts --no-audit --no-fund`,
+    '',
+  ].join('\n'));
+});
+
 it('writes the moves a registry entry that is one version does make', () => {
   const at = bump([GOOSE], [entryOf('goose', '1.54.0')]);
 
@@ -127,4 +177,6 @@ it('writes the moves a registry entry that is one version does make', () => {
   const parts = readParts(at.file);
   expect(parts[0]?.version).toBe('1.54.0');
   expect(parts[0]?.archives?.['linux-arm64']?.sha256).toBe('ab'.repeat(32));
+  // The path of each command in the download is the entry's own, and stays.
+  expect(parts[0]?.paths).toEqual({ goose: 'goose' });
 });

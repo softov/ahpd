@@ -394,6 +394,15 @@ describe('the mcpServers key', () => {
     expect(held().mcpServers).toHaveProperty('new');
   });
 
+  // rootConfigWrite replaced: the protocol's reducer replaces each top-level
+  // key's value whole (types/channels-root/reducer.ts L26-L36 at spec v1.0.0).
+  it('writes the servers sent in place of the map under rootConfigWrite replaced, a <set> taken out with its credential', async () => {
+    put({ mcpServers: SERVERS, rootConfigWrite: 'replaced' });
+    const root = daemonRootConfig(optionsFrom({ configFile: config }));
+    await root.write({ mcpServers: { search: { type: 'stdio', command: 'mcp-search', env: { KEY: '<set>' } } } });
+    expect(held().mcpServers).toEqual({ search: { type: 'stdio', command: 'mcp-search' } });
+  });
+
   it('hands the written servers, credentials included, to the next session', async () => {
     put({ mcpServers: SERVERS });
     let next: unknown;

@@ -109,6 +109,16 @@ export interface ServiceSetting {
    * `dev.ahpd.daemon`.
    */
   name?: string;
+  /**
+   * The `PATH` the unit or the agent gives the daemon.
+   *
+   * `shell`, the default, is the `PATH` of the shell that ran `ahpd service
+   * install`, so the agents this host starts find their own runtimes.
+   * `manager` sets none, and the daemon runs on the manager's own, as VS Code's
+   * CLI writes its unit (cli/src/tunnels/service_linux.rs L192-L219 at
+   * 6b68d3fe).
+   */
+  path?: 'shell' | 'manager';
 }
 
 /**
@@ -362,6 +372,94 @@ export interface Config {
    * `branch` asks for the pull requests of the session's branch.
    */
   pullRequestLookup?: 'url' | 'branch';
+  /**
+   * How the folder shell integration points zsh at is taken when it is there
+   * already: `<tmp>/<user>-ahpd-zsh`, a name known in advance in a folder
+   * every user can write.
+   *
+   * `owned`, the default, takes only a folder of this user's that is not a
+   * link, since another user can make the name first and a link there would
+   * send zsh's four startup files wherever it points; anything else starts the
+   * shell with no integration. `asFound` sets the folder's mode on whatever is
+   * there and uses it, as VS Code does
+   * (src/vs/platform/terminal/node/terminalEnvironment.ts L219-L250 at
+   * 6b68d3fe).
+   */
+  zshFolder?: 'owned' | 'asFound';
+  /**
+   * How a plugin whose entry points outside its own package is taken.
+   *
+   * `refuse`, the default, refuses it, so a manifest cannot point its own
+   * package at somebody else's code. `warn` loads it with a warning on its row,
+   * as VS Code warns of an extension whose `main` is outside its folder and
+   * loads it (src/vs/platform/extensions/common/extensionValidator.ts L292-L302
+   * at 6b68d3fe).
+   */
+  pluginEntryOutside?: 'refuse' | 'warn';
+  /**
+   * How `daemon.json`, the record of the running daemon, is read by the verbs
+   * that find it.
+   *
+   * `fields`, the default, reads each field as it is there, so a record an
+   * older daemon wrote still names its daemon in the middle of an upgrade.
+   * `schemaVersion` ignores a record of another `schemaVersion` and leaves it
+   * where it is, as VS Code's CLI ignores a registry entry of another version
+   * (cli/src/tunnels/agent_host_registry.rs L36-L42, L217-L228 at 6b68d3fe).
+   */
+  daemonRecord?: 'fields' | 'schemaVersion';
+  /**
+   * How an object a client writes to root config is written.
+   *
+   * `merged`, the default, writes it over what the key holds: a `null` takes a
+   * key back, and a `<set>`, which is what a client was shown for a
+   * credential, leaves that credential as it is, so a client sends back one
+   * nested value beside the rest. `replaced` writes each top-level key's value
+   * whole, as the protocol's reducer applies `root/configChanged`
+   * (types/channels-root/reducer.ts L26-L36 at spec v1.0.0), a `<set>` taken
+   * out with the credential it stood for.
+   */
+  rootConfigWrite?: 'merged' | 'replaced';
+  /**
+   * The most one plugin icon may be, in bytes, whether a file, a `data:` URI or
+   * a fetched body: 32768 by default, upstream's 32 KB, which keeps the plugins
+   * and adapters lists small since every client receives each in full (plan
+   * plugin/58, Softov 2026-10-23). 0 sets no limit.
+   */
+  iconLimitBytes?: number;
+  /**
+   * How long one fetch of an `https:` plugin icon may take before the icon is
+   * given up: 10000 by default, VS Code's for an image request
+   * (`PROFILE_IMAGE_REQUEST_TIMEOUT_MS`,
+   * src/vs/platform/agentHost/node/codex/codexProfileImage.ts L17 at 6b68d3fe).
+   */
+  iconTimeoutMs?: number;
+  /**
+   * How long `ahpd start`, and a restart starting the next daemon, waits for
+   * it to say where it is listening before stopping it: 60000 by default,
+   * upstream's minute (plan daemon/24, Softov), where VS Code's CLI waits 30
+   * seconds for its agent host server (`STARTUP_TIMEOUT`,
+   * cli/src/tunnels/agent_host.rs L58-L59 at 6b68d3fe). 0 waits for ever.
+   */
+  readyTimeoutMs?: number;
+  /**
+   * How long `ahpd stop` gives the daemon to go before it is killed: 5000 by
+   * default, as VS Code's CLI gives its agent host server before escalating to
+   * a forced kill (cli/src/tunnels/agent_host.rs L736-L752 at 6b68d3fe). 0
+   * waits for ever.
+   */
+  stopWaitMs?: number;
+  /**
+   * How `ahpd configure` and `ahpd doctor` find a command on PATH.
+   *
+   * `runnable`, the default, takes a regular file with an execute bit, tries
+   * each `PATHEXT` extension and then the name as written on Windows, and skips
+   * an empty entry, so a setup reports what the machine installs and not what
+   * the folder it ran in holds. `findExecutable` is VS Code's lookup
+   * (src/vs/base/node/processes.ts L86-L140 at 6b68d3fe): any file that is not a
+   * folder, with every entry that is not absolute, the empty one among them,
+   * read against the working directory.
+   */
+  onPath?: 'runnable' | 'findExecutable';
   /**
    * How long a call a client runs may wait before it is failed.
    *

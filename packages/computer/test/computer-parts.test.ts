@@ -1,8 +1,10 @@
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { dockerfileOf, hashOf, readParts, tagOf, versionsPath } from '../src/parts.js';
+import { dockerfileOf, hashOf, lockOf, packageOf, partsLabel, partsSaid, readParts, tagOf, versionsPath } from '../src/parts.js';
 import type { AhpdSource, Part } from '../src/parts.js';
 
 /*
@@ -51,6 +53,7 @@ const archive = (over: Record<string, unknown> = {}): Record<string, unknown> =>
   version: '1.53.0',
   archives: { 'linux-x64': { url: 'https://example.test/goose.tar.gz', sha256: 'ab'.repeat(32) } },
   bin: ['goose'],
+  paths: { goose: 'goose' },
   ...over,
 });
 
@@ -124,12 +127,56 @@ it('refuses a file with two parts of one id', () => {
   expect(() => read([npm(), npm({ name: 'Other' })])).toThrow(/names codex twice/);
 });
 
-it('refuses a version that is a range rather than one version', () => {
-  for (const version of ['^2.1.1', '~2.1.1', '2.x', 'latest', '2.1']) {
-    expect(() => read([npm({ version })])).toThrow(/a range rather than one version/);
+it('refuses a version that is not one exact version, in VS Code\'s words', () => {
+  for (const version of ['^2.1.1', '~2.1.1', '2.x', 'latest', '2.1', '2.1.1+build.5']) {
+    expect(() => read([npm({ version })])).toThrow(`Refusing to use codex@${version} from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
   }
-  // A prerelease is one version, not a range.
+  expect(() => read([node(), npm({ packages: ['@openai/codex@0.1.0+build'] })]))
+    .toThrow(`Refusing to use @openai/codex@0.1.0+build from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
+  // A prerelease is one version, not a range, its own dashes included.
   expect(read([node(), npm({ version: '0.2.0-rc.2' })])[1]?.version).toBe('0.2.0-rc.2');
+  expect(read([node(), npm({ version: '0.2.0-rc-2' })])[1]?.version).toBe('0.2.0-rc-2');
+});
+
+/*
+ * An id, a command and an update variable land unquoted in the Dockerfile's
+ * shell lines, so each is held to the alphabet VS Code holds such a value to,
+ * and the id names an image as well.
+ */
+it('refuses an id, a command or an update that would reach a shell line as something else', () => {
+  expect(() => read([npm({ id: 'codex;id' })])).toThrow('Unsafe part id value for shell interpolation: "codex;id"');
+  expect(() => read([npm({ bin: ['codex acp'] })])).toThrow('Unsafe bin value for shell interpolation: "codex acp"');
+  expect(() => read([npm({ updates: { 'NO UPDATE': '1' } })])).toThrow('Unsafe update variable value for shell interpolation: "NO UPDATE"');
+  expect(() => read([npm({ updates: { NO_UPDATE: '1; id' } })])).toThrow('Unsafe update value value for shell interpolation: "1; id"');
+  expect(() => read([npm({ id: 'Codex' })])).toThrow(/has the id Codex, which an image name cannot hold: invalid reference format/);
+  expect(read([node(), npm({ updates: { CODEX_NO_UPDATE: '1' } })])[1]?.updates).toEqual({ CODEX_NO_UPDATE: '1' });
+});
+
+it('refuses a tag the reference grammar does not take', () => {
+  const long = read([node(), npm({ version: `1.0.0-${'a'.repeat(130)}` })])[1] as Part;
+  expect(() => tagOf(long)).toThrow(/invalid reference format/);
+});
+
+/*
+ * The download is picked by the architecture BuildKit says the build is for,
+ * and a build that says none is refused rather than given another one's.
+ */
+it('picks a download by TARGETARCH, and refuses a build that sets none', () => {
+  const part = read([archive({
+    archives: {
+      'linux-x64': { url: 'https://example.test/goose-x64.tar.gz', sha256: 'ab'.repeat(32) },
+      'linux-arm64': { url: 'https://example.test/goose-arm64.tar.gz', sha256: 'cd'.repeat(32) },
+    },
+  })])[0] as Part;
+  const file = dockerfileOf(part);
+  const picked = file.slice(file.indexOf('case "'), file.indexOf('esac;') + 'esac;'.length).replace(/\\\n/gu, '');
+  const run = (env: Record<string, string>) =>
+    spawnSync('sh', ['-c', `set -eu; ${picked} printf '%s' "$url"`], { encoding: 'utf8', env: { PATH: process.env.PATH ?? '', ...env } });
+
+  expect(run({ TARGETARCH: 'arm64' }).stdout).toBe('https://example.test/goose-arm64.tar.gz');
+  const unset = run({});
+  expect(unset.status).not.toBe(0);
+  expect(unset.stderr).toContain('TARGETARCH: is not set, which BuildKit sets to the architecture a build is for');
 });
 
 it('refuses an archive nothing can check', () => {
@@ -197,6 +244,16 @@ it('hashes the file, the ahpd part and the joined Dockerfile together, so either
 /** One tarball as a build context carries it, with bytes no test reads. */
 const tarball = (name: string): { name: string; bytes: Buffer } => ({ name, bytes: Buffer.from(name) });
 
+/** A part's two files, as `lockOf` reads them, standing in for the ones npm writes. */
+const lockWith = (text = '{}\n') => [
+  { name: 'package.json', bytes: Buffer.from('{ "private": true }\n') },
+  { name: 'package-lock.json', bytes: Buffer.from(text) },
+];
+
+/** The line a Dockerfile checks one file of a lock with. */
+const checked = (one: { name: string; bytes: Buffer }): string =>
+  `echo "${createHash('sha256').update(one.bytes).digest('hex')}  ${one.name}" | sha256sum --check --strict -`;
+
 /**
  * The `node` tag a Dockerfile copies from.
  *
@@ -234,15 +291,22 @@ it('builds the node part as a download, with no launcher of its own', () => {
   expect(file).toMatch(/FROM scratch\nCOPY --from=fetch \/opt\/ahpd\/node \/opt\/ahpd\/node$/);
 });
 
-it('builds an npm part on the node part, at the version the file pins', () => {
+it('builds an npm part on the node part, from its lock, each file checked by its sum', () => {
   const part = read([node(), npm()])[1] as Part;
-  const file = dockerfileOf(part);
+  const lock = lockWith();
+  const file = dockerfileOf(part, undefined, lock);
 
   // One Node serves them all, copied in rather than fetched a second time.
   expect(file).toContain(`COPY --from=${nodeTag()} /opt/ahpd/node /opt/ahpd/node`);
   expect(file).toContain('ENV PATH="/opt/ahpd/node/bin:${PATH}"');
-  expect(file).toContain('npm install --prefix /opt/ahpd/codex');
-  expect(file).toContain('@agentclientprotocol/codex-acp@2.1.1');
+  // The two files are copied in and checked, then `npm ci` installs what they lock.
+  expect(file).toContain('COPY package.json package-lock.json /opt/ahpd/codex/');
+  expect(file).toContain(`RUN cd /opt/ahpd/codex \\\n && ${checked(lock[0]!)} \\\n && ${checked(lock[1]!)} \\\n && npm ci --no-audit --no-fund --loglevel=error`);
+  expect(file).not.toContain('npm install');
+  // A lock that moves is a Dockerfile that moves, so the tag the image is built at moves too.
+  expect(tagOf(part, undefined, file)).not.toBe(tagOf(part, undefined, dockerfileOf(part, undefined, lockWith('{ "moved": true }\n'))));
+  // A part with npm packages is never written without its lock.
+  expect(() => dockerfileOf(part)).toThrow(/installs its npm packages from its package\.json and package-lock\.json, which is what lockOf\(\) answers/);
   // A script bin runs on the part's Node; the launcher holds what the build found.
   expect(file).toContain(`run=/opt/ahpd/codex/node_modules/.bin/codex-acp; case "$(head -c 2 /opt/ahpd/codex/node_modules/.bin/codex-acp)" in '#!') run="/opt/ahpd/node/bin/node /opt/ahpd/codex/node_modules/.bin/codex-acp";; esac`);
   expect(file).toContain(`printf 'exec %s "$@"\\n' "$run" >> /opt/ahpd/codex/bin/codex-acp`);
@@ -257,10 +321,8 @@ it('installs a package pinned at its own version, and moves the tag with it', ()
     packages: ['@agentclientprotocol/claude-agent-acp', '@anthropic-ai/claude-code@2.1.291'],
     bin: ['claude-agent-acp', 'claude'],
   })])[1] as Part;
-  const file = dockerfileOf(part);
+  const file = dockerfileOf(part, undefined, lockWith());
 
-  expect(file).toContain('@agentclientprotocol/claude-agent-acp@0.85.1 @anthropic-ai/claude-code@2.1.291');
-  expect(file).not.toContain('claude-code@2.1.291@');
   // Each bin gets its launcher, the native `claude` included.
   expect(file).toContain('> /opt/ahpd/claude/bin/claude-agent-acp');
   expect(file).toContain('> /opt/ahpd/claude/bin/claude;');
@@ -269,7 +331,7 @@ it('installs a package pinned at its own version, and moves the tag with it', ()
   expect(tagOf(part, undefined, file)).toMatch(/^ahpd-part\/claude:0\.85\.1-2\.1\.291-[0-9a-f]{12}$/u);
 
   expect(() => read([node(), npm({ packages: ['@anthropic-ai/claude-code@^2.1.291'] })]))
-    .toThrow(/the package @anthropic-ai\/claude-code@\^2.1.291, whose version is a range/);
+    .toThrow(`Refusing to use @anthropic-ai/claude-code@^2.1.291 from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
 });
 
 it('installs an archive part\'s npm packages beside its download, each at its own version', () => {
@@ -284,14 +346,20 @@ it('installs an archive part\'s npm packages beside its download, each at its ow
       'linux-arm64': { url: 'https://example.test/amp-acp-arm64.tar.gz', sha256: 'cd'.repeat(32) },
     },
     bin: ['amp-acp', 'amp'],
+    paths: { 'amp-acp': 'amp-acp' },
   })])[1] as Part;
-  const file = dockerfileOf(part);
+  const file = dockerfileOf(part, undefined, lockWith());
 
   expect(file).toContain(`COPY --from=${nodeTag()} /opt/ahpd/node /opt/ahpd/node`);
-  expect(file).toContain('RUN npm install --prefix /opt/ahpd/amp --no-audit --no-fund --loglevel=error @ampcode/cli@0.0.1791273659-g33d612');
-  // A bin npm installed is written from `node_modules/.bin`, and the rest found in the archive.
-  expect(file).toContain('elif test -e /opt/ahpd/amp/node_modules/.bin/amp; then run=/opt/ahpd/amp/node_modules/.bin/amp;');
-  expect(file).toContain('found=$(find /opt/ahpd/amp -name amp-acp');
+  expect(file).toContain('COPY package.json package-lock.json /opt/ahpd/amp/');
+  expect(file).toContain('npm ci --no-audit --no-fund --loglevel=error');
+  // The packages are installed before the download unpacks beside them.
+  expect(file.indexOf('npm ci')).toBeLessThan(file.indexOf('curl --fail'));
+  // A command with no path is the one npm installed, written from
+  // `node_modules/.bin`, and the other runs from its path in the download.
+  expect(file).toContain('test -e /opt/ahpd/amp/node_modules/.bin/amp || { echo "the amp download holds no node_modules/.bin/amp to run" >&2; exit 1; }; run=/opt/ahpd/amp/node_modules/.bin/amp;');
+  expect(file).toContain('test -x /opt/ahpd/amp/amp-acp || { echo "the amp download holds no amp-acp to run" >&2; exit 1; }');
+  expect(file).toContain('"/opt/ahpd/amp/amp-acp" >> /opt/ahpd/amp/bin/amp-acp');
   expect(tagOf(part)).toBe('ahpd-part/amp:0.9.0-0.0.1791273659-g33d612');
   expect(tagOf(part, undefined, file)).toMatch(/^ahpd-part\/amp:0\.9\.0-0\.0\.1791273659-g33d612-[0-9a-f]{12}$/u);
 
@@ -306,6 +374,34 @@ it('ships a claude part that holds the claude command next to the ACP adapter', 
   expect(claude?.packages?.[1]).toMatch(/^@anthropic-ai\/claude-code@\d+\.\d+\.\d+$/);
 });
 
+/** What a `package.json` and a `package-lock.json` hold that the check below reads. */
+type Locked = {
+  dependencies?: Record<string, string>;
+  packages?: Record<string, { version?: string; dependencies?: Record<string, string> }>;
+};
+
+/*
+ * Each shipped part that installs npm packages is installed from its lock, and
+ * its `package.json` pins the versions the file names, as VS Code's build test
+ * holds each agent SDK's pin and its lock in lockstep (build/agent-sdk/README.md
+ * L96-L97 at 6b68d3fe).
+ */
+it('keeps each shipped part lock in step with the versions the file names', () => {
+  const locked = readParts(versionsPath()).filter((one) => one.kind === 'ahpd' || one.packages !== undefined);
+  expect(locked.length).toBeGreaterThan(0);
+  for (const part of locked) {
+    const [manifest, lock] = (lockOf(part) ?? []).map((one) => JSON.parse(one.bytes.toString('utf8')) as Locked);
+    const pinned = part.kind === 'ahpd'
+      ? { '@ahpd/sdk': part.version, '@ahpd/server': part.version }
+      : Object.fromEntries((part.packages ?? []).map((one) => [packageOf(one).name, packageOf(one).version ?? part.version]));
+    expect(manifest?.dependencies, part.id).toEqual(pinned);
+    expect(lock?.packages?.['']?.dependencies, part.id).toEqual(pinned);
+    for (const [name, version] of Object.entries(pinned)) {
+      expect(lock?.packages?.[`node_modules/${name}`]?.version, `${part.id} ${name}`).toBe(version);
+    }
+  }
+});
+
 it('turns a CLI own update off in the launcher, not in the machine', () => {
   const one = read([node(), npm({
     id: 'copilot',
@@ -318,16 +414,23 @@ it('turns a CLI own update off in the launcher, not in the machine', () => {
 
   // The launcher sets it, so every run of the part gets it and the machine's
   // own environment says nothing about this one CLI.
-  expect(dockerfileOf(one)).toContain(`'#!/bin/sh' 'export COPILOT_AUTO_UPDATE=false' > /opt/ahpd/copilot/bin/copilot`);
-  expect(dockerfileOf(one)).not.toContain('ENV COPILOT_AUTO_UPDATE');
+  expect(dockerfileOf(one, undefined, lockWith())).toContain(`'#!/bin/sh' 'export COPILOT_AUTO_UPDATE=false' > /opt/ahpd/copilot/bin/copilot`);
+  expect(dockerfileOf(one, undefined, lockWith())).not.toContain('ENV COPILOT_AUTO_UPDATE');
 });
 
-it('builds an archive part by downloading it, and finds its binary wherever it sits', () => {
+/*
+ * An archive part runs each command from the path its entry names in the
+ * download, the publisher's layout for that version, as VS Code knows each
+ * agent SDK's layout rather than searching it (build/agent-sdk/README.md L80
+ * at 6b68d3fe).
+ */
+it('builds an archive part by downloading it, and runs each command from the path its entry names', () => {
   const one = read([archive({
     archives: {
       'linux-x64': { url: 'https://example.test/goose.tar.gz', sha256: 'ab'.repeat(32) },
       'linux-arm64': { url: 'https://example.test/goose-arm64.tar.bz2', sha256: 'cd'.repeat(32) },
     },
+    paths: { goose: 'goose-x86_64/goose' },
   })])[0] as Part;
   const file = dockerfileOf(one);
 
@@ -337,13 +440,33 @@ it('builds an archive part by downloading it, and finds its binary wherever it s
   expect(file).toContain('how=-xjf;;');
   expect(file).toContain('how=-xzf;;');
   expect(file).toContain('tar "${how}" part -C /opt/ahpd/goose');
-  // The publisher's own layout is the build's problem, not this file's: the
-  // launcher holds the path the find found.
-  expect(file).toContain("found=$(find /opt/ahpd/goose -name goose \\( -type f -o -type l \\) -perm -u+x");
-  expect(file).toContain(`echo "the goose archive holds no goose to run" >&2`);
-  // devin ships `bin/devin`, which is where its launcher goes, so an executable
-  // already at that path is left alone rather than exec'd into itself.
-  expect(file).toContain('if test -x /opt/ahpd/goose/bin/goose; then :; else found=$(find');
+  // The launcher runs the named path, and a download without it fails the build.
+  expect(file).toContain('test -x /opt/ahpd/goose/goose-x86_64/goose || { echo "the goose download holds no goose-x86_64/goose to run" >&2; exit 1; }');
+  expect(file).toContain('"/opt/ahpd/goose/goose-x86_64/goose" >> /opt/ahpd/goose/bin/goose');
+  expect(file).not.toContain('find ');
+
+  // A command the publisher put at `bin/<command>` is its own launcher, so
+  // nothing is written over it.
+  const devin = dockerfileOf(read([archive({
+    id: 'devin',
+    name: 'Devin',
+    archives: {
+      'linux-x64': { url: 'https://example.test/devin.tar.gz', sha256: 'ab'.repeat(32) },
+      'linux-arm64': { url: 'https://example.test/devin-arm64.tar.gz', sha256: 'cd'.repeat(32) },
+    },
+    bin: ['devin'],
+    paths: { devin: 'bin/devin' },
+  })])[0] as Part);
+  expect(devin).toContain('test -x /opt/ahpd/devin/bin/devin || { echo "the devin download holds no bin/devin to run" >&2; exit 1; }');
+  expect(devin).not.toContain('> /opt/ahpd/devin/bin/devin');
+});
+
+it('refuses an archive part that names no path for a command, or a path outside its download', () => {
+  expect(() => read([archive({ paths: undefined })])).toThrow(/names no path in its download for goose/);
+  expect(() => read([archive({ paths: { goose: '../goose' } })])).toThrow(/has the path \.\.\/goose for goose, which is not a path in its download/);
+  expect(() => read([archive({ paths: { goose: '/usr/bin/goose' } })])).toThrow(/which is not a path in its download/);
+  expect(() => read([archive({ paths: { goose: 'goose', other: 'other' } })])).toThrow(/has a path for other, which its bin does not name/);
+  expect(() => read([node(), npm({ paths: { 'codex-acp': 'codex-acp' } })])).toThrow(/names paths, which only an archive part's download has/);
 });
 
 it('refuses an archive part whose file gives no download for a platform', () => {
@@ -353,9 +476,11 @@ it('refuses an archive part whose file gives no download for a platform', () => 
 
 it('builds the ahpd part from npm with its own plugins inside it', () => {
   const part = read([node(), ahpd()])[1] as Part;
-  const file = dockerfileOf(part, { from: 'npm', version: '0.8.0', hash: 'abcdef123456' });
+  const file = dockerfileOf(part, { from: 'npm', version: '0.8.0', hash: 'abcdef123456' }, lockWith());
 
-  expect(file).toContain('@ahpd/sdk@0.8.0 @ahpd/server@0.8.0');
+  // `@ahpd/sdk` and `@ahpd/server` at the part's version are what its lock holds.
+  expect(file).toContain('COPY package.json package-lock.json /opt/ahpd/ahpd/');
+  expect(file).toContain('npm ci --no-audit --no-fund --loglevel=error');
   // The nested backends are installed by the command they will be run through,
   // because an inner host resolves a package only under its own prefix.
   expect(file).toContain('AHPD_PLUGIN_ROOT=/opt/ahpd/ahpd/plugins /opt/ahpd/ahpd/node_modules/.bin/ahpd plugin install --no-enable @ahpd/agent-cofold@0.8.0 @ahpd/agent-pi@0.8.0');
@@ -406,14 +531,15 @@ it('writes every Dockerfile as instructions docker would accept', () => {
   };
   const cases = [
     [node()], [node(), npm()], [archive({ archives: both })],
-    // Two launchers, because a part may name more than one.
-    [archive({ archives: both, bin: ['goose', 'goose-helper'] })],
+    // Two launchers, because a part may name more than one, and one of them the
+    // publisher's own at `bin/<command>`.
+    [archive({ archives: both, bin: ['goose', 'goose-helper'], paths: { goose: 'goose', 'goose-helper': 'bin/goose-helper' } })],
   ] as const;
   const ahpdPart = read([node(), ahpd()])[1] as Part;
 
   const files = [
-    ...cases.map((parts) => dockerfileOf(read([...parts])[parts.length - 1] as Part)),
-    dockerfileOf(ahpdPart, { from: 'npm', version: '0.8.0', hash: 'abcdef123456' }),
+    ...cases.map((parts) => dockerfileOf(read([...parts])[parts.length - 1] as Part, undefined, lockWith())),
+    dockerfileOf(ahpdPart, { from: 'npm', version: '0.8.0', hash: 'abcdef123456' }, lockWith()),
     dockerfileOf(ahpdPart, workspace),
   ];
 
@@ -426,4 +552,20 @@ it('writes every Dockerfile as instructions docker would accept', () => {
       expect(known, instruction).toContain(word);
     }
   }
+});
+
+/*
+ * A machine's parts label is JSON, as the dev container tooling writes its
+ * structured label and VS Code reads a container's labels as JSON
+ * (devContainerAgentHostService.ts L967-L976 at 6b68d3fe); a label an older
+ * daemon wrote, a comma list, is read too, as VS Code reads a container's
+ * older folder label beside the current one (L977-L981).
+ */
+it('writes the parts label as JSON, and reads it and an older daemon\'s comma list back', () => {
+  const written = partsLabel([{ id: 'codex', tag: 'ahpd-part/codex:2.1.1', version: '2.1.1' }], ['claude']);
+  expect(JSON.parse(written)).toEqual([{ id: 'codex', version: '2.1.1' }, { id: 'claude', version: 'host' }]);
+  expect(partsSaid(written)).toEqual(['codex', 'claude']);
+  expect(partsSaid('codex@2.1.1,claude@host')).toEqual(['codex', 'claude']);
+  expect(partsSaid(JSON.stringify([{ id: 'node' }]))).toEqual(['node']);
+  expect(partsSaid(undefined)).toEqual([]);
 });

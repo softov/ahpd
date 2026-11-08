@@ -189,6 +189,26 @@ export const doorOf = (options: DoorOptions): Door => {
 /** The sentence a refused token is answered with, on the handshake and on a plain request. */
 const TOKEN_REQUIRED = 'A connection token is required';
 
+/**
+ * The challenge every 401 of this host carries, in its `WWW-Authenticate`.
+ *
+ * HTTP has the server that answers 401 send at least one challenge for the
+ * resource (RFC 9110 section 11.6.1), and the bearer scheme words it (RFC 6750
+ * section 3): the realm alone for a request that presented no credential, and
+ * `error="invalid_token"` beside it for one that presented a credential this
+ * host does not take. The realm's value, `ahpd`, is this host's own name for
+ * the scope a token opens.
+ * https://www.rfc-editor.org/rfc/rfc6750#section-3
+ */
+export const bearerChallenge = (presented: boolean): string =>
+  (presented ? 'Bearer realm="ahpd", error="invalid_token"' : 'Bearer realm="ahpd"');
+
+/** The challenge for a request, by whether it carried a token in its query or its `Authorization`. */
+const challengeFor = (url: string | undefined, authorization: string | null): string => {
+  const held = presented(url, authorization);
+  return bearerChallenge(held !== undefined && held !== '');
+};
+
 /** The sentence an admitted plain request is answered with. */
 const SPEAKS_AHP = 'ahpd speaks the Agent Host Protocol over WebSocket';
 
@@ -199,9 +219,14 @@ const SPEAKS_AHP = 'ahpd speaks the Agent Host Protocol over WebSocket';
  */
 const PLAIN_HEADERS = { 'content-type': 'text/plain', 'access-control-allow-origin': '*' } as const;
 
-/** The status and the body of a plain request's answer: 401 for a refused token, 426 for an admitted one. */
-const plainVerdict = (admission: Admission): { status: number; body: string } =>
-  (admission.admitted ? { status: 426, body: SPEAKS_AHP } : { status: 401, body: TOKEN_REQUIRED });
+/**
+ * The status, the body and the headers of a plain request's answer: 401 with
+ * its challenge for a refused token, 426 for an admitted one.
+ */
+const plainVerdict = (admission: Admission, challenge: string): { status: number; body: string; headers: Record<string, string> } =>
+  (admission.admitted
+    ? { status: 426, body: SPEAKS_AHP, headers: { ...PLAIN_HEADERS } }
+    : { status: 401, body: TOKEN_REQUIRED, headers: { ...PLAIN_HEADERS, 'www-authenticate': challenge } });
 
 /**
  * The answer to a plain request on a WebSocket port.
@@ -210,8 +235,9 @@ const plainVerdict = (admission: Admission): { status: number; body: string } =>
  * would admit it, so a client can test a token without opening a socket.
  */
 export const plainAnswer = async (door: Door, request: Request): Promise<Response> => {
-  const { status, body } = plainVerdict(await door(request.url, request.headers.get('authorization')));
-  return new Response(body, { status, headers: PLAIN_HEADERS });
+  const authorization = request.headers.get('authorization');
+  const { status, body, headers } = plainVerdict(await door(request.url, authorization), challengeFor(request.url, authorization));
+  return new Response(body, { status, headers });
 };
 
 export async function listen(options: ListenOptions, onConnect: OnConnect): Promise<Listener> {
@@ -247,7 +273,10 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         // HTTP rather than handed a socket that closes on its first message.
         const identity = await identityOf(request.url, request.headers.get('authorization'));
         if (!identity.admitted) {
-          return new Response(TOKEN_REQUIRED, { status: 401 });
+          return new Response(TOKEN_REQUIRED, {
+            status: 401,
+            headers: { 'www-authenticate': challengeFor(request.url, request.headers.get('authorization')) },
+          });
         }
         // What the door decided rides on the socket, because Bun's `open` is
         // handed the socket and not the request this answer came from.
@@ -333,7 +362,10 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
       if (!upgrading(request)) return options.request === undefined ? plainAnswer(identityOf, request) : options.request(request);
       const identity = await identityOf(request.url, request.headers.get('authorization'));
       if (!identity.admitted) {
-        return new Response(TOKEN_REQUIRED, { status: 401 });
+        return new Response(TOKEN_REQUIRED, {
+          status: 401,
+          headers: { 'www-authenticate': challengeFor(request.url, request.headers.get('authorization')) },
+        });
       }
       // A unix socket has a path rather than an address, and Deno reports the
       // transport that tells them apart.
@@ -410,7 +442,7 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   // closed for no stated reason.
   const verifyClient = (
     info: { req: NodeRequest },
-    accept: (allow: boolean, code?: number, message?: string) => void,
+    accept: (allow: boolean, code?: number, message?: string, headers?: Record<string, string>) => void,
   ): void => {
     void identityOf(info.req.url, info.req.headers.authorization ?? null).then((identity) => {
       if (identity.admitted) {
@@ -418,7 +450,9 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
         accept(true);
         return;
       }
-      accept(false, 401, TOKEN_REQUIRED);
+      accept(false, 401, TOKEN_REQUIRED, {
+        'WWW-Authenticate': challengeFor(info.req.url, info.req.headers.authorization ?? null),
+      });
     });
   };
   /*
@@ -435,8 +469,8 @@ export async function listen(options: ListenOptions, onConnect: OnConnect): Prom
   const plain = createServer(options.request === undefined
     ? (request, response) => {
       void identityOf(request.url, request.headers.authorization ?? null).then((admission) => {
-        const { status, body } = plainVerdict(admission);
-        response.writeHead(status, PLAIN_HEADERS);
+        const { status, body, headers } = plainVerdict(admission, challengeFor(request.url, request.headers.authorization ?? null));
+        response.writeHead(status, headers);
         response.end(body);
       });
     }

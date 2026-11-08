@@ -25,17 +25,21 @@ export interface FileEnablementOptions {
 }
 
 /**
- * What the state file holds.
+ * What the state file holds: the global decisions and the decisions of each
+ * working directory, named as VS Code's agent host persists its own.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostCustomizationEnablementService.ts#L29-L32
  *
- * Versioned, so a later shape is recognised rather than guessed at. A decision
- * that equals what it inherits is not written, so both records hold decisions
- * and nothing that only repeats another one - which is what makes an empty file
- * and a file that is not there the same answer.
+ * Versioned, so a later shape is recognised rather than guessed at: version 2
+ * names the directories' record `workingDirectories`, and version 1, which
+ * named it `folders`, is read as the same record. A decision that equals what
+ * it inherits is not written, so both records hold decisions and nothing that
+ * only repeats another one - which is what makes an empty file and a file that
+ * is not there the same answer.
  */
 interface StateFile {
-  version: 1;
+  version: 2;
   global: Record<string, boolean>;
-  folders: Record<string, Record<string, boolean>>;
+  workingDirectories: Record<string, Record<string, boolean>>;
 }
 
 /** One record of booleans, with everything that is not one dropped. */
@@ -54,7 +58,7 @@ export function fileEnablement(options: FileEnablementOptions): EnablementStore 
   /** What the store holds now, written whole: a file is replaced, never patched. */
   const save = (): void => {
     const held = store.held();
-    const file: StateFile = { version: 1, global: held.global, folders: held.folders };
+    const file: StateFile = { version: 2, global: held.global, workingDirectories: held.folders };
     try {
       writeJsonAtomic(options.file, file);
     }
@@ -77,13 +81,13 @@ export function fileEnablement(options: FileEnablementOptions): EnablementStore 
     told(`Could not read ${options.file}: ${reason(read.error)}`);
   }
   else if (read.ok) {
-    const held = bag(read.value) as Partial<StateFile>;
-    if (held.version !== 1) {
+    const held = bag(read.value);
+    if (held.version !== 1 && held.version !== 2) {
       told(`${options.file} is not a customization state this version can read, and was left alone`);
     }
     else {
       for (const [key, on] of Object.entries(decisionsIn(held.global))) store.setGlobal(key, on);
-      for (const [dir, decisions] of Object.entries(bag(held.folders))) {
+      for (const [dir, decisions] of Object.entries(bag(held.version === 1 ? held.folders : held.workingDirectories))) {
         for (const [key, on] of Object.entries(decisionsIn(decisions))) store.setFolder(dir, key, on);
       }
     }

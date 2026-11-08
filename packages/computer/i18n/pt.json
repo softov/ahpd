@@ -14,7 +14,7 @@
       "description": "Argumentos que vêm antes dos dele, para um wrapper ou um contexto."
     },
     "ssh": {
-      "description": "Máquinas que este host alcança por ssh. Cada uma é listada, não criada: nada deste host está nela, então nenhuma pode ser criada, iniciada ou removida daqui."
+      "description": "Máquinas que este host alcança por ssh. Cada uma é listada, não criada, então nenhuma pode ser criada, iniciada ou removida daqui; uma sessão nela inicia seu host com o ahpd que este host instala na pasta do próprio usuário lá."
     },
     "libvirt": {
       "description": "Como um perfil com runtime libvirt cria suas máquinas: cada uma é uma VM no libvirt do seu servidor, um clone ligado de um disco modelo, alcançada por ssh através desse servidor."
@@ -32,7 +32,7 @@
       "description": "Um limite de memória para cada máquina que este host cria."
     },
     "max": {
-      "description": "Quantas podem existir ao mesmo tempo."
+      "description": "Quantas máquinas podem existir ao mesmo tempo quando a ferramenta do agente pede mais uma."
     },
     "label": {
       "description": "O label que toda máquina leva."
@@ -62,7 +62,7 @@
       "description": "Se uma part pode ser montada da sua própria imagem. false monta cada part de um volume preenchido uma vez a partir dela."
     },
     "images": {
-      "description": "Os padrões de imagem de que uma máquina pode ser criada."
+      "description": "As imagens de que uma máquina pode ser criada, como escopos de imagem do containers-policy.json: docker.io/library/node:22 uma imagem, docker.io/library/node um repositório, ghcr.io/acme um namespace, ghcr.io um registro, *.example.com seus subdomínios."
     },
     "devcontainer": {
       "description": "A CLI do Dev Container, como launcher e como criador de máquinas, e as pastas de que ela pode criar uma; false desliga todas as rotas de dev container."

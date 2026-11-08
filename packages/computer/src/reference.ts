@@ -1,5 +1,5 @@
 /**
- * An image reference, and the patterns an operator allows.
+ * An image reference, and the scopes an operator allows.
  *
  * A deployment that says which images a machine may be made from is saying
  * what a machine may *be*, next to what `bodyMounts` says it may *see*: an
@@ -7,11 +7,18 @@
  * mounted into it, so on a host that shares an agent configuration inwards the
  * image is the thing being trusted.
  *
- * Matching is by component and never by string, because the string has traps
- * the grammar does not: `ghcr.io/acme` is a prefix of `ghcr.io/acme-evil` and
- * is not a prefix of anything under `acme`. Splitting on what the reference
- * actually is - a registry, a path, and a tag or a digest - makes the obvious
- * pattern the correct one.
+ * Each entry is a scope of the image policy the containers tools read,
+ * containers-policy.json's `docker:` transport: a named reference in its fully
+ * expanded form with a tag or a digest is one image, and a prefix of one names
+ * a repository, a namespace or a registry host, its port included; `*.` before
+ * a domain names every subdomain of it.
+ * https://github.com/containers/image/blob/main/docs/containers-policy.json.5.md
+ *
+ * An image is matched by its own scopes, as containers/image looks one up: its
+ * identity, its repository, each namespace above it, its registry, and each
+ * wildcard of the registry's domain. Matching whole scopes rather than string
+ * prefixes is what keeps `ghcr.io/acme` from allowing `ghcr.io/acme-evil`.
+ * https://github.com/containers/image/blob/main/docker/policyconfiguration/naming.go
  */
 
 /** Docker Hub, under every name it answers to. */
@@ -37,19 +44,15 @@ export interface Reference {
  * a dot or a colon, or when it is exactly `localhost`.
  */
 const isRegistry = (word: string): boolean =>
-  word === 'localhost' || word.includes('.') || word.includes(':')
-  // A pattern says "any registry" in the registry's own position, and no real
-  // reference has a `*` in it, so reading one here costs nothing.
-  || word === '*' || word === '**';
+  word === 'localhost' || word.includes('.') || word.includes(':');
 
 /**
  * One reference, parsed and normalised.
  *
  * `node:22`, `library/node:22`, `docker.io/library/node:22` and
  * `index.docker.io/library/node:22` are one image on a real daemon - same
- * digest - so they are one `Reference` here. Without that, a list allowing one
- * spelling refuses the others, which fails closed but teaches an operator that
- * the feature is broken.
+ * digest - so they are one `Reference` here, the fully expanded form the scopes
+ * are written in.
  */
 export const referenceOf = (said: string): Reference => {
   let rest = said;
@@ -85,72 +88,78 @@ export const referenceOf = (said: string): Reference => {
 };
 
 /**
- * A pattern an operator wrote, checked for the one shape that is a trap.
- *
- * A `*` inside a component - `node:22-*` - is partial matching within a name,
- * which is where the subtle holes live, and nothing has asked for it. Refused
- * here rather than read as a literal, so a bad option is a startup error and
- * not a rule that silently matches nothing.
+ * One image's identity, the scope of that image alone: its expanded name with
+ * its digest, or with its tag, `latest` where it names neither, as Docker
+ * reads a missing tag.
  */
-export const patternOf = (said: string): Reference => {
-  /*
-   * A bare star is everything, spelled the way somebody would guess.
-   *
-   * Without this it would parse as a name, and a one-component name on the Hub
-   * is an official image - so `*` would quietly mean "any official image",
-   * which is not what anybody writing it means. A star in the registry's own
-   * position is the other half: a namespace wherever it is published.
-   */
-  if (said === '*' || said === '**') return { registry: '*', path: ['**'] };
-  const held = referenceOf(said);
-  const words = [held.registry, ...held.path, ...(held.tag === undefined ? [] : [held.tag])];
-  for (const word of words) {
-    if (word.includes('*') && word !== '*' && word !== '**') {
-      throw new Error(`${said} has a * inside ${word}; a * stands for a whole part of a name, as in node:* or ghcr.io/acme/**`);
-    }
-  }
-  return held;
+export const identityOf = (image: Reference): string => {
+  const name = `${image.registry}/${image.path.join('/')}`;
+  return image.digest === undefined ? `${name}:${image.tag ?? 'latest'}` : `${name}@${image.digest}`;
 };
 
 /**
- * Whether a pattern's path covers a reference's, component by component.
- *
- * `*` is one component and `**` is any number of them, which matters because
- * registry paths nest: an operator who allows a namespace should not have to
- * know how deep the repositories under it go.
+ * Every scope one image is matched by, most specific first: its identity, its
+ * repository and each namespace above it down to its registry, then `*.` and
+ * each domain the registry's host is under, its port left off.
  */
-const covers = (pattern: string[], path: string[]): boolean => {
-  if (pattern.length === 0) return path.length === 0;
-  const [head, ...tail] = pattern;
-  if (head === '**') {
-    // Every split, shortest first: `**` may stand for nothing at all.
-    for (let at = 0; at <= path.length; at++) {
-      if (covers(tail, path.slice(at))) return true;
-    }
-    return false;
+const scopesOf = (image: Reference): string[] => {
+  const scopes = [identityOf(image)];
+  let name = `${image.registry}/${image.path.join('/')}`;
+  for (;;) {
+    scopes.push(name);
+    const slash = name.lastIndexOf('/');
+    if (slash === -1) break;
+    name = name.slice(0, slash);
   }
-  if (path.length === 0) return false;
-  if (head !== '*' && head !== path[0]) return false;
-  return covers(tail, path.slice(1));
+  const colon = name.indexOf(':');
+  let host = colon === -1 ? name : name.slice(0, colon);
+  for (let dot = host.indexOf('.'); dot !== -1; dot = host.indexOf('.')) {
+    host = host.slice(dot + 1);
+    scopes.push(`*.${host}`);
+  }
+  return scopes;
 };
 
 /**
- * Whether one pattern allows one image.
+ * A scope an operator wrote, checked against the forms the policy reads.
  *
- * A pattern that names no tag allows any of them: Docker reads a missing tag
- * as `latest`, but an operator who writes `node` means the image rather than
- * one tag of it. A reference pinned by digest alone is matched on its
- * repository for the same reason - the name is what the pattern governs.
+ * The policy names an image in its fully expanded form, so `busybox` and
+ * `docker.io/busybox` scope nothing: `docker.io/library/busybox` does. A
+ * registry alone is a host name, with a dot or `localhost`, and a port where
+ * it has one: a lone `node:22` is an image's name and tag by Docker's
+ * grammar, never a registry. A `*` is a scope only as the first label of a
+ * domain, as `*.example.com`. A scope in any other form would match no image,
+ * so it is refused here, and a bad option is a startup error rather than a
+ * rule an operator meant something by that matches nothing.
  */
-export const allows = (pattern: Reference, image: Reference): boolean => {
-  if (pattern.registry !== '*' && pattern.registry !== image.registry) return false;
-  if (!covers(pattern.path, image.path)) return false;
-  if (pattern.tag === undefined || pattern.tag === '*') return true;
-  return pattern.tag === image.tag;
+export const scopeOf = (said: string): string => {
+  const refuse = (): never => {
+    throw new Error(`${said} is not an image scope: name an image in its fully expanded form, such as docker.io/library/node:22, or a repository, a namespace or a registry of one, or every subdomain of a domain, as *.example.com`);
+  };
+  if (said.startsWith('*.')) {
+    const domain = said.slice(2);
+    if (domain === '' || domain.includes('*') || domain.includes('/') || domain.includes(':')) refuse();
+    return said;
+  }
+  if (said.includes('*')) refuse();
+  const slash = said.indexOf('/');
+  const registry = slash === -1 ? said : said.slice(0, slash);
+  const host = registry.split(':')[0] ?? '';
+  if (!(host === 'localhost' || host.includes('.')) || (HUB.has(registry) && registry !== 'docker.io')) refuse();
+  if (registry === 'docker.io' && slash !== -1 && !said.slice(slash + 1).includes('/')) refuse();
+  return said;
 };
 
-/** Whether any of them allows it. An empty list allows nothing. */
-export const allowedBy = (patterns: Reference[], said: string): boolean => {
-  const image = referenceOf(said);
-  return patterns.some((one) => allows(one, image));
+/** Whether a scope names one image, by a tag or a digest, rather than a repository, a namespace, a registry or a domain. */
+export const namesOneImage = (scope: string): boolean => {
+  if (scope.startsWith('*.')) return false;
+  if (scope.includes('@')) return true;
+  const slash = scope.lastIndexOf('/');
+  return slash !== -1 && scope.slice(slash + 1).includes(':');
+};
+
+/** Whether any of the scopes allows the image. An empty list allows nothing. */
+export const allowedBy = (scopes: string[], said: string): boolean => {
+  const mine = new Set(scopesOf(referenceOf(said)));
+  return scopes.some((one) => mine.has(one));
 };

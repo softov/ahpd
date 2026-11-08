@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { webhookRoute } from '../src/route.js';
 import type { Call } from '../src/call.js';
@@ -50,6 +51,94 @@ const call = (path: string, bearer?: string, method = 'POST'): Request => new Re
 it('answers 405 to a GET', async () => {
   const { route } = made();
   expect((await route(call('/ci', 'right-token', 'GET'))).status).toBe(405);
+});
+
+it('names the methods an endpoint takes in the Allow of its 405', async () => {
+  const { route } = made();
+  expect((await route(call('/ci', 'right-token', 'GET'))).headers.get('allow')).toBe('POST');
+  const metaRoute = webhookRoute({
+    endpoint: () => ({ id: 'meta', secret: 'app-secret', auth: 'meta', verifyToken: 'verify', owner: 'user:alice' }),
+    fire: () => {},
+  });
+  expect((await metaRoute(call('/meta', undefined, 'PUT'))).headers.get('allow')).toBe('GET, POST');
+});
+
+it('sends its 401 a bearer challenge: the realm alone with no token, invalid_token with a wrong one', async () => {
+  const { route } = made();
+  expect((await route(call('/ci'))).headers.get('www-authenticate')).toBe('Bearer realm="ahpd"');
+  expect((await route(call('/ci', 'wrong-token'))).headers.get('www-authenticate')).toBe('Bearer realm="ahpd", error="invalid_token"');
+});
+
+it('takes a GitHub or Standard Webhooks delivery once, and its redelivery answers 202 duplicate', async () => {
+  const fired: Record<string, unknown>[] = [];
+  const github: Endpoint = { id: 'gh', secret: 'gh-secret', auth: 'github', owner: 'user:alice' };
+  const standard: Endpoint = { id: 'sw', secret: 'whsec_c2VjcmV0LXRva2Vu', auth: 'standard', owner: 'user:alice' };
+  const now = 1_700_000_000_000;
+  const route = webhookRoute({
+    endpoint: (id) => (id === 'gh' ? github : id === 'sw' ? standard : undefined),
+    fire: (data) => { fired.push(data); },
+    now: () => now,
+  });
+  const body = '{"action":"opened"}';
+  const hub = (delivery: string): Request => new Request(`${PREFIX}/gh`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-github-delivery': delivery,
+      'x-hub-signature-256': `sha256=${createHmac('sha256', 'gh-secret').update(body).digest('hex')}`,
+    },
+    body,
+  });
+  expect((await route(hub('delivery-1'))).status).toBe(202);
+  const again = await route(hub('delivery-1'));
+  expect(again.status).toBe(202);
+  expect(await again.json()).toEqual({ duplicate: true });
+  expect((await route(hub('delivery-2'))).status).toBe(202);
+  expect(fired).toHaveLength(2);
+
+  const ts = String(Math.floor(now / 1000));
+  const sent = (): Request => new Request(`${PREFIX}/sw`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'webhook-id': 'msg_1',
+      'webhook-timestamp': ts,
+      'webhook-signature': `v1,${createHmac('sha256', Buffer.from('secret-token')).update(`msg_1.${ts}.${body}`).digest('base64')}`,
+    },
+    body,
+  });
+  expect((await route(sent())).status).toBe(202);
+  expect(await (await route(sent())).json()).toEqual({ duplicate: true });
+  expect(fired).toHaveLength(3);
+});
+
+it('takes a delivery again when its first call was answered with anything but a 2xx, and once one was', async () => {
+  let refuse = true;
+  const reached: string[] = [];
+  const github: Endpoint = { id: 'gh', bot: 'bot://motion', secret: 'gh-secret', auth: 'github', reply: 'none', owner: 'user:alice' };
+  const route = webhookRoute({
+    endpoint: () => github,
+    bot: async () => {
+      reached.push('bot');
+      return new Response('{}', { status: refuse ? 409 : 202 });
+    },
+  });
+  const body = '{"text":"hello","thread":"t"}';
+  const hub = (): Request => new Request(`${PREFIX}/gh`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-github-delivery': 'delivery-1',
+      'x-hub-signature-256': `sha256=${createHmac('sha256', 'gh-secret').update(body).digest('hex')}`,
+    },
+    body,
+  });
+  expect((await route(hub())).status).toBe(409);
+  refuse = false;
+  expect((await route(hub())).status).toBe(202);
+  // Taken now, so the same delivery once more is the same event again.
+  expect(await (await route(hub())).json()).toEqual({ duplicate: true });
+  expect(reached).toEqual(['bot', 'bot']);
 });
 
 it('answers 404 to an endpoint no connector opened', async () => {

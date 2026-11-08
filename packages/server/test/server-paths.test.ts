@@ -261,7 +261,7 @@ describe('ahpd paths at the terminal', () => {
           pid: process.pid, url: `ws://127.0.0.1:${String(bound.port)}`, host: '127.0.0.1', port: bound.port, paths: own.paths, startedAt: '',
         }),
         turning: () => [],
-        restart: () => {},
+        restart: () => ({ restartDelayMs: 0 }),
       }),
       token,
       program: { name: 'ahpd', version: '0.0.0' },
@@ -509,7 +509,7 @@ describe('ahpd paths, served', () => {
         ...(own.startFolder === undefined ? {} : { startFolder: own.startFolder }),
       }),
       turning: () => [],
-      restart: () => {},
+      restart: () => ({ restartDelayMs: 0 }),
       valuesMoved: async () => { told.push(read().paths); },
     };
     const handler = apiHandler({
@@ -744,7 +744,7 @@ describe('ahpd status names the start folder', () => {
           ...(own.startFolder === undefined ? {} : { startFolder: own.startFolder }),
         }),
         turning: () => [],
-        restart: () => {},
+        restart: () => ({ restartDelayMs: 0 }),
       }),
       token: 'root-secret',
       program: { name: 'ahpd', version: '0.0.0' },

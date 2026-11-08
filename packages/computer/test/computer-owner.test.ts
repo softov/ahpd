@@ -266,16 +266,17 @@ it('keeps the Dev Container CLI on the folder identity and records the owner bes
       workingDirectories: [folder],
     },
   });
-  await until(() => devCalls(devState).length > 0);
+  await until(() => devCalls(devState).some((one) => one[0] === 'up'));
 
   // The two pairs that identify the folder's container and nothing else: the
   // CLI finds an existing one by its labels, so an owner among them would give
   // a folder that already has a container a second one.
-  expect(devCalls(devState)[0]).toEqual([
+  expect(devCalls(devState).find((one) => one[0] === 'up')).toEqual([
     'up',
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
+    '--config', join(folder, '.devcontainer', 'devcontainer.json'),
     // The override config, whose own path is a temporary one: the id labels
     // are the whole of what identifies this container.
     '--override-config', expect.any(String),

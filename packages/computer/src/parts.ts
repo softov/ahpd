@@ -11,10 +11,11 @@ import type { ComputerRuntime } from './runtime.js';
  * The parts a machine is made of, and the one file that says what they are.
  *
  * A part is one agent CLI, or ahpd itself, at an exact version, built into an
- * image of its own and mounted or copied at `/opt/ahpd/<id>`. Nothing here fetches or builds:
- * this is the file, what it is allowed to say, the Dockerfiles that build them
- * and the tags they answer, so a version move is a pull request and whether an
- * image is already there is one `docker image inspect`.
+ * image of its own by the release workflow, pulled by a host that needs it,
+ * and mounted or copied at `/opt/ahpd/<id>`. This is the file, what it is
+ * allowed to say, the Dockerfiles that build them and the tags they answer,
+ * so a version move is a pull request and whether an image is already there
+ * is one `docker image inspect`.
  */
 
 /** One part, as the versions file names it. */
@@ -40,6 +41,14 @@ export interface Part {
   archives?: Record<string, { url: string; sha256: string }>;
   /** The commands in its own `bin`, which is what a machine puts on its `PATH`. */
   bin: string[];
+  /**
+   * For an archive part, where each command is in its download, by the
+   * command's name: the publisher's own layout for this version, as VS Code
+   * knows each agent SDK's layout rather than searching it. A command it names
+   * no path for is the one the part's `packages` install.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L80
+   */
+  paths?: Record<string, string>;
   /** The parts that have to be there first; `node` is one of them for everything installed by npm. */
   requires?: string[];
   /** The environment that switches this CLI's own update off, set by its launcher. */
@@ -51,16 +60,55 @@ export interface Part {
 /** Where the file is, in a checkout and in an installed package alike. */
 export const versionsPath = (): string => fileURLToPath(new URL('../images/versions.json', import.meta.url));
 
+/**
+ * Where the release workflow publishes the parts and a host pulls them from:
+ * the GitHub container registry namespace of the repository this package
+ * names, `ghcr.io/<owner>`, lowercase as the registry's names are.
+ * https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry
+ */
+export const registryOf = (): string => {
+  const manifest = JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')) as {
+    repository?: string | { url?: string };
+  };
+  const said = typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url ?? '';
+  const url = URL.canParse(said) ? new URL(said) : undefined;
+  const owner = url?.hostname === 'github.com' ? url.pathname.split('/')[1] ?? '' : '';
+  if (owner === '') {
+    throw new Error(`@ahpd/computer names ${said === '' ? 'no repository' : `the repository ${said}`}, and its parts are pulled from the GitHub container registry of a GitHub repository`);
+  }
+  return `ghcr.io/${owner.toLowerCase()}`;
+};
+
 /** The kinds an entry may say, so a typo is a refusal rather than a part nothing can build. */
 const KINDS = ['npm', 'archive', 'ahpd', 'node'] as const;
 
 /**
- * An exact version, which is what the file has to hold.
+ * An exact version, which is what the file has to hold: VS Code's check of a
+ * pinned agent SDK, major.minor.patch with a prerelease and nothing more.
  *
  * A range would let two hosts building the same tag run different agents, which
  * is the whole thing pinning is against.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/common.ts#L104-L106
  */
-const EXACT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:\+[0-9A-Za-z.]+)?$/;
+const EXACT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+/**
+ * A value written unquoted into a shell line of a Dockerfile, as VS Code checks
+ * one: letters, digits, `.`, `_` and `-`.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sshRemoteAgentHostHelpers.ts#L14-L25
+ */
+const SHELL_TOKEN = /^[a-zA-Z0-9._-]+$/;
+
+/**
+ * A part's id as an image name holds it, `ahpd-part/<id>`: a path component
+ * of the reference grammar, lowercase letters and digits with `.`, `_`, `__`
+ * or dashes between them.
+ * https://github.com/distribution/reference/blob/0965666a6ade2e06035fe352e38344be1e68951a/regexp.go#L41-L68
+ */
+const PATH_COMPONENT = /^[a-z0-9]+(?:(?:[._]|__|[-]+)[a-z0-9]+)*$/;
+
+/** A tag of the reference grammar, which a part's image tag has to be. */
+const TAG = /^[\w][\w.-]{0,127}$/;
 
 /** A download url, which lands unquoted in a shell line in the Dockerfile. */
 const URL_SAFE = /^https:\/\/[A-Za-z0-9._~\/%+-]+$/;
@@ -87,18 +135,30 @@ const said = (problem: string): never => { throw new Error(`${versionsPath()}: $
  * One entry, read as an entry or refused as one.
  *
  * Everything a part cannot be is refused here rather than at build: a version
- * that is a range, an archive nobody can check, a `requires` naming a part that
- * is not in the file. The file is small and read on every build, so a refusal
- * here is a refusal that costs nothing.
+ * that is not one exact version, a value that would reach a shell line as
+ * something else, an id no image can be named by, an archive nobody can check,
+ * a `requires` naming a part that is not in the file. The file is small and
+ * read on every build, so a refusal here is a refusal that costs nothing.
  */
 const entryOf = (value: unknown, where: string): Part => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return said(`${where} is not an entry`);
   const held = value as Record<string, unknown>;
   const text = (key: string): string => (typeof held[key] === 'string' ? held[key] : said(`${where} has no ${key}`));
+  // What lands unquoted in a Dockerfile's shell lines, refused in VS Code's words.
+  const token = (one: string, label: string): string => {
+    if (!SHELL_TOKEN.test(one)) throw new Error(`Unsafe ${label} value for shell interpolation: ${JSON.stringify(one)}`);
+    return one;
+  };
+  // An exact version, refused as VS Code refuses a pinned SDK's that is not one.
+  const exact = (name: string, one: string): string => {
+    if (!EXACT.test(one)) throw new Error(`Refusing to use ${name}@${one} from ${versionsPath()}: must be an exact version (no ^ or ~ ranges)`);
+    return one;
+  };
+  const id = token(text('id'), 'part id');
+  if (!PATH_COMPONENT.test(id)) return said(`${where} has the id ${id}, which an image name cannot hold: invalid reference format`);
   const kind = text('kind');
   if (!KINDS.includes(kind as Part['kind'])) return said(`${where} names no kind this can build: ${kind}`);
-  const version = text('version');
-  if (!EXACT.test(version)) return said(`${where} has the version ${version}, which is a range rather than one version`);
+  const version = exact(id, text('version'));
   const archives = ((): Part['archives'] => {
     if (held.archives === undefined) return undefined;
     if (typeof held.archives !== 'object' || held.archives === null || Array.isArray(held.archives)) {
@@ -120,12 +180,10 @@ const entryOf = (value: unknown, where: string): Part => {
     (Array.isArray(held[key]) && (held[key] as unknown[]).every((one) => typeof one === 'string')
       ? held[key] as string[]
       : undefined);
-  const bin = list('bin') ?? said(`${where} names no command`);
+  const bin = (list('bin') ?? said(`${where} names no command`)).map((one) => token(one, 'bin'));
   for (const spec of list('packages') ?? []) {
-    const own = packageOf(spec).version;
-    if (own !== undefined && !EXACT.test(own)) {
-      return said(`${where} has the package ${spec}, whose version is a range rather than one version`);
-    }
+    const { name, version: own } = packageOf(spec);
+    if (own !== undefined) exact(name, own);
     // An archive's version is its download's, so a package in one names its own.
     if (kind === 'archive' && own === undefined) {
       return said(`${where} has the package ${spec} with no version of its own, which an archive part has to give`);
@@ -134,18 +192,41 @@ const entryOf = (value: unknown, where: string): Part => {
   if (kind === 'archive' && list('packages') !== undefined && !(list('requires') ?? []).includes('node')) {
     return said(`${where} installs npm packages and does not require node`);
   }
+  // Each a path in the download, of segments a shell line takes unquoted.
+  const paths = ((): Part['paths'] => {
+    if (held.paths === undefined) return undefined;
+    if (kind !== 'archive') return said(`${where} names paths, which only an archive part's download has`);
+    if (typeof held.paths !== 'object' || held.paths === null || Array.isArray(held.paths)) {
+      return said(`${where} has paths that are not one per command`);
+    }
+    const per: Record<string, string> = {};
+    for (const [command, one] of Object.entries(held.paths as Record<string, unknown>)) {
+      if (!bin.includes(command)) return said(`${where} has a path for ${command}, which its bin does not name`);
+      const path = typeof one === 'string' ? one : said(`${where} has the path of ${command}, which is not text`);
+      if (path.split('/').some((segment) => segment === '.' || segment === '..' || !SHELL_TOKEN.test(segment))) {
+        return said(`${where} has the path ${path} for ${command}, which is not a path in its download`);
+      }
+      per[command] = path;
+    }
+    return per;
+  })();
+  const pathless = kind === 'archive' && list('packages') === undefined ? bin.find((command) => paths?.[command] === undefined) : undefined;
+  if (pathless !== undefined) return said(`${where} names no path in its download for ${pathless}`);
+  const updates = typeof held.updates === 'object' && held.updates !== null && !Array.isArray(held.updates)
+    ? Object.fromEntries(Object.entries(held.updates as Record<string, unknown>).map(([key, one]) =>
+      [token(key, 'update variable'), token(typeof one === 'string' ? one : said(`${where} has the update ${key}, which is not text`), 'update value')]))
+    : undefined;
   return {
-    id: text('id'),
+    id,
     name: text('name'),
     kind: kind as Part['kind'],
     version,
     ...(list('packages') === undefined ? {} : { packages: list('packages') as string[] }),
     ...(archives === undefined ? {} : { archives }),
     bin,
+    ...(paths === undefined ? {} : { paths }),
     ...(list('requires') === undefined ? {} : { requires: list('requires') as string[] }),
-    ...(typeof held.updates === 'object' && held.updates !== null && !Array.isArray(held.updates)
-      ? { updates: held.updates as Record<string, string> }
-      : {}),
+    ...(updates === undefined ? {} : { updates }),
     ...(list('plugins') === undefined ? {} : { plugins: list('plugins') as string[] }),
   };
 };
@@ -195,24 +276,28 @@ export const pinnedOf = (part: Part): string =>
 const fileHashOf = (dockerfile: string): string => createHash('sha256').update(dockerfile).digest('hex').slice(0, 12);
 
 /**
- * The image a part is built as, and the one place that is spelled.
+ * The image a part is built as, and the one place that is spelled: the tag the
+ * release workflow pushes it at and a host pulls it at.
  *
- * The tag is the version, so whether a part is built is one `docker image
+ * The tag is the version, so whether a part is here is one `docker image
  * inspect`. The `ahpd` part carries a hash of its own source beside the
  * version, because a checkout that changed its code has not changed its
  * version and would otherwise reuse the image built from the code before it -
  * the thing that hash is there for. And the Dockerfile's own text is in the tag
  * with them, because an upgrade that changes how an image is written changes
  * what is in it while the versions stand still, and the tag is the whole of
- * what makes `ensurePart` reuse the image the older code built.
+ * what makes `ensurePart` reuse the image the older code made.
  */
 export const tagOf = (part: Part, sourceHash?: string, dockerfile?: string): string => {
   const built = dockerfile === undefined ? '' : `-${fileHashOf(dockerfile)}`;
-  if (part.kind !== 'ahpd') return `ahpd-part/${part.id}:${pinnedOf(part)}${built}`;
-  if (sourceHash === undefined || sourceHash === '') {
+  if (part.kind === 'ahpd' && (sourceHash === undefined || sourceHash === '')) {
     throw new Error('the tag of the ahpd part carries a hash of its own source, and none was given to tag it with');
   }
-  return `ahpd-part/${part.id}:${part.version}-${sourceHash}${built}`;
+  const tag = part.kind === 'ahpd' ? `${part.version}-${String(sourceHash)}${built}` : `${pinnedOf(part)}${built}`;
+  // The tag of the reference grammar, which the exact versions it is made of
+  // keep it in; its length is the one thing they do not bound.
+  if (!TAG.test(tag)) throw new Error(`ahpd-part/${part.id}:${tag}: invalid reference format`);
+  return `ahpd-part/${part.id}:${tag}`;
 };
 
 /**
@@ -258,12 +343,10 @@ export const hashOf = (
 };
 
 /**
- * Where the ahpd part's own code comes from.
- *
- * A checkout packs the workspace's own packages and installs those tarballs,
- * so a developer tests the code they are editing; an installed package names
- * the version from npm, which is the only one there is - the answer is made
- * once, in this one function, so the choice is one place to change.
+ * Where the ahpd part's own code comes from: the version the versions file
+ * names, from npm, or the packed packages of the checkout the part's override
+ * variable names, so a developer tests the code they are editing. The answer
+ * is made once, in `ahpdSourceOf`, so the choice is one place to change.
  */
 export type AhpdSource =
   | { from: 'workspace'; hash: string; tarballs: Tarball[]; plugins: Tarball[] }
@@ -278,24 +361,15 @@ export type Tarball = { name: string; bytes: Buffer };
  */
 export type ArchiveEntry = Tarball & { uid?: number; gid?: number; directory?: boolean };
 
-/** What `ensurePart` needs to answer, and builds with. */
+/** What `ensurePart` needs to answer, and loads with. */
 export interface EnsureOptions {
-  /** The runtime the image is built on, which is where the build happens. */
+  /** The runtime the image is pulled to or built on, which is the Docker that mounts it. */
   runtime: ComputerRuntime;
   /** The parts to read, which is the shipped file unless a caller says otherwise. */
   parts?: Part[];
+  /** Where a line the load says goes: the override in use. */
+  log?: (line: string) => void;
 }
-
-/** The directory holding `versions.json`, which is the package root in both cases. */
-const packageRoot = (): string => dirname(dirname(fileURLToPath(import.meta.url)));
-
-/** The repository this is a checkout of, or nothing when it is an installed package. */
-const checkoutRoot = (): string | undefined => {
-  for (let at = packageRoot(); ; at = dirname(at)) {
-    if (existsSync(join(at, 'pnpm-workspace.yaml'))) return at;
-    if (dirname(at) === at) return undefined;
-  }
-};
 
 /** Where a workspace package of this repository lives, by the name it publishes under. */
 const workspaceDir = (root: string, name: string): string | undefined => {
@@ -324,27 +398,23 @@ const workspacePackages = (root: string): string[] => {
   return ['@ahpd/server', ...own];
 };
 
-/** One packed workspace package, named as the Dockerfile will name it. */
+/**
+ * One packed workspace package, named as the Dockerfile will name it.
+ *
+ * Written where `--out` names it, which is pnpm's own way to say where a
+ * tarball goes.
+ * https://pnpm.io/cli/pack
+ */
 const packOf = (root: string, name: string, into: string): { name: string; bytes: Buffer } => {
   const at = workspaceDir(root, name);
   if (at === undefined) throw new Error(`${root} has no ${name}, so the ahpd part cannot be built from this checkout`);
-  const packed = spawnSync('pnpm', ['pack', '--pack-destination', into], { cwd: at, encoding: 'utf8', windowsHide: true });
+  const file = `${name.replace(/^@/, '').replace('/', '-')}.tgz`;
+  const packed = spawnSync('pnpm', ['pack', '--out', join(into, file)], { cwd: at, encoding: 'utf8', windowsHide: true });
   if (packed.status !== 0) {
     const said = (packed.stderr.trim() || packed.stdout.trim()).split('\n').slice(-3).join(' ');
     throw new Error(`pnpm pack could not pack ${name}, which the release workflow runs after pnpm build: ${said}`);
   }
-  /*
-   * The tarball it says it wrote, which is where it wrote it.
-   *
-   * The last line of `pnpm pack`'s output is the tarball's path, and both
-   * shapes are read: an absolute one, which is what the real `pnpm` prints -
-   * joined onto nothing, because `join` reads a second absolute path as a
-   * relative one and the read then names the scratch directory twice over,
-   * which is `ENOENT` whatever the pack did - and a relative one, read against
-   * the directory the pack was asked to write into.
-   */
-  const file = packed.stdout.trim().split('\n').pop() ?? '';
-  return { name: `${name.replace(/^@/, '').replace('/', '-')}.tgz`, bytes: readFileSync(resolve(into, file)) };
+  return { name: file, bytes: readFileSync(join(into, file)) };
 };
 
 /** The tarballs a checkout builds the ahpd part from, and the hash their bytes make. */
@@ -372,41 +442,43 @@ const packedOf = (root: string, part: Part): { tarballs: { name: string; bytes: 
 let answered: Promise<AhpdSource> | undefined;
 
 /**
- * What the ahpd part is built from, which is the workspace's own code in a
- * checkout and the pinned version anywhere else.
+ * What the ahpd part is built from: the version the versions file names, from
+ * npm, unless `AHPD_PART_<ID>_ROOT` names a checkout of this repository, whose
+ * own packages are packed instead, as VS Code takes an agent SDK's local code
+ * only from the SDK's override variable and otherwise its pinned download, and
+ * says the override it uses.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L364-L370
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/agentService.ts#L226
  *
  * Packing is a `pnpm pack` per package and it is done once and remembered: the
  * bytes are what the build context carries and what the tag's hash covers, and
  * two builds in one process have to agree on them.
  */
-export const ahpdSourceOf = async (): Promise<AhpdSource> => {
+export const ahpdSourceOf = async (log?: (line: string) => void): Promise<AhpdSource> => {
   if (answered === undefined) {
     const asked: Promise<AhpdSource> = (async () => {
       const part = readParts().find((one) => one.kind === 'ahpd');
       if (part === undefined) throw new Error(`${versionsPath()} names no ahpd part`);
-      const root = checkoutRoot();
-      if (root === undefined) {
+      const variable = `AHPD_PART_${part.id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_ROOT`;
+      const root = process.env[variable];
+      if (root === undefined || root === '') {
         return { from: 'npm', version: part.version, hash: createHash('sha256').update(part.version).digest('hex').slice(0, 12) };
       }
-      return { from: 'workspace', ...packedOf(root, part) };
+      log?.(`the ${part.id} part is built from the checkout at ${root}, which ${variable} names`);
+      return { from: 'workspace', ...packedOf(resolve(root), part) };
     })();
     answered = asked;
     /*
-     * A pack that failed is not remembered.
-     *
-     * The pack runs before the daemon is built - `pnpm build` is what makes
-     * `prepack`'s `tsc -p .` resolve - so the first build after a start can be
-     * the one that fails, and a remembered refusal would be every ahpd part
-     * build until the next restart. The caller that met it still gets it; the
-     * next one asks again.
+     * A pack that failed is not kept here: `ensurePart` refuses the part for
+     * the time VS Code holds a failed load, and the ask after that packs again.
      */
     void asked.catch(() => { if (answered === asked) answered = undefined; });
   }
   return answered;
 };
 
-/** The image a part downloads from, for one platform. */
-const platformOf = (part: Part, key: string): { url: string; sha256: string } => {
+/** The download a part is made from, for one platform. */
+export const platformOf = (part: Part, key: string): { url: string; sha256: string } => {
   const found = (part.archives ?? {})[key];
   if (found === undefined) throw new Error(`${versionsPath()} has no ${key} download for ${part.id}`);
   return found;
@@ -423,8 +495,9 @@ const tarFlag = (url: string): string => {
 /**
  * The tag of the `node` part, which every part installed by npm copies in.
  *
- * It is the tag `ensurePart` builds the `node` part at, Dockerfile hash and all,
- * because a `COPY --from` naming anything else is a stage Docker cannot resolve.
+ * It is the tag the `node` part is at, Dockerfile hash and all, because a
+ * `COPY --from` naming anything else is a stage Docker cannot resolve; the
+ * release workflow builds against the registry's image of that tag.
  */
 const nodeTag = (): string => {
   const node = readParts().find((one) => one.kind === 'node');
@@ -437,7 +510,8 @@ const nodeTag = (): string => {
  *
  * `TARGETARCH` is BuildKit's own, so one Dockerfile builds both images and a
  * build for anything else says which architecture it was rather than downloading
- * the wrong one.
+ * the wrong one. A build that sets none, which a builder without BuildKit is,
+ * says that, for the same reason.
  *
  * Every line carries the trailing backslash the `RUN` it sits in needs. Without
  * it Docker takes the next line for a fresh instruction, and says
@@ -451,7 +525,7 @@ const byPlatform = (part: Part): string => {
     return `      ${arch}) url=${one.url}; sum=${one.sha256}; how=${tarFlag(one.url)};; \\`;
   };
   return [
-    '    case "${TARGETARCH:-amd64}" in \\',
+    '    case "${TARGETARCH:?is not set, which BuildKit sets to the architecture a build is for}" in \\',
     line('amd64', 'linux-x64'),
     line('arm64', 'linux-arm64'),
     '      *) echo "no download for ${TARGETARCH}" >&2; exit 1;; \\',
@@ -540,12 +614,8 @@ const download = (part: Part, after: string[], strip = false): string => [
   ' curl --fail --silent --show-error --location --output part "${url}"; \\',
   ' echo "${sum}  part" | sha256sum --check --strict -; \\',
   ` mkdir -p /opt/ahpd/${part.id}; \\`,
-  // Unstripped, because an archive does not have to hold one wrapping
-  // directory and three of the five do not: goose lays out
-  // `goose-x86_64-unknown-linux-gnu/goose`, while opencode and amp ship the
-  // executable at the root, where stripping a component leaves nothing at all.
-  // Nothing here needs the depth, because the launcher below finds the
-  // executable rather than naming a path.
+  // Unstripped for an archive part, so a path its entry names is the
+  // publisher's own path in the download.
   ` tar "${'${how}'}" part -C /opt/ahpd/${part.id}${strip ? ' --strip-components=1' : ''}; \\`,
   // Each is a statement of its own, and the semicolon is added here rather than
   // left to the caller: docker joins a continued `RUN` into one line with
@@ -555,37 +625,82 @@ const download = (part: Part, after: string[], strip = false): string => [
 ].join('\n').replace(/; \\$/, ';');
 
 /**
- * The launcher of a part installed by download.
+ * The launcher of each command of a part installed by download.
  *
- * What is inside the archive is the publisher's own layout - a binary at the
- * root, one under `bin`, one under `dist-package` - so the build finds the
- * executable of the name the entry gives and writes its path into the launcher,
- * rather than this file having to know three layouts.
- *
- * A bin the part's npm packages installed, in `node_modules/.bin`, is written
- * as an npm part's is, ahead of looking in the archive.
+ * Each runs the path the entry names for it in the download, the publisher's
+ * own layout for this version, as VS Code knows each agent SDK's layout rather
+ * than searching it; a build whose download holds nothing executable there
+ * fails, naming the path. A command the publisher put at `bin/<command>` is
+ * its own launcher, since one written over it would exec itself. A command
+ * with no path is the one the part's npm packages installed, in
+ * `node_modules/.bin`, and is written as an npm part's is.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L80
  */
 const launchersIn = (part: Part): string[] => [`mkdir -p /opt/ahpd/${part.id}/bin`, ...part.bin.map((bin) => {
-  // A symlink counts: `npm` and `npx` are symlinks in a Node tarball, and some
-  // of these CLIs ship their binary behind one.
-  const found = `found=$(find /opt/ahpd/${part.id} -name ${bin} \\( -type f -o -type l \\) -perm -u+x | head -n 1);`;
-  // One line, because the shell has no `else` without a command after it and the
-  // launcher is four statements. A publisher that already put the command where
-  // a launcher goes has written the launcher itself - devin ships `bin/devin` -
-  // and one written over it would exec itself, so it is left alone.
+  const launcher = `/opt/ahpd/${part.id}/bin/${bin}`;
+  const path = part.paths?.[bin];
+  const missing = (said: string): string => `{ echo "the ${part.id} download holds no ${said} to run" >&2; exit 1; }`;
+  if (path === `bin/${bin}`) return `test -x ${launcher} || ${missing(path)}`;
+  if (path !== undefined) {
+    return `test -x /opt/ahpd/${part.id}/${path} || ${missing(path)}; `
+      + `${writes(launcher, part, `/opt/ahpd/${part.id}/${path}`)}; chmod +x ${launcher}`;
+  }
   const npm = `/opt/ahpd/${part.id}/node_modules/.bin/${bin}`;
-  const fromNpm = part.packages === undefined ? '' : `elif test -e ${npm}; then ${scriptOrNative(npm)}; `
-    + `${writes(`/opt/ahpd/${part.id}/bin/${bin}`, part, '$run')}; chmod +x /opt/ahpd/${part.id}/bin/${bin}; `;
-  return `if test -x /opt/ahpd/${part.id}/bin/${bin}; then :; ${fromNpm}else ${found} `
-    + `test -n "$found" || { echo "the ${part.id} archive holds no ${bin} to run" >&2; exit 1; }; `
-    + `${writes(`/opt/ahpd/${part.id}/bin/${bin}`, part, '$found')}; chmod +x /opt/ahpd/${part.id}/bin/${bin}; fi`;
+  return `test -e ${npm} || ${missing(`node_modules/.bin/${bin}`)}; ${scriptOrNative(npm)}; `
+    + `${writes(launcher, part, '$run')}; chmod +x ${launcher}`;
 })];
 
-/** The `npm install` a part installed by npm runs, and the launcher it leaves. */
-const byNpm = (part: Part): string => [
+/**
+ * The two files a part's npm packages are installed from, as VS Code installs
+ * each agent SDK from the `package.json` and `package-lock.json` committed
+ * beside it: the packages at the versions the versions file pins, and the
+ * whole graph they resolved to. `node scripts/parts-bump.mjs --locks` writes
+ * them, in `parts/<id>` beside the versions file.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L48
+ */
+export const LOCK_FILES = ['package.json', 'package-lock.json'] as const;
+
+/** A part's two files, or nothing for a part with no npm packages; the ahpd part's are `@ahpd/sdk` and `@ahpd/server`. */
+export const lockOf = (part: Part, path: string = versionsPath()): Tarball[] | undefined => {
+  if (part.kind !== 'ahpd' && part.packages === undefined) return undefined;
+  return LOCK_FILES.map((name) => {
+    const at = join(dirname(path), 'parts', part.id, name);
+    if (!existsSync(at)) {
+      throw new Error(`${at} is not there, and the ${part.id} part's npm packages are installed from it: node scripts/parts-bump.mjs --locks writes it`);
+    }
+    return { name, bytes: readFileSync(at) };
+  });
+};
+
+/** The flags npm installs a part's packages with. */
+export const PART_NPM_FLAGS = '--no-audit --no-fund --loglevel=error';
+
+/**
+ * The `npm ci` that installs a part's packages into `root` from its two files,
+ * so the part is a function of its lock, as VS Code installs each agent SDK
+ * from the lock committed beside it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L51
+ *
+ * Each file is checked against the sum written here, so the tag that hashes
+ * the Dockerfile names the lock too, and a build given another file is
+ * refused, as a download that is not its sum is. Install scripts run, because
+ * several of these packages fetch their binary in a `postinstall`. The peers
+ * a package names are installed with it, because dsh's own packages reach one
+ * another as peers.
+ */
+const fromLock = (root: string, lock: readonly Tarball[]): string => [
+  `COPY ${lock.map((one) => one.name).join(' ')} ${root}/`,
+  [
+    `RUN cd ${root}`,
+    ...lock.map((one) => `echo "${createHash('sha256').update(one.bytes).digest('hex')}  ${one.name}" | sha256sum --check --strict -`),
+    `npm ci ${PART_NPM_FLAGS}`,
+  ].join(' \\\n && '),
+].join('\n');
+
+/** The `npm ci` a part installed by npm runs, and the launcher it leaves. */
+const byNpm = (part: Part, lock: readonly Tarball[]): string => [
   fetching(true, 'ca-certificates'),
-  `RUN npm install --prefix /opt/ahpd/${part.id} --no-audit --no-fund --loglevel=error ${
-    (part.packages ?? []).map((one) => (packageOf(one).version === undefined ? `${one}@${part.version}` : one)).join(' ')}`,
+  fromLock(`/opt/ahpd/${part.id}`, lock),
   launchers(part, () => '$run', {}, (bin) => scriptOrNative(`/opt/ahpd/${part.id}/node_modules/.bin/${bin}`)),
   only(part.id),
 ].join('\n\n');
@@ -602,11 +717,11 @@ const scriptOrNative = (path: string): string =>
   `run=${path}; case "$(head -c 2 ${path})" in '#!') run="/opt/ahpd/node/bin/node ${path}";; esac`;
 
 /** The download a part made of one tarball fetches, unpacked into the part. */
-const byDownload = (part: Part): string => [
-  fetching(part.packages !== undefined, 'ca-certificates curl bzip2 xz-utils'),
+const byDownload = (part: Part, lock?: readonly Tarball[]): string => [
+  fetching(lock !== undefined, 'ca-certificates curl bzip2 xz-utils'),
   // An archive part's npm packages, each at the version it pins of its own,
   // installed before the download unpacks beside them.
-  ...(part.packages === undefined ? [] : [`RUN npm install --prefix /opt/ahpd/${part.id} --no-audit --no-fund --loglevel=error ${part.packages.join(' ')}`]),
+  ...(lock === undefined ? [] : [fromLock(`/opt/ahpd/${part.id}`, lock)]),
   download(part, launchersIn(part)),
   only(part.id),
 ].join('\n\n');
@@ -639,20 +754,23 @@ const ahpdLauncher = (part: Part): string =>
  * `/opt/ahpd/<id>` and nothing else, so a part is the same directory whether it
  * was mounted or copied. The `ahpd` part is the one kind whose source has to be
  * answered first, because its image holds this repository's code or the published
- * version and the two are not the same build.
+ * version and the two are not the same build. A part with npm packages, the
+ * published ahpd among them, is installed from its two files, `lock`.
  */
-export const dockerfileOf = (part: Part, source?: AhpdSource): string => {
+export const dockerfileOf = (part: Part, source?: AhpdSource, lock?: readonly Tarball[]): string => {
   if (part.kind === 'node') return byNode(part);
-  if (part.kind === 'archive') return byDownload(part);
-  if (part.kind === 'npm') return byNpm(part);
+  if (lock === undefined && (part.kind === 'npm' || part.packages !== undefined || source?.from === 'npm')) {
+    throw new Error(`the ${part.id} part installs its npm packages from its ${LOCK_FILES.join(' and ')}, which is what lockOf() answers`);
+  }
+  if (part.kind === 'archive') return byDownload(part, lock);
+  if (part.kind === 'npm') return byNpm(part, lock ?? []);
   if (source === undefined) {
     throw new Error(`the ${part.id} part is built from code this checkout has to pack, which is what ahpdSourceOf() answers`);
   }
-  const flags = '--no-audit --no-fund --loglevel=error --legacy-peer-deps';
   if (source.from === 'npm') {
     return [
       fetching(true, 'ca-certificates'),
-      `RUN npm install --prefix /opt/ahpd/${part.id} ${flags} @ahpd/sdk@${source.version} @ahpd/server@${source.version}`,
+      fromLock(`/opt/ahpd/${part.id}`, lock ?? []),
       // The nested backends go in the part, not in the config dir, because a
       // `FROM scratch` stage keeps nothing that is not under `/opt/ahpd/ahpd`.
       //
@@ -674,11 +792,13 @@ export const dockerfileOf = (part: Part, source?: AhpdSource): string => {
   return [
     fetching(true, 'ca-certificates'),
     `COPY ${names.join(' ')} ./`,
-    `RUN npm install --prefix /opt/ahpd/${part.id} ${flags} ${source.tarballs.map((one) => `./${one.name}`).join(' ')}`,
+    `RUN npm install --prefix /opt/ahpd/${part.id} ${PART_NPM_FLAGS} ${source.tarballs.map((one) => `./${one.name}`).join(' ')}`,
     // The plugins of a checkout are tarballs, and what resolves a bare name is
     // the plugin root, so npm installs them into the same root the launcher
-    // points `AHPD_PLUGIN_ROOT` at.
-    `RUN npm install --prefix ${PLUGIN_ROOT} ${flags} ${[...source.plugins, ...source.tarballs]
+    // points `AHPD_PLUGIN_ROOT` at, with the sdk beside them and no plugin's
+    // peer range checked against another's, as `ahpd plugin install` installs
+    // into a plugin root (`the-daemon-installs-its-own-sdk-beside-the-plugins`).
+    `RUN npm install --prefix ${PLUGIN_ROOT} --legacy-peer-deps --no-audit --no-fund --loglevel=error ${[...source.plugins, ...source.tarballs]
       .map((one) => `./${one.name}`).join(' ')}`,
     ahpdLauncher(part),
     only(part.id),
@@ -708,8 +828,9 @@ const tarEntry = (entry: ArchiveEntry): Buffer => {
   header.write(`${(entry.uid ?? 0).toString(8).padStart(7, '0')}\0`, 108, 8, 'utf8');
   header.write(`${(entry.gid ?? 0).toString(8).padStart(7, '0')}\0`, 116, 8, 'utf8');
   header.write(`${bytes.length.toString(8).padStart(11, '0')}\0`, 124, 12, 'utf8');
-  // A fixed mtime, so the same context twice is the same bytes and Docker's own
-  // cache is not thrown away by a build that changed nothing.
+  // A fixed mtime, the epoch, so the same entries are the same bytes every time
+  // they are written, as VS Code writes its SDK tarballs.
+  // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/package.ts#L312-L328
   header.write('00000000000\0', 136, 12, 'utf8');
   header.write('        ', 148, 8, 'utf8');
   header.write(entry.directory === true ? '5' : '0', 156, 1, 'utf8');
@@ -778,31 +899,67 @@ export const once = <T>(tag: string, work: () => Promise<T>): Promise<T> => {
 };
 
 /**
- * One part's tag, its image built the first time anything asks for it.
+ * How long a part that failed to load is refused before it is asked for again,
+ * as VS Code holds a failed SDK load: long enough that every machine asking in
+ * the meantime is not one more failed build.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L230-L231
+ */
+const LOAD_FAILURE_HELD_MS = 30_000;
+
+/**
+ * The last failed load of each part, with when it may be asked again, kept per
+ * runtime: the runtime is where a part loads, as VS Code's downloader keeps
+ * its own, so a failure on one Docker refuses nothing on another.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L277-L289
+ */
+const failedLoads = new WeakMap<ComputerRuntime, Map<string, { error: Error; until: number }>>();
+
+/**
+ * One part's tag, its image pulled the first time anything asks for it: the
+ * image the release workflow built from the same Dockerfile and pushed to
+ * `registryOf()` at the same tag, as VS Code's build produces each agent SDK
+ * once per release and a host downloads it at first use. A checkout's own
+ * ahpd part, which no release holds, is built here.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L1-L5
  *
- * A part that names a `requires` is not built until those are, because its
- * Dockerfile copies the `node` part's image in by tag and a build without it
- * fails on a stage Docker cannot resolve.
+ * A part's `requires` are here first: a part installed by npm runs on the
+ * `node` part's Node, and a checkout's ahpd part is built on it. A part whose
+ * load failed is refused with that failure until `LOAD_FAILURE_HELD_MS` has
+ * passed, and loaded again after it.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L372-L395
  */
 export const ensurePart = async (id: string, options: EnsureOptions): Promise<string> => {
-  const parts = options.parts ?? readParts();
-  const part = parts.find((one) => one.id === id);
-  if (part === undefined) throw new Error(`${versionsPath()} names no ${id} part`);
-  for (const need of part.requires ?? []) {
-    await ensurePart(need, { ...options, parts });
-  }
-  const source = part.kind === 'ahpd' ? await ahpdSourceOf() : undefined;
-  // The Dockerfile is what the image is, so it is written once and is both what
-  // the tag hashes and what is built: an upgrade that changes how a part is
-  // written changes the image while the versions stand still.
-  const file = dockerfileOf(part, source);
-  const tag = tagOf(part, source?.hash, file);
-  return once(tag, async () => {
-    if (await options.runtime.hasImage(tag)) return tag;
-    const files = source?.from === 'workspace' ? [...source.tarballs, ...source.plugins] : [];
-    await options.runtime.buildImage(tag, contextOf(file, files));
+  const failures = failedLoads.get(options.runtime) ?? new Map<string, { error: Error; until: number }>();
+  failedLoads.set(options.runtime, failures);
+  const held = failures.get(id);
+  if (held !== undefined && held.until > Date.now()) throw held.error;
+  try {
+    const parts = options.parts ?? readParts();
+    const part = parts.find((one) => one.id === id);
+    if (part === undefined) throw new Error(`${versionsPath()} names no ${id} part`);
+    for (const need of part.requires ?? []) {
+      await ensurePart(need, { ...options, parts });
+    }
+    const source = part.kind === 'ahpd' ? await ahpdSourceOf(options.log) : undefined;
+    // The Dockerfile is what the image is, so it is written once and is both what
+    // the tag hashes and what is built: an upgrade that changes how a part is
+    // written changes the image while the versions stand still, and so does a
+    // lock that moved, whose sums it holds.
+    const file = dockerfileOf(part, source, lockOf(part));
+    const tag = tagOf(part, source?.hash, file);
+    await once(tag, async () => {
+      if (await options.runtime.hasImage(tag)) return;
+      if (source?.from === 'workspace') await options.runtime.buildImage(tag, contextOf(file, [...source.tarballs, ...source.plugins]));
+      else await options.runtime.pullImage(`${registryOf()}/${tag}`, tag);
+    });
+    failures.delete(id);
     return tag;
-  });
+  }
+  catch (error) {
+    const failed = error instanceof Error ? error : new Error(String(error));
+    failures.set(id, { error: failed, until: Date.now() + LOAD_FAILURE_HELD_MS });
+    throw failed;
+  }
 };
 
 /** One part a machine is made with: its id, the image it comes from, and the version that image is. */
@@ -822,10 +979,12 @@ export interface MadePart {
 }
 
 /**
- * The label a machine carries naming the parts it has, as `<id>@<version>`
- * joined by commas.
+ * The label a machine carries naming the parts it has, as JSON: an array of
+ * `{ id, version }`, as the dev container tooling writes its structured label,
+ * `devcontainer.metadata`, and VS Code reads a container's labels as JSON.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L967-L976
  *
- * Only the parts it was made with: a part whose build failed is not on it, and
+ * Only the parts it was made with: a part whose load failed is not on it, and
  * that absence is what refuses a session needing that part. The joined image
  * carries the same label with ids alone, so a machine made from it reads the
  * same way.
@@ -834,16 +993,34 @@ export const MACHINE_PARTS = 'ahpd.parts';
 
 /**
  * The label value for a machine made with these parts, and with `host` mounted
- * from this host in place of parts that could not be built, each `<id>@host`.
+ * from this host in place of parts that could not be loaded, each of those at
+ * the version `host`.
  */
 export const partsLabel = (parts: readonly MadePart[], host: readonly string[] = []): string =>
-  [...parts.map((one) => `${one.id}@${one.version}`), ...host.map((id) => `${id}@host`)].join(',');
+  JSON.stringify([...parts.map(({ id, version }) => ({ id, version })), ...host.map((id) => ({ id, version: 'host' }))]);
 
-/** The part ids a label value names, with any version dropped. */
-export const partsSaid = (value: unknown): string[] =>
-  (typeof value === 'string'
-    ? value.split(',').map((one) => one.trim().split('@')[0] ?? '').filter((one) => one !== '')
-    : []);
+/**
+ * The part ids a label value names: the `id` of each entry in its JSON, and
+ * for a label an older daemon wrote, `<id>@<version>` joined by commas, the id
+ * before each `@`. A machine outlives the daemon that made it, and a label
+ * cannot change on a container that runs, so both are read, as VS Code reads
+ * a container's older folder label, `vsch.local.folder`, beside the current one.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/devContainerAgentHostService.ts#L977-L981
+ */
+export const partsSaid = (value: unknown): string[] => {
+  if (typeof value !== 'string') return [];
+  let said: unknown;
+  try {
+    said = JSON.parse(value);
+  }
+  catch {
+    return value.split(',').map((one) => one.trim().split('@')[0] ?? '').filter((one) => one !== '');
+  }
+  if (!Array.isArray(said)) return [];
+  return said
+    .map((one: unknown) => (typeof one === 'object' && one !== null ? (one as Record<string, unknown>)['id'] : undefined))
+    .filter((id): id is string => typeof id === 'string' && id !== '');
+};
 
 /** The `PATH` Docker gives a container whose image sets none. */
 export const IMAGE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
@@ -852,22 +1029,67 @@ export const IMAGE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
  * The volume a part is copied into where an image mount is refused,
  * `ahpd-part-<id>-<version>`.
  *
- * The version is in the name, so a bump makes a new volume and the old one is
- * left for `docker volume prune`. So is the Dockerfile's own hash, since a
- * rebuild under a new tag fills a volume of its own rather than the one the
- * older image filled. A character Docker refuses in a volume name - the `+` of
- * a build suffix - is written `_`.
+ * The version is in the name, so a bump makes a new volume, and the old one is
+ * removed once no machine has used it for a week (`PART_VOLUME_KEPT_MS`). So
+ * is the Dockerfile's own hash, since a rebuild under a new tag fills a volume
+ * of its own rather than the one the older image filled. A character Docker
+ * refuses in a volume name - the `+` of a build suffix - is written `_`.
  */
 export const volumeOf = (part: MadePart): string =>
   `ahpd-part-${part.id}-${part.version.replace(/[^A-Za-z0-9_.-]/g, '_')}`;
 
 /**
- * The file written into a part volume once it is filled, and last.
+ * The file written into a part volume once it is filled, and last, holding
+ * the image it was filled from and when a machine last used it.
  *
  * A volume without it is a fill that stopped half way, which is removed and
- * filled again rather than mounted.
+ * filled again rather than mounted. Its time is the volume's last use, as VS
+ * Code's sentinel in a cached SDK records the SDK's last use.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L11-L15
  */
 export const FILLED_MARKER = '.ahpd-filled';
+
+/** The marker's text: the image's tag, then the time of the last use. */
+export const markerText = (tag: string, used: number): string => `${tag}\n${new Date(used).toISOString()}\n`;
+
+/** The last use a marker's text records, or nothing for one that records none. */
+export const markerUsed = (text: string): number | undefined => {
+  const used = Date.parse(text.split('\n')[1] ?? '');
+  return Number.isNaN(used) ? undefined : used;
+};
+
+/**
+ * How long a part volume of a version the versions file does not name is kept
+ * after a machine last used it, as VS Code keeps a cached SDK version the
+ * product does not ask for: another daemon on the same Docker may still run
+ * that version.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L17-L22
+ */
+export const PART_VOLUME_KEPT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The least time between two writes of a volume's last use while machines keep
+ * using it, as VS Code refreshes a cached SDK's.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L244-L245
+ */
+export const PART_VOLUME_USE_REFRESH_MS = 60 * 60 * 1000;
+
+/**
+ * Whether a part volume is of a version the versions file names, kept however
+ * long ago a machine used it: the volume of each of that version's Dockerfiles,
+ * as VS Code keeps every target of a version the product asks for.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkCache.ts#L30-L36
+ */
+export const requestedVolume = (volume: string, parts: readonly Part[]): boolean =>
+  parts.some((part) => volume.startsWith(`${volumeOf({ id: part.id, tag: '', version: pinnedOf(part) })}-`));
+
+/**
+ * How long after the plugin starts its part volumes are swept, as VS Code
+ * waits before it cleans its SDK cache, so the sweep stays out of the way of
+ * startup's own work.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSdkDownloader.ts#L241-L242
+ */
+export const PART_VOLUME_SWEEP_DELAY_MS = 30_000;
 
 /** A `PATH` with each part's `bin` in front of `base`, in the order the parts are named. */
 export const pathWith = (ids: readonly string[], base: string): string =>
@@ -899,11 +1121,11 @@ export const withRequires = (ids: readonly string[], parts?: Part[]): string[] =
 };
 
 /**
- * Every part a machine asks for, built where it is not already, with what each
+ * Every part a machine asks for, loaded where it is not already, with what each
  * requires.
  *
- * A part whose build fails, or whose requirement's build fails, is answered
- * among `failed` with the build's own reason rather than thrown: the machine is
+ * A part whose load fails, or whose requirement's load fails, is answered
+ * among `failed` with the load's own reason rather than thrown: the machine is
  * made with the rest, and only a session that needs the missing part is
  * refused.
  */
@@ -915,7 +1137,7 @@ export const ensureParts = async (
   const failed: { id: string; reason: string }[] = [];
   let named: Part[] = [];
   try { named = options.parts ?? readParts(); }
-  catch { /* each build below says why the file could not be read */ }
+  catch { /* each load below says why the file could not be read */ }
   for (const id of withRequires(ids, options.parts)) {
     try {
       const tag = await ensurePart(id, options);
@@ -945,8 +1167,8 @@ export const refusedWithout = (spec: { sessionParts?: string[] }, failed: readon
 export const JOINED_PACKAGES = 'ca-certificates git ripgrep';
 
 /**
- * The Dockerfile of the one image ahpd publishes: a machine with every part in
- * it, at the path each is mounted at.
+ * The Dockerfile of the joined image: a machine with every part in it, at the
+ * path each is mounted at, copied from the part images this host has.
  *
  * Built only for a runtime that cannot mount image parts, which is why a profile
  * naming no image stays on `debian:bookworm-slim` with its parts mounted
@@ -964,8 +1186,8 @@ export const joinedDockerfile = (parts: Part[], tags: ReadonlyMap<string, string
   // and the bare `codex-acp` are the same command.
   `ENV PATH="${parts.map((part) => `/opt/ahpd/${part.id}/bin`).join(':')}:${'${PATH}'}"`,
   // What it holds, so a machine it was built without can be told from one built
-  // from a versions file that has since moved.
-  `LABEL ahpd.parts="${parts.map((part) => part.id).join(',')}"`,
+  // from a versions file that has since moved: the machine's own label, ids alone.
+  `LABEL ${MACHINE_PARTS}=${JSON.stringify(JSON.stringify(parts.map((part) => ({ id: part.id }))))}`,
 ].join('\n');
 
 /** The joined image: its tag, the parts it holds and the parts it does not. */
@@ -974,14 +1196,14 @@ export interface Joined {
   tag: string;
   /** Every part whose image was here, at the path it is mounted at. */
   parts: Part[];
-  /** The parts whose image could not be built, in the order the file names them. */
+  /** The parts whose image could not be loaded, in the order the file names them. */
   missing: string[];
 }
 
 /**
- * The joined image, every part in it and every part built on the way.
+ * The joined image, every part in it and every part loaded on the way.
  *
- * A part that will not build does not stop the rest: the image is built without
+ * A part that will not load does not stop the rest: the image is built without
  * it and the answer says which is missing, so a machine whose agent needs that
  * one is refused by name and every other machine is made. The alternative -
  * refusing the joined image over one CLI - would take thirteen working agents
@@ -1014,12 +1236,12 @@ export const ensureJoined = async (options: EnsureOptions): Promise<Joined> => {
   //
   // Asked for only when the ahpd part is one of the parts that built. Its build
   // asks for it too, so an ahpd part in the image has already answered it and
-  // this is the remembered answer. An ahpd part that did not build - a checkout
-  // with no `pnpm build`, which is what `prepack`'s `tsc -p .` needs - is in
-  // `missing` with its reason, and asking again here would throw the same
+  // this is the remembered answer. An ahpd part that did not build - from a
+  // checkout with no `pnpm build`, which is what `prepack`'s `tsc -p .` needs -
+  // is in `missing` with its reason, and asking again here would throw the same
   // refusal out of the whole join: no machine at all would be made, where the
   // point of `missing` is that every machine not needing that part still is.
-  const hash = held.some((one) => one.kind === 'ahpd') ? (await ahpdSourceOf()).hash : undefined;
+  const hash = held.some((one) => one.kind === 'ahpd') ? (await ahpdSourceOf(options.log)).hash : undefined;
   const file = joinedDockerfile(held, tags);
   const tag = `ahpd-agents:${hashOf(hash, named, held.map((part) => part.id), file)}`;
   return once(tag, async () => {

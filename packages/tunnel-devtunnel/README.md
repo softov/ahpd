@@ -4,7 +4,7 @@
 [![CI](https://github.com/softov/ahpd/actions/workflows/ci.yml/badge.svg)](https://github.com/softov/ahpd/actions/workflows/ci.yml)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
-![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
+![Agent Host Protocol 1.0.0](https://img.shields.io/badge/AHP-1.0.0-0b7285)
 
 A [Dev Tunnel](https://aka.ms/devtunnels) plugin for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon. It forwards the daemon's port through a Microsoft Dev Tunnel, labelled the way VS Code expects, so VS Code can find and reach the daemon from a machine on another network.
 
@@ -36,7 +36,7 @@ In the configuration file, with every option set:
 | Option | Default | What it does |
 | --- | --- | --- |
 | `connector` | none | The `devtunnel` connector this host's own tunnel uses; absent, no system tunnel is opened |
-| `name` | this machine's hostname | What a Dev Tunnel this plugin makes is called in a client's list |
+| `name` | this machine's hostname | What the Dev Tunnel is called in a client's list, and how it is found. A configured name is normalized as VS Code normalizes one (lowercase, word characters and dashes, twenty at most) and the hostname is cleaned as VS Code and its CLI clean one, so `code tunnel` and this plugin give one machine the same name |
 | `keep` | `true` | Whether the Dev Tunnel outlives the daemon |
 | `anonymous` | `false` | Whether somebody not signed in to this account may reach the system tunnel |
 | `allowAccountChange` | `false` | Whether a second sign-in may replace a connector's GitHub account |
@@ -51,7 +51,9 @@ A `devtunnel` connector is one GitHub account, signed in with a device code. In 
 
 A second sign-in on an existing connector from the same account keeps it. From another account it is refused, because a connector is one account. Set `allowAccountChange` to `true` to let a sign-in replace the account instead.
 
-The token lasts eight hours. The plugin refreshes it when the connector opens and every seven hours after. Each new pair is written to the vault through `x-ahpd/connectors/secret`. A refresh that fails logs one line and asks the host to check the connector, which then says on its row what the service answered.
+The token lasts eight hours. The plugin refreshes it when the connector opens, then keeps it alive as VS Code's CLI does: again at two thirds of the lifetime GitHub gives the new token, or an hour on when GitHub gives none. Each new pair is written to the vault through `x-ahpd/connectors/secret`. A refresh that fails logs one line and asks the host to check the connector, which then says on its row what the service answered; it is tried again in ten seconds, unless GitHub answered with a 4xx, which ends the refreshing until you sign in again.
+
+A sign-in that polls too soon is told so by GitHub's `slow_down` or by a 429, and either adds five seconds to the wait, as VS Code's CLI does.
 
 The plugin needs no grant for that: the host lets the plugin that registered an adapter write the secrets of that adapter's connectors and ask for their check, whoever owns them.
 
@@ -65,7 +67,7 @@ The plugin registers one tunnel kind, `devtunnel`. A record of it is a connector
 { "kind": "devtunnel", "settings": { "connector": "dev03", "port": 9187, "anonymous": false } }
 ```
 
-Starting a record puts its port on its connector's Dev Tunnel and asks the relay to serve it. Stopping it takes the port off. Two records of one connector are two ports on that connector's one Dev Tunnel, and one relay host serves both. A connector's Dev Tunnel is found by the `_ahpd` label, so a restart reuses it and keeps its id, and with it every client's token.
+Starting a record puts its port on its connector's Dev Tunnel and asks the relay to serve it. Stopping it takes the port off. Two records of one connector are two ports on that connector's one Dev Tunnel, and one relay host serves both. A connector's Dev Tunnel is found as VS Code's CLI finds the tunnel it hosts: by the id the plugin kept for the connector, else by its name with the `vscode-server-launcher` label, so a restart reuses it and keeps its id, and with it every client's token. A tunnel of that name another machine is hosting is refused with the CLI's words. A port is written with the protocol `auto`, and a private one carries an anonymous deny, so a public default on the tunnel does not open it.
 
 The kind offers `start`, `stop`, `restart` and `anonymous`. `restart` connects the relay to the same Dev Tunnel again without removing a port, which is what to try when the relay dropped. `anonymous` takes `{ "on": true }` or `{ "on": false }` and changes who may reach the port live, and the host saves it in the record.
 
@@ -114,7 +116,7 @@ In VS Code, sign in to the same Dev Tunnels account and run **Agents: Connect to
 
 A client connecting over a tunnel computes its token from the tunnel's id, as the unpadded base64url of its SHA-256, and presents it as `?tkn=`. Only people who pass the Dev Tunnels access check can reach the tunnel, so the token does not need to be secret.
 
-A daemon on loopback with no connection token of its own accepts it, and that needs no configuration. A daemon started with `--connection-token` refuses it, because the client presents the derived token and not the daemon's. The plugin prints the derived token on its own line so you can make the two agree:
+A daemon on loopback with no connection token of its own accepts it, and that needs no configuration. A daemon started with `--connection-token` is reached through the hop from the tunnel's port to its own, which sets the daemon's token as the `tkn` of every request it carries, a WebSocket upgrade among them, as VS Code's CLI injects its agent host's token into each request arriving over a tunnel; the `listening` event carries the token to the plugin. A guarded daemon bound to the tunnel's own port has no hop, and the plugin prints the derived token on its own line so you can make the two agree:
 
 ```
 tunnel token 4d8f...  - what a client presents over the tunnel; this daemon requires its own
@@ -130,8 +132,8 @@ A read that fails keeps the page as it was, and the plugin logs the first failur
 
 With the `connector` option set, the host adds one system tunnel of the `devtunnel` kind and starts it when the daemon starts listening:
 
-1. Finds the connector's Dev Tunnel by the `_ahpd` label, or makes one with the convention's labels.
-2. Labels a new one `vscode-server-launcher` and `protocolv5`, which is what makes a client list it.
+1. Finds the connector's Dev Tunnel by the id kept for it, else by its name with the launcher label, or makes one.
+2. Labels it with its name, `protocolv5` and `vscode-server-launcher`, which is what makes a client list it, and keeps its id for the next start.
 3. Puts port 31546 on it, the fixed port VS Code looks for.
 4. Forwards 31546 on loopback to the port the daemon bound, unless the daemon is already on 31546.
 5. Hosts the Dev Tunnel and prints its address.

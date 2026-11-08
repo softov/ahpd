@@ -38,9 +38,9 @@ The channel is `x-ahpd-plans://<plan id>`, it asks `session:read`, and its state
 
 After the subscribe, each change is one action carrying the record as the store holds it:
 
-- `x-ahpd-plans/taskAdded` with `task`, when a task of the plan is made.
+- `x-ahpd-plans/taskAdded` with `task`, when a task of the plan is made or a task moves to the plan.
 - `x-ahpd-plans/taskSet` with `task`, when a task of the plan changes.
-- `x-ahpd-plans/taskRemoved` with `taskId`, when a task leaves the plan and there is no record left to carry.
+- `x-ahpd-plans/taskRemoved` with `taskId`, when a task leaves the plan, for another plan, for none, or out of the store.
 - `x-ahpd-plans/set` with `plan`, when the plan itself changes.
 
 The channel is read-only: a client subscribes and is sent actions, and nothing a client dispatches reaches it.

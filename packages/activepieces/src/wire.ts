@@ -1,7 +1,7 @@
 /**
- * The messages between the plugin and its child process.
+ * The messages between the plugin and its engine process.
  *
- * The child is a separate process because a piece turns off TLS checks for the
+ * The engine is a separate process because a piece turns off TLS checks for the
  * process it runs in. The two sides trade plain JSON: what a piece is, and the
  * result of one action.
  *
@@ -12,19 +12,20 @@
 /**
  * The store an action keeps values in, in the shape a piece calls.
  *
- * The shape of `Store` in `@activepieces/pieces-framework` 0.32.0, written here
- * so the package installs no framework: each piece bundles its own copy.
+ * The shape of `Store` in `@activepieces/pieces-framework`, written here so the
+ * package installs no framework: each piece bundles its own copy. The scope is
+ * the framework's `StoreScope`, `FLOW` when a piece names none, or `PROJECT`.
  */
 export interface Store {
-  /** Keep one value under a key, and answer it. */
-  put<T>(key: string, value: T): Promise<T>;
-  /** The value kept under a key, or `null`. */
-  get<T>(key: string): Promise<T | null>;
-  /** Forget the value under a key. */
-  delete(key: string): Promise<void>;
+  /** Keep one value under a key in a scope, and answer it. */
+  put<T>(key: string, value: T, scope?: unknown): Promise<T>;
+  /** The value kept under a key in a scope, or `null`. */
+  get<T>(key: string, scope?: unknown): Promise<T | null>;
+  /** Forget the value under a key in a scope. */
+  delete(key: string, scope?: unknown): Promise<void>;
 }
 
-/** One prop of a piece's auth, or of one of its actions, as the child describes it. */
+/** One prop of a piece's auth, or of one of its actions, as the engine describes it. */
 export interface PropDescription {
   /** The piece's own type, such as `SHORT_TEXT` or `STATIC_DROPDOWN`. */
   type: string;
@@ -45,7 +46,7 @@ export interface PropDescription {
   props?: Record<string, PropDescription>;
 }
 
-/** One auth a piece takes, as the child describes it. */
+/** One auth a piece takes, as the engine describes it. */
 export interface AuthDescription {
   /** The piece's auth type, such as `SECRET_TEXT` or `CUSTOM_AUTH`. */
   type: string;
@@ -55,9 +56,15 @@ export interface AuthDescription {
   description?: string;
   /** The fields of a `CUSTOM_AUTH`, each by the name the piece reads it by. */
   props?: Record<string, PropDescription>;
+  /** What a `BASIC_AUTH` calls its username field. */
+  username?: { displayName: string; description?: string };
+  /** What a `BASIC_AUTH` calls its password field. */
+  password?: { displayName: string; description?: string };
+  /** Whether the piece checks a connection of this auth with a `validate` of its own. */
+  validates?: boolean;
 }
 
-/** One action of a piece, as the child describes it. */
+/** One action of a piece, as the engine describes it. */
 export interface ActionDescription {
   /** The name a call refers to the action by. */
   name: string;
@@ -67,11 +74,13 @@ export interface ActionDescription {
   description: string;
   /** The description the piece wrote for a model, when it wrote one. */
   aiDescription?: string;
+  /** Who the action is for, as the piece marks it: `human`, `ai` or `both`, which it is when the piece says nothing. */
+  audience?: string;
   /** The action's input, each prop by the name the piece reads it by. */
   props: Record<string, PropDescription>;
 }
 
-/** One piece the child loaded, as the child describes it. */
+/** One piece the engine loaded, as the engine describes it. */
 export interface PieceDescription {
   /** The specifier the piece was asked for by. */
   package: string;
@@ -87,7 +96,7 @@ export interface PieceDescription {
   actions: ActionDescription[];
 }
 
-/** Ask the child what the named pieces are. */
+/** Ask the engine what the named pieces are. */
 export interface DescribeRequest {
   type: 'describe';
   /** The id this request is answered by. */
@@ -98,12 +107,12 @@ export interface DescribeRequest {
    * The plugin's own `installed/` folder, when it has one.
    *
    * A piece that is not one of the plugin's dependencies is installed there,
-   * so the child imports it from that folder when its own resolution does not
+   * so the engine imports it from that folder when its own resolution does not
    * find the package.
    */
   installed?: string;
   /**
-   * The pieces the child imports from `installed/` before its own resolution.
+   * The pieces the engine imports from `installed/` before its own resolution.
    *
    * A name the options wrote with a version runs at that version, and the copy
    * the plugin ships may be another one.
@@ -112,10 +121,10 @@ export interface DescribeRequest {
 }
 
 /**
- * Ask the child to run one action of one piece.
+ * Ask the engine to run one action of one piece.
  *
- * The connector's id goes with it because the child keeps one `store` for each
- * connector, and the auth value goes with it because the child holds no secret
+ * The connector's id goes with it because the engine keeps one `store` for each
+ * connector, and the auth value goes with it because the engine holds no secret
  * from one call to the next.
  */
 export interface RunRequest {
@@ -131,7 +140,7 @@ export interface RunRequest {
   /**
    * The plugin's own `installed/` folder, when it has one.
    *
-   * Sent with every call, because a child started after an install still has
+   * Sent with every call, because an engine started after an install still has
    * to find a piece that lives there.
    */
   installed?: string;
@@ -148,9 +157,37 @@ export interface RunRequest {
    * `files.write` puts a written file here.
    */
   files?: string;
+  /** The folder the engine keeps each connector's store in, one file to a connector. */
+  stores?: string;
 }
 
-/** What the child answered a `describe` with. */
+/** Ask the engine whether a connection works, by the piece's own `validate`. */
+export interface ValidateRequest {
+  type: 'validate';
+  /** The id this request is answered by. */
+  id: number;
+  /** The package specifier of the piece. */
+  piece: string;
+  /** The auth value, as a call would carry it, its `type` naming its kind. */
+  auth: Record<string, unknown>;
+  /** The plugin's own `installed/` folder, when it has one. */
+  installed?: string;
+  /** Whether this piece is imported from `installed/` first. */
+  installedFirst?: boolean;
+}
+
+/** What the engine answered a `validate` with: the piece's verdict. */
+export interface ValidatedAnswer {
+  type: 'validated';
+  /** The id of the request this answers. */
+  id: number;
+  /** Whether the piece took the connection. */
+  valid: boolean;
+  /** What the piece said of one it did not take. */
+  error?: string;
+}
+
+/** What the engine answered a `describe` with. */
 export interface DescribedAnswer {
   type: 'described';
   /** The id of the request this answers. */
@@ -161,7 +198,7 @@ export interface DescribedAnswer {
   errors: string[];
 }
 
-/** What the child answered a `run` with, when the action returned. */
+/** What the engine answered a `run` with, when the action returned. */
 export interface RanAnswer {
   type: 'ran';
   /** The id of the request this answers. */
@@ -170,7 +207,7 @@ export interface RanAnswer {
   result: unknown;
 }
 
-/** What the child answered when the request itself failed. */
+/** What the engine answered when the request itself failed. */
 export interface FailedAnswer {
   type: 'failed';
   /** The id of the request this answers. */
@@ -179,19 +216,36 @@ export interface FailedAnswer {
   message: string;
 }
 
-/** One request to the child. */
-export type Request = DescribeRequest | RunRequest;
+/** One request to the engine. */
+export type Request = DescribeRequest | RunRequest | ValidateRequest;
 
 /** One request before its id is given: what a caller sends. */
-export type Question = Omit<DescribeRequest, 'id'> | Omit<RunRequest, 'id'>;
+export type Question = Omit<DescribeRequest, 'id'> | Omit<RunRequest, 'id'> | Omit<ValidateRequest, 'id'>;
 
-/** One answer from the child. */
-export type Answer = DescribedAnswer | RanAnswer | FailedAnswer;
+/** One answer from the engine. */
+export type Answer = DescribedAnswer | RanAnswer | ValidatedAnswer | FailedAnswer;
+
+/**
+ * What a running action said with `output.update`, before its answer: the
+ * `data` it handed over, which replaces what it said before.
+ */
+export interface OutputMessage {
+  type: 'output';
+  /** The id of the `run` request the action is running for. */
+  id: number;
+  /** The `data` the action handed `output.update`. */
+  data: unknown;
+}
 
 /** Whether a value came over the channel as an answer, with an id. */
 export const isAnswer = (value: unknown): value is Answer => {
   if (typeof value !== 'object' || value === null) return false;
   const message = value as Record<string, unknown>;
-  const known = message['type'] === 'described' || message['type'] === 'ran' || message['type'] === 'failed';
+  const known = message['type'] === 'described' || message['type'] === 'ran' || message['type'] === 'validated' || message['type'] === 'failed';
   return known && typeof message['id'] === 'number';
 };
+
+/** Whether a value came over the channel as a running action's output, with an id. */
+export const isOutput = (value: unknown): value is OutputMessage =>
+  typeof value === 'object' && value !== null && (value as Record<string, unknown>)['type'] === 'output'
+  && typeof (value as Record<string, unknown>)['id'] === 'number';

@@ -12,14 +12,17 @@
  * Bun, and skips everywhere else.
  */
 
-import { existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
-import { tmpdir, userInfo } from 'node:os';
+import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { runtime, shellTerminals } from '@ahpd/sdk';
 import type { SpawnPty } from '@ahpd/sdk';
-import { getShellIntegrationInjection, shellIntegration } from '../src/shellintegration.js';
+import { getShellIntegrationInjection, shellIntegrationOf } from '../src/shellintegration.js';
+
+/** The port as the daemon builds it under its default `zshFolder`. */
+const shellIntegration = shellIntegrationOf('owned');
 import { pty } from '../src/pty.js';
 
 /** The folder the scripts are in: this package's root, from `test` and from `dist` alike. */
@@ -92,6 +95,27 @@ describe('the injection a shell is given', () => {
     }
   });
 
+  // zshFolder asFound: VS Code chmods the folder at the name as it finds it
+  // (src/vs/platform/terminal/node/terminalEnvironment.ts L219-L250 at 6b68d3fe).
+  it.skipIf(process.platform === 'win32')('takes a zsh folder as it finds it under zshFolder asFound', () => {
+    const shared = mkdtempSync(join(tmpdir(), 'ahpd-zsh-shared-'));
+    const target = mkdtempSync(join(tmpdir(), 'ahpd-zsh-target-'));
+    const folder = join(shared, `${userInfo().username}-ahpd-zsh`);
+    symlinkSync(target, folder);
+    const was = process.env.TMPDIR;
+    process.env.TMPDIR = shared;
+    try {
+      const asked = getShellIntegrationInjection('/bin/zsh', [], nonce, {}, { platform: 'linux', windowsBuild: () => 0 }, 'asFound');
+      expect(asked).toMatchObject({ type: 'injection', envMixin: { ZDOTDIR: join(realpathSync(shared), `${userInfo().username}-ahpd-zsh`) } });
+    }
+    finally {
+      if (was === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = was;
+      rmSync(shared, { recursive: true, force: true });
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
+
   it('follows VS Code\'s rules on Windows: pwsh, powershell and bash only, from build 18309', () => {
     const windows = (build: number) => ({ platform: 'win32', windowsBuild: () => build });
     expect(getShellIntegrationInjection('C:\\Program Files\\PowerShell\\7\\pwsh.exe', [], nonce, {}, windows(22631)))
@@ -110,6 +134,13 @@ describe('the injection a shell is given', () => {
     const folder = answer?.envMixin?.ZDOTDIR ?? '';
     expect(existsSync(join(folder, '.zshrc'))).toBe(true);
     expect(existsSync(join(folder, '.zshenv'))).toBe(true);
+  });
+
+  // VS Code's agent host asks with no environment, so a ZDOTDIR the shell
+  // would be given is not the one its own files are read from.
+  it.skipIf(process.platform === 'win32')('reads a person\'s zsh files from the home folder, as VS Code\'s agent host does', () => {
+    const answer = shellIntegration('/bin/zsh', [], { ZDOTDIR: '/somewhere/else' }, nonce);
+    expect(answer?.envMixin?.USER_ZDOTDIR).toBe(homedir());
   });
 });
 

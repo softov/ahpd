@@ -92,24 +92,41 @@ describe('the plan tools', () => {
     expect(second?.created).toMatchObject({ by: 'bob', in: 'ahp-session:/two' });
   });
 
+  /*
+   * A refusal names the tool, the field and what it must be, in the words VS
+   * Code's server tools refuse their input with:
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/shared/sessionServerTools.ts#L649-L671
+   */
   it('refuses a scope that is neither a folder nor a bot', async () => {
     const { run } = await served();
+    const refusal = 'Invalid plan_create input: scope must be a folder or a bot (e.g. {"kind":"folder","folder":"/srv/work"} or {"kind":"bot","bot":"pilot"}).';
     await expect(run('plan_create', {
       title: 'Nowhere',
       goal: 'Nothing.',
       scope: { kind: 'team', team: 'backend' },
-    })).rejects.toThrow('scope is a folder or a bot');
+    })).rejects.toThrow(refusal);
     await expect(run('plan_create', {
       title: 'Nowhere',
       goal: 'Nothing.',
       scope: '/srv/work',
-    })).rejects.toThrow('scope is a folder or a bot');
+    })).rejects.toThrow(refusal);
     // A session's plan is the translation's, and no tool makes one.
     await expect(run('plan_create', {
       title: 'Nowhere',
       goal: 'Nothing.',
       scope: { kind: 'session', session: 'one' },
-    })).rejects.toThrow('scope is a folder or a bot');
+    })).rejects.toThrow(refusal);
+  });
+
+  it('refuses a title or a goal it was not given, in the words VS Code refuses one with', async () => {
+    const { run } = await served();
+    const scope = { kind: 'folder', folder: '/srv/work' };
+    await expect(run('plan_create', { goal: 'One.', scope })).rejects.toThrow('Invalid plan_create input: title is required.');
+    await expect(run('plan_create', { title: 'First', scope })).rejects.toThrow('Invalid plan_create input: goal is required.');
+    await expect(run('plan_create', { title: 'First', goal: 5, scope })).rejects.toThrow('Invalid plan_create input: goal must be a string.');
+    await expect(run('plan_create', { title: 'First', goal: 'One.', scope, refs: 'x' }))
+      .rejects.toThrow('Invalid plan_create input: refs must be a string array.');
+    await expect(run('plan_set', {})).rejects.toThrow('Invalid plan_set input: plan is required.');
   });
 
   it('changes a plan\'s title and status, and refuses an unknown status or plan', async () => {
@@ -119,8 +136,9 @@ describe('the plan tools', () => {
       .toBe('p1, active, Renamed');
     expect(await run('plan_set', { plan: 'p1', status: 'done' })).toBe('p1, done, Renamed');
     await expect(run('plan_set', { plan: 'p1', status: 'open' }))
-      .rejects.toThrow('status is one of draft, active, done, dropped');
-    await expect(run('plan_set', { plan: 'p9', title: 'Elsewhere' })).rejects.toThrow('there is no plan p9');
+      .rejects.toThrow('Invalid plan_set input: status must be draft, active, done, or dropped.');
+    await expect(run('plan_set', { plan: 'p9', title: 'Elsewhere' }))
+      .rejects.toThrow('Invalid plan_set input: plan must match the id of a known plan (see plan_list).');
   });
 
   it('shows a plan and one line per task that names it', async () => {
@@ -133,7 +151,8 @@ describe('the plan tools', () => {
       't1, todo, medium, Task t1',
       't2, todo, medium, Task t2',
     ].join('\n'));
-    await expect(run('plan_show', { plan: 'p9' })).rejects.toThrow('there is no plan p9');
+    await expect(run('plan_show', { plan: 'p9' }))
+      .rejects.toThrow('Invalid plan_show input: plan must match the id of a known plan (see plan_list).');
   });
 
   it('lists plans, filtered by scope and status', async () => {
@@ -147,8 +166,10 @@ describe('the plan tools', () => {
     expect(await run('plan_list', { scope: { kind: 'folder', folder: '/srv/work' } })).toBe('p1, active, Work');
     expect(await run('plan_list', { scope: { kind: 'bot', bot: 'pilot' } })).toBe('p2, draft, Pilot');
     expect(await run('plan_list', { scope: { kind: 'folder', folder: '/srv/elsewhere' } })).toBe('No plans.');
-    await expect(run('plan_list', { scope: { kind: 'session', session: 'one' } })).rejects.toThrow('scope is a folder or a bot');
-    await expect(run('plan_list', { status: 'open' })).rejects.toThrow('status is one of draft, active, done, dropped');
+    await expect(run('plan_list', { scope: { kind: 'session', session: 'one' } }))
+      .rejects.toThrow('Invalid plan_list input: scope must be a folder or a bot (e.g. {"kind":"folder","folder":"/srv/work"} or {"kind":"bot","bot":"pilot"}).');
+    await expect(run('plan_list', { status: 'open' }))
+      .rejects.toThrow('Invalid plan_list input: status must be draft, active, done, or dropped.');
   });
 
   it('offers no grant to ask, so any session may make and change a plan', async () => {

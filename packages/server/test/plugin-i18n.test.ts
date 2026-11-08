@@ -64,6 +64,21 @@ describe('ahpd.i18n', () => {
     expect(contributions[0]?.i18n?.pt).toEqual({ meta: { title: 'Demonstração' } });
   });
 
+  it('hands a plugin the catalogs it ships, where it looks up what it says itself', async () => {
+    write('i18n-said/i18n/pt.json', JSON.stringify({ messages: { 'notice.ready': 'Pronto.' } }));
+    const dir = pkg('i18n-said', { i18n: 'i18n' });
+    write('i18n-said/index.mjs', "export const name = 'i18n-said';\nexport function apply(host) { globalThis.i18nSaid = host.i18n; }\n");
+    const seen = globalThis as Record<string, unknown>;
+    try {
+      const { problems } = await load([dir]);
+      expect(problems).toEqual([]);
+      expect(seen['i18nSaid']).toEqual({ pt: { messages: { 'notice.ready': 'Pronto.' } } });
+    }
+    finally {
+      delete seen['i18nSaid'];
+    }
+  });
+
   it('drops each value that is not an object or a string', () => {
     write('i18n-mixed/i18n/pt.json', JSON.stringify({
       meta: { title: 'Título', description: 7, links: ['a'] },
@@ -139,12 +154,13 @@ describe('tools/i18n-check.mjs', () => {
   });
 
   it('prints each path that matches no field, and exits 1', () => {
-    write('i18n-stale/src/agent.ts', "const schema = { mode: { enum: ['fast', 'slow'] } };\n");
+    write('i18n-stale/src/agent.ts', "const schema = { mode: { enum: ['fast', 'slow'] } };\nconst said = translated(['messages', 'notice.ready'], 'Ready.', lang, host.i18n);\nconst later = translated(['messages', 'notice.later'], 'Later.', lang, host.i18n);\n");
     write('i18n-stale/i18n/pt.json', JSON.stringify({
       meta: { title: 'Velho', subtitle: 'Nada' },
       options: { region: { title: 'Região', enum: { eu: 'Europa', mars: 'Marte' } }, gone: { title: 'Sumiu' } },
       session: { mode: { enum: { fast: 'Rápido', warp: 'Dobra' } }, lost: { title: 'Perdido' } },
       views: { main: { state: { text: 'Pronto', color: 'verde' }, open: { label: 1 } }, side: 'Lado' },
+      messages: { 'notice.ready': 'Pronto.', 'notice.gone': 'Sumiu.', 'notice.later': 3 },
       labels: {},
     }));
     const dir = pkg('i18n-stale', {
@@ -163,6 +179,8 @@ describe('tools/i18n-check.mjs', () => {
       'views.main.state.color matches no field',
       'views.main.open.label is not a string',
       'views.side is not an object',
+      'messages.notice.gone matches no message the sources look up',
+      'messages.notice.later is not a string',
       'labels is not a block a lookup reads',
     ]);
   });

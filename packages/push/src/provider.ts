@@ -1,4 +1,4 @@
-import { ECDH } from 'node:crypto';
+import { ECDH, createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { RpcError, absentResource, bodyText, readJsonObject, splitResource, writeJsonAtomic } from '@ahpd/sdk';
 import type { Entry, Metadata, Owner, Principal, Read, ResourceProvider, SchemeDescription, Write } from '@ahpd/sdk';
@@ -14,10 +14,11 @@ import type { Vapid } from './vapid.js';
  * endpoint and the two keys a message to it is encrypted with.
  *
  * What a record holds is the platform it belongs to, the person and client it
- * was registered by, and, when a device asked for a language, that language.
- * The client is the host's, as the connection named it, and the body cannot
- * name it: a device with no setting hears the sessions of the client that
- * opened the session or, when its person is the session's owner, the person's.
+ * was registered by, which sessions it hears about, and, when a device asked
+ * for a language, that language. The person and the client are the host's, as
+ * the connection is signed in and introduced itself, and the body cannot name
+ * them: a device hears the sessions of its person, or with `audience` `device`
+ * only the ones its own client created or opened.
  *
  * The devices are one JSON file under the daemon's own configuration folder,
  * written whole and read at load, because a token and a subscription are
@@ -50,49 +51,40 @@ export const WEB_PUSH_HOSTS = [
   '*.notify.windows.com',
 ] as const;
 
-/**
- * When a device was registered, which this file does not keep.
- *
- * A record here is a token and a platform rather than a thing with a history,
- * and answering this read's own clock would tell a client a device changed when
- * nothing did. The epoch is the answer every store without a clock gives.
- */
-const EPOCH = '1970-01-01T00:00:00.000Z';
-
 /** The part of a registration both kinds of device share. */
 interface Kept {
   /**
-   * The language the device asked for, where the client named one.
-   *
-   * Kept as the device gave it and read by nobody yet: a notification is worded
-   * in English, and this is what a sender that words one per device would read.
+   * The language the device asked for, where the client named one, which its
+   * notifications are worded in where the plugin's catalogs have the words.
    */
   lang?: string;
   /**
-   * The client that registered it, as it gave its id at `initialize`.
-   *
-   * Absent when the connection that wrote it never introduced itself, which is
-   * a device kept and sent nothing: what a device hears is the sessions of the
-   * client that registered it.
-   */
-  client?: string;
-  /**
    * The person the registration was written for, as the host named them.
    *
-   * Absent on a host with no users directory, and on a connection that is
-   * neither a person nor the root one. A device with no person hears only the
-   * sessions of its own client, because nobody else's sessions can be shown to
-   * be its person's.
+   * Absent on a host with no users directory, where every device is the one
+   * person's, and on a connection that is neither a person nor the root one,
+   * whose device has no person's sessions to hear.
    */
   owner?: Owner;
   /**
+   * The client that registered it, as it gave its id at `initialize`.
+   *
+   * Absent when the connection that wrote it never introduced itself. What a
+   * `device` audience hears is the sessions of this client.
+   */
+  client?: string;
+  /**
    * Which sessions it hears about. Absent means `person`.
    *
-   * The person's sessions are every session whose owner the host names the
-   * same, plus every session this device's own client created or opened.
+   * `person` is every session of its person, and every session its own client
+   * created or opened; `device` is only the ones its own client created or
+   * opened (Softov 2026-10-31: "A setting per device").
    */
   audience?: Audience;
 }
+
+/** Which sessions a device hears about, as its registration chose. */
+export type Audience = 'person' | 'device';
 
 /** A phone or a tablet, which Expo reaches through its token. */
 export interface ExpoDevice extends Kept {
@@ -130,8 +122,8 @@ const EXPO_BODY = {
   properties: {
     token: { type: 'string', description: 'The Expo push token this device answers to.' },
     platform: { type: 'string', enum: ['ios', 'android'], description: 'Which service the token belongs to.' },
-    lang: { type: 'string', description: 'The language the device asked for, kept with it. Notifications are worded in English.' },
-    audience: { type: 'string', enum: ['person', 'device'], description: 'Which sessions the device hears about. Every session of its person unless this says device.' },
+    lang: { type: 'string', description: 'The language the device asked for, a BCP 47 tag, which its notifications are worded in.' },
+    audience: { type: 'string', enum: ['person', 'device'], description: 'Which sessions the device hears about: every session of its person unless this says device, the ones its own client created or opened.' },
   },
   additionalProperties: false,
 } as const;
@@ -151,8 +143,8 @@ const WEB_BODY = {
       },
       additionalProperties: false,
     },
-    lang: { type: 'string', description: 'The language the device asked for, kept with it. Notifications are worded in English.' },
-    audience: { type: 'string', enum: ['person', 'device'], description: 'Which sessions the device hears about. Every session of its person unless this says device.' },
+    lang: { type: 'string', description: 'The language the device asked for, a BCP 47 tag, which its notifications are worded in.' },
+    audience: { type: 'string', enum: ['person', 'device'], description: 'Which sessions the device hears about: every session of its person unless this says device, the ones its own client created or opened.' },
   },
   additionalProperties: false,
 } as const;
@@ -160,16 +152,6 @@ const WEB_BODY = {
 const MANIFEST = {
   oneOf: [EXPO_BODY, WEB_BODY],
 } as const;
-
-/**
- * Which sessions a device hears about.
- *
- * `person` is every session its person created or opened, and `device` is only
- * the ones the client that registered it created or opened. A device without a
- * setting is a `person` device, which is what a registration written before
- * this setting existed becomes.
- */
-export type Audience = 'person' | 'device';
 
 /**
  * The devices one daemon keeps.
@@ -232,6 +214,16 @@ const shownOf = (device: Device): Record<string, unknown> => {
   return shown;
 };
 
+/**
+ * A device's version token, which a write's `ifMatch` is checked against.
+ *
+ * The hash of the record as it is kept, token and keys included, so a device
+ * registered again with a rotated token has a new one; the digest does not
+ * give the credential back.
+ */
+const etagOf = (device: Device): string =>
+  createHash('sha256').update(JSON.stringify(device), 'utf8').digest('base64url');
+
 /** Whether a string is base64url, which is how both browser keys arrive. */
 const BASE64URL = /^[A-Za-z0-9_-]+={0,2}$/;
 
@@ -263,13 +255,13 @@ const keysOf = (said: unknown): SubscriptionKeys | undefined => {
 /** The fields of a registration both kinds of device keep, as they were found. */
 const keptCommon = (one: Record<string, unknown>): Kept => {
   const lang = one['lang'];
-  const client = one['client'];
   const owner = one['owner'];
+  const client = one['client'];
   const audience = one['audience'];
   return {
     ...(typeof lang === 'string' ? { lang } : {}),
-    ...(typeof client === 'string' ? { client } : {}),
     ...(typeof owner === 'string' && owner !== '' ? { owner: owner as Owner } : {}),
+    ...(typeof client === 'string' && client !== '' ? { client } : {}),
     ...(audience === 'person' || audience === 'device' ? { audience } : {}),
   };
 };
@@ -401,7 +393,7 @@ const deviceOf = (uri: string, content: Write, webPushHosts: readonly string[]):
   }
   const audience = body['audience'];
   if (audience !== undefined && audience !== 'person' && audience !== 'device') {
-    throw new RpcError(-32602, `${uri} has an audience of person or device`);
+    throw new RpcError(-32602, `${uri} has an audience that is not person or device`);
   }
   const common: Kept = {
     ...(typeof lang === 'string' ? { lang } : {}),
@@ -480,37 +472,28 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
     },
 
     /**
-     * A device that is not there still has the shape of one.
+     * What one place is, as the spec's `resourceResolve` answers it.
      *
-     * What a client drawing a registration form needs before it writes
-     * anything, and the same answer the records of `people` and `policy` give:
-     * the URI names a device whether or not one has been registered under it
-     * yet, and a write is what makes the difference.
+     * A device that is not registered is `NotFound`, which the spec makes a
+     * MUST over any success standing in for one. The file keeps no times, so
+     * none is answered: the spec gives `mtime` and `ctime` only when known.
+     * https://github.com/microsoft/agent-host-protocol/blob/spec/v1.0.0/types/common/commands.ts#L1022-L1024
      */
     resolve: async (uri) => {
       const place = placeOf(uri);
       if (place.at === 'vapid') {
         if (vapid === undefined) throw absentResource(SCHEME, uri);
-        return {
-          uri,
-          type: 'file',
-          size: Buffer.byteLength(vapidFile(), 'utf8'),
-          mtime: EPOCH,
-          ctime: EPOCH,
-        } as Metadata;
+        return { uri, type: 'file', size: Buffer.byteLength(vapidFile(), 'utf8') };
       }
-      if (place.at !== 'device') return { uri, type: 'directory', mtime: EPOCH, ctime: EPOCH } as Metadata;
+      if (place.at !== 'device') return { uri, type: 'directory' };
       const held = store.get(place.id);
-      const body = held === undefined ? '' : JSON.stringify(shownOf(held), null, 2);
+      if (held === undefined) throw absentResource(SCHEME, uri);
       return {
         uri,
         type: 'file',
-        size: Buffer.byteLength(body, 'utf8'),
-        // No etag: a device is registered whole and re-registering one is how a
-        // rotated token arrives, so there is no lost update to guard against.
-        mtime: EPOCH,
-        ctime: EPOCH,
-      } as Metadata;
+        size: Buffer.byteLength(JSON.stringify(shownOf(held), null, 2), 'utf8'),
+        etag: etagOf(held),
+      };
     },
 
     read: async (uri) => {
@@ -529,29 +512,35 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      * A device is registered here, and re-registered here.
      *
      * The body is the token and the platform, or a browser's endpoint and keys;
-     * the client id is not the body's to name but the connection's, which is
-     * what makes a device the property of the client that wrote it. `createOnly`
+     * the person and the client are not the body's to name but the
+     * connection's, which is what makes a device hear that person's sessions
+     * and its own client's. `createOnly`
      * is the protocol's own word for refusing a device that is already there,
      * and it is honoured because a client that asked for it is a client that
-     * did not mean to overwrite a sibling's registration.
+     * did not mean to overwrite a sibling's registration. `ifMatch` is the
+     * other: a device whose version token is not the one named is refused
+     * `Conflict`, and so is one that is not there, because the caller believed
+     * it held the token of one that is, as VS Code's file resources refuse it.
+     * The public key and the scheme's two directories are no device, and a
+     * write to one is `PermissionDenied` in those resources' words.
+     * https://github.com/microsoft/agent-host-protocol/blob/spec/v1.0.0/types/common/commands.ts#L724-L726
+     * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/resourceProviders/fileSystemResources.ts#L201-L207
      */
     write: async (uri, content, owner, client) => {
       const place = placeOf(uri);
-      if (place.at === 'vapid') {
-        throw new RpcError(-32602, `${uri} is the host's public key and cannot be written; write a device to ${SCHEME}://${DEVICES}/<id>`);
-      }
-      if (place.at !== 'device') {
-        throw new RpcError(-32602, `${uri} is not a device; write to ${SCHEME}://${DEVICES}/<id>`);
-      }
+      if (place.at !== 'device') throw new RpcError(-32009, `Permission denied: ${uri}`);
       const held = store.get(place.id);
       if (content.createOnly === true && held !== undefined) {
         throw new RpcError(-32010, `${place.id} is already a device here; edit it or choose another id`);
       }
+      if (content.ifMatch !== undefined && (held === undefined || etagOf(held) !== content.ifMatch)) {
+        throw new RpcError(-32011, `ifMatch precondition failed for: ${uri}`);
+      }
       const device = deviceOf(uri, content, webPushHosts);
       store.put(place.id, {
         ...device,
-        ...(client === undefined || client === '' ? {} : { client }),
         ...(owner === undefined ? {} : { owner }),
+        ...(client === undefined || client === '' ? {} : { client }),
       });
     },
 
@@ -560,16 +549,12 @@ export const pushProvider = (options: PushProviderOptions): PushProvider => {
      *
      * The other road that changes what this scheme holds, and the one a client
      * takes when a person turns notifications off, so it is a device's whole id
-     * or nothing: there are no children to take with a flag.
+     * or nothing: there are no children to take with a flag. The public key
+     * and the two directories are `PermissionDenied`, as a write to them is.
      */
     delete: async (uri) => {
       const place = placeOf(uri);
-      if (place.at === 'vapid') {
-        throw new RpcError(-32602, `${uri} is the host's public key and cannot be deleted; delete ${SCHEME}://${DEVICES}/<id>`);
-      }
-      if (place.at !== 'device') {
-        throw new RpcError(-32602, `${uri} is not a device to delete; delete ${SCHEME}://${DEVICES}/<id>`);
-      }
+      if (place.at !== 'device') throw new RpcError(-32009, `Permission denied: ${uri}`);
       if (!store.remove(place.id)) throw absentResource(SCHEME, uri);
     },
   };

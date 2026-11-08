@@ -362,11 +362,11 @@ export interface TokenRecord {
   /**
    * What the key says about itself, such as `env=prod` or `client=pi`.
    *
-   * A call made with the key writes these on its record, and adds the entries
-   * of its own `X-AHP-Meta` header to them: a name the key holds is not changed
-   * by the call. Every name is 1 to 64 characters of `[A-Za-z0-9_.-]`, every
-   * value is at most 256 characters with no comma and no line break, and one
-   * key names at most 32 entries.
+   * A call made with the key writes these on its record, and adds its own,
+   * LiteLLM's `spend_logs_metadata` from its `X-AHP-Meta` header or its body,
+   * to them: a name the key holds is not changed by the call. Every name is 1
+   * to 64 characters, every value at most 256, and one key names at most 32
+   * entries.
    */
   meta?: Record<string, string>;
   /** When it was minted, in epoch milliseconds. */

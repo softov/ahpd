@@ -6,6 +6,7 @@ import { chatReducer, sessionReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
 import { Status } from '../src/sessions/catalog.js';
 import { notes } from '../../../examples/notes/agent.js';
+import type { Start } from '../src/types/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /*
@@ -54,7 +55,7 @@ afterEach(async () => {
 });
 
 /** A connected client with one notes session, watching both its channels. */
-async function talking(ask = 'writes') {
+async function talking(autoApprove = 'default') {
   const dir = await mkdtemp(join(tmpdir(), 'ahpd-notes-'));
   dirs.push(dir);
   const host = createHost({ path: dir, agents: [notes({ path: dir, pace: 0 })] });
@@ -67,7 +68,7 @@ async function talking(ask = 'writes') {
   const uri = 'ahp-session:/one';
   await client.handle({
     method: 'createSession',
-    params: { channel: uri, provider: 'notes', config: { ask } },
+    params: { channel: uri, provider: 'notes', config: { autoApprove } },
   });
   // Read off the session rather than spelled out: what a session calls its chat
   // is the host's to say and every client's to look up.
@@ -132,6 +133,125 @@ it('reads a note without asking, and says what it found', async () => {
   expect((call?.toolCall as { content: { text: string }[] }).content[0]?.text).toContain('the whole of it');
 });
 
+// A command picked from the slash menu runs, as VS Code's providers run the commands they offer.
+it('runs /read and /write picked from the slash menu as the commands they are offered as', async () => {
+  const { dir, client, peer: p, chatUri } = await talking('autoApprove');
+  await writeFile(join(dir, 'hello.md'), 'the whole of it\n', 'utf8');
+  say(client, chatUri, '/read hello');
+  await until(() => actions(p, chatUri).filter((a) => a.type === 'chat/turnComplete').length === 1);
+  say(client, chatUri, '/write other some words');
+  await until(() => actions(p, chatUri).filter((a) => a.type === 'chat/turnComplete').length === 2);
+  const tools = actions(p, chatUri).filter((a) => a.type === 'chat/toolCallStart').map((a) => a.toolName);
+  expect(tools).toEqual(['readNote', 'writeNote']);
+  expect(await readFile(join(dir, 'other.md'), 'utf8')).toBe('some words\n');
+});
+
+// The approvals key is VS Code's autoApprove, its name and levels
+// (src/vs/platform/agentHost/common/agentHostSchema.ts L387-L405 at 6b68d3fe).
+it('says in its help what asks under the approvals level in force', async () => {
+  const all = await talking('autoApprove');
+  say(all.client, all.chatUri, 'help');
+  await until(() => actions(all.peer, all.chatUri).some((a) => a.type === 'chat/turnComplete'));
+  const { chat: quiet } = reduced(all.peer, all.uri, all.chatUri);
+  const told = String(quiet.turns[0]?.responseParts[0]?.content);
+  expect(told).toContain('- `write <name> <text>` - write one.');
+  expect(told).not.toContain('I will ask before I do');
+
+  const manual = await talking('default');
+  say(manual.client, manual.chatUri, 'help');
+  await until(() => actions(manual.peer, manual.chatUri).some((a) => a.type === 'chat/turnComplete'));
+  const { chat: careful } = reduced(manual.peer, manual.uri, manual.chatUri);
+  const said = String(careful.turns[0]?.responseParts[0]?.content);
+  expect(said).toContain('- `write <name> <text>` - write one. I will ask before I do.');
+  expect(said).toContain('- `read <name>` - read one. Leave the name out');
+});
+
+/*
+ * A finished turn carries its state and the message as the client sent it,
+ * which a client reads of every turn it is served:
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L797
+ */
+it('keeps a finished turn complete, with the message as the client sent it', async () => {
+  const { dir, client, peer: p, uri, chatUri } = await talking();
+  await writeFile(join(dir, 'hello.md'), 'the whole of it\n', 'utf8');
+  say(client, chatUri, 'read hello');
+  await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
+  await client.handle({ method: 'disposeSession', params: { channel: uri } });
+  // Opened again from the backend's own record of it, which is what a later client reads.
+  const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+    items: { resource: string }[];
+  };
+  const row = await client.handle({ method: 'subscribe', params: { channel: listed.items[0]?.resource ?? '' } }) as {
+    snapshot: { state: { defaultChat: string } };
+  };
+  const opened = await client.handle({ method: 'subscribe', params: { channel: row.snapshot.state.defaultChat } }) as {
+    snapshot: { state: { turns: { state?: string; message: { origin?: { kind: string } } }[] } };
+  };
+  expect(opened.snapshot.state.turns[0]?.state).toBe('complete');
+  expect(opened.snapshot.state.turns[0]?.message.origin).toEqual({ kind: 'user' });
+});
+
+/*
+ * A turn whose work throws ends in `chat/error`, as VS Code's host ends a
+ * failed send:
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2329-L2337
+ */
+it('ends a turn whose work throws in chat/error, as VS Code ends a failed send', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ahpd-notes-'));
+  dirs.push(dir);
+  const heard: Record<string, unknown>[] = [];
+  const session = await notes({ path: dir, pace: 0 }).create({
+    uri: 'ahp-session:/broken',
+    chatUri: 'ahp-chat:/broken',
+    settings: { autoApprove: 'autoApprove' },
+    clientToolTimeoutMs: 1000,
+    schema: () => ({}),
+    emit: (_channel: string, action: Record<string, unknown>) => { heard.push(action); },
+    // The changeset's hook is the one call the work makes outside a tool's own guard.
+    onFileEdit: () => { throw new Error('the changeset is gone'); },
+  } as unknown as Start);
+  session.sendMessage('t1', 'write hello there', { origin: { kind: 'user' } });
+  await until(() => heard.some((a) => a.type === 'chat/error'));
+  expect(heard.find((a) => a.type === 'chat/error')).toMatchObject({
+    turnId: 't1',
+    part: { kind: 'error', error: { errorType: 'sendFailed', message: 'the changeset is gone' } },
+  });
+  expect(heard.some((a) => a.type === 'chat/turnComplete')).toBe(false);
+  expect((session.chatState() as { turns: { state?: string }[] }).turns[0]?.state).toBe('error');
+});
+
+// A stop ends the work it parked, as VS Code aborts a stopped turn's work.
+it('says nothing more of a turn after its stop, though a question or a call was parked in it', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  say(client, chatUri, 'write held something');
+  await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
+  const running = actions(p, chatUri).find((a) => a.type === 'chat/turnStarted')?.turnId;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: running, duration: 0 } },
+  });
+  await settle();
+  const said = actions(p, chatUri);
+  const stopped = said.findLastIndex((a) => a.type === 'chat/turnCancelled');
+  expect(said.slice(stopped + 1).map((a) => a.type)
+    .filter((type) => type === 'chat/responsePart' || type === 'chat/delta' || type === 'chat/toolCallConfirmed')).toEqual([]);
+});
+
+// A row carries the moment its session began, as VS Code lists a session.
+it('lists a finished session with the moment it began', async () => {
+  const { dir, client, peer: p, uri, chatUri } = await talking();
+  await writeFile(join(dir, 'hello.md'), 'the whole of it\n', 'utf8');
+  // Long enough that the session's start and its turn's end are two moments.
+  await new Promise((resolve) => { setTimeout(resolve, 20); });
+  say(client, chatUri, 'read hello');
+  await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
+  await client.handle({ method: 'disposeSession', params: { channel: uri } });
+  const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+    items: { createdAt: string; modifiedAt: string }[];
+  };
+  expect(Date.parse(listed.items[0]?.createdAt ?? '')).toBeLessThan(Date.parse(listed.items[0]?.modifiedAt ?? ''));
+});
+
 it('asks before it writes, and writes once it is allowed', async () => {
   const { dir, client, peer: p, uri, chatUri } = await talking();
   say(client, chatUri, 'write shopping bread and milk');
@@ -152,7 +272,9 @@ it('asks before it writes, and writes once it is allowed', async () => {
     method: 'dispatchAction',
     params: {
       channel: chatUri,
-      // The call the entry names, as a client answers the entry's call.
+      // The call the entry names, as a client answers the entry's call, in the
+      // turn the call is in, which the protocol's tool call actions carry
+      // (types/channels-chat/actions.ts L43-L47 at spec v1.0.0).
       action: { type: 'chat/toolCallConfirmed', turnId: request.turnId, toolCallId: request.toolCall.toolCallId, approved: true, confirmed: 'user-action' },
     },
   });
@@ -210,6 +332,10 @@ it('writes nothing when it is told not to', async () => {
   });
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
 
+  // The denial is said once, by the host, as VS Code's host echoes a client's
+  // confirmation and hands it to its agent, which says none of its own
+  // (src/vs/platform/agentHost/node/agentSideEffects.ts L1878-L1904 at 6b68d3fe).
+  expect(actions(p, chatUri).filter((a) => a.type === 'chat/toolCallConfirmed')).toHaveLength(1);
   await expect(readFile(join(dir, 'secrets.md'), 'utf8')).rejects.toThrow();
   const { chat, session } = reduced(p, uri, chatUri);
   expect(session.inputNeeded).toBeUndefined();
@@ -273,7 +399,7 @@ it('will not treat a name as a path', async () => {
 });
 
 it('stops asking when the session is told to stop asking', async () => {
-  const { dir, client, peer: p, uri, chatUri } = await talking('never');
+  const { dir, client, peer: p, uri, chatUri } = await talking('autoApprove');
   say(client, chatUri, 'write quiet no questions');
   await until(() => actions(p, chatUri).some((a) => a.type === 'chat/turnComplete'));
 
@@ -282,20 +408,20 @@ it('stops asking when the session is told to stop asking', async () => {
 });
 
 it('changes when it asks on a session that is already running', async () => {
-  const { client, peer: p, uri, chatUri } = await talking('never');
+  const { client, peer: p, uri, chatUri } = await talking('autoApprove');
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/configChanged', config: { ask: 'always' } } },
+    params: { channel: uri, action: { type: 'session/configChanged', config: { autoApprove: 'default' } } },
   });
   await settle();
 
   // Confirmed back, because a mode applied in silence leaves each client
   // showing whatever it last chose for itself.
   expect(actions(p, uri).some((a) => a.type === 'session/configChanged'
-    && (a.config as { ask?: string }).ask === 'always')).toBe(true);
+    && (a.config as { autoApprove?: string }).autoApprove === 'default')).toBe(true);
 
-  // And reading asks now, which it did not a moment ago.
-  say(client, chatUri, 'read anything');
+  // And writing asks now, which it did not a moment ago.
+  say(client, chatUri, 'write anything at all');
   await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
   expect(actions(p, uri).find((a) => a.type === 'session/inputNeededSet')).toBeDefined();
 });
@@ -384,28 +510,31 @@ it('refuses a key its schema marks immutable, without the backend being asked', 
   expect(why.rejectionReason).toBe('tone is fixed once the session has started');
 });
 
-/*
- * A value its property's list does not offer is refused in the reference
- * host's words for one, since a client draws a property with a list as a
- * picker of exactly those values.
- * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L148
- */
-it('takes one its schema marks mutable, and refuses a value its list does not offer in the reference host\'s words', async () => {
+it('takes one its schema marks mutable, and refuses a value its list does not offer as VS Code does', async () => {
   const { client, peer: p, uri } = await talking();
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/configChanged', config: { ask: 'never' } } },
+    params: { channel: uri, action: { type: 'session/configChanged', config: { autoApprove: 'autoApprove' } } },
   });
   await settle();
   expect(actions(p, uri).some((a) => a.type === 'session/configChanged'
-    && (a.config as { ask?: string }).ask === 'never')).toBe(true);
+    && (a.config as { autoApprove?: string }).autoApprove === 'autoApprove')).toBe(true);
 
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/configChanged', config: { ask: 'sometimes' } } },
+    params: { channel: uri, action: { type: 'session/configChanged', config: { autoApprove: 'sometimes' } } },
   });
   await settle();
-  // The whole sentence, naming the key and the value it does not offer.
+  /*
+   * The host's sentence, which names the key and the value, as VS Code's host
+   * refuses a value a property's list does not offer, so a client knows the
+   * control works and the value was the problem:
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/common/sessionConfigProperties.ts#L144-L148
+   *
+   * The whole sentence, because `toContain('sometimes')` matches the value
+   * the test itself supplied, and so passes on any message that echoes the
+   * bad input back without naming the key.
+   */
   const why = p.notes.filter((n) => n.method === 'action').at(-1)?.params as { rejectionReason?: string };
-  expect(why.rejectionReason).toBe('Session configuration \'ask\' does not offer \'sometimes\'.');
+  expect(why.rejectionReason).toBe('Session configuration \'autoApprove\' does not offer \'sometimes\'.');
 });

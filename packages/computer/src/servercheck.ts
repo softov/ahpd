@@ -9,8 +9,14 @@
  * the commands that fix each missing piece.
  *
  * Nothing is installed. The fixes are for the operator to run, because the box
- * is theirs and the commands need `sudo`.
+ * is theirs and the commands need `sudo`. The one piece this host installs is
+ * ahpd itself, in the user's own folder when a session first starts there
+ * (`hostinstall.ts`), so its item says whether that install is there or can be
+ * made, and the fix is what the download needs, or on a system no download is
+ * made for, a `host` command for an ahpd of the box's own.
  */
+
+import { HOST_MACHINES, HOST_ROOT, INSTALL_GLOB } from './hostinstall.js';
 
 /** The items a report holds, in the order a reader is shown them. */
 export const SERVER_ITEMS = [
@@ -48,15 +54,18 @@ export interface ServerReport {
  * Alpine - and must not stop when a program is absent: every probe is guarded
  * by `command -v` or by its own `2>/dev/null`, and nothing here uses `set -e`.
  *
- * `~/.local/node/bin` goes at the end of PATH, because the install script puts
- * ahpd and its node there, and that folder is on the PATH of an interactive
- * shell only: `ssh box cmd` is not one.
- *
  * `sed` rather than `awk` or a sourced `/etc/os-release`, so a box needs only
  * what every system has and nothing of the box's own file is run as code.
+ *
+ * The ahpd this host installed is the newest folder under its root, and the
+ * download that installs one needs `curl`, `tar`, `xz` and `sha256sum`. A box
+ * whose `host` option names the command its host starts with is sent `named`
+ * as the script's argument, and is asked none of that: the install does not
+ * apply to it, as VS Code runs an agent host command it is given as written
+ * and installs nothing.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/sshRemoteAgentHostService.ts#L913-L927
  */
 const SCRIPT = `
-[ -d "$HOME/.local/node/bin" ] && PATH="$PATH:$HOME/.local/node/bin"
 first() { sed -n 1p; }
 osval() { sed -n "s/^$1=//p" /etc/os-release 2>/dev/null | tr -d '"' | first; }
 echo "os_id=$(osval ID)"
@@ -80,25 +89,37 @@ if command -v virsh >/dev/null 2>&1; then
   echo "libvirt=\${v:-installed}"
   if virsh -c qemu:///system list >/dev/null 2>&1; then echo libvirt_access=yes; else echo libvirt_access=no; fi
 fi
-if command -v ahpd >/dev/null 2>&1; then
-  v=$(ahpd --version 2>/dev/null | first)
-  echo "ahpd=\${v:-installed}"
+if [ "\${1:-}" = named ]; then
+  echo host_named=yes
+else
+  echo "kernel=$(uname -s 2>/dev/null | first)"
+  root=${HOST_ROOT}
+  newest=$(ls -1td -- "$root"/${INSTALL_GLOB} 2>/dev/null | first)
+  if [ -n "$newest" ] && [ -x "$newest/bin/ahpd" ]; then
+    v=$("$newest/bin/ahpd" --version 2>/dev/null | first)
+    echo "ahpd_installed=\${v:-installed}"
+  fi
+  missing=
+  for tool in curl tar xz sha256sum; do command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"; done
+  echo "fetch_missing=\${missing# }"
 fi
 echo "user=$(id -un 2>/dev/null)"
 `;
 
 /**
- * The command the box runs, and the script it reads on stdin.
+ * The commands the box runs, `named` the one for a box whose `host` option
+ * names its host's command, and the script it reads on stdin.
  *
- * Both are here, because a runtime that sends the script and a test that
- * answers in its place have to agree on the one command it arrives as.
+ * All are here, because a runtime that sends the script and a test that
+ * answers in its place have to agree on the command it arrives as.
  */
-export const SERVER_CHECK = { command: 'sh -s', script: SCRIPT } as const;
+export const SERVER_CHECK = { command: 'sh -s', named: 'sh -s -- named', script: SCRIPT } as const;
 
 /** The keys the script prints, and nothing else is kept. */
 const KEYS = new Set([
   'os_id', 'os_like', 'os_name', 'arch', 'cpus', 'memory_kb', 'home_free_kb', 'varlib_free_kb',
-  'docker', 'docker_access', 'kvm', 'kvm_access', 'libvirt', 'libvirt_access', 'ahpd', 'user',
+  'docker', 'docker_access', 'kvm', 'kvm_access', 'libvirt', 'libvirt_access', 'user',
+  'kernel', 'ahpd_installed', 'fetch_missing', 'host_named',
 ]);
 
 /** What the script printed, by key, with an unknown key left out. */
@@ -124,11 +145,18 @@ const count = (value: string | undefined): number | undefined => {
 
 const item = (ok: boolean, found: string): ServerItem => ({ ok, found, fix: [] });
 
+/** How the ahpd item starts for a box that no Node download in `versions.json` is for. */
+const NO_DOWNLOAD = 'no ahpd download is made for';
+
 /**
  * A report from what the script printed, with no fixes yet.
  *
  * A key the script did not print is an item that is not there: `docker` is
  * printed only when the program is, so its absence is the answer.
+ *
+ * The ahpd item is ok when this host's install is there or the download can
+ * make it, and for a box whose `host` option names the command its host starts
+ * with, which is run as written.
  */
 export const reportFrom = (text: string): ServerReport => {
   const said = probed(text);
@@ -141,7 +169,11 @@ export const reportFrom = (text: string): ServerReport => {
   const varlib = count(get('varlib_free_kb'));
   const docker = get('docker');
   const libvirt = get('libvirt');
-  const ahpd = get('ahpd');
+  const installed = get('ahpd_installed');
+  const missing = get('fetch_missing').split(' ').filter((one) => one !== '');
+  const cannot = get('kernel') !== 'Linux' || !Object.values(HOST_MACHINES).flat().some((one) => one === get('arch'))
+    ? `${NO_DOWNLOAD} ${`${get('kernel')} ${get('arch')}`.trim() || 'this system'}`
+    : missing.length > 0 ? `the download needs ${missing.join(', ')}` : '';
 
   const disk = [
     ...(home === undefined ? [] : [`${gib(home)} free in the home folder`]),
@@ -173,16 +205,19 @@ export const reportFrom = (text: string): ServerReport => {
         : get('libvirt_access') === 'yes'
           ? item(true, 'the user reaches qemu:///system')
           : item(false, 'the user cannot reach qemu:///system'),
-      ahpd: item(ahpd !== '', ahpd || 'not installed'),
+      ahpd: get('host_named') === 'yes'
+        ? item(true, 'the box starts its host with the command its host option names')
+        : installed !== ''
+          ? item(true, `${installed}, installed by this host`)
+          : cannot === ''
+            ? item(true, 'not installed yet: this host installs it when a session first starts here')
+            : item(false, cannot),
     },
   };
 };
 
 /** The line a group fix ends with, because a new group takes effect only at a login. */
 const RELOGIN = '# log in to the box again, so the new group applies';
-
-/** The one-line install, as `docs/server/INSTALL.md` gives it for a box. */
-const AHPD_INSTALL = 'curl -fsSL https://ahpio.com/ahpd/install.sh | bash -s -- --no-onboard';
 
 /**
  * Whether the box's system is one the `apt` lines are written for.
@@ -219,7 +254,12 @@ export const fixesOf = (report: ServerReport, os: { id: string; like: string }, 
       ...group('libvirt'),
     ],
     libvirtAccess: report.items.libvirt.ok ? group('libvirt') : [],
-    ahpd: [AHPD_INSTALL],
+    // What keeps this host from installing ahpd: a system no download is made
+    // for starts an ahpd of the box's own, the command its `host` option names,
+    // and a box short of a tool gets the packages the download runs.
+    ahpd: report.items.ahpd.found.startsWith(NO_DOWNLOAD)
+      ? ['# name the command that starts an ahpd of the box\'s own in its host option']
+      : install('curl tar xz-utils coreutils', 'curl, tar, xz and sha256sum'),
   };
 
   const items = { ...report.items };
@@ -240,7 +280,8 @@ export const osOf = (text: string): { id: string; like: string } => {
  * One box's report with its fixes, from a function that runs the script there.
  *
  * `run` is the runtime's: it sends `SERVER_CHECK.script` to the box as
- * `SERVER_CHECK.command` and answers what the box printed.
+ * `SERVER_CHECK.command`, or `SERVER_CHECK.named` for a box that names its
+ * host's command, and answers what the box printed.
  */
 export const checkServer = async (run: () => Promise<string>): Promise<ServerReport> => {
   const text = await run();

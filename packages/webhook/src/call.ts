@@ -8,8 +8,13 @@
  * signature schemes.
  */
 
-/** The most of a body this plugin reads unless its option says otherwise: 5 MiB. */
-export const DEFAULT_MAX_BODY_BYTES = 5 * 1024 * 1024;
+/**
+ * The most of a body this plugin reads unless its option says otherwise: 25 MiB,
+ * which holds every payload GitHub delivers, since GitHub caps its payloads at
+ * 25 MB.
+ * https://docs.github.com/en/webhooks/webhook-events-and-payloads#payload-cap
+ */
+export const DEFAULT_MAX_BODY_BYTES = 25 * 1024 * 1024;
 
 /** One call, as a route reads it. */
 export interface Call {

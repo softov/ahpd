@@ -54,3 +54,22 @@ describe('the token in a file', () => {
     expect(readFileSync(tokenFile, 'utf8').trim()).toBe(first.token);
   });
 });
+
+/*
+ * A token is held to the characters VS Code's agent host server holds one to,
+ * and refused in its words, which name where the token came from and never
+ * the token.
+ */
+describe('a token outside 0-9, a-z, A-Z, _ and -', () => {
+  it('is refused from the flag, without the token in the sentence', () => {
+    const flagged = (): unknown => secret(optionsFrom({ configFile, connectionToken: 'open sesame!' }));
+    expect(flagged).toThrow('The connection token from --connection-token does not adhere to the characters 0-9, a-z, A-Z, _, or -.');
+    expect(secret(optionsFrom({ configFile, connectionToken: 'Open_Sesame-1' })).token).toBe('Open_Sesame-1');
+  });
+
+  it('is refused from a file, which the sentence names', () => {
+    const tokenFile = join(root, 'token');
+    writeFileSync(tokenFile, 'open sesame!\n');
+    expect(() => secret(options(tokenFile))).toThrow(`The connection token in '${tokenFile}' does not adhere to the characters 0-9, a-z, A-Z, _, or -.`);
+  });
+});

@@ -11,8 +11,9 @@
  *
  * An icon is decoration, so nothing here refuses: an icon that cannot be read,
  * fetched or is too large is dropped and said in one line, and the plugin that
- * declared it still loads. The limit is 32 KB, for each file and each `data:`
- * URI, because every client receives the whole of what is kept.
+ * declared it still loads. The limit is the daemon's `iconLimitBytes`, 32 KB
+ * unless it says otherwise, for each file and each `data:` URI, because every
+ * client receives the whole of what is kept.
  */
 
 import { readFileSync, realpathSync, statSync } from 'node:fs';
@@ -20,8 +21,23 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Icon } from '@ahpd/sdk';
 
-/** The most one icon may be, in bytes, whether it is a file, a `data:` URI or a fetched body. */
+/**
+ * The most one icon may be, in bytes, whether it is a file, a `data:` URI or a
+ * fetched body, unless the daemon's `iconLimitBytes` says otherwise: upstream's
+ * 32 KB, which keeps the plugins and adapters lists small (plan plugin/58,
+ * Softov 2026-10-23).
+ */
 export const ICON_LIMIT = 32 * 1024;
+
+/**
+ * The bounds an icon is read within: `limitBytes`, the daemon's
+ * `iconLimitBytes`, where 0 sets no limit, and `timeoutMs`, its
+ * `iconTimeoutMs`, how long one fetch of an `https:` icon may take.
+ */
+export interface IconBounds {
+  limitBytes: number;
+  timeoutMs: number;
+}
 
 /**
  * Where the brand marks the host ships are kept.
@@ -32,8 +48,22 @@ export const ICON_LIMIT = 32 * 1024;
  */
 const MARK_FOLDER = fileURLToPath(new URL('../icons/', import.meta.url));
 
-/** How long one fetch of an `https:` icon may take before the icon is given up. */
-const ICON_TIMEOUT_MS = 5_000;
+/**
+ * How long one fetch of an `https:` icon may take before the icon is given up,
+ * unless the daemon's `iconTimeoutMs` says otherwise: VS Code's ten seconds for
+ * an image request (`PROFILE_IMAGE_REQUEST_TIMEOUT_MS`,
+ * src/vs/platform/agentHost/node/codex/codexProfileImage.ts L17 at 6b68d3fe).
+ */
+export const ICON_TIMEOUT_MS = 10_000;
+
+/** The bounds an icon is read within when the daemon names none. */
+export const ICON_BOUNDS: IconBounds = { limitBytes: ICON_LIMIT, timeoutMs: ICON_TIMEOUT_MS };
+
+/** Whether `size` bytes are past `limit`, 0 being no limit. */
+const past = (size: number, limit: number): boolean => limit > 0 && size > limit;
+
+/** The limit as a line says it. */
+const kilobytes = (limit: number): string => `${String(limit / 1024)} KB`;
 
 /** The content type each extension the host reads stands for. */
 const TYPES: Record<string, string> = {
@@ -79,7 +109,7 @@ const isMarkName = (name: string): boolean => /^[a-z0-9-]+$/u.test(name);
  * the caller's unknown-mark line, and the dark file is optional. A file that is
  * there but cannot be drawn is a line of its own.
  */
-const markOf = (name: string, theme?: 'dark'): { icon: Icon } | { problem: string } | undefined => {
+const markOf = (name: string, limit: number, theme?: 'dark'): { icon: Icon } | { problem: string } | undefined => {
   const at = resolve(MARK_FOLDER, theme === 'dark' ? `${name}-dark.svg` : `${name}.svg`);
   let found: ReturnType<typeof statSync>;
   try {
@@ -89,7 +119,7 @@ const markOf = (name: string, theme?: 'dark'): { icon: Icon } | { problem: strin
     return undefined;
   }
   if (!found.isFile()) return { problem: `the mark ${name} is not a file` };
-  if (found.size > ICON_LIMIT) return { problem: `the mark ${name} is larger than ${ICON_LIMIT / 1024} KB` };
+  if (past(found.size, limit)) return { problem: `the mark ${name} is larger than ${kilobytes(limit)}` };
   let bytes: Buffer;
   try {
     bytes = readFileSync(at);
@@ -120,9 +150,9 @@ const drawn = (bytes: Buffer, contentType: string, held: Partial<Icon>): Icon =>
  * of a package. Absent, only the two `src` forms that need no folder are kept.
  *
  * `by` names the plugin in every line `problem` receives, and each line is one
- * icon that was dropped.
+ * icon that was dropped. `limit` is the daemon's `iconLimitBytes`.
  */
-export function resolveIcons(icons: unknown, base: string | undefined, by: string, problem: IconProblem): Icon[] {
+export function resolveIcons(icons: unknown, base: string | undefined, by: string, problem: IconProblem, limit: number = ICON_LIMIT): Icon[] {
   if (!Array.isArray(icons)) return [];
   const kept: Icon[] = [];
   for (const held of icons) {
@@ -134,7 +164,7 @@ export function resolveIcons(icons: unknown, base: string | undefined, by: strin
      * A mark is a brand drawing the host ships beside this module, named as
      * `mark:<name>` rather than carried by the plugin, so one WhatsApp mark
      * serves every plugin that needs it. The name is a file name and never a
-     * path, and the file is kept under 32 KB like any other icon.
+     * path, and the file is held to the limit like any other icon.
      */
     if (src.startsWith('mark:')) {
       const name = src.slice('mark:'.length);
@@ -142,7 +172,7 @@ export function resolveIcons(icons: unknown, base: string | undefined, by: strin
         problem(`${by}: the icon ${src} is not a mark of lowercase letters, digits and -`);
         continue;
       }
-      const light = markOf(name);
+      const light = markOf(name, limit);
       if (light === undefined) {
         problem(`${by}: the mark ${name} is not one the host ships`);
         continue;
@@ -154,7 +184,7 @@ export function resolveIcons(icons: unknown, base: string | undefined, by: strin
       kept.push(light.icon);
       // A dark file is sent beside the light one where it exists, so a mark
       // that does not read on a dark background has a second drawing.
-      const dark = markOf(name, 'dark');
+      const dark = markOf(name, limit, 'dark');
       if (dark !== undefined && 'icon' in dark) kept.push(dark.icon);
       else if (dark !== undefined) problem(`${by}: ${dark.problem}`);
       continue;
@@ -167,8 +197,8 @@ export function resolveIcons(icons: unknown, base: string | undefined, by: strin
       continue;
     }
     if (/^data:/i.test(src)) {
-      if (Buffer.byteLength(src, 'utf8') > ICON_LIMIT) {
-        problem(`${by}: an icon is a data: URI larger than ${ICON_LIMIT / 1024} KB`);
+      if (past(Buffer.byteLength(src, 'utf8'), limit)) {
+        problem(`${by}: an icon is a data: URI larger than ${kilobytes(limit)}`);
         continue;
       }
       kept.push({ src, ...extras });
@@ -211,8 +241,8 @@ export function resolveIcons(icons: unknown, base: string | undefined, by: strin
         problem(`${by}: the icon ${src} is not a file`);
         continue;
       }
-      if (found.size > ICON_LIMIT) {
-        problem(`${by}: the icon ${src} is larger than ${ICON_LIMIT / 1024} KB`);
+      if (past(found.size, limit)) {
+        problem(`${by}: the icon ${src} is larger than ${kilobytes(limit)}`);
         continue;
       }
       bytes = readFileSync(real);
@@ -236,15 +266,15 @@ export function resolveIcons(icons: unknown, base: string | undefined, by: strin
 /**
  * Fetch one `https:` icon and turn it into the icon a client draws.
  *
- * The rules are a file's: a body over 32 KB, a type that is not an image and an
- * answer that fails all cost the icon and one line. A `contentType` the
+ * The rules are a file's: a body over the limit, a type that is not an image
+ * and an answer that fails all cost the icon and one line. A `contentType` the
  * manifest gives wins over the answer's, because the writer said what the body
  * is and the server may not.
  */
-async function fetchOne(icon: Icon, by: string, problem: IconProblem, fetcher: typeof fetch): Promise<Icon | undefined> {
+async function fetchOne(icon: Icon, by: string, problem: IconProblem, fetcher: typeof fetch, bounds: IconBounds): Promise<Icon | undefined> {
   let answer: Response;
   try {
-    answer = await fetcher(icon.src, { signal: AbortSignal.timeout(ICON_TIMEOUT_MS) });
+    answer = await fetcher(icon.src, { signal: AbortSignal.timeout(bounds.timeoutMs) });
   }
   catch (error) {
     problem(`${by}: the icon ${icon.src} could not be fetched: ${reason(error)}`);
@@ -263,8 +293,8 @@ async function fetchOne(icon: Icon, by: string, problem: IconProblem, fetcher: t
     problem(`${by}: the icon ${icon.src} could not be read: ${reason(error)}`);
     return undefined;
   }
-  if (bytes.length > ICON_LIMIT) {
-    problem(`${by}: the icon ${icon.src} is larger than ${ICON_LIMIT / 1024} KB`);
+  if (past(bytes.length, bounds.limitBytes)) {
+    problem(`${by}: the icon ${icon.src} is larger than ${kilobytes(bounds.limitBytes)}`);
     return undefined;
   }
 
@@ -285,14 +315,16 @@ async function fetchOne(icon: Icon, by: string, problem: IconProblem, fetcher: t
  * line `problem` receives, and the rest still go on: an icon is decoration.
  *
  * `fetcher` is a parameter so a test can answer without a network, and the same
- * argument `fetch` takes otherwise.
+ * argument `fetch` takes otherwise. `bounds` are the daemon's `iconLimitBytes`
+ * and `iconTimeoutMs`.
  */
 export async function fetchIcons(
   icons: Icon[],
   by: string,
   problem: IconProblem,
   fetcher: typeof fetch = fetch,
+  bounds: IconBounds = ICON_BOUNDS,
 ): Promise<Icon[]> {
-  const kept = await Promise.all(icons.map((icon) => (isFetch(icon.src) ? fetchOne(icon, by, problem, fetcher) : Promise.resolve<Icon | undefined>(icon))));
+  const kept = await Promise.all(icons.map((icon) => (isFetch(icon.src) ? fetchOne(icon, by, problem, fetcher, bounds) : Promise.resolve<Icon | undefined>(icon))));
   return kept.filter((icon): icon is Icon => icon !== undefined);
 }

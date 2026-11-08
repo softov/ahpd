@@ -7,9 +7,13 @@
  * sum for takes that sum, and one it does not is downloaded and hashed here,
  * because a part is built only when its archive matches what is written down.
  *
+ * A part that moves and installs npm packages has its lock written again, in
+ * `parts/<id>` beside the parts file, which is what the part is installed from.
+ *
  *   node scripts/parts-bump.mjs                  # bump what moved
  *   node scripts/parts-bump.mjs --dry-run        # print the moves, write nothing
  *   node scripts/parts-bump.mjs --registry <file>
+ *   node scripts/parts-bump.mjs --locks          # write every part's lock again, bump nothing
  *
  * A part that cannot be resolved is skipped by name and the rest of the file
  * still lands, because one archive that 404s is not thirteen agents down.
@@ -17,7 +21,8 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REGISTRY = 'https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json';
@@ -40,8 +45,42 @@ const SHA256 = /^[0-9a-f]{64}$/;
 
 const argv = process.argv.slice(2);
 const dry = argv.includes('--dry-run');
+const locksOnly = argv.includes('--locks');
 const registryAt = argv.indexOf('--registry');
 const source = registryAt === -1 ? undefined : argv[registryAt + 1];
+
+/**
+ * The packages a part's lock pins, by name: each npm package at the part's
+ * version, or at its own where the entry is written `<package>@<version>`,
+ * and for the ahpd part `@ahpd/sdk` and `@ahpd/server` at its version, as
+ * `packages/computer/src/parts.ts` reads an entry.
+ */
+const dependenciesOf = (part) => {
+  if (part.kind === 'ahpd') return { '@ahpd/sdk': part.version, '@ahpd/server': part.version };
+  return Object.fromEntries((part.packages ?? []).map((one) => {
+    const at = one.lastIndexOf('@');
+    return at > 0 ? [one.slice(0, at), one.slice(at + 1)] : [one, part.version];
+  }));
+};
+
+/**
+ * One part's `package.json` and `package-lock.json`, in `parts/<id>` beside the
+ * parts file: the packages it pins, then npm's lock of the graph they resolve
+ * to, made without installing or running anything, as VS Code refreshes an
+ * agent SDK's lock.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/build/agent-sdk/README.md#L88-L94
+ */
+const lock = async (part) => {
+  const dir = join(dirname(FILE), 'parts', part.id);
+  await mkdir(dir, { recursive: true });
+  const manifest = { name: `ahpd-part-${part.id}`, private: true, dependencies: dependenciesOf(part) };
+  await writeFile(join(dir, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+  const ran = spawnSync('npm', ['install', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: dir, encoding: 'utf8' });
+  if (ran.status !== 0) throw new Error(`npm did not lock ${part.id}: ${(ran.stderr ?? '').trim().split('\n').at(-1) ?? `exit ${ran.status}`}`);
+};
+
+/** Whether a part installs npm packages, which is what has a lock. */
+const lockable = (part) => part.kind === 'ahpd' || part.packages !== undefined;
 
 /** The registry, by id. A fetch that fails is a failed run, not a quiet one. */
 const entriesOf = async () => {
@@ -164,8 +203,30 @@ const layout = (parts) => `${JSON.stringify(parts, null, 2)
   .replace(/\{\s+("[^"]*":\s*"[^"]*"(?:\s*,\s*"[^"]*":\s*"[^"]*")*)\s+\}/g, oneLine)}\n`;
 
 const parts = JSON.parse(await readFile(FILE, 'utf8'));
+
+/**
+ * Each of `which` locked, a line apiece, and whether every one was: a lock npm
+ * could not write is a failed run, since the part is installed from it.
+ */
+const lockAll = async (which) => {
+  let locked = true;
+  for (const part of which.filter(lockable)) {
+    try {
+      await lock(part);
+      console.log(`locked ${part.id}`);
+    } catch (error) {
+      console.log(`not locked ${part.id}: ${error.message}`);
+      locked = false;
+    }
+  }
+  return locked;
+};
+
+if (locksOnly) process.exit(await lockAll(parts) ? 0 : 1);
+
 const entries = await entriesOf();
 const moved = [];
+const movedParts = [];
 const skipped = [];
 
 for (const part of parts) {
@@ -182,6 +243,7 @@ for (const part of parts) {
   }
   const was = part.version;
   moved.push(`${part.id} ${was} -> ${what.version}${what.archives === undefined ? '' : `, ${Object.keys(what.archives).length} archives`}`);
+  movedParts.push(part);
   part.version = what.version;
   if (what.archives !== undefined) part.archives = what.archives;
 }
@@ -194,4 +256,5 @@ else if (dry) console.log(`${FILE} left as it is: --dry-run.`);
 else {
   await writeFile(FILE, layout(parts));
   console.log(`Wrote ${FILE}.`);
+  if (!await lockAll(movedParts)) process.exit(1);
 }

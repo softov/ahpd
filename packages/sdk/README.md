@@ -129,7 +129,7 @@ export function parrot(): Agent {
     displayName: 'Parrot',
     schema: () => ({ properties: {} }),
     defaults: () => ({}),
-    create: (start: Start): Session => converse(start),
+    create: (start: Start): Session => createSession(start),
   };
 }
 ```

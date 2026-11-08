@@ -138,6 +138,17 @@ describe('the device sign-in', () => {
     expect(headersOf(account.init).get('authorization')).toBe('Bearer gho_made-up');
   });
 
+  it('slows down on GitHub\'s 429 as on slow_down, and keeps polling', async () => {
+    const probe = fake();
+    probe.on(DEVICE_CODE_URL, STARTED);
+    probe.on(ACCESS_TOKEN_URL, { status: 429 }, { body: { error: 'authorization_pending' } });
+    const signIn = signInOf(devtunnelAdapter(new OpenTunnels(), { fetch: probe.fetch }));
+    const started = await signIn.start();
+
+    expect(await signIn.poll(started.handle)).toEqual({ wait: 10 });
+    expect(await signIn.poll(started.handle)).toEqual({ wait: 10 });
+  });
+
   it('ends the sign-in on a refusal, and names neither the handle nor the code', async () => {
     const probe = fake();
     probe.on(DEVICE_CODE_URL, STARTED);
@@ -266,6 +277,74 @@ describe('an open connector', () => {
     expect(tunnels.held('ana')).toEqual({ owner: 'host', token: 'gho_old', refresh: 'ghr_old' });
 
     (close as () => void)();
+  });
+
+  it('refreshes again at two thirds of the lifetime GitHub gives, and an hour on when it gives none', async () => {
+    vi.useFakeTimers();
+    try {
+      const probe = fake();
+      probe.on(
+        ACCESS_TOKEN_URL,
+        { body: { access_token: 'gho_1', refresh_token: 'ghr_1', expires_in: 28800 } },
+        { body: { access_token: 'gho_2', refresh_token: 'ghr_2' } },
+        { body: { access_token: 'gho_3', refresh_token: 'ghr_3' } },
+      );
+      const refreshes = (): number => probe.calls.filter((call) => call.url === ACCESS_TOKEN_URL).length;
+      const tunnels = new OpenTunnels();
+      const close = devtunnelAdapter(tunnels, { fetch: probe.fetch, secret: async () => {} })
+        .open(connectorOf('ana', { token: 'gho_old', refresh: 'ghr_old' }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(refreshes()).toBe(1);
+
+      // Eight hours' lifetime, so the next refresh is at five hours and twenty minutes.
+      await vi.advanceTimersByTimeAsync(28800 * 1000 * 2 / 3 - 1000);
+      expect(refreshes()).toBe(1);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(refreshes()).toBe(2);
+      expect(tunnels.held('ana')?.token).toBe('gho_2');
+
+      // That answer gave no lifetime, so the next is an hour on.
+      await vi.advanceTimersByTimeAsync(60 * 60 * 1000 - 2000);
+      expect(refreshes()).toBe(2);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(refreshes()).toBe(3);
+      (close as () => void)();
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tries a failed refresh again in ten seconds, and stops at a 4xx', async () => {
+    vi.useFakeTimers();
+    try {
+      const probe = fake();
+      probe.on(
+        ACCESS_TOKEN_URL,
+        { status: 502 },
+        { status: 401 },
+        { body: { access_token: 'gho_never', refresh_token: 'ghr_never', expires_in: 28800 } },
+      );
+      const refreshes = (): number => probe.calls.filter((call) => call.url === ACCESS_TOKEN_URL).length;
+      const checked: string[] = [];
+      const close = devtunnelAdapter(new OpenTunnels(), {
+        fetch: probe.fetch,
+        check: (id) => { checked.push(id); },
+      }).open(connectorOf('ana', { token: 'gho_old', refresh: 'ghr_old' }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(refreshes()).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(refreshes()).toBe(2);
+      // GitHub no longer takes the token, so nothing is asked of it again.
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+      expect(refreshes()).toBe(2);
+      expect(checked).toEqual(['ana', 'ana']);
+      (close as () => void)();
+    }
+    finally {
+      vi.useRealTimers();
+    }
   });
 
   it('has nothing to refresh when the record holds no refresh token', async () => {

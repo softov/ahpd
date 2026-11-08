@@ -64,7 +64,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `image` | `debian:bookworm-slim` | The image a machine is made from when a call names none |
 | `cpus` | none | A CPU limit for every machine this host makes |
 | `memory` | none | A memory limit for every machine this host makes |
-| `max` | `3` | How many machines may exist at once |
+| `max` | `3` | How many machines may exist at once when the agent's tool asks for one more |
 | `label` | `ahpd.computer=1` | The label every machine carries, and the one every read checks |
 | `prefix` | `ahpd-computer` | What the name of every machine this host makes starts with |
 | `sessionSetting` | `true` | Whether the plugin adds a `computer` session setting that names the machine a session runs in |
@@ -74,7 +74,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `profiles` | none | The named sets a person picks from when making a machine. See `profiles.<name>` below |
 | `bodyMounts` | `false` | Whether a person making a machine may name `mounts` or a `folder` of their own. With it on, `computer:write` is root on the host. See [Security](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#security) |
 | `imageMounts` | `true` | Whether a part may be mounted from its own image. `false` mounts every part from a volume filled once from it |
-| `images` | any image | The image patterns a machine may be made from, such as `node:*` or `ghcr.io/acme/**` |
+| `images` | any image | The images a machine may be made from, as containers-policy.json image scopes, such as `docker.io/library/node` or `ghcr.io/acme` |
 | `devcontainer` | the `devcontainer` CLI | The Dev Container CLI, as a launcher and as a machine maker. `false` switches every dev container route off. See `devcontainer` below |
 
 `ahpd vault set <scope>:<name>` keeps a value a need reads with `{ "$secret": "<scope>:<name>" }`, from standard input. A need may name `host:`, `team:<team>/` or `user:<id>/`. See [VAULT.md](https://github.com/softov/ahpd/blob/main/docs/server/VAULT.md) for the vault, and [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#profiles) for who a need is read for.
@@ -146,7 +146,7 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 ## Agents in a machine
 
-A machine made for an agent carries what the agent's `machine()` declares. Each agent's CLI comes from a part, an image this host builds at the version `images/versions.json` pins and mounts at `/opt/ahpd/<id>`, so any glibc image runs it with nothing installed. Each agent keeps its configuration in a state volume per provider, seeded from a few host files and never a login file; a profile with `state: "host"` mounts this host's own configuration instead. A value the vault fills for a need reaches only the agent whose need declared it, `computer_exec` from that agent's session included. See [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#parts).
+A machine made for an agent carries what the agent's `machine()` declares. Each agent's CLI comes from a part, an image the release workflow builds and this host pulls at the version `images/versions.json` pins and mounts at `/opt/ahpd/<id>`, so any glibc image runs it with nothing installed. Each agent keeps its configuration in a state volume per provider, seeded from a few host files and never a login file; a profile with `state: "host"` mounts this host's own configuration instead. A value the vault fills for a need reaches only the agent whose need declared it, `run_in_computer` from that agent's session included. See [COMPUTERS.md](https://github.com/softov/ahpd/blob/main/docs/plugins/COMPUTERS.md#parts).
 
 ## The tools
 
@@ -154,9 +154,9 @@ A machine made for an agent carries what the agent's `machine()` declares. Each 
 | --- | --- |
 | `request_disposable_computer` | Start one and answer its URI. `image`, `cpus`, `memory` and `name` may override what the host was configured with |
 | `release_computer` | Stop it and remove it. Nothing on it survives |
-| `computer_exec` | Run a command line inside it through `sh -lc`, and answer what it printed and its exit code |
+| `run_in_computer` | Run a command line inside it through `sh -lc`, and answer what it printed and its exit code |
 
-Each declares its `effects`, so a backend with a policy can ask a person before one runs: making a machine writes and reaches the network, releasing is destructive, and running in one is both.
+Each declares its `effects`, so a backend with a policy can ask a person before one runs: making a machine writes and reaches the network, releasing is destructive, and running in one is both. A client sees each with a title, `Request Disposable Computer`, `Release Computer` and `Run in Computer`, and with the annotations VS Code's server tools carry: none is read-only, and releasing and running are destructive.
 
 ## What it serves
 

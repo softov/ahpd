@@ -263,8 +263,8 @@ it('mints a key with its meta, and refuses one that is not', async () => {
   expect(stored().tokens[0]?.meta).toEqual(meta);
 
   // A name outside the bounds is refused, and no token is written.
-  await expect(users.mintToken!('ana', { meta: { 'a b': '1' } }))
-    .rejects.toThrow('is 1 to 64 characters of A to Z');
+  await expect(users.mintToken!('ana', { meta: { ['n'.repeat(65)]: '1' } }))
+    .rejects.toThrow('is 1 to 64 characters');
   expect(stored().tokens).toHaveLength(1);
 });
 

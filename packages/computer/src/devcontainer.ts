@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink, PluginSpec } from '@ahpd/sdk';
 import { byName } from './byname.js';
 import { sameHostPath } from './hostpath.js';
@@ -151,12 +152,33 @@ export const execArgv = (
  * goes to a client through the relay and into the message a caller reads when a
  * make fails. Only the name is kept: what a variable is for is a property of the
  * machine, and what it says is a credential wherever the image keeps one.
+ *
+ * A line the CLI writes as JSON, its result among them, is masked value by
+ * value, read with JSON's own parser: inside a JSON string a quote is written
+ * `\"`, and a value quoted that way is still a value.
  */
 export const masked = (said: string): string => said
   .split('\n')
-  .map((line) => line.replace(ENV_FLAG, (_all, flag: string, gap: string, double?: string, single?: string, plain?: string) =>
-    `${flag}${gap}${double ?? single ?? plain ?? ''}=<set>`))
+  .map((line) => {
+    let parsed: unknown;
+    try { parsed = JSON.parse(line); }
+    catch {
+      return line.replace(ENV_FLAG, (_all, flag: string, gap: string, double?: string, single?: string, plain?: string) =>
+        `${flag}${gap}${double ?? single ?? plain ?? ''}=<set>`);
+    }
+    return JSON.stringify(maskedValue(parsed));
+  })
   .join('\n');
+
+/** A JSON value with every string in it masked, at any depth. */
+const maskedValue = (value: unknown): unknown => {
+  if (typeof value === 'string') return masked(value);
+  if (Array.isArray(value)) return value.map(maskedValue);
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, one]) => [key, maskedValue(one)]));
+  }
+  return value;
+};
 
 /**
  * One `-e` or `--env` and its value, however the value is quoted.
@@ -683,21 +705,70 @@ export const parseUp = (stdout: string): { containerId: string; remoteWorkspaceF
   return undefined;
 };
 
-/**
- * Where a folder's own definition is, by the CLI's two names, or nothing.
- *
- * The file rather than the fact of it, because an override config replaces that
- * file instead of merging with it, so anything this host adds to a make has to
- * be written on top of what the folder's owner wrote.
- */
-export const definitionOf = (folder: string): string | undefined => {
-  const beside = join(folder, '.devcontainer', 'devcontainer.json');
-  const at = join(folder, '.devcontainer.json');
-  return existsSync(beside) ? beside : existsSync(at) ? at : undefined;
-};
-
 /** Whether a folder is a dev container at all, by the CLI's own two names. */
-export const hasDefinition = (folder: string): boolean => definitionOf(folder) !== undefined;
+export const hasDefinition = (folder: string): boolean =>
+  existsSync(join(folder, '.devcontainer', 'devcontainer.json')) || existsSync(join(folder, '.devcontainer.json'));
+
+/** Where the CLI finds a folder's definition, and the Compose service and files it names. */
+export interface DevContainerConfiguration {
+  configPath: string;
+  service?: string;
+  dockerComposeFile?: string | string[];
+}
+
+/**
+ * The CLI's `read-configuration` for a folder: where its definition is, and
+ * the Compose service and files it names.
+ *
+ * Run and read as VS Code's dev container host runs and reads it
+ * (devContainerAgentHostService.ts L61 and L486-L492, devContainerSandbox.ts
+ * L18-L24 and L41-L51, at 6b68d3fe): a nonzero exit refused with the CLI's
+ * stderr, and the answer checked field by field, each refusal worded as VS
+ * Code's validators word it (src/vs/base/common/validation.ts). The merged
+ * configuration VS Code also asks for feeds its server cache mount, which this
+ * host makes none of, so the configuration is asked for alone.
+ */
+export const readConfiguration = async (
+  run: (argv: string[]) => Promise<{ code: number; stdout: string; stderr: string }>,
+  folder: string,
+): Promise<DevContainerConfiguration> => {
+  const result = await run(['read-configuration', '--log-level', 'debug', '--workspace-folder', folder]);
+  if (result.code !== 0) {
+    throw new Error(`Cannot read Dev Container configuration (exit ${String(result.code)}): ${result.stderr}`);
+  }
+  const said: unknown = JSON.parse(result.stdout);
+  const refuse = (path: string[], message: string): never => {
+    throw new Error(`Invalid Dev Container configuration: ${path.map((key) => `Error in property '${key}': `).join('')}${message}`);
+  };
+  const objectAt = (value: unknown, path: string[]): Record<string, unknown> =>
+    typeof value === 'object' && value !== null ? value as Record<string, unknown> : refuse(path, 'Expected object');
+  const stringAt = (value: unknown, path: string[]): string =>
+    typeof value === 'string' ? value : refuse(path, `Expected string, but got ${typeof value}`);
+  const configuration = objectAt(objectAt(said, []).configuration, ['configuration']);
+  const at = ['configuration', 'configFilePath'];
+  const file = objectAt(configuration.configFilePath, at);
+  if (file.scheme !== 'file' && file.scheme !== 'vscode-fileHost') refuse([...at, 'scheme'], 'Expected: vscode-fileHost');
+  const path = stringAt(file.path, [...at, 'path']);
+  const authority = file.authority === undefined ? '' : stringAt(file.authority, [...at, 'authority']);
+  const service = configuration.service === undefined ? undefined : stringAt(configuration.service, ['configuration', 'service']);
+  const compose = configuration.dockerComposeFile;
+  if (compose !== undefined && typeof compose !== 'string') {
+    if (!Array.isArray(compose)) refuse(['configuration', 'dockerComposeFile'], 'Expected array');
+    (compose as unknown[]).forEach((one, index) => {
+      if (typeof one !== 'string') refuse(['configuration', 'dockerComposeFile'], `Error in element ${String(index)}: Expected string, but got ${typeof one}`);
+    });
+  }
+  // The file's path as `URI.from({ ...configFilePath, scheme: 'file' }).fsPath`
+  // reads it, through this platform's own reading of a file URL.
+  const url = new URL('file://');
+  url.hostname = authority;
+  url.pathname = path;
+  return {
+    configPath: fileURLToPath(url),
+    ...(service === undefined ? {} : { service }),
+    ...(compose === undefined ? {} : { dockerComposeFile: compose as string | string[] }),
+  };
+};
 
 /**
  * How long a nested host is given to end on its own before it is killed.
@@ -988,9 +1059,11 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
           sink,
         );
         const fresh = parseUp(up.stdout);
-        if (fresh === undefined) {
-          const said = masked([up.stdout.trim(), up.stderr.trim()].filter((one) => one !== '').join(' '));
-          throw new Error(`The Dev Container CLI reported no container: ${said === '' ? `exit ${String(up.code)}` : said}`);
+        // A result is taken with the CLI's exit 0 beside it, and anything else
+        // is refused in VS Code's words with what the CLI said, its result
+        // first (devContainerAgentHostService.ts L316-L319 at 6b68d3fe).
+        if (up.code !== 0 || fresh === undefined) {
+          throw new Error(`Dev Container CLI returned an invalid result: ${masked(up.stdout.trim() || up.stderr.trim())}`);
         }
         made = fresh;
         remotes.set(one.workspaceFolder, fresh.remoteWorkspaceFolder);
@@ -1009,7 +1082,7 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
        * runs the user's login shell and its answer is kept beside the daemon's
        * configuration: the container this connect is about, not the command, and
        * under the machine id rather than the container id so the create and
-       * `computer_exec` read the same entry. A container the CLI made again is
+       * `run_in_computer` read the same entry. A container the CLI made again is
        * probed again, because the shell that answered last time is not the one
        * in there now - decision `a-dev-container-is-reached-by-docker-exec`.
        */

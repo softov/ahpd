@@ -6,7 +6,7 @@
  * repository is seeded from a git bundle of the tree's `HEAD`, made here and
  * copied in: the bundle holds every object the checkout needs, and no
  * credential reaches the box. A profile may instead have the machine fetch the
- * session's branch from a public `origin` over https. Either way the commit lands in the seed ref, and the work comes
+ * session's branch from a public `origin`. Either way the commit lands in the seed ref, and the work comes
  * back the way it does from any machine with a repository of its own, by
  * bring-back.
  */
@@ -86,20 +86,18 @@ export const originOf = (root: string): string | undefined => {
 };
 
 /**
- * The https address of a git remote written for ssh, or the address as given.
- *
- * A machine holds no ssh key, and a token is a password git sends over https
- * alone, so a machine fetches an ssh origin by its https form: `git@host:path`
- * and `ssh://git@host/path` both become `https://host/path`. Any other
- * address is answered unchanged.
+ * The address a machine fetches an origin by, as VS Code's agent host turns a
+ * repository URL into the one it clones (missionControlProjects.ts L467-L485
+ * at 6b68d3fe): an scp-like address is read as `ssh://git@<host>/<path>`, a
+ * GitHub SSH address is fetched by GitHub's HTTPS origin, so
+ * `git@github.com:acme/app.git` is `https://github.com/acme/app.git`, and any
+ * other address is fetched as written.
  */
-export const httpsOf = (origin: string): string => {
-  const scp = /^[^@/:]+@([^:/]+):(?!\/)(.+)$/u.exec(origin);
-  if (scp !== null) return `https://${scp[1] as string}/${scp[2] as string}`;
-  if (!/^ssh:\/\//iu.test(origin)) return origin;
-  try {
-    const parsed = new URL(origin);
-    return `https://${parsed.hostname}${parsed.pathname}`;
-  }
+export const cloneUrl = (origin: string): string => {
+  const scp = /^(?:git@)?(?<host>[\w.-]+):(?<path>[^/].*)$/.exec(origin);
+  let url: URL;
+  try { url = new URL(scp?.groups ? `ssh://git@${scp.groups.host ?? ''}/${scp.groups.path ?? ''}` : origin); }
   catch { return origin; }
+  const github = new URL('https://github.com');
+  return url.hostname === github.hostname && url.protocol === 'ssh:' ? new URL(url.pathname, github).toString() : origin;
 };

@@ -21,7 +21,7 @@ Terms, one line each:
 
 A trigger has an `id`, a `kind`, a `type`, a `title`, and either `events` or a `schedule`.
 
-`schedule` is the protocol's own and is not listed by this host: a client may always write one, and the store that fires it is what decides whether it means anything. Its `schedule.expression` is a five-field AHP cron expression - minute, hour, day of month, month, day of week - that accepts a list, a `from-to` range and a `/step` in each field, and the month and weekday names (`jan`, `mon`). `7` and `0` are both Sunday. When both day fields are restricted an occurrence matches if **either** does, which is cron's own rule and the one thing about it that is easy to get backwards; when one is `*` the other simply applies. Its `schedule.timeZone` is an `Intl` zone name and defaults to `UTC`. `misfirePolicy` is `runOnce`, the default, or `skip`: with `runOnce` an occurrence missed while the daemon was down is caught up once however many went by, so a machine off for a week comes back to one run and not two hundred.
+`schedule` is the protocol's own and is not listed by this host: a client may always write one, and the store that fires it is what decides whether it means anything. Its `schedule.expression` is a five-field AHP cron expression - minute, hour, day of month, month, day of week - that accepts a list, a `from-to` range and a `/step` in each field, and the month and weekday names (`jan`, `mon`). `7` and `0` are both Sunday. When both day fields are restricted an occurrence matches if **either** does, which is cron's own rule and the one thing about it that is easy to get backwards; when one is `*` the other simply applies. Its `schedule.timeZone` is an `Intl` zone name and defaults to `UTC`. `misfirePolicy` is `runOnce`, the default, or `skip`: with `runOnce` an occurrence missed while the daemon was down is caught up once however many went by, so a machine off for a week comes back to one run and not two hundred. An occurrence the running daemon reaches a minute or more after it was due, as after the machine slept, is a catch-up as VS Code's scheduler counts one: its run's origin says `catchUp: true`, and under `skip` it does not run and the schedule moves on to its next occurrence.
 
 `event` is the half this page is about, and it comes in three flavours:
 
@@ -198,7 +198,7 @@ Run history is in memory either way, in both modes: a run names the sessions it 
 
 ## Where an automation is kept
 
-With `automations: "file"`, the default, an automation is one Markdown file in `<configDir>/automations`, named after the id it has on the catalogue: `ahp-automation:/nightly-review` is `nightly-review.md`. It is the same shape as a record a plugin keeps, held the same way - YAML frontmatter and a Markdown body, written whole at mode 0600 in a folder made at 0700 - and the body is the message a run is given, which is the long text and so the part a person came to the file to read:
+With `automations: "file"`, the default, an automation is one Markdown file in `<configDir>/automations`, named after the resource it has on the catalogue: `ahp-automation:/nightly-review` is `nightly-review.md`. It is the same shape as a record a plugin keeps, held the same way - YAML frontmatter and a Markdown body, written whole at mode 0600 in a folder made at 0700 - and the body is the message a run is given, which is the long text and so the part a person came to the file to read:
 
 ```markdown
 ---
@@ -218,9 +218,11 @@ triggers:
 Review what changed in the repository today and open a pull request for anything that needs one.
 ```
 
-The file name is the id, not a field in the frontmatter, and the id is lowercase letters, digits and dashes, one to sixty-four of them, starting with a letter or a digit - a rule of its own rather than a bot's slug, because a client may name an automation with a UUID - so an id that could not name a file is refused where the automation is written rather than kept somewhere unexpected. A copy under a new name is a new automation: `cp nightly-review.md monday-review.md` installs a second one, which this host picks up at once, with a run history that starts empty.
+The file name is the resource, not a field in the frontmatter. `ahp-automation:/<id>`, with an id of lowercase letters, digits and dashes, one to sixty-four of them, starting with a letter or a digit, is `<id>.md`, so a UUID a client names an automation with is a file name as it stands. Any other `ahp-automation:` URI, which the protocol lets a client choose, is its whole URI as unpadded url-safe base64, the way VS Code puts a URI into one path segment: `ahp-automation:/Daily Review` is `YWhwLWF1dG9tYXRpb246L0RhaWx5IFJldmlldw.md`. A resource in another scheme is refused with VS Code's `Automation resource must use the ahp-automation scheme`, and a new automation whose file is already there, as a file this host could not load is, is refused with `Automation file already exists`. A copy under a new name is a new automation: `cp nightly-review.md monday-review.md` installs a second one, which this host picks up at once, with a run history that starts empty.
 
 What a run changes is not in the file. The count against an `afterRuns` allowance, the occurrence it is waiting for, and when it last moved are in `<configDir>/automations-state.json`, so a run never rewrites a file somebody is editing. The file holds what a person wrote: the definition, the owner, and when the automation was made.
+
+A daemon with no state file has no run state yet. A state file that is there and cannot be read, or that holds what this version does not understand, is the only record of what each allowance has paid for and what each automation is waiting on, so it is reported and left alone, and automations stay unavailable until it is recovered, as VS Code's do over storage that does not load. The daemon loads, fires and watches nothing, its host advertises no automations, `ahpd status` says `automations unavailable until <file> is recovered`, and `ahpd automation` and every write are refused with `Automation storage is unavailable and must be recovered before automations can run.` Repair or move the file and restart the daemon.
 
 A daemon that is running reads a file the moment it changes - added, edited or removed - and follows it at once: the schedule is armed again, the state file is written, and every client subscribed to `ahp-automations://` is told, exactly as if the change had come over the protocol. A file this host will not run, because its frontmatter cannot be read or its definition is one the host refuses, is reported to the log and skipped, with the definition the daemon already had left in place.
 
@@ -278,7 +280,7 @@ triggers:
 Review what changed in the repository today.
 ```
 
-The id is the automation's id in this host's store, bare or as `ahp-automation:/<id>`. The file name is made from the title, as VS Code makes it. The note of the chat a pinned automation keeps is left out, because that chat is on this host.
+The id is the one `ahpd automation list` shows: what follows `ahp-automation:/` in the resource, or the whole resource where it does not start so. The whole URI is taken too. The file name is made from the title, as VS Code makes it. The note of the chat a pinned automation keeps is left out, because that chat is on this host.
 
 `ahpd automation import` makes an automation from that file:
 
@@ -314,19 +316,17 @@ schedule:
 Review the commits made to this repository since yesterday morning.
 ```
 
-The id is the automation's id in this host's store, bare or as `ahp-automation:/<id>`. The file's `id` and its file name are made from the title, as VS Code makes them. The file holds the title, the message and the schedule, and nothing else: no folder, no provider, no owner, and not whether it is on, because VS Code refuses a file with any key it does not know.
+The id is the one `ahpd automation list` shows, or the whole URI. The file's `id` and its file name are made from the title, as VS Code makes them. The file holds the title, the message and the schedule, and nothing else: no folder, no provider, no owner, and not whether it is on, because VS Code refuses a file with any key it does not know.
 
-The file holds a schedule VS Code's editor can show, so export refuses an automation it cannot hold and says what:
+The file holds one schedule, as VS Code's editor reads one, so export refuses an automation it cannot hold and says what:
 
 | The automation has | Why it is refused |
 | --- | --- |
 | An event or webhook trigger | The file holds only a schedule |
 | More than one schedule | The file holds one |
-| A cron other than `M H * * *`, `M H * * 1-5` or `M H * * D` | The file holds daily, weekday and weekly schedules |
-| `M * * * *` with `M` other than 0 | The file runs hourly on the hour |
 | `misfirePolicy: skip` | VS Code always catches a missed run up |
 
-An automation with no schedule is written as `kind: manual`. Export keeps the hour and drops the zone: the file says `timeZone: local`, which is the zone of whoever imports it.
+The schedule is written as VS Code's agent host reads one: an automation with no schedule as `kind: manual`; one at any minute of every hour as `kind: hourly`, which runs on the hour where it is imported; a daily, weekday or weekly time, and any other cron expression, as `kind: cron` with the expression. Export keeps the hour and drops the zone: the file says `timeZone: local`, which is the zone of whoever imports it.
 
 Over HTTP it is `GET /api/automation/export/{id}?vscode=true`.
 
@@ -348,7 +348,7 @@ The schedule is read as VS Code reads it, in this host's zone:
 | `kind: hourly` | `0 * * * *` |
 | `kind: cron` | The file's `expression` |
 
-A file VS Code would refuse is refused with VS Code's sentence: an unknown `version`, a key it does not know, a cron its editor cannot show, or a `timeZone` other than `local`.
+A file VS Code would refuse is refused with VS Code's sentence: an unknown `version`, a key it does not know, an `expression` that is not a five-field cron expression, or a `timeZone` other than `local`.
 
 Over HTTP it is `POST /api/automation/import`, with the file's text as the body's `text`, `vscode` as `true`, and the folder as `folder`, which must be absolute. A request names no path on the host, so it cannot read a file there.
 
